@@ -10,7 +10,7 @@ use crate::app::{App, AppScreen};
 use crate::game::{Game, GameEvents};
 use petramond::net::protocol::{JoinData, ModEntry, SelfRestore};
 use petramond::player::PlayerId;
-use petramond::server::handle::ServerHandle;
+use petramond::net::handle::ServerHandle;
 use petramond_input::controls::{Control, TextKey, TextShortcut};
 use petramond_math::math::Vec3;
 use petramond_math::world_pos::WorldPos;
@@ -101,9 +101,9 @@ fn connect_screen_opens_from_title_mirrors_edits_and_gates_connect() {
 #[test]
 fn refused_mod_list_populates_missing_rows_and_back_preserves_address() {
     let mut app = shell_app();
-    app.connect.addr = "192.168.1.9:7434".to_owned();
-    app.connect.name = "Rachel".to_owned();
-    app.connect.missing = vec![
+    app.shell.connect.addr = "192.168.1.9:7434".to_owned();
+    app.shell.connect.name = "Rachel".to_owned();
+    app.shell.connect.missing = vec![
         ModEntry {
             id: "kitchen".to_owned(),
             version: "1.0".to_owned(),
@@ -151,8 +151,8 @@ fn a_bad_address_fails_inline_without_spawning_a_worker() {
 
     app.begin_connect();
 
-    assert!(matches!(app.connect.phase, ConnectPhase::Failed { .. }));
-    assert!(!app.connect.has_worker(), "no thread for a parse failure");
+    assert!(matches!(app.shell.connect.phase, ConnectPhase::Failed { .. }));
+    assert!(!app.shell.connect.has_worker(), "no thread for a parse failure");
     app.drive_doc_ui(GuiKind::ConnectServer, SCREEN, 0.0);
     assert_eq!(app.ui.state_mut().get_bool("has_status"), Some(true));
     assert_eq!(app.ui.state_mut().get_bool("connecting"), Some(false));
@@ -172,7 +172,10 @@ fn connection_lost_event_tears_down_to_the_disconnected_screen() {
 
     assert_eq!(app.screen, AppScreen::ConnectionLost);
     assert!(app.game.is_none(), "the dead session is dropped, unsaved");
-    assert_eq!(app.disconnect_message, "The server closed the connection");
+    assert_eq!(
+        app.shell.disconnect_message(),
+        "The server closed the connection"
+    );
 
     app.drive_doc_ui(GuiKind::ConnectionLost, SCREEN, 0.0);
     assert_eq!(
@@ -201,7 +204,7 @@ fn pause_menu_shows_lan_controls_for_host() {
     assert!(app.ui.out().rect("disconnect").is_none());
 
     // A bound port flips the button into the status label.
-    app.lan_port = Some(7434);
+    app.session_ui.lan_port = Some(7434);
     app.drive_doc_ui(GuiKind::Pause, SCREEN, 0.1);
     assert_eq!(app.ui.state_mut().get_bool("lan_open"), Some(true));
     assert_eq!(app.ui.state_mut().get_bool("lan_closed"), Some(false));
@@ -274,7 +277,7 @@ fn multiplayer_pause_menu_does_not_freeze_the_client() {
 
     // The same session once LAN is open (the flag the Open-to-LAN click
     // sets): the pause menu no longer freezes anything.
-    app.lan_port = Some(7434);
+    app.session_ui.lan_port = Some(7434);
     app.update_frame(SCREEN);
     assert!(
         drain(&mut app) > 0,
@@ -295,7 +298,7 @@ fn multiplayer_pause_menu_does_not_freeze_the_client() {
 #[test]
 fn lan_menu_transition_never_stamps_an_unpopulated_shell_frame() {
     let mut app = app();
-    app.lan_port = Some(7434);
+    app.session_ui.lan_port = Some(7434);
     app.server.lan_ever_opened = true;
 
     app.handle_control(Control::CloseScreen, true); // ESC → Pause
@@ -325,8 +328,8 @@ fn lan_menu_transition_never_stamps_an_unpopulated_shell_frame() {
 /// disconnect leaving cleanly.
 #[test]
 fn end_to_end_connect_through_the_ui_joins_a_lan_server() {
-    let (server, _bootstrap) = crate::game::session::build_session_inline("", 7, 1);
-    let mut host = ServerHandle::spawn(server);
+    let (server, _bootstrap) = crate::game::tests::bootstrap::build_session_inline("", 7, 1);
+    let mut host = petramond::server::handle::spawn(server);
     host.unthrottle_for_test();
     let port = host.open_to_lan(0).expect("bind an ephemeral LAN port");
 
@@ -336,7 +339,7 @@ fn end_to_end_connect_through_the_ui_joins_a_lan_server() {
     state.set("server_addr", UiValue::Str(format!("127.0.0.1:{port}")));
     state.set("player_name", UiValue::Str("E2EVisitor".to_owned()));
     app.begin_connect();
-    assert!(app.connect.connecting(), "the worker attempt is running");
+    assert!(app.shell.connect.connecting(), "the worker attempt is running");
 
     let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     loop {
@@ -344,7 +347,7 @@ fn end_to_end_connect_through_the_ui_joins_a_lan_server() {
         if app.screen == AppScreen::Game {
             break;
         }
-        if let ConnectPhase::Failed { message } = &app.connect.phase {
+        if let ConnectPhase::Failed { message } = &app.shell.connect.phase {
             panic!("connect failed: {message}");
         }
         assert!(

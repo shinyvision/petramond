@@ -1,7 +1,7 @@
 //! Server-session construction: open (or create) the world, attach the save,
 //! restore or spawn the local player, load recipes/loot/mods, run mod init,
-//! and kick the first streaming wave. Shared by the listen server (the client
-//! bootstrap in `game::session` wraps it), the headless dedicated server, and
+//! and kick the first streaming wave. Shared by the listen server (`crate::local_host`
+//! wraps it), the headless dedicated server, and
 //! the in-process test harness.
 
 use std::collections::{BTreeSet, HashMap};
@@ -49,7 +49,7 @@ impl Default for OpenedSession {
 /// server, with NO local session and no client half — every player joins
 /// over TCP, the streamer windows every session, and the sim freezes while
 /// nobody is connected (`ServerGame::pump_tagged`'s empty-session gate).
-/// Driven by the same `ServerHandle::spawn` loop; the standalone binary
+/// Driven by the same `server::handle::spawn` loop; the standalone binary
 /// (`platform::server`) parks its main thread on it.
 pub fn build_headless_session(world_name: &str, new_seed: u32, render_dist: i32) -> ServerGame {
     build_server(world_name, new_seed, render_dist, None).0
@@ -179,7 +179,7 @@ pub fn build_server_with_pool(
         .mobs_mut()
         .set_sim_distance(crate::mob::SimDistance::default());
     // BEFORE core systems install below — the day/night cycle captures it.
-    world.set_day_cycle_ticks(crate::server::daynight::cycle_ticks_for_day_minutes(
+    world.set_day_cycle_ticks(crate::rules::daynight::cycle_ticks_for_day_minutes(
         opened.day_minutes,
     ));
     // The mod world KV and the world tick ride level.dat: restore both

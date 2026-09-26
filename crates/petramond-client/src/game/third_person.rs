@@ -109,7 +109,7 @@ impl Game {
                 yaw: self.player.yaw,
                 grounded: self.player.on_ground,
                 medium: super::body_pose::movement_medium(&self.replica, self.player.pos),
-                enabled: !self.player.is_spectator() && self.self_mount.is_none(),
+                enabled: !self.player.is_spectator() && self.entities.own_mount().is_none(),
                 sneaking: self.predicted_input.sneak,
             },
         );

@@ -35,7 +35,7 @@ impl Game {
             *self.self_view.inventory.cursor_mut() =
                 item.map(|i| ItemStack::new(i, i.max_stack_size()));
         }
-        self.outbox.push(ClientToServer::CreativeCursor {
+        self.net.queue(ClientToServer::CreativeCursor {
             item: item.map(|i| i.registry_name().into()),
             request_id,
         });
@@ -64,7 +64,7 @@ impl Game {
             self.predict_menu_drag(kind, &slots, button);
         }
 
-        self.outbox.push(ClientToServer::MenuDrag {
+        self.net.queue(ClientToServer::MenuDrag {
             slots: slots.iter().map(MenuSlotWire::from_menu_slot).collect(),
             button: petramond::net::protocol::button_to_wire(button),
             request_id,
@@ -336,7 +336,7 @@ impl Game {
         if can {
             self.predict_menu_click(slot, button, shift, gather);
         }
-        self.outbox.push(ClientToServer::MenuClick {
+        self.net.queue(ClientToServer::MenuClick {
             slot: MenuSlotWire::from_menu_slot(&slot),
             button: petramond::net::protocol::button_to_wire(button),
             shift,
@@ -349,7 +349,8 @@ impl Game {
     /// cells can be predicted locally; container and transient output cells
     /// ride track-only until the authoritative menu tick applies them.
     pub fn menu_drop(&mut self, slot: petramond_world::gui_state::MenuSlot, all: bool) {
-        self.local_hand_threw |= self.menu_slot_has_stack(slot);
+        let held = self.menu_slot_has_stack(slot);
+        self.hand.latch_throw(held);
         let (can, request_id) = if matches!(
             slot,
             petramond_world::gui_state::MenuSlot::Inventory(_)
@@ -373,7 +374,7 @@ impl Game {
                 _ => {}
             }
         }
-        self.outbox.push(ClientToServer::MenuDrop {
+        self.net.queue(ClientToServer::MenuDrop {
             slot: MenuSlotWire::from_menu_slot(&slot),
             all,
             request_id,
@@ -433,7 +434,7 @@ impl Game {
                 _ => {}
             }
         }
-        self.outbox.push(ClientToServer::MenuSwapOffHand {
+        self.net.queue(ClientToServer::MenuSwapOffHand {
             slot: MenuSlotWire::from_menu_slot(&slot),
             request_id,
         });

@@ -4,7 +4,7 @@ use petramond::events::{DamageSource, Outcome};
 use petramond::mob::{Mob, MobAttack, MobDamageFeedback};
 use petramond::net::protocol::{ClientToServer, PlayerAction};
 use petramond::player;
-use petramond::server::game::ATTACK_COOLDOWN_TICKS;
+use petramond::rules::combat::ATTACK_COOLDOWN_TICKS;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
@@ -433,7 +433,7 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
             .collect()
     };
     let batch = rows(&game);
-    game.replicated_mobs.apply_snapshot(&batch);
+    game.entities.mobs_mut().apply_snapshot(&batch);
 
     assert_eq!(
         game.closest_mob(game.cam.pos, dir, player::REACH)
@@ -462,7 +462,7 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
         )
         .is_some());
     let batch = rows(&game);
-    game.replicated_mobs.apply_snapshot(&batch);
+    game.entities.mobs_mut().apply_snapshot(&batch);
     assert_eq!(
         game.closest_mob(game.cam.pos, dir, player::REACH),
         None,
@@ -505,12 +505,14 @@ fn closest_mob_targets_the_interpolated_render_pose_not_the_future_row() {
     let feet_y = eye.y - 0.35;
     let previous = eye + dir * 2.0;
     let future = eye + dir * 6.0;
-    game.replicated_mobs
+    game.entities
+        .mobs_mut()
         .apply_snapshot(&[row(42, WorldPos::new(previous.x, feet_y, previous.z))]);
-    game.replicated_mobs
+    game.entities
+        .mobs_mut()
         .apply_snapshot(&[row(42, WorldPos::new(future.x, feet_y, future.z))]);
-    game.replica_clock.start();
-    game.replica_clock.advance(TICK_DT * 0.5);
+    game.entities.clock_mut().start();
+    game.entities.clock_mut().advance(TICK_DT * 0.5);
 
     assert_eq!(
         game.closest_mob(eye, dir, player::REACH).map(|(id, _)| id),
@@ -549,7 +551,7 @@ fn a_mob_eases_into_and_out_of_its_gait() {
         }
     }
     let walk = |game: &crate::game::Game| {
-        let entry = game.replicated_mobs.iter().next().unwrap();
+        let entry = game.entities.mobs().iter().next().unwrap();
         entry
             .gait_blend
             .iter()
@@ -558,11 +560,11 @@ fn a_mob_eases_into_and_out_of_its_gait() {
     };
 
     let mut game = game();
-    game.replicated_mobs.apply_snapshot(&[row(false, 0.0)]);
+    game.entities.mobs_mut().apply_snapshot(&[row(false, 0.0)]);
     // A step begins: the walk comes in from rest, never at full weight.
-    game.replicated_mobs.apply_snapshot(&[row(true, 0.4)]);
-    game.replicated_mobs.advance_anim_blends(0.05);
-    game.replicated_mobs.advance_anim_blends(0.05);
+    game.entities.mobs_mut().apply_snapshot(&[row(true, 0.4)]);
+    game.entities.mobs_mut().advance_anim_blends(0.05);
+    game.entities.mobs_mut().advance_anim_blends(0.05);
     let (weight, _) = walk(&game).expect("the walk is blending in");
     assert!(
         weight > 0.0 && weight < 1.0,
@@ -570,8 +572,8 @@ fn a_mob_eases_into_and_out_of_its_gait() {
     );
     // And ends mid-stride (the sim's clock resets with the gait): the walk
     // fades from the stride it was in, not from the reset clock.
-    game.replicated_mobs.apply_snapshot(&[row(false, 0.0)]);
-    game.replicated_mobs.advance_anim_blends(0.05);
+    game.entities.mobs_mut().apply_snapshot(&[row(false, 0.0)]);
+    game.entities.mobs_mut().advance_anim_blends(0.05);
     let (fading, phase) = walk(&game).expect("the walk is still fading out");
     assert!(fading > 0.0 && fading < weight + 1e-6);
     assert_eq!(phase, 0.4, "it holds the stride it stopped in");
@@ -1109,7 +1111,8 @@ fn a_mob_pushes_the_player_per_frame() {
     // mob rows (the shove reaches the server in the next PlayerUpdate).
     let mut game = game();
     game.player.pos = WorldPos::new(8.0, 64.0, 8.0);
-    game.replicated_mobs
+    game.entities
+        .mobs_mut()
         .apply_snapshot(&[petramond::net::protocol::MobStateRow {
             id: 1,
             kind_id: Mob::Owl.0,
@@ -1189,13 +1192,13 @@ fn a_remote_player_pushes_the_local_player_per_frame() {
     }
 
     let mut game = game();
-    let own_id = game.game.self_id;
+    let own_id = game.game.entities.self_id();
     let start = WorldPos::new(8.0, 64.0, 8.0);
     let overlap = WorldPos::new(8.2, 64.0, 8.0); // just east, footprints overlapping
 
     let run = |game: &mut common::TestGame, row: PlayerStateRow| {
         game.player.pos = start;
-        game.game.remote_players.apply_snapshot(&[row], &[], own_id);
+        game.game.entities.players_mut().apply_snapshot(&[row], &[], own_id);
         for _ in 0..30 {
             game.apply_entity_push(1.0 / 60.0);
         }
@@ -1584,13 +1587,14 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
     game.cam.pos = WorldPos::new(8.0, 66.0, 8.0);
     game.cam.pitch = 0.0;
     let dir = game.cam.forward();
-    let own_id = game.game.self_id;
+    let own_id = game.game.entities.self_id();
 
     // A remote body two metres ahead, feet dropped so the level ray crosses it.
     let mut feet = game.cam.pos + dir * 2.0;
     feet.y -= 1.0;
     game.game
-        .remote_players
+        .entities
+        .players_mut()
         .apply_snapshot(&[remote_row(1, feet, true)], &[], own_id);
     game.refresh_target();
     assert_eq!(game.targeted_player, Some(1), "the remote body is targeted");
@@ -1604,7 +1608,8 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
     let mut mob_feet = game.cam.pos + dir * 1.2;
     mob_feet.y -= 0.35;
     game.game
-        .replicated_mobs
+        .entities
+        .mobs_mut()
         .apply_snapshot(&[petramond::net::protocol::MobStateRow {
             id: 42,
             kind_id: Mob::Owl.0,
@@ -1632,9 +1637,10 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
     assert!(game.targeted_player.is_none());
 
     // A hidden (dead/spectator) remote is never targeted.
-    game.game.replicated_mobs.apply_snapshot(&[]);
+    game.game.entities.mobs_mut().apply_snapshot(&[]);
     game.game
-        .remote_players
+        .entities
+        .players_mut()
         .apply_snapshot(&[remote_row(1, feet, false)], &[], own_id);
     game.refresh_target();
     assert!(

@@ -30,7 +30,7 @@ impl Game {
                     // Sampled against the REPLICA, which already applied this
                     // pump's deltas (the break landed before the events).
                     let (sky, blk) =
-                        petramond::server::breaking::break_light(&self.replica, pos, normal);
+                        petramond::rules::breaking::break_light(&self.replica, pos, normal);
                     // A swing in progress on the broken block lapses on the
                     // next advance, which finds no animated block there.
                     self.burst(
@@ -130,7 +130,8 @@ impl Game {
     /// state. The sounds are returned for the frame's events.
     pub(super) fn tick_mob_digging(&mut self, dt: f32) -> Vec<petramond::events::tick::SoundEvent> {
         let digging: Vec<(u64, IVec3, WorldPos)> = self
-            .replicated_mobs
+            .entities
+            .mobs()
             .iter()
             .filter_map(|m| {
                 let (cell, _) = m.curr.dig?;
@@ -180,17 +181,10 @@ impl Game {
         self.particles.tick(dt, &self.replica);
     }
 
-    /// Adopt the REPLICATED open-chest set (the server's viewer counts): a
-    /// chest entering it starts its lid opening, one leaving starts it
-    /// closing — ANY player's open screen lifts the lid on every client.
+    /// Adopt the REPLICATED open-chest set (the server's viewer counts); see
+    /// `BlockAnimations::set_open_chests`.
     pub(super) fn set_open_chests(&mut self, open: rustc_hash::FxHashSet<IVec3>) {
-        for &pos in open.difference(&self.open_chests) {
-            self.block_animations.begin(pos, false);
-        }
-        for &pos in self.open_chests.difference(&open) {
-            self.block_animations.begin(pos, true);
-        }
-        self.open_chests = open;
+        self.block_animations.set_open_chests(open);
     }
 
     /// The linear open progress (`0.0` closed .. `1.0` open) of the animated
@@ -199,8 +193,7 @@ impl Game {
     /// looking inside it. The presentation snapshot reads this per block.
     #[inline]
     pub(super) fn block_open_progress(&self, anchor: IVec3, pose_open: bool) -> f32 {
-        let open = pose_open || self.open_chests.contains(&anchor);
-        self.block_animations.progress(anchor, open)
+        self.block_animations.open_progress(anchor, pose_open)
     }
 
     /// Advance every animated block mid-swing by `dt` toward its logical open
@@ -208,10 +201,10 @@ impl Game {
     /// onto the REPLICA by the cell-state deltas — or the replicated
     /// open-chest set), at its model's own speed.
     pub(super) fn advance_block_animations(&mut self, dt: f32) {
-        let (world, open_chests) = (&self.replica, &self.open_chests);
-        self.block_animations.advance(dt, |anchor| {
+        let world = &self.replica;
+        self.block_animations.advance_poses(dt, |anchor| {
             let (model, pose) = world.animated_pose_at(anchor)?;
-            Some((pose.open || open_chests.contains(&anchor), model.open_speed))
+            Some((pose.open, model.open_speed))
         });
     }
 
@@ -223,7 +216,7 @@ impl Game {
     /// its own thread now.
     #[inline]
     pub(super) fn tick_alpha(&self) -> f32 {
-        self.replica_clock.alpha()
+        self.entities.alpha()
     }
 
     /// Two-channel light at the player's eye, for lighting the first-person hand
@@ -244,21 +237,8 @@ impl Game {
         // admission-limited RD32 flight meshing while the workers sat idle.
         const MESH_BUDGET: usize = 256;
         self.replica.tick_mesh_budget(MESH_BUDGET);
-        if self
-            .stream_feedback_at
-            .is_none_or(|at| at.elapsed() >= std::time::Duration::from_millis(100))
-        {
-            let (mesh_sections, upload_columns) = self.replica.terrain_presentation_backlog();
-            if self
-                .handle
-                .send(petramond::net::protocol::ClientToServer::TerrainBacklog {
-                    mesh_sections,
-                    upload_columns,
-                })
-                .is_ok()
-            {
-                self.stream_feedback_at = Some(std::time::Instant::now());
-            }
-        }
+        let replica = &self.replica;
+        self.net
+            .report_terrain_backlog(|| replica.terrain_presentation_backlog());
     }
 }

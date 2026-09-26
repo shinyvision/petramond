@@ -2,7 +2,7 @@
 //! state and the ONE background thread that resolves the address, opens the
 //! TCP connection, and runs the join handshake. The worker reports back over
 //! an mpsc channel the ConnectServer screen drains each frame
-//! ([`App::poll_connect_worker`]).
+//! ([`ConnectSession::poll`]).
 //!
 //! Cancellation is cooperative (a flag checked between blocking steps) plus a
 //! GENERATION guard: Cancel/Back bump the session's `gen` and drop the
@@ -14,13 +14,15 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::shell_docs::ShellCommand;
+use super::ui_runtime::AppUi;
 use super::{App, AppScreen};
 use crate::game::Game;
 use petramond::net::handshake::{
     client_handshake, installed_mod_ids, HandshakeError, HandshakeJoin,
 };
 use petramond::net::protocol::ModEntry;
-use petramond::server::handle::ServerHandle;
+use petramond::net::handle::ServerHandle;
 use petramond_render::camera::Camera;
 
 /// Per-step network deadline: the TCP connect and each handshake read.
@@ -78,6 +80,15 @@ impl Default for ConnectSession {
     }
 }
 
+/// What draining the connect worker decided, for the caller to act on.
+pub(super) enum ConnectEvent {
+    /// The handshake succeeded; the connection threads are already running.
+    Joined(Box<HandshakeJoin>, ServerHandle),
+    /// The server runs mods this client lacks: the refusal's list is in
+    /// [`ConnectSession::missing`].
+    Missing,
+}
+
 impl ConnectSession {
     pub(super) fn connecting(&self) -> bool {
         matches!(self.phase, ConnectPhase::Connecting { .. })
@@ -89,46 +100,129 @@ impl ConnectSession {
     pub(super) fn has_worker(&self) -> bool {
         self.rx.is_some()
     }
+
+    /// Abandon the in-flight attempt (Cancel/Back/ESC): flag the worker and
+    /// make anything it already reported stale.
+    pub(super) fn cancel(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+        self.gen += 1;
+        self.rx = None;
+        if self.connecting() {
+            self.phase = ConnectPhase::Editing;
+        }
+    }
+
+    /// Drain the worker's outcomes — the ConnectServer screen's per-frame
+    /// prep. Progress and failures land in `phase`; a join or a mod refusal
+    /// comes back for the caller to act on.
+    pub(super) fn poll(&mut self) -> Option<ConnectEvent> {
+        loop {
+            let rx = self.rx.as_ref()?;
+            let (gen, outcome) = match rx.try_recv() {
+                Ok(msg) => msg,
+                Err(TryRecvError::Empty) => return None,
+                Err(TryRecvError::Disconnected) => {
+                    // The worker died without a report (a panic): fail loud
+                    // rather than spin on "Connecting…" forever.
+                    self.rx = None;
+                    if self.connecting() {
+                        self.phase = ConnectPhase::Failed {
+                            message: "The connection attempt failed".to_owned(),
+                        };
+                    }
+                    return None;
+                }
+            };
+            if gen != self.gen {
+                continue;
+            }
+            match outcome {
+                ConnectOutcome::Progress(label) => {
+                    if self.connecting() {
+                        self.phase = ConnectPhase::Connecting { label };
+                    }
+                }
+                ConnectOutcome::Joined(join, handle) => {
+                    self.rx = None;
+                    self.phase = ConnectPhase::Editing;
+                    return Some(ConnectEvent::Joined(Box::new(join), handle));
+                }
+                ConnectOutcome::Missing(mods) => {
+                    self.rx = None;
+                    self.phase = ConnectPhase::Editing;
+                    self.missing = mods;
+                    return Some(ConnectEvent::Missing);
+                }
+                ConnectOutcome::Failed(message) => {
+                    self.rx = None;
+                    self.phase = ConnectPhase::Failed { message };
+                }
+            }
+        }
+    }
+
+    /// Reset for a fresh open of the Connect screen, its fields seeded from
+    /// client.json (`last_server` + the resolved player name).
+    pub(super) fn open_fresh(&mut self, ui: &mut AppUi) {
+        let settings = petramond::save::client::load();
+        let addr = settings.last_server.clone().unwrap_or_default();
+        let name = petramond::save::client::resolve_player_name(&settings);
+        *self = ConnectSession::default();
+        seed_connect_fields(ui, &addr, name);
+    }
+
+    /// Back from the ModsMissing screen: the refused attempt's address and
+    /// name intact.
+    pub(super) fn reopen(&mut self, ui: &mut AppUi) {
+        self.phase = ConnectPhase::Editing;
+        let (addr, name) = (self.addr.clone(), self.name.clone());
+        seed_connect_fields(ui, &addr, name);
+    }
+}
+
+/// The shell command a connect event asks for.
+pub(super) fn connect_event_command(event: ConnectEvent) -> ShellCommand {
+    match event {
+        ConnectEvent::Joined(join, handle) => ShellCommand::AdoptRemote(join, handle),
+        // The connect screen already handed the pointer to the menu.
+        ConnectEvent::Missing => ShellCommand::SwitchTo(AppScreen::ModsMissing),
+    }
+}
+
+/// Seed the connect document's entry fields and focus the address.
+fn seed_connect_fields(ui: &mut AppUi, addr: &str, name: String) {
+    // Activate the document FIRST: switching kinds resets bound state, which
+    // would wipe the seeds below on the screen's first frame.
+    ui.ensure_active(petramond_world::gui_state::GuiKind::ConnectServer);
+    let state = ui.state_mut();
+    state.set("server_addr", petramond_ui::UiValue::Str(addr.to_owned()));
+    state.set("player_name", petramond_ui::UiValue::Str(name));
+    // Ready to type immediately, editing from the prefill.
+    ui.focus_text_input("server_addr", addr, ADDR_MAX_CHARS);
 }
 
 impl App {
     /// Open the Connect to Server screen from the title: fields prefilled
     /// from client.json (`last_server` + the resolved player name).
     pub(super) fn open_connect_server(&mut self) {
-        let settings = petramond::save::client::load();
-        let addr = settings.last_server.clone().unwrap_or_default();
-        let name = petramond::save::client::resolve_player_name(&settings);
-        self.connect = ConnectSession::default();
-        self.enter_connect_screen(addr, name);
+        self.shell.connect.open_fresh(&mut self.ui);
+        self.screen = AppScreen::ConnectServer;
+        self.controls.pointer.release_for_menu();
     }
 
     /// Back from the ModsMissing screen: same screen, the refused attempt's
     /// address and name intact.
     pub(super) fn reopen_connect_server(&mut self) {
-        let (addr, name) = (self.connect.addr.clone(), self.connect.name.clone());
-        self.connect.phase = ConnectPhase::Editing;
-        self.enter_connect_screen(addr, name);
-    }
-
-    fn enter_connect_screen(&mut self, addr: String, name: String) {
-        // Activate the document FIRST: switching kinds resets bound state,
-        // which would wipe the seeds below on the screen's first frame.
-        self.ui
-            .ensure_active(petramond_world::gui_state::GuiKind::ConnectServer);
-        let state = self.ui.state_mut();
-        state.set("server_addr", petramond_ui::UiValue::Str(addr.clone()));
-        state.set("player_name", petramond_ui::UiValue::Str(name));
-        // Ready to type immediately, editing from the prefill.
-        self.ui
-            .focus_text_input("server_addr", &addr, ADDR_MAX_CHARS);
+        self.shell.connect.reopen(&mut self.ui);
         self.screen = AppScreen::ConnectServer;
-        self.pointer.release_for_menu();
+        self.controls.pointer.release_for_menu();
     }
 
     /// The Connect button/Enter: validate the fields, persist them, and spawn
     /// the worker thread. Parse failures show inline without any thread.
     pub(super) fn begin_connect(&mut self) {
-        if self.connect.connecting() {
+        let connect = &mut self.shell.connect;
+        if connect.connecting() {
             return;
         }
         let state = self.ui.state_mut();
@@ -137,30 +231,30 @@ impl App {
         let (host, port) = match petramond::net::address::parse_server_address(&addr_text) {
             Ok(parts) => parts,
             Err(e) => {
-                self.connect.phase = ConnectPhase::Failed {
+                connect.phase = ConnectPhase::Failed {
                     message: e.to_string(),
                 };
                 return;
             }
         };
         if name.is_empty() {
-            self.connect.phase = ConnectPhase::Failed {
+            connect.phase = ConnectPhase::Failed {
                 message: "Enter a player name".to_owned(),
             };
             return;
         }
-        self.connect.addr = addr_text.clone();
-        self.connect.name = name.clone();
+        connect.addr = addr_text.clone();
+        connect.name = name.clone();
         persist_connect_fields(&addr_text, &name);
         let view_distance = self.render_dist;
 
-        self.connect.gen += 1;
-        let gen = self.connect.gen;
-        self.connect.cancel = Arc::new(AtomicBool::new(false));
-        let cancel = Arc::clone(&self.connect.cancel);
+        connect.gen += 1;
+        let gen = connect.gen;
+        connect.cancel = Arc::new(AtomicBool::new(false));
+        let cancel = Arc::clone(&connect.cancel);
         let (tx, rx) = mpsc::channel();
-        self.connect.rx = Some(rx);
-        self.connect.phase = ConnectPhase::Connecting {
+        connect.rx = Some(rx);
+        connect.phase = ConnectPhase::Connecting {
             label: "Connecting…",
         };
         // Claim the retained section cache in the Join manifest. Stale or
@@ -190,74 +284,19 @@ impl App {
             .expect("spawn connect thread");
     }
 
-    /// Abandon the in-flight attempt (Cancel/Back/ESC): flag the worker and
-    /// make anything it already reported stale.
-    pub(super) fn cancel_connect(&mut self) {
-        self.connect.cancel.store(true, Ordering::Relaxed);
-        self.connect.gen += 1;
-        self.connect.rx = None;
-        if self.connect.connecting() {
-            self.connect.phase = ConnectPhase::Editing;
-        }
-    }
-
-    /// Drain the worker's outcomes — the ConnectServer screen's per-frame
-    /// prep. A join adopts the remote game; a mod refusal opens ModsMissing;
-    /// failures land in the inline status label.
+    /// Drain the connect worker and act on what it decided, outside the
+    /// screen's frame — for tests that wait on a real join.
+    #[cfg(test)]
     pub(super) fn poll_connect_worker(&mut self) {
-        loop {
-            let Some(rx) = self.connect.rx.as_ref() else {
-                return;
-            };
-            let (gen, outcome) = match rx.try_recv() {
-                Ok(msg) => msg,
-                Err(TryRecvError::Empty) => return,
-                Err(TryRecvError::Disconnected) => {
-                    // The worker died without a report (a panic): fail loud
-                    // rather than spin on "Connecting…" forever.
-                    self.connect.rx = None;
-                    if self.connect.connecting() {
-                        self.connect.phase = ConnectPhase::Failed {
-                            message: "The connection attempt failed".to_owned(),
-                        };
-                    }
-                    return;
-                }
-            };
-            if gen != self.connect.gen {
-                continue;
-            }
-            match outcome {
-                ConnectOutcome::Progress(label) => {
-                    if self.connect.connecting() {
-                        self.connect.phase = ConnectPhase::Connecting { label };
-                    }
-                }
-                ConnectOutcome::Joined(join, handle) => {
-                    self.connect.rx = None;
-                    self.connect.phase = ConnectPhase::Editing;
-                    self.start_remote_game(join, handle);
-                    return;
-                }
-                ConnectOutcome::Missing(mods) => {
-                    self.connect.rx = None;
-                    self.connect.phase = ConnectPhase::Editing;
-                    self.connect.missing = mods;
-                    self.screen = AppScreen::ModsMissing;
-                    return;
-                }
-                ConnectOutcome::Failed(message) => {
-                    self.connect.rx = None;
-                    self.connect.phase = ConnectPhase::Failed { message };
-                }
-            }
+        if let Some(event) = self.shell.connect.poll() {
+            self.run_shell_command(connect_event_command(event));
         }
     }
 
     /// Enter the joined REMOTE session — `start_game`'s tail for a handshaked
     /// connection. The camera position is irrelevant: the constructor snaps
     /// it to the restored player.
-    fn start_remote_game(&mut self, join: HandshakeJoin, handle: ServerHandle) {
+    pub(super) fn start_remote_game(&mut self, join: HandshakeJoin, handle: ServerHandle) {
         let cam = Camera::new(
             petramond_math::world_pos::WorldPos::new(8.0, 90.0, 8.0),
             self.shell_camera.aspect.max(0.01),
@@ -268,7 +307,7 @@ impl App {
             join.join,
             handle,
             self.render_dist,
-            &self.connect.addr,
+            &self.shell.connect.addr,
             &join.server_mods,
             retained_cache,
         ));

@@ -7,8 +7,7 @@ use super::game::ServerGame;
 use crate::events::tick::TickEvents;
 use crate::events::{BlockPlacePre, Outcome, PostEvent, SimCtx};
 use crate::net::protocol::TargetRef;
-use petramond_math::facing::Facing;
-use petramond_math::math::{IVec3, Vec3};
+use petramond_math::math::IVec3;
 use petramond_world::block::{Aabb, Block, CellPart};
 
 impl ServerGame {
@@ -81,7 +80,7 @@ impl ServerGame {
         // the clicked face. Air is replaceable too (a placement may overwrite it) but is
         // never itself a raycast hit, so exclude it. `p` then feeds the torch support
         // gate, the model footprint, and the final replaceable check uniformly.
-        let player_facing = facing_from_forward(self.sessions[s].player.forward());
+        let player_facing = crate::rules::placement::facing_from_forward(self.sessions[s].player.forward());
         let inputs = crate::world::placement::PlaceInputs::of_click(
             &self.world,
             h.block,
@@ -344,23 +343,5 @@ impl ServerGame {
     pub fn try_place_for_test(&mut self) -> bool {
         let target = self.sessions[0].look;
         self.try_place(0, target, &mut Default::default()).is_some()
-    }
-}
-
-/// The furnace facing for a block placed while looking along `forward`: the front
-/// (mouth) points back toward the player — opposite the camera's horizontal look
-/// direction — snapped to the nearest cardinal.
-pub fn facing_from_forward(forward: Vec3) -> Facing {
-    let (fx, fz) = (-forward.x, -forward.z);
-    if fx.abs() >= fz.abs() {
-        if fx >= 0.0 {
-            Facing::East
-        } else {
-            Facing::West
-        }
-    } else if fz >= 0.0 {
-        Facing::South
-    } else {
-        Facing::North
     }
 }

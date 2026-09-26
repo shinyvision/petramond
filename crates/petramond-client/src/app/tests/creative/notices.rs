@@ -74,11 +74,11 @@ fn creative_notice_visual_check() {
         .unwrap();
     };
     open_save_page(&mut app);
-    app.library_form.name = "Workshop".into();
+    app.session_ui.library_form.name = "Workshop".into();
     app.game
         .as_mut()
         .unwrap()
-        .world_tools
+        .tools.world
         .selection
         .selection
         .region([0, 0, 0], [3, 3, 3], false)

@@ -5,14 +5,15 @@
 //! and the camera source), per-frame targeting (`Game::look`/
 //! `Game::targeted_mob`), particles, transient animation state, and the
 //! app-facing API. The SIMULATION — world, player sessions, entities, the
-//! fixed-tick stage ladder — lives in [`petramond::server::game::ServerGame`].
+//! fixed-tick stage ladder — lives on the server, reached only through the
+//! session's [`ServerHandle`](petramond::net::handle::ServerHandle).
 //!
 //! Input reaches the sim ONLY as [`petramond::net::protocol`]
 //! messages: every frame the client translates its input + targeting into a
-//! `PlayerUpdate` (+ one-shot `Action`s/menu actions queued in
-//! `Game::outbox`) and sends them to the server. The server
+//! `PlayerUpdate` (+ one-shot `Action`s/menu actions queued on the
+//! session's `NetLink`) and sends them to the server. The server
 //! (`ServerGame`) runs on its OWN self-clocked thread behind a
-//! [`ServerHandle`] — the handoff is std::sync::mpsc channels of message
+//! `ServerHandle` — the handoff is std::sync::mpsc channels of message
 //! VALUES (Arc payloads are refcount bumps); a remote join swaps TCP under
 //! the identical messages.
 //!
@@ -32,6 +33,7 @@
 
 pub mod ambient;
 mod block_animation;
+mod camera_rig;
 pub mod body_pose;
 mod client_mods;
 mod client_presentation;
@@ -44,9 +46,11 @@ pub mod environment;
 mod first_person;
 mod frame;
 mod ghosts;
+mod local_hand;
 mod local_player;
 mod menu_actions;
 mod menu_prediction;
+mod net_link;
 pub mod prediction;
 pub mod presentation;
 pub mod remote_players;
@@ -61,28 +65,30 @@ mod session_control;
 mod speed_fov;
 mod terrain_render;
 mod third_person;
+pub mod tools;
 pub mod tick;
 mod view_bob;
 mod world_prediction;
 pub mod world_tool;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 use crate::particle::ParticleSystem;
 use petramond::net::protocol::{ChatLine, ClientToServer, PlayerAction, SelfTransform};
 #[cfg(test)]
 use petramond::player::PlayerMode;
 use petramond::player::{Player, RaycastHit};
-use petramond::server::handle::ServerHandle;
-use petramond::server::player::HeldRotation;
 use petramond::world::World;
+#[cfg(test)]
 use petramond_math::math::IVec3;
 use petramond_render::camera::Camera;
 use petramond_world::block_state::HeldBlockState;
+use petramond_world::world::placement::HeldRotation;
 use petramond_worldgen::density::surface::SurfaceDensitySystem;
 
 pub use environment::GameEnvironment;
 pub use frame::{render_bone_offsets, render_held_pose};
+pub use menu_actions::MenuReadModel;
 pub use tick::{
     GameEvents, GameInput, MobSoundEvent, MovementInput, SpatialSoundCommand, WorldEvent,
 };
@@ -93,16 +99,13 @@ pub struct Game {
     jobs: std::sync::Arc<petramond::worker::JobPool>,
     /// A refusal or failure to show the player once; the app takes it.
     pub notice: String,
-    pub world_tools: world_tool::WorldTools,
-    pub schematic_preview: schematic_preview::SchematicPreview,
-    pub schematic_library: schematic_library::SchematicLibrary,
-    /// A paste the player asked for went up (an edge the menu closes on).
-    paste_preview_ready: bool,
-    /// Captures arriving from, and pastes leaving for, the server.
+    /// The creative building tools: world tools, schematic preview,
+    /// library, share and ghosts.
+    pub tools: tools::Tools,
+    /// Creative double-jump flight toggling.
     flight_toggle: creative::FlightToggle,
+    /// Creative instant-break repeat pacing while the button is held.
     break_repeat: creative::BreakRepeat,
-    pub schematics: schematics::SchematicShare,
-    ghosts: ghosts::Ghosts,
     cam: Camera,
     /// The client's LOCALLY-SIMULATED player: movement physics runs on this
     /// copy every frame and the camera mirrors its eye. Its transform is sent
@@ -130,75 +133,24 @@ pub struct Game {
     /// nearer than any block or mob — the PvP attack target. At most one of
     /// `targeted_mob`/`targeted_player` is set; `AttackClick` carries it.
     targeted_player: Option<u8>,
-    /// The authoritative mount from the own replicated player row —
-    /// `(stable mob id, seat index)`. While `Some`, local player physics and
-    /// entity push are suspended and the body slaves per frame to the
-    /// interpolated mount at the species' seat offset; movement INTENT keeps
-    /// riding `PlayerUpdate` so the driving mod reads it server-side.
-    self_mount: Option<petramond::net::protocol::PlayerMount>,
     /// The client-owned R-key placement-rotation cycle; its raw counter rides
     /// `PlayerUpdate.held_rotation` (the session keeps its own latched copy).
     held_rotation: HeldRotation,
-    /// One-shot client→server messages queued by the app-facing methods since
-    /// the last frame, handed to `ServerGame::pump` (after this frame's
-    /// `PlayerUpdate` + click edges) in `Game::tick`.
-    outbox: Vec<ClientToServer>,
-    /// Per-frame scratch for the assembled message batch (capacity reused;
-    /// `pump` drains it every frame).
-    frame_messages: Vec<ClientToServer>,
-    /// Visual-only vertical lag after grounded auto-step movement. The player
-    /// feet and collision state update immediately; only the camera eases —
-    /// upward after a step-up, downward after a sneak snap-down.
-    camera_step_y_offset: f32,
-    /// Visual-only eased eye drop while sneaking (`0` upright …
-    /// `-SNEAK_EYE_DROP` crouched) — the first-person feedback that sneak is
-    /// active. Camera only: the collision box and the sim eye stay full
-    /// height.
-    camera_sneak_y_offset: f32,
-    last_player_eye_y: f64,
+    /// The first-person camera's presentation easing (step glide, sneak dip,
+    /// walking sway, pillow eye, speed FOV).
+    camera_rig: camera_rig::CameraRig,
     /// Third-person view state (boom camera + body pose). `cam` above stays the
     /// authoritative first-person eye for every presentation consumer; see
     /// `third_person.rs`.
     third_person: third_person::ThirdPerson,
-    /// The handle to the SIMULATION — `ServerGame` on its own self-clocked
-    /// thread. Input reaches it only as messages
-    /// ([`ServerHandle::send`]); state comes back only as drained
-    /// server→client messages. The client holds NO direct sim state.
-    handle: ServerHandle,
-    /// Whether this session is a REMOTE client (built by
-    /// [`Game::new_remote`] over a TCP connection). Gates host-only actions:
-    /// pause, open-to-LAN, save-and-quit.
-    remote: bool,
-    /// `Some(reason)` once the server is unreachable (thread crashed, or a
-    /// send/drain hit a closed channel). Latched once, surfaced through
-    /// `GameEvents::connection_lost` on the frame it is detected; the app
-    /// keeps running the (frozen) world until it consumes the event with a
-    /// proper connection-lost screen.
-    connection_lost: Option<String>,
-    /// Whether `connection_lost` was already surfaced (log + event) — the
-    /// error is reported exactly once.
-    connection_lost_reported: bool,
+    /// The link to the server: handle, frame batch, flow control and
+    /// connection-loss latching. The client holds NO direct sim state.
+    net: net_link::NetLink,
     /// The transform of the last `PlayerUpdate` this client SENT. A
     /// `SelfState::transform` correction adopts only the fields that differ
     /// from it: fields equal to what we last claimed are just the server
     /// echoing us, and the local (possibly newer) value wins.
     last_sent_transform: Option<SelfTransform>,
-    /// Client-side tick clock over RECEIVED `TickUpdate`s — the `tick_alpha`
-    /// source now that the server accumulator lives on another thread.
-    replica_clock: tick::ReplicaClock,
-    /// Bounded FIFO of `TickUpdate` entity rows waiting for crossed render-time
-    /// segment boundaries (see `ReplicaClock` / `StagedRows`).
-    staged_rows: VecDeque<replicated::StagedRows>,
-    /// When the currently-open streaming batch's `StreamBatchStart` was
-    /// applied; `StreamBatchEnd` closes it into a rate sample and an ack.
-    stream_batch_started: Option<std::time::Instant>,
-    /// EMA over measured batch apply rates (streaming messages/second) — what
-    /// `StreamBatchAck` reports so the server sizes future batches to this
-    /// client's real throughput.
-    stream_rate_ema: Option<f32>,
-    stream_feedback_at: Option<std::time::Instant>,
-    /// Per-frame scratch for drained server messages (capacity reused).
-    incoming: Vec<petramond::net::protocol::ServerToClient>,
     /// Replica sections installed during the current message drain. Their
     /// overlapping mesh invalidations are applied once after the batch.
     remote_section_installs: Vec<petramond_world::chunk::SectionPos>,
@@ -214,12 +166,10 @@ pub struct Game {
     /// and publish document state/images; they never share the server mod
     /// instances or simulation mutation seams.
     client_mods: petramond::modding::client::ClientModRuntime,
-    /// REPLICATED mob store: presentation reads these, fed by the per-tick
-    /// `TickUpdate` batches — never `server.world.mobs()` (see
-    /// `game/replicated.rs`).
-    replicated_mobs: replicated::ReplicatedMobs,
-    /// REPLICATED dropped-item store (same contract as `replicated_mobs`).
-    replicated_items: replicated::ReplicatedItems,
+    /// The replicated ENTITY state: mob / item / remote-player stores, the
+    /// own mount, the staged interpolation window over them, and the
+    /// per-batch session facts (tick, sleep headcount, roster, own id).
+    entities: replicated::EntityReplica,
     /// The client-side mirror of the local player's replicated `SelfState`:
     /// the HUD/hand/overlay read model (health, effects, inventory, mining,
     /// eating, sleeping).
@@ -235,30 +185,8 @@ pub struct Game {
     /// sound queues), buffered by `apply_tick_update` and drained once per
     /// `Game::tick` into `GameEvents`.
     pending_events: tick::ClientEvents,
-    /// The LOCAL player's server-assigned id (`JoinData::player_id`;
-    /// in-process always session 0's) — distinguishes own vs foreign
-    /// `ItemPickedUp` events.
-    self_id: petramond::player::PlayerId,
-    /// The OTHER connected players (id → name): seeded from
-    /// `JoinData::players` on a remote join, then maintained by
-    /// `PlayerJoined`/`PlayerLeft` broadcasts on every connection kind.
-    player_roster: HashMap<petramond::player::PlayerId, String>,
-    /// REPLICATED remote-player store: every OTHER session in this client's
-    /// interest — its prev/curr row pair plus its body-pose / held-item
-    /// animation state, what `collect_remote_players` renders bodies from.
-    /// The local player is never in it.
-    remote_players: remote_players::RemotePlayers,
-    /// The server-wide sleep headcount from the latest batch — remote rows
-    /// only cover the players in view, the overlay counts everyone.
-    sleep_tally: petramond::net::protocol::SleepTally,
-    /// The latest replicated tick number (`TickUpdate::tick`) — the client's
-    /// notion of game time for presentation scheduling.
-    replicated_tick: u64,
-    /// Chests with at least one open screen anywhere (replicated per batch —
-    /// the server's `chest_viewers` key set). Opens their animated lids; set
-    /// through [`Game::set_open_chests`], which starts the lids' swings.
-    open_chests: rustc_hash::FxHashSet<IVec3>,
-    /// Optimistic prediction ledger (request ids + undo snapshots).
+    /// Optimistic prediction ledger (request ids + undo snapshots + the
+    /// presented-cell suppress set).
     pub prediction: prediction::PredictionLedger,
     /// Local mining timer for crack overlay + `BreakFinished` (P2).
     local_mining: petramond_world::mining::MiningState,
@@ -278,63 +206,10 @@ pub struct Game {
     /// Scratch for this frame's resolved bone-offset target, reused so
     /// advancing the local body's easing allocates nothing.
     local_bone_target: Vec<petramond_render::BoneOffset>,
-    /// First-person walking sway — a presentation offset on the camera, and
-    /// the stride phase the first-person animator's walk plays on.
-    view_bob: view_bob::ViewBob,
-    /// The look's turn rates, advanced once per frame with the look.
-    first_person_look: first_person::LookRate,
-    /// Speed-coupled FOV — the camera widens with the body's WISHED land
-    /// speed (`Player::wish_speed`), a presentation retarget of `cam.fov_y`.
-    speed_fov: speed_fov::SpeedFov,
-    /// One-shot hand/presentation triggers latched this frame for P0
-    /// prediction — the ONLY source of the own hand animation (the server
-    /// never echoes self-initiated one-shots back). Consumed into `GameEvents` in
-    /// `tick_receive`.
-    local_hand_jab: bool,
-    /// The latched jab belongs to the LEFT hand (the use-click prediction's
-    /// off-hand pass produced it). Meaningless while `local_hand_jab` is
-    /// false.
-    local_hand_jab_off: bool,
-    /// The latched consumed click's consumer presents itself (an eat's
-    /// raise), so the hand plays no jab. Meaningless while `local_hand_jab`
-    /// is false.
-    local_hand_presents_itself: bool,
-    /// The latched consumed click is a placement: the place jab plays, not
-    /// the interact one. Meaningless while `local_hand_jab` is false.
-    local_hand_places: bool,
-    local_hand_swing: bool,
-    /// Seconds of the local hand's swing still to FOLLOW THROUGH: the
-    /// client's mirror of the server's attack cooldown, armed by the same
-    /// attribute-scaled window. Without it the press predicted a swing the
-    /// server's cooldown was about to refuse, so a mash restarted the
-    /// animation mid-arc while the hits kept the server's pace.
-    local_attack_recovery: f32,
-    /// A press held over the follow-through, ONE deep: it fires by itself
-    /// the frame the recovery ends (see `attack_press`), so a mash chains
-    /// without having to land on the beat.
-    local_attack_queued: bool,
-    local_hand_threw: bool,
-    /// Hand-swing one-shots latched at event assembly for the client-mod
-    /// frame hook (the ABI's swing facts, `PlayerSnapshot::swing`) and taken
-    /// by `drive_client_mods`. Its own latch, deliberately: the app's hand
-    /// events feed the animators and drain at RENDER — a different
-    /// clock — and a shared latch is whoever-eats-first, which once left a
-    /// swing-claim pack dark on every one-shot. `mining` is unused here (the
-    /// level is read live at dispatch, like the server's roster build).
-    swing_events: mod_api::HandSwing,
-    /// The block the LOCAL mining timer finished this frame (hand pop).
-    local_broke_block: Option<petramond_world::block::Block>,
-    /// The block the place ghost predicted this frame (hand pop).
-    local_placed_block: Option<petramond_world::block::Block>,
-    /// The predicted place committed from the OFF hand (left-hand pop).
-    local_placed_off_hand: bool,
-    /// Optimistic place cell (cleared on accept/deny or replica delta).
-    place_ghost: Option<(IVec3, u16)>,
-    /// Cells this client already presented place/break for (local WorldEvent).
-    /// Wire `BlockPlaced` / `BlockBroken` for these cells are dropped until the
-    /// matching outcome clears the entry — never re-play sound/particles for
-    /// an optimistic action. Observers' breaks never enter this set.
-    predicted_presentation_cells: rustc_hash::FxHashSet<IVec3>,
+    /// The LOCAL hand's predicted one-shots (the ONLY source of the own
+    /// hand animation — the server never echoes self-initiated one-shots)
+    /// and the attack follow-through window.
+    hand: local_hand::LocalHand,
     /// Evicted replica sections parked for `SectionCached` re-promotion —
     /// harvested by the app shell on disconnect so a reconnect's Join
     /// manifest can claim them.
@@ -351,7 +226,7 @@ pub struct Game {
     /// [`Game::advance_block_animations`], read per frame by the presentation
     /// snapshot through [`Game::block_open_progress`]. Client-side animation
     /// only, never persisted — the authoritative state lives in the cell-state
-    /// store and the replicated open-chest set.
+    /// store and the replicated open-chest set (which it also holds).
     block_animations: block_animation::BlockAnimations,
 }
 
@@ -373,13 +248,13 @@ impl Game {
     /// The REPLICATED tick (latest `TickUpdate`), not a server-world read.
     #[inline]
     pub fn current_tick(&self) -> u64 {
-        self.replicated_tick
+        self.entities.tick()
     }
 
     /// The OTHER connected players (id → name). Empty in singleplayer.
     #[cfg(test)]
     pub fn player_roster(&self) -> &HashMap<petramond::player::PlayerId, String> {
-        &self.player_roster
+        self.entities.roster()
     }
 
     /// Request a survival/spectator toggle. The in-process listen player is
@@ -387,12 +262,11 @@ impl Game {
     /// for the server-authoritative `SelfState::mode`, so an unprivileged
     /// client cannot enter spectator even briefly.
     pub fn toggle_player_mode(&mut self) {
-        if !self.remote {
+        if !self.net.is_remote() {
             self.player.toggle_mode();
             self.self_view.mode = self.player.mode();
         }
-        self.outbox
-            .push(ClientToServer::Action(PlayerAction::ToggleMode));
+        self.net.queue(ClientToServer::Action(PlayerAction::ToggleMode));
     }
 
     #[cfg(test)]
@@ -413,7 +287,7 @@ impl Game {
     /// the server end synchronously (`Game::tick` sends them in play).
     #[cfg(test)]
     pub fn take_outbox_for_test(&mut self) -> Vec<ClientToServer> {
-        std::mem::take(&mut self.outbox)
+        self.net.take_outbox_for_test()
     }
 
     /// Apply replicated view refreshes a test harness built server-side,
@@ -467,22 +341,21 @@ impl Game {
     }
 
     // --- App-facing action methods. The pub surface `Game` exposed before the
-    // client/server split stays intact, but these PUSH
-    // MESSAGES into `outbox` (consumed by `ServerGame::pump` inside
-    // `Game::tick`) instead of touching server state. The menu
+    // client/server split stays intact, but these QUEUE
+    // MESSAGES on the `NetLink` (flushed by `Game::tick`) instead of
+    // touching server state. The menu
     // read model renders from the REPLICATED `MenuView` and the screen-open
     // calls are requests/acks (menus open server-side on the tick).
 
     /// App-side wake request (ESC / "Leave bed"), latched to the next tick.
     pub fn request_wake(&mut self) {
-        self.outbox.push(ClientToServer::Action(PlayerAction::Wake));
+        self.net.queue(ClientToServer::Action(PlayerAction::Wake));
     }
 
     /// App-side respawn request (the death screen's button), latched to the
     /// next tick.
     pub fn request_respawn(&mut self) {
-        self.outbox
-            .push(ClientToServer::Action(PlayerAction::Respawn));
+        self.net.queue(ClientToServer::Action(PlayerAction::Respawn));
     }
 
     /// Sleep fade progress in `[0, 1]` while the LOCAL player sleeps — the read
@@ -498,8 +371,8 @@ impl Game {
     /// "x/y players sleeping" from this when `total > 1`.
     pub fn sleeping_player_counts(&self) -> (usize, usize) {
         (
-            usize::from(self.sleep_tally.sleeping),
-            usize::from(self.sleep_tally.connected),
+            usize::from(self.entities.sleep_tally().sleeping),
+            usize::from(self.entities.sleep_tally().connected),
         )
     }
 
@@ -587,4 +460,4 @@ impl Game {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

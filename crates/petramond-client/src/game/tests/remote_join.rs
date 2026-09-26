@@ -5,7 +5,7 @@
 use crate::game::Game;
 use petramond::net::protocol::{ItemSlotWire, JoinData, SelfRestore, ServerToClient};
 use petramond::player::PlayerId;
-use petramond::server::handle::ServerHandle;
+use petramond::net::handle::ServerHandle;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 use petramond_world::item::ItemType;

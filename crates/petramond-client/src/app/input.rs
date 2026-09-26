@@ -1,5 +1,36 @@
+use crate::app::pointer::PointerState;
 use crate::game::MovementInput;
-use petramond_input::controls::Control;
+use petramond_input::controls::{ActionTable, BindingEngine, Control, Modifiers};
+
+/// Everything between the platform's raw input and the app's controls: the
+/// held-control aggregator, the pointer, the physical modifier keys, the
+/// session's remappable-action table and the bindings currently held.
+pub(super) struct Controls {
+    pub(super) input: InputController,
+    pub(super) pointer: PointerState,
+    /// Physical Ctrl/Shift/Alt/Meta modifier state from the windowing system,
+    /// tracked apart from the rebindable controls. Drives UI modifiers (Ctrl =
+    /// drop whole stack, Shift = inventory quick-move) and binding chords.
+    pub(super) modifiers: Modifiers,
+    /// Every remappable action of the current session: the engine actions
+    /// plus what the loaded client mods registered. Rebuilt on session
+    /// start/end (`rebuild_action_table`).
+    pub(super) action_table: ActionTable,
+    /// Which bound actions are currently held (raw input → action edges).
+    pub(super) binding_engine: BindingEngine,
+}
+
+impl Controls {
+    pub(super) fn new() -> Self {
+        Self {
+            input: InputController::default(),
+            pointer: PointerState::default(),
+            modifiers: Modifiers::default(),
+            action_table: ActionTable::engine(),
+            binding_engine: BindingEngine::default(),
+        }
+    }
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ControlEvent {

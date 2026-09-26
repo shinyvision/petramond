@@ -1,6 +1,6 @@
 //! The headless dedicated-server host: the SAME server the in-game "Open to
 //! LAN" runs — `game/session.rs::build_headless_session` builds it with no
-//! local session, [`ServerHandle::spawn`] runs the identical self-clocked
+//! local session, [`crate::server::handle::spawn`] runs the identical self-clocked
 //! loop on its own thread, and this module's main thread just opens the
 //! listener and parks on its console (`stop`, `save`, `say`, `op`, `deop`,
 //! and `time`).
@@ -16,8 +16,6 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-
-use crate::server::handle::ServerHandle;
 
 /// Headless-server settings: `settings.json` NEXT TO THE SERVER BINARY (not
 /// in the data dir — one config per deployed binary). Materialized with
@@ -118,7 +116,7 @@ pub fn run() {
         .world
         .mobs_mut()
         .set_sim_distance(settings.simulation_distance);
-    let mut handle = ServerHandle::spawn(server);
+    let mut handle = crate::server::handle::spawn(server);
     let port = match handle.open_to_lan(port) {
         Ok(port) => port,
         Err(e) => {

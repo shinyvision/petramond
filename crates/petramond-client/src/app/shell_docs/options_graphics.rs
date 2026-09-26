@@ -3,7 +3,7 @@
 //! plus particles, anti-aliasing and screen shake. Both sliders preview their
 //! readout while dragged and apply on release.
 
-use crate::app::App;
+use super::{ScreenCtx, ShellCommand};
 use petramond::save::client::{AntiAliasing, ParticlesMode};
 use petramond_ui::{UiEvent, UiState, UiValue};
 
@@ -29,30 +29,31 @@ fn particles_label(mode: ParticlesMode) -> &'static str {
     }
 }
 
-pub(super) fn populate(app: &App, state: &mut UiState) {
-    super::populate_options_chrome(app, state);
-    let vd = app
+pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
+    super::populate_options_chrome(ctx, state);
+    let options = &*ctx.options;
+    let vd = options
         .view_distance_preview
-        .unwrap_or(app.settings.render_dist);
+        .unwrap_or(options.settings.render_dist);
     state.set("view_distance", UiValue::F32(vd as f32));
     state.set("vd_label", UiValue::Str(format!("{vd} chunks")));
     state.set(
         "particles_label",
         UiValue::Str(format!(
             "Particles: {}",
-            particles_label(app.settings.particles)
+            particles_label(options.settings.particles)
         )),
     );
-    state.set("screen_shake", UiValue::Bool(app.settings.screen_shake));
-    let aa = app
+    state.set("screen_shake", UiValue::Bool(options.settings.screen_shake));
+    let aa = options
         .anti_aliasing_preview
-        .unwrap_or(app.settings.anti_aliasing);
+        .unwrap_or(options.settings.anti_aliasing);
     state.set("anti_aliasing", UiValue::F32(aa.index() as f32));
     state.set("aa_label", UiValue::Str(anti_aliasing_label(aa).into()));
 }
 
-pub(super) fn handle(app: &mut App, ev: UiEvent) {
-    if super::options_category_back(app, &ev) {
+pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
+    if super::options_category_back(ctx, &ev) {
         return;
     }
     match ev {
@@ -64,21 +65,22 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
         } if id == "anti_aliasing" => {
             let mode = AntiAliasing::from_index(value.round().max(0.0) as usize);
             if committed {
-                app.apply_anti_aliasing(mode);
-                app.persist_settings();
+                ctx.options.set_anti_aliasing(mode);
+                ctx.options.persist();
             } else {
-                app.anti_aliasing_preview = Some(mode);
+                ctx.options.anti_aliasing_preview = Some(mode);
             }
         }
         UiEvent::Toggle { id, .. } if id == "screen_shake" => {
-            app.apply_screen_shake(!app.settings.screen_shake);
-            app.persist_settings();
+            let on = !ctx.options.settings.screen_shake;
+            ctx.options.set_screen_shake(on);
+            ctx.options.persist();
         }
         UiEvent::Click { id, .. } if id == "particles" => {
-            let next = app.settings.particles.next();
-            app.settings.particles = next;
-            app.apply_particles();
-            app.persist_settings();
+            let next = ctx.options.settings.particles.next();
+            ctx.options.settings.particles = next;
+            ctx.request(ShellCommand::ApplyParticles);
+            ctx.options.persist();
         }
         UiEvent::SliderChange {
             id,
@@ -89,10 +91,9 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
             let chunks = (value.round() as i32)
                 .clamp(*VIEW_DISTANCE_RANGE.start(), *VIEW_DISTANCE_RANGE.end());
             if committed {
-                app.apply_view_distance(chunks);
-                app.persist_settings();
+                ctx.request(ShellCommand::ApplyViewDistance(chunks));
             } else {
-                app.view_distance_preview = Some(chunks);
+                ctx.options.view_distance_preview = Some(chunks);
             }
         }
         _ => {}

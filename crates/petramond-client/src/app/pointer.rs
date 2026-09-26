@@ -185,11 +185,11 @@ impl PointerState {
 
 impl App {
     pub fn add_pointer_motion(&mut self, dx: f32, dy: f32) {
-        self.pointer.add_motion(dx, dy);
+        self.controls.pointer.add_motion(dx, dy);
     }
 
     pub fn set_cursor_position(&mut self, x: f32, y: f32) {
-        self.pointer.set_cursor_position(x, y);
+        self.controls.pointer.set_cursor_position(x, y);
         if self.screen == super::AppScreen::Chat {
             self.chat.pointer_move(x, y, super::now_seconds());
             return;
@@ -207,7 +207,7 @@ impl App {
     pub fn set_pointer_button(&mut self, button: PointerButton, down: bool) {
         if self.screen == super::AppScreen::Chat {
             if button == PointerButton::Primary {
-                let (x, y) = self.pointer.cursor();
+                let (x, y) = self.controls.pointer.cursor();
                 if down {
                     self.chat.pointer_down(x, y, super::now_seconds());
                 } else {
@@ -216,12 +216,12 @@ impl App {
             }
             return;
         }
-        self.pointer.set_button(button, down);
+        self.controls.pointer.set_button(button, down);
         if self.screen.client_canvas_open() {
             if !down {
                 self.flush_client_canvas_move();
             }
-            let (x, y) = self.pointer.cursor();
+            let (x, y) = self.controls.pointer.cursor();
             let button = match button {
                 PointerButton::Primary => mod_api::ClientPointerButton::Primary,
                 PointerButton::Secondary => mod_api::ClientPointerButton::Secondary,
@@ -239,14 +239,14 @@ impl App {
             return;
         }
         if self.doc_ui_kind().is_some() {
-            let (x, y) = self.pointer.cursor();
+            let (x, y) = self.controls.pointer.cursor();
             let button = match button {
                 PointerButton::Primary => petramond_ui::PointerButton::Primary,
                 PointerButton::Secondary => petramond_ui::PointerButton::Secondary,
             };
             self.ui.push_input(if down {
                 let slot_drag = self.screen.ui_open()
-                    && !self.modifiers.shift
+                    && !self.controls.modifiers.shift
                     && self
                         .game
                         .as_ref()
@@ -255,7 +255,7 @@ impl App {
                     x,
                     y,
                     button,
-                    shift: self.modifiers.shift,
+                    shift: self.controls.modifiers.shift,
                     slot_drag,
                 }
             } else {
@@ -265,7 +265,7 @@ impl App {
     }
 
     pub fn add_scroll_delta(&mut self, delta: f32) {
-        if self.remap.is_some() {
+        if self.options.remap().is_some() {
             // Remap capture: any wheel movement binds its direction.
             self.remap_capture_scroll(delta);
             return;
@@ -288,11 +288,11 @@ impl App {
             });
             return;
         }
-        self.pointer.add_scroll_delta(delta);
+        self.controls.pointer.add_scroll_delta(delta);
         // Whole notches fire whatever is bound to that scroll direction
         // (hotbar next/prev by default) — gameplay only, like every binding.
         if self.screen.gameplay_enabled() {
-            let notches = self.pointer.take_scroll_notches();
+            let notches = self.controls.pointer.take_scroll_notches();
             if notches != 0 {
                 self.pulse_scroll_bindings(notches);
             }
@@ -300,21 +300,21 @@ impl App {
     }
 
     pub fn release_pointer_buttons(&mut self) {
-        self.pointer.release_buttons();
+        self.controls.pointer.release_buttons();
         if self.doc_ui_kind().is_some() {
             self.ui.push_input(petramond_ui::InputEvent::Blur);
         }
         self.chat.pointer_up();
-        self.audio.set_loop(None, super::now_seconds());
+        self.sound.stop_mining_loop(super::now_seconds());
     }
 
     pub(super) fn recenter_pointer_if_pending(&mut self, screen_size: (u32, u32)) {
-        if self.pointer.recenter_if_pending(screen_size) {}
+        if self.controls.pointer.recenter_if_pending(screen_size) {}
     }
 
     pub(super) fn take_game_input(&mut self) -> GameInput {
-        self.pointer
-            .take_game_input(&mut self.input, self.screen.gameplay_enabled())
+        self.controls.pointer
+            .take_game_input(&mut self.controls.input, self.screen.gameplay_enabled())
     }
 }
 

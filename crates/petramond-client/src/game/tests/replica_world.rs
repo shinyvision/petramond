@@ -190,14 +190,14 @@ fn open_chest_state_replicates_and_drives_the_lid_target() {
         .open_chest_screen_for(0, pos, &mut Default::default());
     frame(&mut game);
     assert!(
-        game.open_chests.contains(&pos),
+        game.block_animations.open_chests().contains(&pos),
         "an open chest screen replicates into the batch's open set"
     );
 
     game.close_open_menu();
     frame(&mut game);
     assert!(
-        game.open_chests.is_empty(),
+        game.block_animations.open_chests().is_empty(),
         "closing the screen empties the replicated set on the next batch"
     );
 }

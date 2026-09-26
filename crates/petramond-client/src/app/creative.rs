@@ -34,24 +34,24 @@ impl App {
             return;
         }
         self.ui.ensure_active(GuiKind::Creative);
-        let on_library = self.creative_menu.tab == CreativeTab::Schematics;
+        let on_library = self.session_ui.creative_menu.tab == CreativeTab::Schematics;
         self.drive_library_form("creative_library_scroll", on_library);
         let game = self.game.as_mut().expect("checked above");
-        let (items, item_rows) = self.creative_menu.catalog.view(&self.creative_menu.query);
+        let (items, item_rows) = self.session_ui.creative_menu.catalog.view(&self.session_ui.creative_menu.query);
         let hovered = self
             .ui
             .hover_item("creative_items")
             .and_then(|i| items.get(i));
         let state = self.ui.state_mut();
         let slot = game.menu_read_model().inventory.active_slot();
-        self.hotbar_notice.populate(
+        self.session_ui.hotbar_notice.populate(
             game.held_tool_setting().map(|label| (slot, label)),
             &mut game.notice,
             now,
             state,
         );
-        let menu = &self.creative_menu;
-        let page = on_library.then_some(self.library_form.page);
+        let menu = &self.session_ui.creative_menu;
+        let page = on_library.then_some(self.session_ui.library_form.page);
         state.set("tab", UiValue::I32(i32::from(on_library)));
         // Each key shows one page of the document; a delete confirmation
         // covers them all.
@@ -60,7 +60,7 @@ impl App {
             ("selection_tab", Some(LibraryPage::Save)),
             ("library_tab", Some(LibraryPage::Library)),
         ] {
-            let visible = self.library_form.pending_delete.is_none() && page == shown;
+            let visible = self.session_ui.library_form.pending_delete.is_none() && page == shown;
             state.set(key, UiValue::Bool(visible));
         }
         state.set("search", UiValue::Str(menu.query.clone()));
@@ -70,7 +70,7 @@ impl App {
         );
         state.set("items", UiValue::List(item_rows));
         let thumbnails =
-            super::schematic_library::populate_library(game, &self.library_form, state);
+            super::schematic_library::populate_library(game, &self.session_ui.library_form, state);
         let mut images = Vec::new();
         let hover_slot = self.ui.out().hover_slot.clone();
         let state = self.ui.state_mut();
@@ -103,21 +103,21 @@ impl App {
             .frame(GuiKind::Creative, screen, now, Some([0.0, 0.0, 0.0, 0.6]));
         for event in self.ui.take_events() {
             let game = self.game.as_mut().expect("open game menu");
-            if self.library_form.handle(game, &event) {
+            if self.session_ui.library_form.handle(game, &event) {
                 continue;
             }
             match event {
                 UiEvent::TabSelect { id, index } if id == "creative_tabs" => {
-                    self.creative_menu.tab = if index == 0 {
+                    self.session_ui.creative_menu.tab = if index == 0 {
                         CreativeTab::Items
                     } else {
                         CreativeTab::Schematics
                     };
-                    self.library_form.page = LibraryPage::Library;
+                    self.session_ui.library_form.page = LibraryPage::Library;
                     game.notice.clear();
                 }
                 UiEvent::TextChanged { id, text } if id == "creative_search" => {
-                    self.creative_menu.query = text
+                    self.session_ui.creative_menu.query = text
                 }
                 UiEvent::Click {
                     id,

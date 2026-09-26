@@ -5,38 +5,43 @@
 //! and written as the world's `settings.json` on Create).
 
 use super::mods_tab;
-use crate::app::shell::SettingsTab;
-use crate::app::{App, AppScreen};
+use super::{ScreenCtx, ShellCommand};
+use crate::app::shell_state::SettingsTab;
+use crate::app::AppScreen;
 use petramond_ui::{NavKey, UiEvent, UiState, UiValue};
 
-pub(super) fn populate(app: &App, state: &mut UiState) {
+/// Taken when the directory exists OR any listed world displays the name
+/// (renamed worlds keep their original directory).
+fn name_taken(ctx: &ScreenCtx, name: &str) -> bool {
+    petramond::save::world_exists(name)
+        || ctx
+            .shell
+            .worlds()
+            .iter()
+            .any(|w| w.name.eq_ignore_ascii_case(name))
+}
+
+pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
     for key in ["create_name", "create_seed"] {
         if state.get(key).is_none() {
             state.set(key, UiValue::Str(String::new()));
         }
     }
     let name = state.get_str("create_name").unwrap_or("").trim().to_owned();
-    // Taken when the directory exists OR any listed world displays the name
-    // (renamed worlds keep their original directory).
-    let exists = !name.is_empty()
-        && (petramond::save::world_exists(&name)
-            || app
-                .worlds
-                .iter()
-                .any(|w| w.name.eq_ignore_ascii_case(&name)));
+    let exists = !name.is_empty() && name_taken(ctx, &name);
     state.set("name_exists", UiValue::Bool(exists));
     state.set("can_create", UiValue::Bool(!name.is_empty() && !exists));
-    let Some(session) = app.create_world.as_ref() else {
+    let Some(session) = ctx.shell.create_world() else {
         return;
     };
     mods_tab::populate_tabs(session.tab, state);
     mods_tab::populate(&session.rows, &session.settings, session.selected, state);
 }
 
-pub(super) fn handle(app: &mut App, ev: UiEvent) {
+pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
     match ev {
         UiEvent::TabSelect { id, index } if id == "tabs" => {
-            if let Some(session) = app.create_world.as_mut() {
+            if let Some(session) = ctx.shell.create_world_mut() {
                 session.tab = SettingsTab::from_index(index);
             }
         }
@@ -44,28 +49,27 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
             id,
             item: Some(row),
             ..
-        } if id == "mod_on" => app.toggle_create_world_row(row as usize),
+        } if id == "mod_on" => ctx.shell.toggle_create_world_row(row as usize),
         UiEvent::ListSelect { id, index } if id == "mods" => {
-            if let Some(session) = app.create_world.as_mut() {
+            if let Some(session) = ctx.shell.create_world_mut() {
                 session.selected = index as usize;
             }
         }
         UiEvent::TextChanged { id, text } => {
-            app.ui.state_mut().set(id, UiValue::Str(text));
+            ctx.ui.state_mut().set(id, UiValue::Str(text));
         }
-        UiEvent::Submit { .. } => create(app),
+        UiEvent::Submit { .. } => create(ctx),
         UiEvent::Click { id, .. } => match id.as_str() {
-            "create" => create(app),
+            "create" => create(ctx),
             "cancel" => {
-                app.create_world = None;
-                app.screen = AppScreen::WorldSelect;
-                app.pointer.release_for_menu();
+                ctx.shell.close_page();
+                ctx.goto(AppScreen::WorldSelect);
             }
             _ => {}
         },
         UiEvent::Key { key, .. } => match key {
             NavKey::Left | NavKey::Right => {
-                if let Some(session) = app.create_world.as_mut() {
+                if let Some(session) = ctx.shell.create_world_mut() {
                     session.tab = match key {
                         NavKey::Left => SettingsTab::World,
                         _ => SettingsTab::Mods,
@@ -74,36 +78,31 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
             }
             NavKey::Enter => {
                 if let Some((row, SettingsTab::Mods)) =
-                    app.create_world.as_ref().map(|s| (s.selected, s.tab))
+                    ctx.shell.create_world().map(|s| (s.selected, s.tab))
                 {
-                    app.toggle_create_world_row(row);
+                    ctx.shell.toggle_create_world_row(row);
                 }
             }
-            NavKey::Up => move_selection(app, -1),
-            NavKey::Down => move_selection(app, 1),
+            NavKey::Up => move_selection(ctx, -1),
+            NavKey::Down => move_selection(ctx, 1),
             _ => {}
         },
         _ => {}
     }
 }
 
-fn create(app: &mut App) {
-    let name = app
+fn create(ctx: &mut ScreenCtx) {
+    let name = ctx
         .ui
         .state_mut()
         .get_str("create_name")
         .unwrap_or("")
         .trim()
         .to_owned();
-    let taken = petramond::save::world_exists(&name)
-        || app
-            .worlds
-            .iter()
-            .any(|w| w.name.eq_ignore_ascii_case(&name));
-    if name.is_empty() || taken {
+    if name.is_empty() || name_taken(ctx, &name) {
         return;
     }
-    let seed_text = app
+    let seed_text = ctx
         .ui
         .state_mut()
         .get_str("create_seed")
@@ -114,7 +113,7 @@ fn create(app: &mut App) {
         log::warn!("could not write world metadata for '{name}': {e}");
     }
     let dir_name = petramond::save::dir_name_for(&name);
-    if let Some(session) = app.create_world.take() {
+    if let Some(session) = ctx.shell.take_create_world() {
         if let Err(e) = petramond::save::write_world_settings(&dir_name, &session.settings) {
             log::warn!("could not write settings.json for new world '{name}': {e}");
         }
@@ -124,11 +123,11 @@ fn create(app: &mut App) {
     } else {
         petramond::save::seed_from_text(&seed_text)
     };
-    app.start_game(&dir_name, seed);
+    ctx.request(ShellCommand::StartGame { dir_name, seed });
 }
 
-fn move_selection(app: &mut App, step: i32) {
-    let Some(session) = app.create_world.as_mut() else {
+fn move_selection(ctx: &mut ScreenCtx, step: i32) {
+    let Some(session) = ctx.shell.create_world_mut() else {
         return;
     };
     if session.tab != SettingsTab::Mods {

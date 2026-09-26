@@ -3,6 +3,24 @@
 
 use super::Game;
 use petramond::net::protocol::{ClientToServer, PlayerAction, ThrowAmount};
+use petramond_world::gui_state::{ContainerView, GuiStateMap};
+use petramond_world::inventory::Inventory;
+use petramond_world::item::ItemStack;
+
+/// Read-only menu state consumed by the app's UI snapshot builder, assembled
+/// entirely from the client's replicated stores (`SelfView.inventory` + the
+/// `MenuView` fed by `MenuSyncMsg`) plus any unresolved prediction — see
+/// [`Game::menu_read_model`].
+pub struct MenuReadModel<'a> {
+    pub inventory: &'a Inventory,
+    pub craft_output: Option<ItemStack>,
+    /// The open mod GUI's state map (a shared snapshot), or `None` when the
+    /// open session is not a mod GUI.
+    pub gui_state: Option<std::sync::Arc<GuiStateMap>>,
+    /// The open mod GUI's container slots, or `None` when the session is not
+    /// a slot-bearing mod GUI.
+    pub container: Option<ContainerView>,
+}
 
 impl Game {
     /// Snapshot the predicted inventory and open a ledger entry for one
@@ -46,7 +64,8 @@ impl Game {
         // P0 throw animation is client-owned: trigger when the hand holds
         // anything (the server never echoes the one-shot back).
         let slot = self.self_view.inventory.active_slot() as usize;
-        self.local_hand_threw |= self.self_view.inventory.slot(slot).is_some();
+        self.hand
+            .latch_throw(self.self_view.inventory.slot(slot).is_some());
         let (can, request_id) = self.begin_inventory_prediction();
         if can {
             let slot = self.self_view.inventory.active_slot() as usize;
@@ -65,7 +84,7 @@ impl Game {
                 }
             }
         }
-        self.outbox.push(ClientToServer::Action(PlayerAction::Drop {
+        self.net.queue(ClientToServer::Action(PlayerAction::Drop {
             all,
             request_id,
         }));
@@ -87,7 +106,8 @@ impl Game {
     /// then click outside the panel): the whole stack or a single item per
     /// `amount`. No-op when the cursor is empty.
     pub fn throw_cursor(&mut self, amount: ThrowAmount) {
-        self.local_hand_threw |= self.self_view.inventory.cursor().is_some();
+        self.hand
+            .latch_throw(self.self_view.inventory.cursor().is_some());
         let (can, request_id) = self.begin_inventory_prediction();
         if can {
             let cursor = self.self_view.inventory.cursor_mut();
@@ -103,8 +123,7 @@ impl Game {
                 }
             }
         }
-        self.outbox
-            .push(ClientToServer::Action(PlayerAction::ThrowCursor {
+        self.net.queue(ClientToServer::Action(PlayerAction::ThrowCursor {
                 amount,
                 request_id,
             }));
@@ -115,7 +134,7 @@ impl Game {
     /// ingredients, and output fit.
     pub fn craft_recipe(&mut self, recipe: &str, bulk: bool) {
         let request_id = self.prediction.begin_track_only();
-        self.outbox.push(ClientToServer::CraftRecipe {
+        self.net.queue(ClientToServer::CraftRecipe {
             recipe: recipe.to_owned(),
             bulk,
             request_id,
@@ -135,8 +154,7 @@ impl Game {
             return;
         }
         self.player.craft_craftable_only = craftable_only;
-        self.outbox
-            .push(ClientToServer::SetCraftFilter { craftable_only });
+        self.net.queue(ClientToServer::SetCraftFilter { craftable_only });
     }
 
     pub fn crafting_catalog(&self) -> &petramond_world::crafting::CraftingCatalog {
@@ -193,9 +211,9 @@ impl Game {
     /// Read-only state needed to build the UI snapshot for the LOCAL player's
     /// current menu — assembled from the client mirrors: replicated state plus
     /// any unresolved P1 prediction. No server-session reads.
-    pub fn menu_read_model(&self) -> petramond::server::menu::MenuReadModel<'_> {
+    pub fn menu_read_model(&self) -> MenuReadModel<'_> {
         let view = &self.menu_view;
-        petramond::server::menu::MenuReadModel {
+        MenuReadModel {
             inventory: &self.self_view.inventory,
             craft_output: view.craft_output,
             gui_state: view.gui_state.clone(),
@@ -207,8 +225,7 @@ impl Game {
     // Inventory is the exception: the E key explicitly requests its session.
 
     pub fn request_open_inventory(&mut self) {
-        self.outbox
-            .push(ClientToServer::Action(PlayerAction::OpenInventory));
+        self.net.queue(ClientToServer::Action(PlayerAction::OpenInventory));
     }
 
     /// Ack of a server-opened GUI session — any kind, engine container or mod
@@ -226,7 +243,6 @@ impl Game {
     /// message lands on; there is no client-side menu state to clear — the App
     /// owns which screen is up.
     pub fn close_open_menu(&mut self) {
-        self.outbox
-            .push(ClientToServer::Action(PlayerAction::CloseMenu));
+        self.net.queue(ClientToServer::Action(PlayerAction::CloseMenu));
     }
 }

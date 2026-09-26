@@ -2,7 +2,7 @@
 //! screens: pack-row binding against a `WorldSettings` disabled set, and the
 //! pack-icon extra images both documents' list rows reference.
 
-use crate::app::shell::ModPackRow;
+use crate::app::shell_state::ModPackRow;
 use petramond::save::settings::WorldSettings;
 use petramond_ui::{UiMap, UiState, UiValue};
 use std::path::PathBuf;
@@ -69,8 +69,8 @@ pub(super) fn populate(
 }
 
 /// Bind the shared tab-bar state (`tab_sel` + the two page visibility keys).
-pub(super) fn populate_tabs(tab: crate::app::shell::SettingsTab, state: &mut UiState) {
-    use crate::app::shell::SettingsTab;
+pub(super) fn populate_tabs(tab: crate::app::shell_state::SettingsTab, state: &mut UiState) {
+    use crate::app::shell_state::SettingsTab;
     state.set("tab_sel", UiValue::I32(tab.index()));
     state.set("tab_world", UiValue::Bool(tab == SettingsTab::World));
     state.set("tab_mods", UiValue::Bool(tab == SettingsTab::Mods));

@@ -11,13 +11,13 @@ impl Game {
     /// server thread. For the QUIT path use [`Game::shutdown`], which also
     /// joins the thread.
     pub fn save_all(&mut self) {
-        self.handle.save_all();
+        self.net.save_all();
     }
 
     /// Quit this session: the server thread saves everything (what `save_all`
     /// did) and exits; returns once it is joined.
     pub fn shutdown(mut self) {
-        self.handle.shutdown_and_join();
+        self.net.shutdown();
     }
 
     /// Singleplayer pause (the pause menu): the server keeps draining
@@ -29,16 +29,14 @@ impl Game {
     pub fn set_paused(&mut self, paused: bool) {
         // A remote client never pauses the shared server (which also gates:
         // once opened to LAN, Pause is ignored) — belt and braces.
-        if self.remote {
+        if self.net.is_remote() {
             return;
         }
-        if self.handle.send(ClientToServer::Pause(paused)).is_err() {
-            self.note_connection_lost();
-        }
+        self.net.send_now(ClientToServer::Pause(paused));
     }
 
     pub fn send_chat(&mut self, text: String) {
-        self.outbox.push(ClientToServer::ChatSend { text });
+        self.net.queue(ClientToServer::ChatSend { text });
     }
 
     /// Apply the particles graphics option to the client-local fleck system
@@ -58,10 +56,10 @@ impl Game {
         let msg = ClientToServer::SetViewDistance {
             chunks: chunks as u8,
         };
-        if self.remote {
-            self.outbox.push(msg);
-        } else if self.handle.send(msg).is_err() {
-            self.note_connection_lost();
+        if self.net.is_remote() {
+            self.net.queue(msg);
+        } else {
+            self.net.send_now(msg);
         }
     }
 
@@ -73,15 +71,14 @@ impl Game {
     /// than the in-process host thread.
     #[inline]
     pub fn is_remote(&self) -> bool {
-        self.remote
+        self.net.is_remote()
     }
 
     /// Open the running HOST server to LAN on `port`; `Ok` carries the
     /// actual bound port. Host only — the pause menu hides the button for
     /// remote sessions (and a remote handle has no control channel to ask).
     pub fn open_to_lan(&mut self, port: u16) -> std::io::Result<u16> {
-        debug_assert!(!self.remote, "open_to_lan is a host action");
-        self.handle.open_to_lan(port)
+        self.net.open_to_lan(port)
     }
 
     /// One-shot: the latched connection-loss reason if it has not yet been
@@ -90,28 +87,6 @@ impl Game {
     /// live game — the pause menu) so a loss detected by
     /// [`Game::pump_network`] still reaches the Disconnected screen.
     pub fn take_connection_lost(&mut self) -> Option<String> {
-        if self.connection_lost_reported {
-            return None;
-        }
-        let reason = self.connection_lost.clone()?;
-        self.connection_lost_reported = true;
-        log::error!("{reason}; nothing further will be saved");
-        Some(reason)
-    }
-
-    /// Latch the server as unreachable (crashed thread / closed channel /
-    /// lost TCP connection); reported exactly once through
-    /// `GameEvents::connection_lost`.
-    pub(super) fn note_connection_lost(&mut self) {
-        self.note_connection_lost_because("world stopped: the server is gone");
-    }
-
-    /// [`note_connection_lost`](Self::note_connection_lost) with an explicit
-    /// reason (`ServerClosing` / a server `Disconnect`); the first reason
-    /// latched wins.
-    pub(super) fn note_connection_lost_because(&mut self, reason: &str) {
-        if self.connection_lost.is_none() {
-            self.connection_lost = Some(reason.to_string());
-        }
+        self.net.take_lost_report()
     }
 }

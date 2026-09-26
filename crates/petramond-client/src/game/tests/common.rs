@@ -3,7 +3,7 @@ use crate::game::{GameEvents, GameInput};
 use petramond::events::tick::TickEvents;
 use petramond::net::protocol::{ClientToServer, PlayerUpdate, TargetRef};
 use petramond::server::game::ServerGame;
-use petramond::server::handle::LoopbackServer;
+use petramond::net::handle::LoopbackServer;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 use petramond_render::camera::Camera;
@@ -11,7 +11,7 @@ use petramond_world::inventory::Inventory;
 use petramond_world::item::{ItemStack, ItemType};
 
 /// The game test fixture: the client [`Game`] wired to a LOOPBACK
-/// [`ServerHandle`](petramond::server::handle::ServerHandle) — the REAL message
+/// [`ServerHandle`](petramond::net::handle::ServerHandle) — the REAL message
 /// channels, serviced synchronously by this harness instead of the server
 /// thread (deterministic; the thread itself is covered by the handle
 /// tests in `server/handle.rs`). The `ServerGame` is held here so tests keep
@@ -51,8 +51,8 @@ pub(super) fn game_on_empty_chunk() -> TestGame {
 /// The fixture with an explicit camera (the WASM child tests spawn near their
 /// build site).
 pub(super) fn game_with_camera(cam: Camera) -> TestGame {
-    let (server, bootstrap) = crate::game::session::build_session_inline("", 1, 1);
-    let (handle, pipe) = petramond::server::handle::ServerHandle::loopback();
+    let (server, bootstrap) = crate::game::tests::bootstrap::build_session_inline("", 1, 1);
+    let (handle, pipe) = petramond::net::handle::ServerHandle::loopback();
     let game = Game::assemble(cam, handle, bootstrap);
     TestGame { game, server, pipe }
 }
@@ -168,7 +168,7 @@ impl TestGame {
     /// Hand the queued outbox messages to the server, standing in for the
     /// message send `Game::tick` performs each frame.
     pub(super) fn flush_outbox_for_test(&mut self) {
-        for msg in std::mem::take(&mut self.game.outbox) {
+        for msg in self.game.net.take_outbox_for_test() {
             self.server.apply_message(0, msg);
         }
     }

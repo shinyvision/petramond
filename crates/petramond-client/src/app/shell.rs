@@ -1,128 +1,14 @@
-//! App-shell session state and actions shared by the document-backed shell
-//! screen controllers (`super::shell_docs`): world list refresh, screen
-//! transitions, world create/delete/settings I/O, and the text-input hooks
-//! that forward platform keyboard events into the GUI-document runtime.
+//! App-level shell actions: entering and leaving game sessions (start,
+//! adopt, pause/resume, LAN, save-and-quit, disconnect, connection loss) and
+//! the text-input hooks that forward platform keyboard events into the
+//! GUI-document runtime. The title flow's own state and world I/O live in
+//! `super::shell_state`.
 
 use super::{now_seconds, App, AppScreen};
 use petramond_input::controls::{text_shortcut_from_key_code, TextKey, TextShortcut};
 use petramond_render::camera::Camera;
 
-/// One World Settings row: an installed pack. Content-only packs (no `id`)
-/// are listed but not toggleable — disable semantics are namespace-based and
-/// they have none (their bare-key overrides are process-wide).
-pub(super) struct ModPackRow {
-    pub(super) name: String,
-    pub(super) id: Option<String>,
-    pub(super) version: Option<String>,
-    pub(super) description: String,
-    pub(super) summary: Option<String>,
-}
-
-/// Which tab of the tabbed World Settings / Create World screens is active.
-/// Purely a shell UI concern; never persisted.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub(super) enum SettingsTab {
-    #[default]
-    World,
-    Mods,
-}
-
-impl SettingsTab {
-    pub(super) fn index(self) -> i32 {
-        match self {
-            SettingsTab::World => 0,
-            SettingsTab::Mods => 1,
-        }
-    }
-
-    pub(super) fn from_index(index: u32) -> SettingsTab {
-        if index == 1 {
-            SettingsTab::Mods
-        } else {
-            SettingsTab::World
-        }
-    }
-}
-
-/// The open World Settings screen's state: which world, the installed pack
-/// rows, and the world's disabled set (mirrors `settings.json`; every toggle
-/// writes the file immediately).
-pub(super) struct WorldSettingsSession {
-    pub(super) dir_name: String,
-    pub(super) world_name: String,
-    pub(super) rows: Vec<ModPackRow>,
-    pub(super) settings: petramond::save::settings::WorldSettings,
-    pub(super) selected: usize,
-    /// The header's inline rename editor is open.
-    pub(super) renaming: bool,
-    pub(super) tab: SettingsTab,
-    /// The world's seed (`level.dat` header); `None` before the first open.
-    pub(super) seed: Option<u32>,
-    /// Save-directory size, reported by the scan thread below.
-    pub(super) size_bytes: Option<u64>,
-    /// The off-thread size scan (region stores can hold many files); the
-    /// controller's prepare polls it, then drops it.
-    pub(super) size_rx: Option<std::sync::mpsc::Receiver<u64>>,
-}
-
-/// The open Create World screen's state: the installed pack rows and the
-/// settings the new world will be created with. Unlike World Settings there
-/// is no world yet — mod toggles buffer here and `settings.json` is written
-/// once on Create.
-pub(super) struct CreateWorldSession {
-    pub(super) rows: Vec<ModPackRow>,
-    pub(super) settings: petramond::save::settings::WorldSettings,
-    pub(super) selected: usize,
-    pub(super) tab: SettingsTab,
-}
-
-/// One row per installed pack, in discovery order (parallel to
-/// `petramond_world::assets::packs()` — the Mods-tab icon binding relies on that).
-fn pack_rows() -> Vec<ModPackRow> {
-    petramond_world::assets::packs()
-        .iter()
-        .map(|p| ModPackRow {
-            name: p.name.clone(),
-            id: p.id.clone(),
-            version: p.version.clone(),
-            description: p.description.clone(),
-            summary: p.summary.clone(),
-        })
-        .collect()
-}
-
-/// Flip one pack row's enabled state in `settings`. Returns false for
-/// content-only packs (no id — always on) and out-of-range rows.
-pub(super) fn toggle_pack_row(
-    rows: &[ModPackRow],
-    settings: &mut petramond::save::settings::WorldSettings,
-    row: usize,
-) -> bool {
-    let Some(Some(id)) = rows.get(row).map(|pack| pack.id.clone()) else {
-        return false;
-    };
-    if !settings.disabled_mods.remove(&id) {
-        settings.disabled_mods.insert(id);
-    }
-    true
-}
-
 impl App {
-    pub(super) fn refresh_worlds(&mut self) {
-        self.worlds = match petramond::save::list_worlds() {
-            Ok(worlds) => worlds,
-            Err(e) => {
-                log::warn!("could not list worlds: {e}");
-                Vec::new()
-            }
-        };
-        if let Some(selected) = self.selected_world {
-            if selected >= self.worlds.len() {
-                self.selected_world = None;
-            }
-        }
-    }
-
     /// Forward a text-editing key to the document UI. Returns whether it was
     /// consumed (false when no document screen is active).
     pub fn handle_text_key(&mut self, key: TextKey) -> bool {
@@ -136,13 +22,13 @@ impl App {
                         }
                     }
                     self.screen = super::AppScreen::Game;
-                    self.pointer.grab_for_gameplay();
+                    self.controls.pointer.grab_for_gameplay();
                 }
                 _ => {
                     self.chat.edit_key(
                         nav_key_from_text_key(key),
-                        self.modifiers.shift,
-                        self.modifiers.ctrl,
+                        self.controls.modifiers.shift,
+                        self.controls.modifiers.ctrl,
                         None,
                         now,
                     );
@@ -155,8 +41,8 @@ impl App {
         }
         self.ui.push_input(petramond_ui::InputEvent::Key {
             key: nav_key_from_text_key(key),
-            shift: self.modifiers.shift,
-            ctrl: self.modifiers.ctrl,
+            shift: self.controls.modifiers.shift,
+            ctrl: self.controls.modifiers.ctrl,
         });
         true
     }
@@ -165,7 +51,7 @@ impl App {
     /// forward it. Clipboard access lives inside the document UI (`AppUi`
     /// owns its own clipboard), so no host clipboard is threaded through.
     pub fn handle_text_shortcut_code(&mut self, code: petramond_input::keycode::KeyCode) -> bool {
-        let Some(shortcut) = text_shortcut_from_key_code(code, self.modifiers) else {
+        let Some(shortcut) = text_shortcut_from_key_code(code, self.controls.modifiers) else {
             return false;
         };
         self.handle_text_shortcut(shortcut)
@@ -218,21 +104,21 @@ impl App {
         // (it still pumps the network — see update.rs).
         game.set_paused(true);
         self.screen = AppScreen::Pause;
-        self.pointer.release_for_menu();
-        self.audio.set_loop(None, now_seconds());
+        self.controls.pointer.release_for_menu();
+        self.sound.stop_mining_loop(now_seconds());
     }
 
     pub(super) fn resume_game(&mut self) {
         // Pause-close cleanup: a stale LAN error must not greet the next open.
-        self.lan_error = None;
+        self.session_ui.lan_error = None;
         let Some(game) = self.game.as_mut() else {
             self.screen = AppScreen::Title;
-            self.pointer.release_for_menu();
+            self.controls.pointer.release_for_menu();
             return;
         };
         game.set_paused(false);
         self.screen = AppScreen::Game;
-        self.pointer.grab_for_gameplay();
+        self.controls.pointer.grab_for_gameplay();
     }
 
     /// The pause menu's Open to LAN: bind the default port into the running
@@ -244,10 +130,10 @@ impl App {
         let port = petramond::net::DEFAULT_PORT;
         match game.open_to_lan(port) {
             Ok(bound) => {
-                self.lan_port = Some(bound);
-                self.lan_error = None;
+                self.session_ui.lan_port = Some(bound);
+                self.session_ui.lan_error = None;
             }
-            Err(e) => self.lan_error = Some(format!("Couldn't open port {port}: {e}")),
+            Err(e) => self.session_ui.lan_error = Some(format!("Couldn't open port {port}: {e}")),
         }
     }
 
@@ -295,22 +181,21 @@ impl App {
             // loss it drops the dead connection. Neither path saves.
             game.shutdown();
         }
-        self.disconnect_message = reason;
+        self.shell.set_disconnect_message(reason);
         self.screen = AppScreen::ConnectionLost;
         self.teardown_game_scene();
     }
 
     /// Shared post-session teardown (every quit/disconnect path): cursor,
-    /// audio, scene, hand state, LAN bookkeeping, world-list refresh. The
-    /// caller sets the target screen.
+    /// audio, scene, hand state, session UI (LAN status included), world-list
+    /// refresh. The caller sets the target screen.
     fn teardown_game_scene(&mut self) {
         self.rebuild_action_table();
-        self.pointer.release_for_menu();
-        self.audio.set_loop(None, now_seconds());
+        self.controls.pointer.release_for_menu();
         // Mod-driven presentation state is session-scoped: the title screen
         // (or the next world) must never inherit this session's rain bed or
         // precipitation volumes.
-        self.audio.stop_gain_loops();
+        self.sound.end_session(now_seconds());
         self.presentation.ambient.clear();
         // Baked custom-shape item geometry is keyed by session-local block ids;
         // flush it so the next world's mods rebake instead of inheriting stale
@@ -319,176 +204,18 @@ impl App {
         self.scene.clear();
         self.client_canvas = None;
         self.client_overlay_images.clear();
-        self.hand_events.clear();
-        self.sleep_interact_hand_t = 0.0;
-        self.lan_port = None;
-        self.lan_error = None;
+        self.hud_fx.reset_session();
+        self.session_ui = Default::default();
         self.renderer_world_clear_pending = true;
-        self.refresh_worlds();
+        self.shell.refresh_worlds();
     }
 
     pub(super) fn play_selected_world(&mut self) {
-        let Some(index) = self.selected_world else {
-            return;
-        };
-        let Some(world) = self.worlds.get(index).cloned() else {
+        let Some(world) = self.shell.selected_world_info().cloned() else {
             return;
         };
         let seed = petramond::save::random_seed();
         self.start_game(&world.dir_name, seed);
-    }
-
-    pub(super) fn open_delete_world_confirm(&mut self) {
-        if self
-            .selected_world
-            .and_then(|index| self.worlds.get(index))
-            .is_none()
-        {
-            return;
-        }
-        self.screen = AppScreen::DeleteWorld;
-        self.pointer.release_for_menu();
-    }
-
-    /// Open the World Settings screen for the selected world: the installed
-    /// pack list (from pack discovery) plus the world's `settings.json`.
-    pub(super) fn open_world_settings(&mut self) {
-        let Some(world) = self.selected_world.and_then(|index| self.worlds.get(index)) else {
-            return;
-        };
-        let (size_tx, size_rx) = std::sync::mpsc::channel();
-        let size_dir = world.dir_name.clone();
-        std::thread::spawn(move || {
-            let _ = size_tx.send(petramond::save::world_size_bytes(&size_dir));
-        });
-        self.world_settings = Some(WorldSettingsSession {
-            dir_name: world.dir_name.clone(),
-            world_name: world.name.clone(),
-            rows: pack_rows(),
-            settings: petramond::save::read_world_settings(&world.dir_name),
-            selected: 0,
-            renaming: false,
-            tab: SettingsTab::World,
-            seed: petramond::save::read_world_seed(&world.dir_name),
-            size_bytes: None,
-            size_rx: Some(size_rx),
-        });
-        self.screen = AppScreen::WorldSettings;
-        self.pointer.release_for_menu();
-    }
-
-    /// Open the Create World screen with a fresh session (all mods enabled).
-    pub(super) fn open_create_world(&mut self) {
-        self.create_world = Some(CreateWorldSession {
-            rows: pack_rows(),
-            settings: petramond::save::settings::WorldSettings::default(),
-            selected: 0,
-            tab: SettingsTab::World,
-        });
-        self.screen = AppScreen::CreateWorld;
-        self.pointer.release_for_menu();
-    }
-
-    /// Flip one pack's enabled state for the open World Settings world and
-    /// write `settings.json` immediately (a crash can't lose toggles; there
-    /// is no unsaved state). Content-only packs (no id) are not toggleable.
-    /// Takes effect the next time the world is OPENED — never live.
-    pub(super) fn toggle_world_settings_row(&mut self, row: usize) {
-        let Some(session) = self.world_settings.as_mut() else {
-            return;
-        };
-        if session.rows.get(row).is_none() {
-            return;
-        }
-        session.selected = row;
-        if !toggle_pack_row(&session.rows, &mut session.settings, row) {
-            return; // content-only packs are always on
-        }
-        self.write_world_settings_session();
-    }
-
-    /// Write the open World Settings session's settings.json (the toggles'
-    /// crash-can't-lose-it policy: every change writes immediately).
-    fn write_world_settings_session(&mut self) {
-        let Some(session) = self.world_settings.as_ref() else {
-            return;
-        };
-        if let Err(e) = petramond::save::write_world_settings(&session.dir_name, &session.settings)
-        {
-            log::warn!(
-                "could not write settings.json for world '{}': {e}",
-                session.world_name
-            );
-        }
-    }
-
-    /// Flip the keep-inventory-on-death world rule. Takes effect next open.
-    pub(super) fn toggle_keep_inventory(&mut self) {
-        if let Some(session) = self.world_settings.as_mut() {
-            session.settings.keep_inventory = !session.settings.keep_inventory;
-            self.write_world_settings_session();
-        }
-    }
-
-    /// Flip the open-to-LAN-on-load world rule.
-    pub(super) fn toggle_auto_open_lan(&mut self) {
-        if let Some(session) = self.world_settings.as_mut() {
-            session.settings.auto_open_lan = !session.settings.auto_open_lan;
-            self.write_world_settings_session();
-        }
-    }
-
-    /// Slide the world's day length (minutes). Live drags update the session
-    /// (the label follows); only the committed release writes the file.
-    pub(super) fn set_day_minutes(&mut self, minutes: u32, committed: bool) {
-        if let Some(session) = self.world_settings.as_mut() {
-            session.settings.day_minutes = minutes.clamp(10, 30);
-            if committed {
-                self.write_world_settings_session();
-            }
-        }
-    }
-
-    /// Flip one pack's enabled state for the world being created. Buffered in
-    /// the session only; written as the new world's `settings.json` on Create.
-    pub(super) fn toggle_create_world_row(&mut self, row: usize) {
-        let Some(session) = self.create_world.as_mut() else {
-            return;
-        };
-        if session.rows.get(row).is_none() {
-            return;
-        }
-        session.selected = row;
-        toggle_pack_row(&session.rows, &mut session.settings, row);
-    }
-
-    pub(super) fn delete_selected_world(&mut self) {
-        let Some(world) = self
-            .selected_world
-            .and_then(|index| self.worlds.get(index))
-            .cloned()
-        else {
-            self.screen = AppScreen::WorldSelect;
-            self.pointer.release_for_menu();
-            return;
-        };
-        if let Err(e) = petramond::save::delete_world(&world.dir_name) {
-            log::warn!("could not delete world '{}': {e}", world.name);
-        } else if let Err(e) =
-            petramond::modding::client::delete_local_world_storage(&world.dir_name)
-        {
-            // Client-mod data (minimap exploration, waypoints) keys on the
-            // save-directory name and lives outside the save — deleted with
-            // the world, or a future world reusing the name inherits it.
-            log::warn!(
-                "could not delete client mod data for world '{}': {e}",
-                world.name
-            );
-        }
-        self.selected_world = None;
-        self.screen = AppScreen::WorldSelect;
-        self.pointer.release_for_menu();
-        self.refresh_worlds();
     }
 
     /// Open (or create) the world saved under `world_dir_name` —
@@ -517,18 +244,13 @@ impl App {
     /// thread) and the test fixtures (which build a loopback-piped session).
     pub fn adopt_game(&mut self, game: crate::game::Game) {
         self.game = Some(game);
-        self.hotbar_notice = Default::default();
-        self.creative_menu = Default::default();
-        self.library_form = Default::default();
+        self.session_ui = Default::default();
         self.apply_particles();
         self.rebuild_action_table();
         self.screen = AppScreen::Game;
-        self.pointer.grab_for_gameplay();
+        self.controls.pointer.grab_for_gameplay();
         self.gui_router.reset_click_streak();
-        self.hand_events.clear();
-        self.sleep_interact_hand_t = 0.0;
-        self.lan_port = None;
-        self.lan_error = None;
+        self.hud_fx.reset_session();
         self.renderer_world_clear_pending = false;
         // A world saved while dead (quit from the death screen, or a crash)
         // reopens ON the death screen — a 0-health player must never resume
@@ -540,7 +262,7 @@ impl App {
             .is_some_and(|h| h.current == 0);
         if dead {
             self.screen = AppScreen::Dead;
-            self.pointer.release_for_menu();
+            self.controls.pointer.release_for_menu();
         }
     }
 }

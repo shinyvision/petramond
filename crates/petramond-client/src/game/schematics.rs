@@ -54,8 +54,8 @@ impl Game {
         for notice in notices {
             match notice {
                 SchematicNotice::Choose { tag } => {
-                    self.schematics.choice = Some(tag);
-                    self.schematics.open_library = true;
+                    self.tools.share.choice = Some(tag);
+                    self.tools.share.open_library = true;
                 }
                 SchematicNotice::Position {
                     tag,
@@ -63,23 +63,23 @@ impl Game {
                     origin,
                     turns,
                 } => {
-                    self.schematics.positioning = Some((tag, digest, origin, turns));
+                    self.tools.share.positioning = Some((tag, digest, origin, turns));
                     self.want_design(digest);
                 }
                 SchematicNotice::Want { digest } => {
-                    if let Some((offered, bytes)) = self.schematics.offered.take() {
+                    if let Some((offered, bytes)) = self.tools.share.offered.take() {
                         if offered == digest {
-                            self.schematics.upload = Some(BlobSender::new(digest, bytes));
+                            self.tools.share.upload = Some(BlobSender::new(digest, bytes));
                         }
                     }
                 }
                 SchematicNotice::Ghost { key, placement } => match placement {
                     Some(placement) => {
                         self.want_design(placement.digest);
-                        self.schematics.ghosts.insert(key, placement);
+                        self.tools.share.ghosts.insert(key, placement);
                     }
                     None => {
-                        self.schematics.ghosts.remove(&key);
+                        self.tools.share.ghosts.remove(&key);
                     }
                 },
                 SchematicNotice::Refused { message } => self.notice = message,
@@ -89,7 +89,7 @@ impl Game {
     }
 
     fn receive_schematic_blob(&mut self, packet: BlobPacket) {
-        let share = &mut self.schematics;
+        let share = &mut self.tools.share;
         match packet {
             BlobPacket::Begin { digest, .. } => {
                 if share.downloads.contains_key(&digest) {
@@ -128,15 +128,14 @@ impl Game {
 
     /// Make `digest` available: decoded already, or fetched from the server.
     fn want_design(&mut self, digest: Digest) {
-        let share = &self.schematics;
+        let share = &self.tools.share;
         if share.designs.contains_key(&digest)
             || share.decoding.contains_key(&digest)
             || share.downloads.contains_key(&digest)
         {
             return;
         }
-        self.outbox
-            .push(ClientToServer::Action(PlayerAction::Schematic(
+        self.net.queue(ClientToServer::Action(PlayerAction::Schematic(
                 SchematicRequest::Fetch { digest },
             )));
     }
@@ -149,7 +148,7 @@ impl Game {
         origin: [i32; 3],
         turns: u8,
     ) {
-        if self.schematics.pasting.is_some() || self.schematics.upload.is_some() {
+        if self.tools.share.pasting.is_some() || self.tools.share.upload.is_some() {
             self.notice = "A schematic is still being transferred".into();
             return;
         }
@@ -157,22 +156,22 @@ impl Game {
             let bytes: Arc<[u8]> = archive::encode_bare(&schematic)?.into();
             Ok((digest(&bytes), bytes))
         });
-        self.schematics.pasting = Some((job, origin, turns));
+        self.tools.share.pasting = Some((job, origin, turns));
     }
 
     /// The server captured a selection: its blob `digest` is saved to the
     /// library once it is here.
     pub(super) fn expect_capture(&mut self, digest: Digest) {
-        self.schematics.captures.insert(digest);
+        self.tools.share.captures.insert(digest);
     }
 
     /// A decoded design this client holds.
     pub fn schematic_design(&self, digest: &Digest) -> Option<&Arc<Schematic>> {
-        self.schematics.designs.get(digest)
+        self.tools.share.designs.get(digest)
     }
 
     fn keep_design(&mut self, digest: Digest, schematic: Arc<Schematic>) {
-        let share = &mut self.schematics;
+        let share = &mut self.tools.share;
         share.designs.insert(digest, schematic);
         share.design_order.retain(|d| *d != digest);
         share.design_order.push(digest);
@@ -190,25 +189,25 @@ impl Game {
 
     /// Whether the app should open the library for a new choice (an edge).
     pub fn take_schematic_library_request(&mut self) -> bool {
-        std::mem::take(&mut self.schematics.open_library)
+        std::mem::take(&mut self.tools.share.open_library)
     }
 
     /// The library screen is up for a choice, not for creative placement.
     pub fn schematic_choice_open(&self) -> bool {
-        self.schematics.choice.is_some()
+        self.tools.share.choice.is_some()
     }
 
     /// Choose library entry `index` for the open choice: read and hash it
     /// off the frame thread, then tell the server.
     pub fn choose_schematic(&mut self, index: usize) -> bool {
-        let Some(tag) = self.schematics.choice.clone() else {
+        let Some(tag) = self.tools.share.choice.clone() else {
             return false;
         };
-        let Some(entry) = self.schematic_library.entries().get(index) else {
+        let Some(entry) = self.tools.library.entries().get(index) else {
             return false;
         };
         let path = entry.path.clone();
-        self.schematics.choosing = Some((
+        self.tools.share.choosing = Some((
             tag,
             Job::spawn(&self.jobs, move || {
                 let bytes: Arc<[u8]> = std::fs::read(&path).map_err(|e| e.to_string())?.into();
@@ -222,19 +221,19 @@ impl Game {
     /// Advance the sharing lane once per frame.
     pub(super) fn poll_schematic_share(&mut self) {
         let chosen = self
-            .schematics
+            .tools
+            .share
             .choosing
             .as_ref()
             .and_then(|(_, job)| job.poll());
         if let Some(outcome) = chosen {
-            let (tag, _) = self.schematics.choosing.take().expect("polled above");
+            let (tag, _) = self.tools.share.choosing.take().expect("polled above");
             match outcome.unwrap_or_else(|_| Err("Reading the schematic failed".into())) {
                 Ok((id, bytes, schematic)) => {
                     self.keep_design(id, schematic);
-                    self.schematics.offered = Some((id, bytes));
-                    self.schematics.choice = None;
-                    self.outbox
-                        .push(ClientToServer::Action(PlayerAction::Schematic(
+                    self.tools.share.offered = Some((id, bytes));
+                    self.tools.share.choice = None;
+                    self.net.queue(ClientToServer::Action(PlayerAction::Schematic(
                             SchematicRequest::Chosen { tag, digest: id },
                         )));
                 }
@@ -242,17 +241,17 @@ impl Game {
             }
         }
         let encoded = self
-            .schematics
+            .tools
+            .share
             .pasting
             .as_ref()
             .and_then(|(job, ..)| job.poll());
         if let Some(outcome) = encoded {
-            let (_, origin, turns) = self.schematics.pasting.take().expect("polled above");
+            let (_, origin, turns) = self.tools.share.pasting.take().expect("polled above");
             match outcome.unwrap_or_else(|_| Err("Encoding the schematic failed".into())) {
                 Ok((id, bytes)) => {
-                    self.schematics.offered = Some((id, bytes));
-                    self.outbox
-                        .push(ClientToServer::Action(PlayerAction::Creative(
+                    self.tools.share.offered = Some((id, bytes));
+                    self.net.queue(ClientToServer::Action(PlayerAction::Creative(
                             petramond::schematic::CreativeAction::Place {
                                 digest: id,
                                 origin,
@@ -263,19 +262,19 @@ impl Game {
                 Err(message) => self.notice = message,
             }
         }
-        if let Some(upload) = self.schematics.upload.as_mut() {
+        if let Some(upload) = self.tools.share.upload.as_mut() {
             let packets = upload.packets();
             let finished = upload.finished();
-            self.outbox.extend(packets.into_iter().map(|packet| {
+            self.net.queue_all(packets.into_iter().map(|packet| {
                 ClientToServer::Action(PlayerAction::Schematic(SchematicRequest::Blob(packet)))
             }));
             if finished {
-                self.schematics.upload = None;
+                self.tools.share.upload = None;
             }
         }
         let mut credits = Vec::new();
         let mut arrived = Vec::new();
-        self.schematics.downloads.retain(|id, download| {
+        self.tools.share.downloads.retain(|id, download| {
             if let Some(credit) = download.take_credit() {
                 credits.push(credit);
             }
@@ -287,28 +286,29 @@ impl Game {
                 }
             }
         });
-        self.outbox.extend(credits.into_iter().map(|packet| {
+        self.net.queue_all(credits.into_iter().map(|packet| {
             ClientToServer::Action(PlayerAction::Schematic(SchematicRequest::Blob(packet)))
         }));
         for (id, result) in arrived {
             match result {
                 Ok(bytes) => {
                     let job = Job::spawn(&self.jobs, move || archive::decode(&bytes));
-                    self.schematics.decoding.insert(id, job);
+                    self.tools.share.decoding.insert(id, job);
                 }
                 Err(message) => self.notice = message,
             }
         }
         let decoded: Vec<_> = self
-            .schematics
+            .tools
+            .share
             .decoding
             .iter()
             .filter_map(|(id, job)| Some((*id, job.poll()?)))
             .collect();
         for (id, outcome) in decoded {
-            self.schematics.decoding.remove(&id);
+            self.tools.share.decoding.remove(&id);
             match outcome.unwrap_or_else(|_| Err("Decoding the schematic failed".into())) {
-                Ok(schematic) if self.schematics.captures.remove(&id) => {
+                Ok(schematic) if self.tools.share.captures.remove(&id) => {
                     self.schematic_captured(Arc::new(schematic))
                 }
                 Ok(schematic) => self.keep_design(id, Arc::new(schematic)),
@@ -321,15 +321,15 @@ impl Game {
     /// Begin placement preview for an opened positioning once its design is
     /// here.
     fn start_ready_positioning(&mut self) {
-        let Some((_, id, _, _)) = self.schematics.positioning.as_ref() else {
+        let Some((_, id, _, _)) = self.tools.share.positioning.as_ref() else {
             return;
         };
-        let Some(schematic) = self.schematics.designs.get(id).cloned() else {
+        let Some(schematic) = self.tools.share.designs.get(id).cloned() else {
             return;
         };
-        let (tag, id, origin, turns) = self.schematics.positioning.take().unwrap();
+        let (tag, id, origin, turns) = self.tools.share.positioning.take().unwrap();
         self.cancel_world_tools();
-        self.schematic_preview
+        self.tools.preview
             .begin_positioning(schematic, tag, id, origin, turns);
     }
 }

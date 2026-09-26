@@ -84,6 +84,29 @@ impl ServerGame {
         Ok((data, name))
     }
 
+    /// The LOCAL session's join payload — the in-process twin of the
+    /// `JoinAccept` a remote client receives, so the listen client boots
+    /// through the same `JoinData` path instead of reading server memory.
+    /// `None` on a headless server (no local session).
+    pub fn local_join_data(&self) -> Option<Box<JoinData>> {
+        if !self.has_local_session {
+            return None;
+        }
+        let local = self.sessions.first()?;
+        Some(Box::new(JoinData {
+            player_id: local.id,
+            seed: self.world.seed,
+            clock: crate::server::daynight::current_clock(&self.world),
+            tables: crate::net::remap::local_name_tables(),
+            self_restore: self_restore_from(&local.player),
+            crafting_recipes: self.recipes.crafting().to_data(),
+            players: self.sessions[1..]
+                .iter()
+                .map(|s| (s.id, s.name.clone()))
+                .collect(),
+        }))
+    }
+
     /// The smallest `PlayerId` no connected session uses (freed ids
     /// recycle); `None` when all 256 are taken.
     fn next_free_player_id(&self) -> Option<PlayerId> {

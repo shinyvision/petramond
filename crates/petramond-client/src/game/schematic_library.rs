@@ -253,17 +253,17 @@ impl Game {
     /// Advance the library one step and apply what finished.
     pub fn poll_schematic_library(&mut self) {
         let browsing = self.creative_mode() || self.schematic_choice_open();
-        match self.schematic_library.poll(&self.jobs, browsing) {
+        match self.tools.library.poll(&self.jobs, browsing) {
             Some(LibraryEvent::Loaded(result)) if self.creative_mode() => match result {
                 Ok(schematic) => {
-                    self.world_tools.cancel_all();
-                    self.schematic_preview.begin_paste(schematic);
-                    self.paste_preview_ready = true;
+                    self.tools.world.cancel_all();
+                    self.tools.preview.begin_paste(schematic);
+                    self.tools.paste_preview_ready = true;
                 }
                 Err(error) => self.notice = error,
             },
             // A paste preview never goes up outside creative mode.
-            Some(LibraryEvent::Loaded(_)) => self.schematic_library.set_previewed(None),
+            Some(LibraryEvent::Loaded(_)) => self.tools.library.set_previewed(None),
             Some(LibraryEvent::Changed) => self.notice.clear(),
             Some(LibraryEvent::Failed(error)) => self.notice = error,
             None => {}
@@ -273,33 +273,33 @@ impl Game {
     /// Load library entry `index` to paste it; the preview goes up when the
     /// archive has been read.
     pub fn begin_schematic_paste(&mut self, index: usize) {
-        let Some(entry) = self.schematic_library.entries().get(index) else {
+        let Some(entry) = self.tools.library.entries().get(index) else {
             return;
         };
         let path = entry.path.clone();
-        self.world_tools.selection.cancel_extrusion();
-        self.paste_preview_ready = false;
-        self.schematic_library.request_load(path);
+        self.tools.world.selection.cancel_extrusion();
+        self.tools.paste_preview_ready = false;
+        self.tools.library.request_load(path);
         self.notice.clear();
     }
 
     /// Whether a requested paste preview went up since this last asked.
     pub fn take_paste_preview_ready(&mut self) -> bool {
-        std::mem::take(&mut self.paste_preview_ready)
+        std::mem::take(&mut self.tools.paste_preview_ready)
     }
 
     /// Forget a paste that was asked for but is not up yet.
     pub fn cancel_pending_paste(&mut self) {
-        self.paste_preview_ready = false;
-        self.schematic_library.cancel_load();
+        self.tools.paste_preview_ready = false;
+        self.tools.library.cancel_load();
     }
 
     /// Delete `entry`, taking down a paste preview that came from it.
     pub fn delete_schematic(&mut self, entry: library::Entry) {
-        if self.schematic_library.previewed() == Some(&entry.path) {
+        if self.tools.library.previewed() == Some(&entry.path) {
             self.cancel_world_tools();
         }
-        self.schematic_library.delete(entry.path);
+        self.tools.library.delete(entry.path);
         self.notice.clear();
     }
 }

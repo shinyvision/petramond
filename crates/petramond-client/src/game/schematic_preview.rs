@@ -134,7 +134,7 @@ impl Game {
     /// A preview is up that this mode may commit: a paste in creative, or a
     /// positioning in any mode.
     pub fn schematic_preview_active(&self) -> bool {
-        self.schematic_preview
+        self.tools.preview
             .held
             .as_ref()
             .is_some_and(|held| self.player.is_creative() || held.positioning.is_some())
@@ -143,7 +143,7 @@ impl Game {
     pub fn rotate_schematic_preview(&mut self) -> bool {
         let active = self.schematic_preview_active();
         if active {
-            self.schematic_preview.rotate();
+            self.tools.preview.rotate();
         }
         active
     }
@@ -151,7 +151,7 @@ impl Game {
     pub fn raise_schematic_preview(&mut self, blocks: i32) -> bool {
         let active = self.schematic_preview_active();
         if active {
-            self.schematic_preview.raise(blocks);
+            self.tools.preview.raise(blocks);
         }
         active
     }
@@ -179,14 +179,14 @@ impl Game {
             &self.replica,
         )
         .map(|(h, _)| h);
-        self.schematic_preview.aim(hit);
+        self.tools.preview.aim(hit);
         if input.gameplay_enabled && input.place_clicked {
             self.commit_schematic_preview();
         }
     }
 
     fn commit_schematic_preview(&mut self) {
-        let Some(held) = self.schematic_preview.held.as_mut() else {
+        let Some(held) = self.tools.preview.held.as_mut() else {
             return;
         };
         let Some(origin) = held.origin else {
@@ -194,8 +194,7 @@ impl Game {
         };
         let turns = held.turns;
         if let Some(Positioning { tag, digest, .. }) = held.positioning.take() {
-            self.outbox
-                .push(ClientToServer::Action(PlayerAction::Schematic(
+            self.net.queue(ClientToServer::Action(PlayerAction::Schematic(
                     SchematicRequest::Positioned {
                         tag,
                         digest,
@@ -211,25 +210,25 @@ impl Game {
     }
 
     fn prepare_preview_scene(&mut self) {
-        let Some(held) = &self.schematic_preview.held else {
-            self.schematic_preview.scene = None;
-            self.schematic_preview.scene_key = None;
+        let Some(held) = &self.tools.preview.held else {
+            self.tools.preview.scene = None;
+            self.tools.preview.scene_key = None;
             return;
         };
         let (schematic, turns) = (held.schematic.clone(), held.turns);
         let current = self
-            .schematic_preview
+            .tools.preview
             .scene_key
             .as_ref()
             .is_some_and(|(s, t)| *t == turns && Arc::ptr_eq(s, &schematic));
         if current {
             return;
         }
-        self.schematic_preview.scene_key = Some((schematic.clone(), turns));
+        self.tools.preview.scene_key = Some((schematic.clone(), turns));
         match self.schematic_scene(&schematic, turns) {
-            Ok(scene) => self.schematic_preview.scene = Some(scene),
+            Ok(scene) => self.tools.preview.scene = Some(scene),
             Err(error) => {
-                self.schematic_preview.scene = None;
+                self.tools.preview.scene = None;
                 self.notice = error;
             }
         }

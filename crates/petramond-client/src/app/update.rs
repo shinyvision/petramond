@@ -73,7 +73,6 @@ impl App {
         let world_frozen = self.game.is_some()
             && !pause_runs_sim
             && (self.doc_shell_kind().is_some() || self.screen.shell_open());
-        self.audio.set_spatial_paused(world_frozen);
         // The soundtrack is driven HERE, above every screen's early return:
         // music belongs to the SESSION, not to whatever screen is open over
         // it — an inventory or a chest must never stop it. `world_frozen` is
@@ -81,11 +80,11 @@ impl App {
         // "is the game actually stopped" (a multiplayer pause menu runs the
         // sim on, so it is not a pause): a frozen world lets the current
         // track finish but schedules no new one.
-        self.music
-            .update(&mut self.audio, self.game.is_some(), world_frozen, dt);
+        self.sound
+            .update_session(self.game.is_some(), world_frozen, dt);
         if let Some(kind) = self.doc_shell_kind() {
-            self.audio.set_loop(None, now);
-            self.pointer.clear_edges();
+            self.sound.stop_mining_loop(now);
+            self.controls.pointer.clear_edges();
             self.drive_doc_ui(kind, screen_size, now);
             if !pause_runs_sim {
                 // Shell screens (pause menu) skip Game::tick, but the server
@@ -103,7 +102,7 @@ impl App {
         // tick-owned, so the world must keep ticking behind them.
         if let Some(kind) = self.doc_overlay_kind() {
             self.drive_doc_ui(kind, screen_size, now);
-            self.pointer.clear_edges();
+            self.controls.pointer.clear_edges();
         }
         // Document-backed game MENUS (mod GUIs, containers) drive their UI
         // frame here too — slot/widget clicks latch to the tick through the
@@ -112,12 +111,12 @@ impl App {
         // menu-consumed click from also firing block break/placement.
         else if self.screen == super::AppScreen::Schematics {
             self.drive_schematics_screen(screen_size, now);
-            self.pointer.clear_edges();
+            self.controls.pointer.clear_edges();
         } else if self.screen.client_ui_open() {
             if let Some(kind) = self.doc_ui_kind() {
                 self.drive_client_doc_ui(kind, screen_size, now);
             }
-            self.pointer.clear_edges();
+            self.controls.pointer.clear_edges();
         } else if self.doc_ui_kind().is_some() {
             // A shell document is the SHELL branch's to drive, and
             // `game_menu_kind` withholds it here: the multiplayer
@@ -130,12 +129,12 @@ impl App {
             if let Some(kind) = self.game_menu_kind() {
                 self.drive_doc_menu(kind, screen_size, now);
             }
-            self.pointer.clear_edges();
+            self.controls.pointer.clear_edges();
         }
 
         if (self.screen.shell_open() && !pause_runs_sim) || self.game.is_none() {
-            self.audio.set_loop(None, now);
-            self.pointer.clear_edges();
+            self.sound.stop_mining_loop(now);
+            self.controls.pointer.clear_edges();
             // Same as the doc-shell path above: keep draining the server.
             self.pump_network_and_watch();
             return;
@@ -170,7 +169,7 @@ impl App {
             })
             .flatten();
         self.play_game_event_sounds(&events, mining_block, now);
-        self.pointer.clear_edges();
+        self.controls.pointer.clear_edges();
         self.latch_game_event_hand_triggers(&events);
     }
 
@@ -188,7 +187,7 @@ impl App {
             && self
                 .game
                 .as_ref()
-                .is_some_and(|g| g.is_remote() || self.lan_port.is_some())
+                .is_some_and(|g| g.is_remote() || self.session_ui.lan_port.is_some())
     }
 
     /// Drain the server while `Game::tick` is suppressed (shell screens over

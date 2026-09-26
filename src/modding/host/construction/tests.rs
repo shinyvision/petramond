@@ -347,10 +347,10 @@ fn a_turned_block_goes_in_only_from_where_a_click_turns_it_so() {
     };
     // East of the worker on the floor: whatever face it clicks, it looks east.
     let cell = IVec3::new(10, 65, 8);
-    let looking = crate::server::placement::facing_from_forward(petramond_math::math::Vec3::new(
+    let looking = crate::rules::placement::facing_from_forward(petramond_math::math::Vec3::new(
         1.0, 0.0, 0.0,
     ));
-    let away = crate::server::placement::facing_from_forward(petramond_math::math::Vec3::new(
+    let away = crate::rules::placement::facing_from_forward(petramond_math::math::Vec3::new(
         -1.0, 0.0, 0.0,
     ));
     assert!(aim(&mut server, mob, cell, Some(stair(looking))).is_ok());

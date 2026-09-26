@@ -30,11 +30,11 @@ impl Game {
         //
         // The swing facts ride with them: the one-shots latched since the
         // last hook (the SAME edges the animators play, on their own
-        // latch — see `Game::swing_events`), the mining level read live —
+        // latch — see `LocalHand::take_swing_events`), the mining level read live —
         // the exact shape of the server's roster build.
         let swing = mod_api::HandSwing {
             mining: self.self_view.mining.is_some(),
-            ..std::mem::take(&mut self.swing_events)
+            ..self.hand.take_swing_events()
         };
         let actor = self.client_actor_snapshot(self.predicted_input.sneak, swing);
         self.client_mods

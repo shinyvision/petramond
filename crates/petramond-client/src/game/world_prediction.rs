@@ -9,7 +9,7 @@ use super::prediction;
 use super::tick::{GameInput, PlacePrediction, WorldEvent};
 use super::Game;
 use petramond::net::protocol::{ClientToServer, PlayerAction};
-use petramond::server::interact::ConsumerKind;
+use petramond::rules::interact::ConsumerKind;
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 
@@ -37,7 +37,7 @@ impl Game {
             // A client has exactly one addressable body, and naming it is
             // what lets a mod use the SAME player-addressed calls its server
             // half does.
-            id: Some(mod_api::PlayerId(self.self_id.0)),
+            id: Some(mod_api::PlayerId(self.entities.self_id().0)),
             pos: self.player.pos.to_array(),
             vel: self.player.vel.to_array(),
             yaw: self.player.yaw,
@@ -64,7 +64,7 @@ impl Game {
             use_held: self.intent_use_held,
             // Patched per mod at the dispatch (each sees its own answer).
             holds_use: false,
-            pose_anchor: self.self_mount.and_then(|m| match m {
+            pose_anchor: self.entities.own_mount().and_then(|m| match m {
                 petramond::net::protocol::PlayerMount::Anchor { pos, .. } => Some(pos.to_array()),
                 petramond::net::protocol::PlayerMount::Mob { .. } => None,
             }),
@@ -110,7 +110,7 @@ impl Game {
             block: self.look.map(|l| l.block.to_array()),
             face: self.look.map(|l| l.normal.to_array()),
             mob: use_mob,
-            player: mod_api::PlayerId(self.self_id.0),
+            player: mod_api::PlayerId(self.entities.self_id().0),
         };
         self.predict_mod_claim(sneak, payload)
     }
@@ -130,7 +130,7 @@ impl Game {
         if self.predicted_held().and_then(|st| st.item.item_use()) != Some(ItemUse::Shear) {
             return false;
         }
-        self.replicated_mobs.iter().any(|e| {
+        self.entities.mobs().iter().any(|e| {
             e.curr.id == id
                 && !e.curr.shorn
                 && petramond::mob::def(petramond::mob::Mob(e.curr.kind_id))
@@ -180,9 +180,9 @@ impl Game {
                             inventory: None,
                             cells: cells.clone(),
                         });
-                    self.local_broke_block = Some(block);
+                    self.hand.latch_break(block);
                     for (c, _) in &cells {
-                        self.predicted_presentation_cells.insert(*c);
+                        self.prediction.mark_presented(*c);
                     }
                     // Initial prediction blocks on the complete exact light ->
                     // mesh footprint so the click exposes no stale shading.
@@ -205,8 +205,7 @@ impl Game {
         // No duration claim rides the wire: the server validates the finish
         // against ITS OWN observed mining window (breaking.rs).
         let tool_item_id = self.self_view.inventory.selected().map(|st| st.item.0);
-        self.outbox
-            .push(ClientToServer::Action(PlayerAction::BreakFinished {
+        self.net.queue(ClientToServer::Action(PlayerAction::BreakFinished {
                 request_id,
                 pos,
                 tool_item_id,
@@ -443,7 +442,7 @@ impl Game {
             // rule, so this cannot drift from the authority.
             let pre_pos =
                 petramond::world::placement::build_position(looked_at, look.block, look.normal);
-            let facing = petramond::server::placement::facing_from_forward(self.player.forward());
+            let facing = petramond::rules::placement::facing_from_forward(self.player.forward());
             let payload = mod_api::EventPayload::BlockPlacePre {
                 pos: pre_pos.to_array(),
                 block: mod_api::BlockId(block.id()),
@@ -453,7 +452,7 @@ impl Game {
                     petramond_math::facing::Facing::West => mod_api::Facing::West,
                     petramond_math::facing::Facing::East => mod_api::Facing::East,
                 },
-                actor: mod_api::EntityRef::Player(mod_api::PlayerId(self.self_id.0)),
+                actor: mod_api::EntityRef::Player(mod_api::PlayerId(self.entities.self_id().0)),
             };
             if self.predict_mod_claim(sneak, payload) {
                 return PlacePrediction::No;
@@ -489,7 +488,7 @@ impl Game {
         }
         let held = self.predicted_held().map(|s| s.item);
         let player_facing =
-            petramond::server::placement::facing_from_forward(self.player.forward());
+            petramond::rules::placement::facing_from_forward(self.player.forward());
 
         // The SHARED per-shape placement ladder (`World::placement_plan`, the
         // same rule the server evaluates against its world), run against the
@@ -565,10 +564,8 @@ impl Game {
         if !self.player.is_creative() {
             self.self_view.inventory.decrement_held(hand);
         }
-        self.place_ghost = Some((place_pos, block.0));
-        self.local_placed_block = Some(block);
-        self.local_placed_off_hand = hand == petramond_world::inventory::Hand::Off;
-        self.predicted_presentation_cells.insert(place_pos);
+        self.hand.latch_place(block, hand);
+        self.prediction.mark_presented(place_pos);
         self.pending_events.world.push(WorldEvent::BlockPlaced {
             pos: place_pos,
             block,
@@ -599,7 +596,7 @@ impl Game {
             hit: look.block.to_array(),
             normal: look.normal.to_array(),
             place_pos: place_pos.to_array(),
-            player_facing: petramond::server::placement::facing_from_forward(self.player.forward())
+            player_facing: petramond::rules::placement::facing_from_forward(self.player.forward())
                 as u8,
         };
         let actor = self.client_actor_snapshot(sneak, Default::default());
@@ -701,10 +698,8 @@ impl Game {
         if !self.player.is_creative() {
             self.self_view.inventory.decrement_held(hand);
         }
-        self.place_ghost = Some((anchor, write_block.id()));
-        self.local_placed_block = Some(write_block);
-        self.local_placed_off_hand = hand == petramond_world::inventory::Hand::Off;
-        self.predicted_presentation_cells.insert(anchor);
+        self.hand.latch_place(write_block, hand);
+        self.prediction.mark_presented(anchor);
         self.pending_events.world.push(WorldEvent::BlockPlaced {
             pos: anchor,
             block: write_block,
@@ -725,7 +720,7 @@ impl Game {
         if self.player.body().overlaps_block_boxes(cell, boxes) {
             return true;
         }
-        for entry in self.replicated_mobs.iter() {
+        for entry in self.entities.mobs().iter() {
             if entry.curr.dead {
                 continue;
             }
@@ -740,7 +735,7 @@ impl Game {
                 return true;
             }
         }
-        for p in self.remote_players.iter() {
+        for p in self.entities.players().iter() {
             let row = &p.curr;
             if !row.visible || !row.alive {
                 continue;
@@ -774,7 +769,7 @@ impl UseClaim {
     pub(crate) fn presents_itself(self) -> bool {
         match self {
             Self::Unclaimed => false,
-            Self::Claimed(kind) => petramond::server::interact::row(kind).presents_itself,
+            Self::Claimed(kind) => kind.presents_itself(),
         }
     }
 }

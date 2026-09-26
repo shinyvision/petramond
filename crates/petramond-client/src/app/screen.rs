@@ -17,7 +17,7 @@ pub(super) enum AppScreen {
     /// connection loss / server close; OK returns to the title.
     ConnectionLost,
     /// The Options root (Sound / Controls / Graphics), entered from the title
-    /// or the pause menu (`App::options_from_pause` remembers which).
+    /// or the pause menu (`OptionsState::from_pause` remembers which).
     Options,
     OptionsSound,
     /// The controls remap screen; while a binding is armed the App captures

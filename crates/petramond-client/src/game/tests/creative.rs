@@ -56,7 +56,7 @@ fn wand_removes_selected_air_and_undo_restores_it_without_breaking_world_blocks(
     game.cam.pos = WorldPos::new(8.5, 80.5, 0.5);
     game.cam.yaw = 0.0;
     game.cam.pitch = 0.0;
-    game.world_tools
+    game.tools.world
         .selection
         .selection
         .region([8, 80, 5], [8, 80, 6], false)
@@ -70,7 +70,7 @@ fn wand_removes_selected_air_and_undo_restores_it_without_breaking_world_blocks(
     game.world_tool_input(&mut input);
     assert!(!input.place_clicked && !input.use_held);
     assert_eq!(
-        game.world_tools
+        game.tools.world
             .selection
             .selection
             .cells()
@@ -78,8 +78,8 @@ fn wand_removes_selected_air_and_undo_restores_it_without_breaking_world_blocks(
         vec![[8, 80, 6]]
     );
     game.undo_edit();
-    assert_eq!(game.world_tools.selection.selection.len(), 2);
-    assert!(!game.world_tools.selection.has_pending_corner());
+    assert_eq!(game.tools.world.selection.selection.len(), 2);
+    assert!(!game.tools.world.selection.has_pending_corner());
     game.adjust_tool(-1);
     game.world_tool_input(&mut GameInput {
         gameplay_enabled: true,
@@ -87,13 +87,13 @@ fn wand_removes_selected_air_and_undo_restores_it_without_breaking_world_blocks(
         ..Default::default()
     });
     assert_eq!(
-        game.world_tools.selection.pending_corner(),
+        game.tools.world.selection.pending_corner(),
         Some([8, 80, 5])
     );
     game.undo_edit();
-    assert!(!game.world_tools.selection.has_pending_corner());
+    assert!(!game.tools.world.selection.has_pending_corner());
     assert_eq!(
-        game.world_tools.selection.selection.len(),
+        game.tools.world.selection.selection.len(),
         2,
         "undo cancels an unfinished region first"
     );
@@ -134,7 +134,7 @@ fn schematic_preview_and_placement_share_the_rotated_footprint_center_and_height
         ([4, 1, 2], [[6, 80, 4], [7, 80, 3]]),
     ] {
         game.cancel_world_tools();
-        game.schematic_preview.begin_paste(Arc::new(
+        game.tools.preview.begin_paste(Arc::new(
             Schematic::from_cells(
                 "Footprint".into(),
                 size,
@@ -150,7 +150,7 @@ fn schematic_preview_and_placement_share_the_rotated_footprint_center_and_height
         let mut height = 0;
         for turns in 0..4 {
             game.world_tool_input(&mut GameInput::default());
-            let scene = game.schematic_preview.scene().cloned().unwrap();
+            let scene = game.tools.preview.scene().cloned().unwrap();
             assert!(game.raise_schematic_preview(if turns % 2 == 0 { 3 } else { -5 }));
             height += if turns % 2 == 0 { 3 } else { -5 };
             let mut expected = origins[turns % 2];
@@ -161,9 +161,9 @@ fn schematic_preview_and_placement_share_the_rotated_footprint_center_and_height
                 place_clicked: true,
                 ..Default::default()
             });
-            assert_eq!(game.schematic_preview.origin(), Some(expected));
+            assert_eq!(game.tools.preview.origin(), Some(expected));
             assert!(
-                Arc::ptr_eq(&scene, game.schematic_preview.scene().unwrap()),
+                Arc::ptr_eq(&scene, game.tools.preview.scene().unwrap()),
                 "height changes must reuse the mesh scene"
             );
             // The paste names its design; the archive follows only once the
@@ -222,18 +222,18 @@ fn schematic_preview_and_placement_share_the_rotated_footprint_center_and_height
                     && d == data));
             }
             assert!(game.rotate_schematic_preview());
-            assert_eq!(game.schematic_preview.vertical_offset(), height);
+            assert_eq!(game.tools.preview.vertical_offset(), height);
         }
         game.cam.yaw = std::f32::consts::PI;
         game.world_tool_input(&mut GameInput::default());
         assert!(
-            game.schematic_preview.origin().is_none(),
+            game.tools.preview.origin().is_none(),
             "losing the target clears the preview position"
         );
-        assert_eq!(game.schematic_preview.vertical_offset(), height);
+        assert_eq!(game.tools.preview.vertical_offset(), height);
         game.cam.yaw = 0.0;
     }
     game.cancel_world_tools();
-    assert_eq!(game.schematic_preview.vertical_offset(), 0);
+    assert_eq!(game.tools.preview.vertical_offset(), 0);
     assert!(!game.raise_schematic_preview(1));
 }

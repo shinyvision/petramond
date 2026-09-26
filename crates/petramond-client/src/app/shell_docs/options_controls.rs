@@ -5,7 +5,7 @@
 //! raw key/mouse/scroll as the new binding (`app/options.rs`); ESC cancels,
 //! and clicking a different action's button switches the armed action.
 
-use crate::app::App;
+use super::ScreenCtx;
 use petramond_ui::{UiEvent, UiMap, UiState, UiValue};
 use std::sync::Arc;
 
@@ -38,10 +38,10 @@ pub(super) fn row_entries(table: &petramond_input::controls::ActionTable) -> Vec
     rows
 }
 
-pub(super) fn populate(app: &App, state: &mut UiState) {
-    super::populate_options_chrome(app, state);
-    let remapping = app.remap.as_deref();
-    let items: Vec<UiMap> = row_entries(&app.action_table)
+pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
+    super::populate_options_chrome(ctx, state);
+    let remapping = ctx.options.remap();
+    let items: Vec<UiMap> = row_entries(ctx.action_table)
         .into_iter()
         .map(|entry| {
             let mut m = UiMap::new();
@@ -53,12 +53,12 @@ pub(super) fn populate(app: &App, state: &mut UiState) {
                     m.insert("is_action".into(), UiValue::Bool(false));
                 }
                 RowEntry::Action(id) => {
-                    let row = app.action_table.row(&id).expect("row from table");
+                    let row = ctx.action_table.row(&id).expect("row from table");
                     let binding = if remapping == Some(id.as_str()) {
                         "> ??? <".to_string()
                     } else {
-                        app.action_table
-                            .effective(&app.settings.bindings, row)
+                        ctx.action_table
+                            .effective(&ctx.options.settings.bindings, row)
                             .label()
                     };
                     m.insert("label".into(), UiValue::Str(row.label.clone()));
@@ -70,7 +70,7 @@ pub(super) fn populate(app: &App, state: &mut UiState) {
             m
         })
         .collect();
-    let hovered = app
+    let hovered = ctx
         .ui
         .hover_item("controls")
         .and_then(|index| items.get(index));
@@ -98,9 +98,9 @@ pub(super) fn populate(app: &App, state: &mut UiState) {
     state.set("remap_hint", UiValue::Str(hint.to_string()));
 }
 
-pub(super) fn handle(app: &mut App, ev: UiEvent) {
+pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
     // Back also disarms any pending remap (`close_options_category`).
-    if super::options_category_back(app, &ev) {
+    if super::options_category_back(ctx, &ev) {
         return;
     }
     if let UiEvent::Click { id, item, .. } = ev {
@@ -110,16 +110,16 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
         let Some(index) = item else {
             return;
         };
-        let rows = row_entries(&app.action_table);
+        let rows = row_entries(ctx.action_table);
         let Some(RowEntry::Action(action_id)) = rows.get(index as usize) else {
             return;
         };
-        if app.remap.as_deref() == Some(action_id.as_str()) {
+        if ctx.options.remap() == Some(action_id.as_str()) {
             // Clicking the armed button again disarms it.
-            app.cancel_remap();
+            ctx.options.cancel_remap();
         } else {
             // Arms this action — and thereby cancels any other armed one.
-            app.begin_remap(action_id);
+            ctx.options.begin_remap(action_id);
         }
     }
 }

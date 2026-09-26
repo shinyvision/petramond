@@ -19,11 +19,11 @@ fn wand() -> TestGame {
     ));
     game.sync_self_view_for_test();
     game.adjust_tool(-1);
-    assert!(game.world_tools.selection.mode() == SelectionMode::Extrude);
+    assert!(game.tools.world.selection.mode() == SelectionMode::Extrude);
     game.cam.pos = WorldPos::new(8.5, 80.5, 0.0);
     game.cam.yaw = 0.0;
     game.cam.pitch = 0.0;
-    game.world_tools
+    game.tools.world
         .selection
         .selection
         .region([8, 80, 10], [10, 82, 12], false)
@@ -63,7 +63,7 @@ fn creative_face_drag_snaps_only_along_normal_and_commits_on_release() {
     assert_eq!(game.tool_overlay().and_then(|o| o.face).unwrap().axis, 2);
     drag(&mut game, (500.0, -80.0), true);
     assert_eq!(
-        game.world_tools.selection.selection.regions(),
+        game.tools.world.selection.selection.regions(),
         &[SelectionBox {
             lo: [8, 80, 8],
             hi: [11, 83, 13]
@@ -72,7 +72,7 @@ fn creative_face_drag_snaps_only_along_normal_and_commits_on_release() {
     assert_eq!(game.tool_overlay().and_then(|o| o.face).unwrap().plane, 8);
     drag(&mut game, (0.0, 160.0), true);
     assert_eq!(
-        game.world_tools.selection.selection.regions(),
+        game.tools.world.selection.selection.regions(),
         &[SelectionBox {
             lo: [8, 80, 12],
             hi: [11, 83, 13]
@@ -80,7 +80,7 @@ fn creative_face_drag_snaps_only_along_normal_and_commits_on_release() {
     );
     drag(&mut game, (0.0, -120.0), false);
     assert_eq!(
-        game.world_tools.selection.selection.regions(),
+        game.tools.world.selection.selection.regions(),
         &[SelectionBox {
             lo: [8, 80, 9],
             hi: [11, 83, 13]
@@ -88,19 +88,19 @@ fn creative_face_drag_snaps_only_along_normal_and_commits_on_release() {
     );
     assert!(!game.world_tool_holds_camera());
     game.undo_edit();
-    assert_eq!(game.world_tools.selection.selection.len(), 27);
+    assert_eq!(game.tools.world.selection.selection.len(), 27);
     game.redo_edit();
-    assert_eq!(game.world_tools.selection.selection.len(), 36);
+    assert_eq!(game.tools.world.selection.selection.len(), 36);
     game.undo_edit();
     game.undo_edit();
-    assert!(game.world_tools.selection.selection.is_empty());
+    assert!(game.tools.world.selection.selection.is_empty());
 }
 
 #[test]
 fn creative_face_drag_cancels_on_escape_undo_mode_change_or_lost_gameplay() {
     for cancel in 0..6 {
         let mut game = wand();
-        let original = game.world_tools.selection.selection.regions().to_vec();
+        let original = game.tools.world.selection.selection.regions().to_vec();
         press(&mut game);
         drag(&mut game, (0.0, -80.0), true);
         match cancel {
@@ -126,10 +126,10 @@ fn creative_face_drag_cancels_on_escape_undo_mode_change_or_lost_gameplay() {
             }
         }
         assert!(!game.world_tool_holds_camera());
-        assert_eq!(game.world_tools.selection.selection.regions(), original);
+        assert_eq!(game.tools.world.selection.selection.regions(), original);
         assert!(game.tool_overlay().and_then(|o| o.face).is_none());
-        assert!(game.world_tools.selection.selection.undo());
-        assert!(game.world_tools.selection.selection.is_empty());
+        assert!(game.tools.world.selection.selection.undo());
+        assert!(game.tools.world.selection.selection.is_empty());
     }
 }
 
@@ -140,14 +140,14 @@ fn creative_face_drag_from_oblique_view_uses_the_projected_axis() {
     game.cam.yaw = std::f32::consts::FRAC_PI_4;
     press(&mut game);
     let axis = game.tool_overlay().and_then(|o| o.face).unwrap().axis;
-    let before = game.world_tools.selection.selection.regions()[0];
+    let before = game.tools.world.selection.selection.regions()[0];
     game.world_tool_input(&mut GameInput {
         gameplay_enabled: true,
         break_held: true,
         look_delta: (-100.0, 0.0),
         ..Default::default()
     });
-    let after = game.world_tools.selection.selection.regions()[0];
+    let after = game.tools.world.selection.selection.regions()[0];
     assert_ne!(before, after);
     for other in 0..3 {
         if other != axis {

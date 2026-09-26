@@ -1,30 +1,30 @@
 //! Title screen controller: Start Game → world select; Connect to Server →
 //! the connect screen; Quit.
 
-use crate::app::{App, AppScreen};
+use super::{ScreenCtx, ShellCommand};
+use crate::app::AppScreen;
 use petramond_ui::{NavKey, UiEvent, UiState};
 
-pub(super) fn populate(_app: &App, _state: &mut UiState) {}
+pub(super) fn populate(_ctx: &ScreenCtx, _state: &mut UiState) {}
 
-pub(super) fn handle(app: &mut App, ev: UiEvent) {
+pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
     match ev {
         UiEvent::Click { id, .. } => match id.as_str() {
-            "start" => start(app),
-            "connect" => app.open_connect_server(),
-            "options" => app.open_options(false),
-            "quit" => app.quit_requested = true,
+            "start" => start(ctx),
+            "connect" => ctx.request(ShellCommand::OpenConnectServer),
+            "options" => ctx.request(ShellCommand::OpenOptions { from_pause: false }),
+            "quit" => ctx.request(ShellCommand::Quit),
             _ => {}
         },
         UiEvent::Key {
             key: NavKey::Enter, ..
-        } => start(app),
+        } => start(ctx),
         _ => {}
     }
 }
 
-fn start(app: &mut App) {
-    app.refresh_worlds();
-    app.selected_world = None;
-    app.screen = AppScreen::WorldSelect;
-    app.pointer.release_for_menu();
+fn start(ctx: &mut ScreenCtx) {
+    ctx.shell.refresh_worlds();
+    ctx.shell.select_world(None);
+    ctx.goto(AppScreen::WorldSelect);
 }

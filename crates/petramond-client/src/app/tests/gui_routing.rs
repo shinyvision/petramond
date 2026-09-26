@@ -208,7 +208,7 @@ fn crafting_buttons_play_ui_click_sound() {
     app.handle_control(Control::ToggleInventory, true);
     let screen = (1280u32, 720u32);
     search_recipes(&mut app, screen, "stick");
-    app.audio.take_played_for_test();
+    app.sound.take_played_for_test();
 
     let (x, y) = cursor_over_widget(&mut app, screen, "recipe", Some(0));
     app.set_cursor_position(x, y);
@@ -218,7 +218,7 @@ fn crafting_buttons_play_ui_click_sound() {
     app.click_screen_for_test(screen, 0.2);
 
     assert_eq!(
-        app.audio.take_played_for_test(),
+        app.sound.take_played_for_test(),
         vec![petramond_world::sound_registry::Sound::UiClick; 2]
     );
 }

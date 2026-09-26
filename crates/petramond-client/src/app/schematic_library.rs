@@ -45,10 +45,10 @@ impl App {
         if !matches!(self.screen, AppScreen::Game) {
             return;
         }
-        self.library_form.page = LibraryPage::Library;
-        self.library_form.pending_delete = None;
+        self.session_ui.library_form.page = LibraryPage::Library;
+        self.session_ui.library_form.pending_delete = None;
         self.screen = AppScreen::Schematics;
-        self.pointer.release_for_menu();
+        self.controls.pointer.release_for_menu();
         self.gui_router.reset_click_streak();
     }
 
@@ -64,7 +64,7 @@ impl App {
         self.ui.ensure_active(GuiKind::Schematics);
         self.drive_library_form("schematics_library_scroll", true);
         let game = self.game.as_mut().expect("checked above");
-        let form = &self.library_form;
+        let form = &self.session_ui.library_form;
         let state = self.ui.state_mut();
         let thumbnails = populate_library(game, form, state);
         let browsing = form.pending_delete.is_none();
@@ -76,7 +76,7 @@ impl App {
             "library_page",
             UiValue::Bool(browsing && form.page == LibraryPage::Library),
         );
-        let selection = &game.world_tools.selection.selection;
+        let selection = &game.tools.world.selection.selection;
         state.set("can_author", UiValue::Bool(!selection.is_empty()));
         state.set("notice", UiValue::Str(game.notice.clone()));
         self.ui.set_dynamic_images(thumbnails);
@@ -85,7 +85,7 @@ impl App {
         let mut leave = false;
         for event in self.ui.take_events() {
             let game = self.game.as_mut().expect("open schematics screen");
-            if self.library_form.handle(game, &event) {
+            if self.session_ui.library_form.handle(game, &event) {
                 continue;
             }
             if let UiEvent::Click {
@@ -112,14 +112,14 @@ impl App {
         let Some(game) = self.game.as_mut() else {
             return;
         };
-        let form = &mut self.library_form;
+        let form = &mut self.session_ui.library_form;
         // Only from the Save page: a player who already left it stays put.
-        if game.schematic_library.take_saved() && form.page == LibraryPage::Save {
+        if game.tools.library.take_saved() && form.page == LibraryPage::Save {
             form.page = LibraryPage::Library;
         }
         let cards_shown =
             library_shown && form.page == LibraryPage::Library && form.pending_delete.is_none();
-        game.schematic_library.request_thumbnails(match () {
+        game.tools.library.request_thumbnails(match () {
             _ if !cards_shown => &[],
             // Nothing is laid out before the first frame.
             _ if visible.is_empty() => &[0, 1, 2],
@@ -151,9 +151,9 @@ pub(super) fn populate_library(
     form: &LibraryForm,
     state: &mut petramond_ui::UiState,
 ) -> Vec<petramond::modding::ClientImageData> {
-    let tool = &game.world_tools.selection;
+    let tool = &game.tools.world.selection;
     let selection = &tool.selection;
-    let entries = game.schematic_library.entries();
+    let entries = game.tools.library.entries();
     state.set("browsing", UiValue::Bool(form.pending_delete.is_none()));
     state.set(
         "confirming_delete",
@@ -192,7 +192,7 @@ pub(super) fn populate_library(
                 .map(|e| {
                     let image_key =
                         format!("schematic_{}_{:x}", e.path.display(), e.header.revision);
-                    if let Some(image) = game.schematic_library.thumbnail(e) {
+                    if let Some(image) = game.tools.library.thumbnail(e) {
                         thumbnails.push(petramond::modding::ClientImageData {
                             key: image_key.clone(),
                             width: image.width as u16,
@@ -255,7 +255,7 @@ impl LibraryForm {
             }
             (UiEvent::Toggle { id, on, .. }, _) if id == "include_air" => self.include_air = *on,
             (_, Some(("delete_schematic", Some(i)))) => {
-                self.pending_delete = game.schematic_library.entries().get(i as usize).cloned();
+                self.pending_delete = game.tools.library.entries().get(i as usize).cloned();
             }
             (_, Some(("save_schematic", _))) => game.save_selection(&self.name, self.include_air),
             (_, Some((id @ ("new_schematic" | "back_to_schematics"), _))) => {

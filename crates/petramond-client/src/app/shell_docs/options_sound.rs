@@ -2,7 +2,7 @@
 //! Slider drags apply LIVE (the mixer re-reads volumes every frame); the
 //! release commit persists `client.json`.
 
-use crate::app::App;
+use super::{ScreenCtx, ShellCommand};
 use petramond_ui::{UiEvent, UiState, UiValue};
 
 fn bind_volume(state: &mut UiState, key: &str, pct_key: &str, value: f32) {
@@ -11,20 +11,16 @@ fn bind_volume(state: &mut UiState, key: &str, pct_key: &str, value: f32) {
     state.set(pct_key.to_string(), UiValue::Str(format!("{pct:.0}%")));
 }
 
-pub(super) fn populate(app: &App, state: &mut UiState) {
-    super::populate_options_chrome(app, state);
-    bind_volume(
-        state,
-        "master_vol",
-        "master_pct",
-        app.settings.master_volume,
-    );
-    bind_volume(state, "sound_vol", "sound_pct", app.settings.sound_volume);
-    bind_volume(state, "music_vol", "music_pct", app.settings.music_volume);
+pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
+    super::populate_options_chrome(ctx, state);
+    let settings = &ctx.options.settings;
+    bind_volume(state, "master_vol", "master_pct", settings.master_volume);
+    bind_volume(state, "sound_vol", "sound_pct", settings.sound_volume);
+    bind_volume(state, "music_vol", "music_pct", settings.music_volume);
 }
 
-pub(super) fn handle(app: &mut App, ev: UiEvent) {
-    if super::options_category_back(app, &ev) {
+pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
+    if super::options_category_back(ctx, &ev) {
         return;
     }
     if let UiEvent::SliderChange {
@@ -35,15 +31,16 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
     } = ev
     {
         let volume = (value / 100.0).clamp(0.0, 1.0);
+        let settings = &mut ctx.options.settings;
         match id.as_str() {
-            "master_vol" => app.settings.master_volume = volume,
-            "sound_vol" => app.settings.sound_volume = volume,
-            "music_vol" => app.settings.music_volume = volume,
+            "master_vol" => settings.master_volume = volume,
+            "sound_vol" => settings.sound_volume = volume,
+            "music_vol" => settings.music_volume = volume,
             _ => return,
         }
-        app.apply_volumes();
+        ctx.request(ShellCommand::ApplyVolumes);
         if committed {
-            app.persist_settings();
+            ctx.options.persist();
         }
     }
 }

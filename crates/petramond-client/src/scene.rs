@@ -178,9 +178,9 @@ impl SceneCapture {
     /// same two shader params the live cycle does, derived the same way, so a
     /// capture's sky matches the game's at that fraction. Defaults to noon.
     pub fn set_time_of_day(&mut self, day_fraction: f32, moon_phase: f32) {
-        let (time, light) = petramond::server::daynight::sky_params(day_fraction, moon_phase);
-        self.set_shader_param(petramond::server::daynight::SKY_TIME_PARAM, time);
-        self.set_shader_param(petramond::server::daynight::SKY_LIGHT_PARAM, light);
+        let (time, light) = petramond::rules::daynight::sky_params(day_fraction, moon_phase);
+        self.set_shader_param(petramond::rules::daynight::SKY_TIME_PARAM, time);
+        self.set_shader_param(petramond::rules::daynight::SKY_LIGHT_PARAM, light);
     }
 
     /// Animation clock (seconds) for time-varying visuals: atlas animation,

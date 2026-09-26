@@ -1,13 +1,12 @@
 //! The frame→tick boundary types shared by the client and the server sim
 //! ([`GameInput`], [`GameEvents`], `TickEvents`/`WorldEvents`) plus the
 //! client's per-frame [`Game::tick`] driver. The fixed-tick stage ladder
-//! itself lives on [`petramond::server::game::ServerGame`].
+//! itself lives on the server, behind the session's `ServerHandle`.
 
 use super::world_prediction::UseClaim;
 use super::Game;
 use petramond::net::protocol::{ClientToServer, OpenScreen, PlayerAction, PlayerUpdate, TargetRef};
-use petramond::player::one_shot::OneShot;
-use petramond::server::interact::ConsumerKind;
+use petramond::rules::interact::ConsumerKind;
 use petramond_math::math::IVec3;
 use petramond_world::inventory::Hand;
 
@@ -100,7 +99,7 @@ impl Game {
         // samples it, or the rider's camera clamps at the segment end for one
         // frame every tick (a 20 Hz stutter) while the world glides on. The
         // receive half turns it again for batches that arrive already overdue.
-        self.replica_clock.advance(dt);
+        self.entities.advance_clock(dt);
         self.advance_interp_window();
         // Per-frame exceptions kept for local feel: look, hotbar, local player, entity push.
         self.apply_camera_input(input);
@@ -128,7 +127,7 @@ impl Game {
         self.world_tool_input(&mut tool_input);
         let input = &tool_input;
         self.tick_local_mining(dt, input);
-        self.local_attack_recovery = (self.local_attack_recovery - dt).max(0.0);
+        self.hand.recover(dt);
 
         let update = self.build_player_update(input);
         self.build_outgoing_messages(input, update);
@@ -139,16 +138,7 @@ impl Game {
             transform: update.transform,
             on_ground: update.on_ground,
         });
-        let mut lost = false;
-        for msg in self.frame_messages.drain(..) {
-            if lost {
-                continue; // drain the rest; the server is gone
-            }
-            lost = self.handle.send(msg).is_err();
-        }
-        if lost {
-            self.note_connection_lost();
-        }
+        self.net.flush_frame();
     }
 
     /// The frame's OUTPUT half: drain + apply the server's messages, then the
@@ -172,16 +162,14 @@ impl Game {
         // then ease the named-animation blend weights toward the committed
         // target sets (oars pick up / settle instead of snapping).
         self.advance_interp_window();
-        self.replicated_mobs.advance_anim_blends(dt);
 
         // Presentation/infra after fixed simulation; no gameplay mutation here.
         // Remote players' per-frame animation state (shared body pose,
         // held-item easing, animator plays, hurt/eat ramps) advances right after the batches
         // applied, so this frame's latched one-shots jab this frame.
-        let alpha = self.replica_clock.alpha();
-        self.remote_players.advance(dt, alpha, |pos| {
-            super::body_pose::movement_medium(&self.replica, pos)
-        });
+        let replica = &self.replica;
+        self.entities
+            .advance_animation(dt, |pos| super::body_pose::movement_medium(replica, pos));
         let events = std::mem::take(&mut self.pending_events);
         self.deliver_client_mod_events(&events.self_events.client_events);
         self.sync_sleep_camera_on_open(&events.self_events);
@@ -206,13 +194,9 @@ impl Game {
     /// streaming installs land, the channel never backs up, and resume is
     /// instant. Also where a dead server (crash / closed channel) is detected.
     pub fn pump_network(&mut self) {
-        if self.handle.is_crashed() {
-            self.note_connection_lost();
-        }
-        let mut msgs = std::mem::take(&mut self.incoming);
-        self.handle.drain(&mut msgs);
+        let mut msgs = self.net.drain();
         self.apply_server_messages(&mut msgs);
-        self.incoming = msgs; // drained; capacity reused
+        self.net.recycle(msgs);
     }
 
     /// Advance the local mining timer for crack overlay and emit
@@ -273,41 +257,28 @@ impl Game {
         let se = events.self_events;
         // The hand one-shots are fed by the local prediction latches — the
         // server never echoes an action the client already animated. The one
-        // exception is `used_unpredicted`: a consumed click whose shipped
-        // `jabbed` verdict was silent (a mod-consumed use/interact the
-        // replica can't foresee), so folding it in can never play twice.
-        let local_jab = std::mem::take(&mut self.local_hand_jab) || se.used_unpredicted;
-        // Which hand the jab belongs to: the local latch's own verdict, or —
-        // for the echoed unpredicted consumption — the server's acting hand.
-        let local_jab_off = std::mem::take(&mut self.local_hand_jab_off) || se.used_unpredicted_off;
-        // An echoed consumption never presents itself: the server echoes no
-        // such claim, and the client always foresees held food.
-        let local_presents_itself =
-            std::mem::take(&mut self.local_hand_presents_itself) && !se.used_unpredicted;
-        let local_places = std::mem::take(&mut self.local_hand_places) && !se.used_unpredicted;
-        let local_swing = std::mem::take(&mut self.local_hand_swing);
-        let local_threw = std::mem::take(&mut self.local_hand_threw);
-        let local_broke = std::mem::take(&mut self.local_broke_block);
-        let local_placed = std::mem::take(&mut self.local_placed_block);
-        let local_placed_off = std::mem::take(&mut self.local_placed_off_hand);
+        // exception is `used_unpredicted` (see `LocalHand::take_frame`).
+        let hand = self
+            .hand
+            .take_frame(se.used_unpredicted, se.used_unpredicted_off);
         let animator_events = self
             .client_mods
             .take_animator_events(&se.animator_events, dt);
         let mut out = GameEvents {
             animator_events,
-            placed_block: local_placed,
-            placed_off_hand: local_placed_off,
-            broke_block: local_broke,
-            swung_hand: local_swing,
+            placed_block: hand.placed,
+            placed_off_hand: hand.placed_off_hand,
+            broke_block: hand.broke,
+            swung_hand: hand.swung,
             picked_up_item: se.picked_up_item,
-            threw_item: local_threw,
+            threw_item: hand.threw,
             close_document_gui: se.close_document_gui,
             toggled_panel: se.toggled_panel,
             bed_interacted: se.bed_interacted,
-            interacted: local_jab,
-            interacted_off_hand: local_jab && local_jab_off,
-            interacted_presents_itself: local_jab && local_presents_itself,
-            interacted_places: local_jab && local_places,
+            interacted: hand.interacted,
+            interacted_off_hand: hand.interacted_off_hand,
+            interacted_presents_itself: hand.interacted_presents_itself,
+            interacted_places: hand.interacted_places,
             player_damaged: se.player_damaged,
             player_died: se.player_died,
             sleep_ended: se.sleep_ended,
@@ -318,13 +289,7 @@ impl Game {
             world_events: events.world,
             ..Default::default()
         };
-        if !self.connection_lost_reported {
-            if let Some(reason) = &self.connection_lost {
-                log::error!("{reason}; nothing further will be saved");
-                out.connection_lost = Some(reason.clone());
-                self.connection_lost_reported = true;
-            }
-        }
+        out.connection_lost = self.net.take_lost_report();
         match se.open_screen {
             None => {}
             Some(OpenScreen::Gui { kind_key, anchor }) => {
@@ -341,28 +306,10 @@ impl Game {
             }
             Some(OpenScreen::Sleep) => out.open_sleep = true,
         }
-        // The hand one-shots, latched AGAIN for the client-mod frame hook
-        // (`Game::swing_events`): the app's own latch feeds the animators
-        // and drains at render, so a consumer on the update clock needs its
-        // own copy — a shared latch is whoever-eats-first, and the frame
-        // hook always ate second. The first gesture in `one_shots` order
-        // wins a hand; the ranking is cosmetic (the edges share one button,
-        // so they almost never coincide).
-        for (hand, kind) in out.one_shots() {
-            let slot = match hand {
-                Hand::Main => &mut self.swing_events.main,
-                Hand::Off => &mut self.swing_events.off,
-            };
-            if slot.is_none() {
-                *slot = Some(match kind {
-                    OneShot::Swing => mod_api::SwingKind::Attack,
-                    OneShot::Break => mod_api::SwingKind::Break,
-                    OneShot::Place => mod_api::SwingKind::Place,
-                    OneShot::Throw => mod_api::SwingKind::Throw,
-                    OneShot::Interact => mod_api::SwingKind::Interact,
-                });
-            }
-        }
+        // The hand one-shots, latched AGAIN for the client-mod frame hook:
+        // the app's own latch feeds the animators and drains at render, so a
+        // consumer on the update clock needs its own copy.
+        self.hand.latch_swing_events(out.one_shots());
         out
     }
 
@@ -459,7 +406,7 @@ impl Game {
                 block: self.look.map(|h| h.block.to_array()),
                 face: self.look.map(|h| h.normal.to_array()),
                 mob: use_mob,
-                player: mod_api::PlayerId(self.self_id.0),
+                player: mod_api::PlayerId(self.entities.self_id().0),
             };
             // The verdict is NOT a jab: nothing happened to the world, and
             // whoever took the gesture poses the body itself. Predicting a
@@ -484,58 +431,35 @@ impl Game {
         }
     }
 
-    /// Whether the primary button swings the hand THIS frame: a fresh press,
-    /// or one held over from the swing still following through.
-    ///
-    /// A swing plays WHOLE — `local_attack_recovery` mirrors the server's
-    /// attack window, scaled by the same claimed attribute (a pack pacing a
-    /// tool off its own animation claims it to zero and paces the hand
-    /// itself, so its mid-arc press flows straight through to its clock).
-    /// A press landing inside that window is neither spent nor predicted on
-    /// the spot — it is HELD, one deep, and fires by itself the frame the
-    /// hand comes home, exactly as a perfectly timed click would. The server
-    /// holds the press it receives the same way, so a queued swing cannot
-    /// die in the gap between the two clocks.
-    ///
-    /// A mining press swings nothing (that arc is the dig loop's), so it
-    /// neither arms the recovery nor is held by one — packs listen for that
-    /// echo on every press.
+    /// Whether the primary button swings the hand THIS frame (see
+    /// `LocalHand::attack_press`): the body's action bar and the mining level
+    /// gate it, and the follow-through window is the same attribute-scaled
+    /// cooldown the server paces the hand by.
     fn attack_press(&mut self, input: &GameInput) -> bool {
-        if self
+        let denied = self
             .player
             .denied_actions()
-            .denies(mod_api::BodyAction::Attack)
-        {
-            // A denied action did not happen: nothing of it is held over.
-            self.local_attack_queued = false;
-            return false;
-        }
-        if self.self_view.mining.is_some() {
-            return input.attack_clicked;
-        }
-        if self.local_attack_recovery > 0.0 {
-            self.local_attack_queued |= input.attack_clicked;
-            return false;
-        }
-        if !input.attack_clicked && !self.local_attack_queued {
-            return false;
-        }
-        self.local_attack_queued = false;
-        self.local_attack_recovery = petramond::events::tick::TICK_DT
-            * self.player.scaled_ticks(
-                mod_api::PlayerAttribute::AttackCooldown,
-                petramond::server::game::ATTACK_COOLDOWN_TICKS,
-            ) as f32;
-        true
+            .denies(mod_api::BodyAction::Attack);
+        let mining = self.self_view.mining.is_some();
+        let player = &self.player;
+        self.hand
+            .attack_press(denied, mining, input.attack_clicked, || {
+                petramond::events::tick::TICK_DT
+                    * player.scaled_ticks(
+                        mod_api::PlayerAttribute::AttackCooldown,
+                        petramond::rules::combat::ATTACK_COOLDOWN_TICKS,
+                    ) as f32
+            })
     }
 
-    /// Assemble this frame's message batch into `frame_messages`, in
-    /// consumption order: the `PlayerUpdate` first (so the edge-drop rule and
+    /// Assemble this frame's message batch on the `NetLink`, in consumption
+    /// order: the `PlayerUpdate` first (so the edge-drop rule and
     /// slot-dependent actions see this frame's state), then this frame's click
     /// edges (mob targets resolved to STABLE ids now, at click time), then
-    /// everything the app-facing methods queued since the last frame.
+    /// everything the app-facing methods queued since the last frame (the
+    /// flush appends those).
     fn build_outgoing_messages(&mut self, input: &GameInput, update: PlayerUpdate) {
-        debug_assert!(self.frame_messages.is_empty(), "pump drains every frame");
+        debug_assert!(self.net.frame_is_empty(), "pump drains every frame");
         let use_mob = input
             .place_clicked
             .then(|| self.targeted_mob_id())
@@ -549,8 +473,7 @@ impl Game {
         // At most one of mob/player is targeted per frame (refresh_target's
         // nearest-wins pick), so the click carries at most one.
         let attack_player = attacks.then_some(self.targeted_player).flatten();
-        self.frame_messages
-            .push(ClientToServer::PlayerUpdate(update));
+        self.net.push_frame(ClientToServer::PlayerUpdate(update));
         if input.gameplay_enabled {
             // A barred body sends no click, runs no prediction and plays no
             // jab: the server would spend the press for nothing, so predicting
@@ -569,12 +492,14 @@ impl Game {
                     PlacePrediction::Predicted(id) | PlacePrediction::TrackOnly(id) => Some(id),
                     _ => None,
                 };
-                self.local_hand_jab = verdict.consumed;
-                self.local_hand_jab_off = verdict.consumed && verdict.off_hand;
-                self.local_hand_presents_itself = verdict.presents_itself;
-                self.local_hand_places = verdict.places;
-                self.frame_messages
-                    .push(ClientToServer::Action(PlayerAction::UseClick {
+                self.hand.latch_use(super::local_hand::UseJab {
+                    consumed: verdict.consumed,
+                    off_hand: verdict.off_hand,
+                    presents_itself: verdict.presents_itself,
+                    places: verdict.places,
+                });
+                self.net
+                    .push_frame(ClientToServer::Action(PlayerAction::UseClick {
                         mob: use_mob,
                         target,
                         request_id,
@@ -586,16 +511,15 @@ impl Game {
             // action is allowed to leave behind ([`Self::attack_press`] reads
             // the same denial).
             if attacks {
-                self.local_hand_swing = true;
-                self.frame_messages
-                    .push(ClientToServer::Action(PlayerAction::AttackClick {
+                self.hand.latch_swing();
+                self.net
+                    .push_frame(ClientToServer::Action(PlayerAction::AttackClick {
                         mob: attack_mob,
                         player: attack_player,
                     }));
             }
         }
         self.poll_schematic_share();
-        self.frame_messages.append(&mut self.outbox);
     }
 
     /// Adopt a `SelfState::transform` correction: the server's ticks moved

@@ -7,12 +7,15 @@
 //! transitions, world I/O). A screen routes through here exactly when
 //! [`App::doc_ui_kind`] maps it and its document loads.
 //!
-//! Runs from [`App::update`], never from render — controllers mutate
-//! app-shell state, and presentation only hands the already-built draw list
-//! to the renderer.
+//! Controllers never see the `App`: each hook gets a [`ScreenCtx`] holding
+//! only the shell state, the options, the screen's document runtime and a
+//! read-only view of the session, and queues [`ShellCommand`]s for anything
+//! app-level (transitions, sessions, applying options), which the App runs
+//! after the frame. Runs from [`App::update`], never from render.
 
 mod connect_server;
 mod connection_lost;
+mod context;
 mod create_world;
 mod death;
 mod delete_world;
@@ -28,7 +31,9 @@ mod title;
 mod world_select;
 mod world_settings;
 
-use super::{App, AppScreen};
+pub(in crate::app) use context::{ScreenCtx, SessionFacts, ShellCommand};
+
+use super::App;
 use petramond_ui::{UiEvent, UiState, UiValue};
 use petramond_world::gui_state::GuiKind;
 use petramond_world::sound_registry::Sound;
@@ -37,19 +42,21 @@ use petramond_world::sound_registry::Sound;
 const MENU_DIM: [f32; 4] = [0.0, 0.0, 0.0, 0.6];
 
 /// One document-backed shell screen, named once: how to bind its state, how
-/// to dispatch its events, and what dims the world behind it.
+/// to dispatch its events, and what dims the world behind it. Every hook
+/// sees only the [`ScreenCtx`] — the shell's state, the options, the
+/// screen's document and a view of the session — never the App.
 struct ShellController {
     /// Bespoke per-frame prep before binding (worker polls, extra images).
-    /// Returning false means the prep switched screens — skip the frame
-    /// rather than draw the stale document.
-    prepare: Option<fn(&mut App) -> bool>,
-    populate: fn(&App, &mut UiState),
-    handle: fn(&mut App, UiEvent),
-    dim: fn(&App) -> Option<[f32; 4]>,
+    /// Returning false means the prep requested a screen switch — skip the
+    /// frame rather than draw the stale document.
+    prepare: Option<fn(&mut ScreenCtx) -> bool>,
+    populate: fn(&ScreenCtx, &mut UiState),
+    handle: fn(&mut ScreenCtx, UiEvent),
+    dim: fn(&ScreenCtx) -> Option<[f32; 4]>,
 }
 
 impl ShellController {
-    fn screen(populate: fn(&App, &mut UiState), handle: fn(&mut App, UiEvent)) -> Self {
+    fn screen(populate: fn(&ScreenCtx, &mut UiState), handle: fn(&mut ScreenCtx, UiEvent)) -> Self {
         ShellController {
             prepare: None,
             populate,
@@ -58,12 +65,12 @@ impl ShellController {
         }
     }
 
-    fn with_prepare(mut self, prepare: fn(&mut App) -> bool) -> Self {
+    fn with_prepare(mut self, prepare: fn(&mut ScreenCtx) -> bool) -> Self {
         self.prepare = Some(prepare);
         self
     }
 
-    fn with_dim(mut self, dim: fn(&App) -> Option<[f32; 4]>) -> Self {
+    fn with_dim(mut self, dim: fn(&ScreenCtx) -> Option<[f32; 4]>) -> Self {
         self.dim = dim;
         self
     }
@@ -71,32 +78,45 @@ impl ShellController {
 
 /// Options screens over a paused/running game dim like the pause menu; from
 /// the title flow the document's own backdrop shows.
-fn options_dim(app: &App) -> Option<[f32; 4]> {
-    app.game.is_some().then_some(MENU_DIM)
+fn options_dim(ctx: &ScreenCtx) -> Option<[f32; 4]> {
+    ctx.session.in_game.then_some(MENU_DIM)
 }
 
 /// Shared prepare for the screens whose Mods tab shows per-pack icons.
-fn pack_icon_prepare(app: &mut App) -> bool {
+fn pack_icon_prepare(ctx: &mut ScreenCtx) -> bool {
     let icons = mods_tab::extra_images();
-    app.ui.set_extra_images(&icons);
+    ctx.ui.set_extra_images(&icons);
     true
 }
 
 /// Shared options-family chrome: the title flow shows the document's
 /// screenshot backdrop; over a live game the host dim does the work instead.
-fn populate_options_chrome(app: &App, state: &mut UiState) {
-    state.set("show_backdrop", UiValue::Bool(app.game.is_none()));
+fn populate_options_chrome(ctx: &ScreenCtx, state: &mut UiState) {
+    state.set("show_backdrop", UiValue::Bool(!ctx.session.in_game));
 }
 
 /// Shared Back handling for the options CATEGORY screens (Sound / Controls /
 /// Graphics): Back returns to the Options root through the same path ESC
 /// takes. Returns true when the event was consumed.
-fn options_category_back(app: &mut App, ev: &UiEvent) -> bool {
+fn options_category_back(ctx: &mut ScreenCtx, ev: &UiEvent) -> bool {
     if matches!(ev, UiEvent::Click { id, .. } if id.as_str() == "back") {
-        app.close_options_category();
+        ctx.request(ShellCommand::CloseOptionsCategory);
         return true;
     }
     false
+}
+
+/// The Connect screen's prep: consume the connect worker's outcomes BEFORE
+/// binding. A join or a mod refusal switches screens — skip the rest of this
+/// frame rather than draw the stale connect UI.
+fn connect_prepare(ctx: &mut ScreenCtx) -> bool {
+    match ctx.shell.connect.poll() {
+        Some(event) => {
+            ctx.request(crate::app::connect::connect_event_command(event));
+            false
+        }
+        None => true,
+    }
 }
 
 fn controller_for(kind: GuiKind) -> ShellController {
@@ -104,7 +124,7 @@ fn controller_for(kind: GuiKind) -> ShellController {
     match kind {
         GuiKind::Demo => C::screen(
             |_, state| super::ui_runtime::demo::populate(state),
-            |app, ev| super::ui_runtime::demo::apply_one(app.ui.state_mut(), &ev),
+            |ctx, ev| super::ui_runtime::demo::apply_one(ctx.ui.state_mut(), &ev),
         ),
         GuiKind::Title => C::screen(title::populate, title::handle),
         GuiKind::WorldSelect => C::screen(world_select::populate, world_select::handle),
@@ -115,13 +135,7 @@ fn controller_for(kind: GuiKind) -> ShellController {
         }
         GuiKind::DeleteWorld => C::screen(delete_world::populate, delete_world::handle),
         GuiKind::ConnectServer => C::screen(connect_server::populate, connect_server::handle)
-            .with_prepare(|app| {
-                // Consume the connect worker's outcomes BEFORE binding. A
-                // terminal outcome switches screens — skip the rest of this
-                // frame rather than draw the stale connect UI.
-                app.poll_connect_worker();
-                matches!(app.screen, AppScreen::ConnectServer)
-            }),
+            .with_prepare(connect_prepare),
         GuiKind::ModsMissing => C::screen(mods_missing::populate, mods_missing::handle),
         GuiKind::ConnectionLost => C::screen(connection_lost::populate, connection_lost::handle),
         GuiKind::Options => C::screen(options::populate, options::handle).with_dim(options_dim),
@@ -136,12 +150,8 @@ fn controller_for(kind: GuiKind) -> ShellController {
         }
         GuiKind::Pause => C::screen(pause::populate, pause::handle).with_dim(|_| Some(MENU_DIM)),
         // The tick-driven darkening fade behind the sleep overlay.
-        GuiKind::Sleep => C::screen(sleep::populate, sleep::handle).with_dim(|app| {
-            let progress = app
-                .game
-                .as_ref()
-                .and_then(|g| g.sleep_progress01())
-                .unwrap_or(1.0);
+        GuiKind::Sleep => C::screen(sleep::populate, sleep::handle).with_dim(|ctx| {
+            let progress = ctx.session.sleep_progress.unwrap_or(1.0);
             Some([0.0, 0.0, 0.0, 0.25 + 0.75 * progress])
         }),
         GuiKind::Death => {
@@ -162,13 +172,6 @@ pub(in crate::app) fn controls_action_row_index(
     options_controls::row_entries(table)
         .iter()
         .position(|e| matches!(e, options_controls::RowEntry::Action(id) if id == action_id))
-}
-
-/// Split-borrow helper: controllers read `&App` while writing the UI state.
-fn with_state(app: &mut App, f: impl FnOnce(&App, &mut UiState)) {
-    let mut state = std::mem::take(app.ui.state_mut());
-    f(app, &mut state);
-    *app.ui.state_mut() = state;
 }
 
 /// The widget id a GAME-MENU event activates — the one lane that reaches a
@@ -240,22 +243,78 @@ impl App {
     pub(super) fn drive_doc_ui(&mut self, kind: GuiKind, screen: (u32, u32), now: f64) {
         self.ui.ensure_active(kind);
         let ctl = controller_for(kind);
-        if let Some(prepare) = ctl.prepare {
-            if !prepare(self) {
-                return;
+        let session = SessionFacts {
+            in_game: self.game.is_some(),
+            is_remote: self.game.as_ref().is_some_and(|g| g.is_remote()),
+            lan_port: self.session_ui.lan_port,
+            lan_error: self.session_ui.lan_error.as_deref(),
+            sleep_counts: self
+                .game
+                .as_ref()
+                .map(|g| g.sleeping_player_counts())
+                .unwrap_or((0, 1)),
+            sleep_progress: self.game.as_ref().and_then(|g| g.sleep_progress01()),
+        };
+        let mut ctx = ScreenCtx::new(
+            &mut self.shell,
+            &mut self.options,
+            &self.controls.action_table,
+            &mut self.ui,
+            session,
+        );
+        let proceed = ctl.prepare.is_none_or(|prepare| prepare(&mut ctx));
+        if proceed {
+            let mut state = std::mem::take(ctx.ui.state_mut());
+            (ctl.populate)(&ctx, &mut state);
+            *ctx.ui.state_mut() = state;
+            let dim = (ctl.dim)(&ctx);
+            ctx.ui.frame(kind, screen, now, dim);
+            for ev in ctx.ui.take_events() {
+                if is_secondary_activation(&ev) {
+                    continue;
+                }
+                if is_widget_activation(&ev) {
+                    self.sound.play(Sound::UiClick);
+                }
+                (ctl.handle)(&mut ctx, ev);
             }
         }
-        with_state(self, ctl.populate);
-        let dim = (ctl.dim)(self);
-        self.ui.frame(kind, screen, now, dim);
-        for ev in self.ui.take_events() {
-            if is_secondary_activation(&ev) {
-                continue;
+        for command in ctx.into_commands() {
+            self.run_shell_command(command);
+        }
+    }
+
+    /// Carry out one app-level request a shell screen queued.
+    pub(super) fn run_shell_command(&mut self, command: ShellCommand) {
+        match command {
+            ShellCommand::Goto(screen) => {
+                self.screen = screen;
+                self.controls.pointer.release_for_menu();
             }
-            if is_widget_activation(&ev) {
-                self.audio.play(Sound::UiClick);
+            ShellCommand::SwitchTo(screen) => self.screen = screen,
+            ShellCommand::Quit => self.quit_requested = true,
+            ShellCommand::PlaySelectedWorld => self.play_selected_world(),
+            ShellCommand::StartGame { dir_name, seed } => self.start_game(&dir_name, seed),
+            ShellCommand::OpenConnectServer => self.open_connect_server(),
+            ShellCommand::ReopenConnectServer => self.reopen_connect_server(),
+            ShellCommand::BeginConnect => self.begin_connect(),
+            ShellCommand::AdoptRemote(join, handle) => self.start_remote_game(*join, handle),
+            ShellCommand::OpenOptions { from_pause } => self.open_options(from_pause),
+            ShellCommand::CloseOptionsRoot => self.close_options_root(),
+            ShellCommand::CloseOptionsCategory => self.close_options_category(),
+            ShellCommand::ResumeGame => self.resume_game(),
+            ShellCommand::OpenLan => self.open_lan(),
+            ShellCommand::DisconnectToTitle => self.disconnect_to_title(),
+            ShellCommand::SaveAndQuitToTitle => self.save_and_quit_to_title(),
+            ShellCommand::CancelSleep => self.cancel_sleep(),
+            ShellCommand::Respawn => {
+                if let Some(game) = self.game.as_mut() {
+                    game.request_respawn();
+                }
             }
-            (ctl.handle)(self, ev);
+            ShellCommand::ApplyVolumes => self.apply_volumes(),
+            ShellCommand::ApplyParticles => self.apply_particles(),
+            ShellCommand::ApplyViewDistance(chunks) => self.apply_view_distance(chunks),
         }
     }
 
@@ -306,10 +365,10 @@ impl App {
             );
         }
         self.ui.frame(kind, screen, now, Some([0.0, 0.0, 0.0, 0.6]));
-        let modifier_shift = self.modifiers.shift;
+        let modifier_shift = self.controls.modifiers.shift;
         for ev in self.ui.take_events() {
             if is_widget_activation(&ev) && !is_secondary_activation(&ev) {
-                self.audio.play(Sound::UiClick);
+                self.sound.play(Sound::UiClick);
             }
             let handled_crafting = if crafting_station.is_some() {
                 self.game

@@ -27,7 +27,7 @@ fn redo_chord_replays_selection_once_and_respects_menu_and_wand_routing() {
     let game = app.game.as_mut().unwrap();
     game.set_active_hotbar(slot as u8);
     for x in 0..3 {
-        game.world_tools
+        game.tools.world
             .selection
             .selection
             .region([x, 0, 0], [x, 0, 0], false)
@@ -35,10 +35,10 @@ fn redo_chord_replays_selection_once_and_respects_menu_and_wand_routing() {
     }
     shortcut(&mut app, false);
     shortcut(&mut app, false);
-    assert_eq!(app.game().world_tools.selection.selection.len(), 1);
+    assert_eq!(app.game().tools.world.selection.selection.len(), 1);
     shortcut(&mut app, true);
     assert_eq!(
-        app.game().world_tools.selection.selection.len(),
+        app.game().tools.world.selection.selection.len(),
         2,
         "redo beats undo and ignores key repeat"
     );
@@ -46,26 +46,26 @@ fn redo_chord_replays_selection_once_and_respects_menu_and_wand_routing() {
     app.handle_control(Control::ToggleInventory, false);
     shortcut(&mut app, true);
     assert_eq!(
-        app.game().world_tools.selection.selection.len(),
+        app.game().tools.world.selection.selection.len(),
         2,
         "menus consume gameplay shortcuts"
     );
     app.close_screen();
     shortcut(&mut app, true);
-    assert_eq!(app.game().world_tools.selection.selection.len(), 3);
+    assert_eq!(app.game().tools.world.selection.selection.len(), 3);
 
     app.game
         .as_mut()
         .unwrap()
-        .world_tools
+        .tools.world
         .selection
         .set_pending_corner([5; 3]);
     shortcut(&mut app, false);
-    assert!(!app.game().world_tools.selection.has_pending_corner());
-    assert_eq!(app.game().world_tools.selection.selection.len(), 3);
+    assert!(!app.game().tools.world.selection.has_pending_corner());
+    assert_eq!(app.game().tools.world.selection.selection.len(), 3);
     shortcut(&mut app, true);
     assert!(
-        !app.game().world_tools.selection.has_pending_corner(),
+        !app.game().tools.world.selection.has_pending_corner(),
         "unfinished corners are cancellation, not edits"
     );
 
@@ -73,7 +73,7 @@ fn redo_chord_replays_selection_once_and_respects_menu_and_wand_routing() {
         let game = app.game.as_mut().unwrap();
         game.set_active_hotbar(if preview { slot as u8 } else { 0 });
         if preview {
-            game.schematic_preview
+            game.tools.preview
                 .begin_paste(std::sync::Arc::new(schematic_fixture()));
         }
         game.take_outbox_for_test();

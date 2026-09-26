@@ -27,7 +27,7 @@ fn menu_click_deny_restores_inventory_snapshot() {
     );
 
     let id = 0;
-    let (rollbacks, _) =
+    let rollbacks =
         game.prediction
             .reconcile(&[petramond::net::protocol::ActionOutcome::deny(
                 id,
@@ -1175,7 +1175,7 @@ fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
         ),
         "local BlockPlaced must queue for sound this frame"
     );
-    assert_eq!(game.game.local_placed_block, Some(Block::Dirt));
+    assert_eq!(game.game.hand.placed(), Some(Block::Dirt));
 }
 
 /// An interactive block (chest, crafting table, furnace…) clicked without
@@ -1317,7 +1317,7 @@ fn optimistic_stair_place_records_orientation_immediately() {
         .stair_state(0, 0, 0);
     let expected_state = |g: &crate::game::Game| {
         petramond_world::block_state::StairState::new(
-            petramond::server::placement::facing_from_forward(g.player.forward()),
+            petramond::rules::placement::facing_from_forward(g.player.forward()),
             petramond_world::block_state::StairHalf::Bottom,
         )
     };
@@ -1371,7 +1371,7 @@ fn optimistic_chest_place_records_front_facing_immediately() {
         .expect("floor section")
         .entity_facing(0, 0, 0);
     let facing_of = |g: &crate::game::Game| {
-        petramond::server::placement::facing_from_forward(g.player.forward())
+        petramond::rules::placement::facing_from_forward(g.player.forward())
     };
     if facing_of(&game.game) == default_facing {
         game.game.player.yaw += std::f32::consts::PI;
@@ -1452,7 +1452,7 @@ fn slab_stack_click_is_not_predicted() {
     // server-side, off the ghost convention (`target + normal`), so the
     // request denies by design — the client must not ghost a slab above.
     let cell = IVec3::new(8, 64, 8);
-    let facing = petramond::server::placement::facing_from_forward(game.game.player.forward());
+    let facing = petramond::rules::placement::facing_from_forward(game.game.player.forward());
     let slot = petramond_world::slab::slot_for_rotation(Default::default(), IVec3::Y, facing);
     assert!(game
         .game
@@ -1503,7 +1503,7 @@ fn optimistic_break_clears_replica_and_queues_world_event() {
         ),
         "local BlockBroken must queue for sound/burst this frame"
     );
-    assert_eq!(game.game.local_broke_block, Some(Block::Poppy));
+    assert_eq!(game.game.hand.broke(), Some(Block::Poppy));
 }
 
 #[test]

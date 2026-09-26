@@ -11,6 +11,7 @@ pub mod address;
 pub mod blob;
 pub mod connection;
 pub mod framing;
+pub mod handle;
 pub mod handshake;
 pub mod identity;
 pub mod protocol;

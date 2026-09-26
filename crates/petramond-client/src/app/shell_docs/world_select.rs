@@ -2,13 +2,15 @@
 //! create a new one, open per-world settings (Delete key follows the button),
 //! back to title.
 
-use crate::app::{App, AppScreen};
+use super::{ScreenCtx, ShellCommand};
+use crate::app::AppScreen;
 use petramond_ui::{NavKey, UiEvent, UiMap, UiState, UiValue};
 use std::sync::Arc;
 
-pub(super) fn populate(app: &App, state: &mut UiState) {
-    let rows: Vec<UiMap> = app
-        .worlds
+pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
+    let rows: Vec<UiMap> = ctx
+        .shell
+        .worlds()
         .iter()
         .map(|w| {
             let mut m = UiMap::new();
@@ -25,51 +27,50 @@ pub(super) fn populate(app: &App, state: &mut UiState) {
     state.set("worlds", UiValue::List(Arc::new(rows)));
     state.set(
         "world_sel",
-        UiValue::I32(app.selected_world.map(|i| i as i32).unwrap_or(-1)),
+        UiValue::I32(ctx.shell.selected_world().map(|i| i as i32).unwrap_or(-1)),
     );
     state.set(
         "has_selection",
-        UiValue::Bool(app.selected_world.is_some_and(|i| i < app.worlds.len())),
+        UiValue::Bool(ctx.shell.selected_world_info().is_some()),
     );
 }
 
-pub(super) fn handle(app: &mut App, ev: UiEvent) {
+pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
     match ev {
         UiEvent::ListSelect { id, index } if id == "worlds" => {
-            app.selected_world = Some(index as usize);
+            ctx.shell.select_world(Some(index as usize));
         }
         UiEvent::ListActivate { id, index } if id == "worlds" => {
-            app.selected_world = Some(index as usize);
-            app.play_selected_world();
+            ctx.shell.select_world(Some(index as usize));
+            ctx.request(ShellCommand::PlaySelectedWorld);
         }
         UiEvent::Click { id, .. } => match id.as_str() {
-            "play" => app.play_selected_world(),
-            "create" => app.open_create_world(),
-            "settings" => app.open_world_settings(),
-            "back" => {
-                app.screen = AppScreen::Title;
-                app.pointer.release_for_menu();
-            }
+            "play" => ctx.request(ShellCommand::PlaySelectedWorld),
+            "create" => open_create_world(ctx),
+            "settings" => open_world_settings(ctx),
+            "back" => ctx.goto(AppScreen::Title),
             _ => {}
         },
         UiEvent::Key { key, .. } => match key {
-            NavKey::Enter => app.play_selected_world(),
-            NavKey::Delete => app.open_world_settings(),
-            NavKey::Up => move_selection(app, -1),
-            NavKey::Down => move_selection(app, 1),
+            NavKey::Enter => ctx.request(ShellCommand::PlaySelectedWorld),
+            NavKey::Delete => open_world_settings(ctx),
+            NavKey::Up => ctx.shell.move_world_selection(-1),
+            NavKey::Down => ctx.shell.move_world_selection(1),
             _ => {}
         },
         _ => {}
     }
 }
 
-fn move_selection(app: &mut App, step: i32) {
-    if app.worlds.is_empty() {
-        return;
+/// Open the Create World page with a fresh session (all mods enabled).
+fn open_create_world(ctx: &mut ScreenCtx) {
+    ctx.shell.open_create_world();
+    ctx.goto(AppScreen::CreateWorld);
+}
+
+/// Open the World Settings page for the selected world, if any.
+fn open_world_settings(ctx: &mut ScreenCtx) {
+    if ctx.shell.open_world_settings() {
+        ctx.goto(AppScreen::WorldSettings);
     }
-    let next = match app.selected_world {
-        Some(i) => (i as i32 + step).clamp(0, app.worlds.len() as i32 - 1) as usize,
-        None => 0,
-    };
-    app.selected_world = Some(next);
 }

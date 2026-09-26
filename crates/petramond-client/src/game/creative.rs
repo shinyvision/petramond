@@ -60,14 +60,12 @@ impl Game {
     }
 
     pub fn toggle_creative_mode(&mut self) {
-        self.outbox
-            .push(ClientToServer::Action(PlayerAction::ToggleCreative));
+        self.net.queue(ClientToServer::Action(PlayerAction::ToggleCreative));
     }
 
     pub fn jump_pressed(&mut self, now: f64) {
         if self.player.is_creative() && self.flight_toggle.press(now) {
-            self.outbox
-                .push(ClientToServer::Action(PlayerAction::ToggleFlight));
+            self.net.queue(ClientToServer::Action(PlayerAction::ToggleFlight));
         }
     }
 
@@ -90,14 +88,13 @@ impl Game {
     }
 
     fn send_creative(&mut self, action: CreativeAction) {
-        self.outbox
-            .push(ClientToServer::Action(PlayerAction::Creative(action)));
+        self.net.queue(ClientToServer::Action(PlayerAction::Creative(action)));
     }
 
     /// Ask the server to capture the selection as `name`; the cells come
     /// back as a blob and are saved to the library.
     pub fn save_selection(&mut self, name: &str, include_air: bool) {
-        let selection = &self.world_tools.selection.selection;
+        let selection = &self.tools.world.selection.selection;
         if selection.is_empty() {
             self.notice = "Select blocks first".into();
             return;
@@ -116,7 +113,7 @@ impl Game {
     }
 
     pub fn clear_selection(&mut self) {
-        self.world_tools.selection.clear();
+        self.tools.world.selection.clear();
         self.notice.clear();
     }
 
@@ -130,7 +127,7 @@ impl Game {
     }
 
     pub(crate) fn schematic_captured(&mut self, schematic: Arc<Schematic>) {
-        self.schematic_library.queue_save(schematic);
+        self.tools.library.queue_save(schematic);
         self.notice.clear();
     }
 }

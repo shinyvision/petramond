@@ -391,7 +391,7 @@ impl World {
                 player_inputs: Vec::new(),
                 player_roster: Vec::new(),
                 keep_inventory: false,
-                day_cycle_ticks: crate::server::daynight::DEFAULT_CYCLE_TICKS,
+                day_cycle_ticks: crate::rules::daynight::DEFAULT_CYCLE_TICKS,
             },
             draw_stream: DrawStreamState {
                 block_draws: FxHashMap::default(),

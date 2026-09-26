@@ -264,8 +264,8 @@ fn a_pending_prediction_declines_parking_and_heals_by_cache_miss() {
     // the guard is the backstop). The server still believes they parked.
     for cy in -4..16 {
         game.game
-            .predicted_presentation_cells
-            .insert(IVec3::new(8, cy * 16 + 8, 8));
+            .prediction
+            .mark_presented(IVec3::new(8, cy * 16 + 8, 8));
     }
     let unloads = leave(&mut game);
     let vouched: Vec<SectionPos> = unloads
@@ -290,7 +290,7 @@ fn a_pending_prediction_declines_parking_and_heals_by_cache_miss() {
             "a section with pending predictions never parks ({sp:?})"
         );
     }
-    game.game.predicted_presentation_cells.clear();
+    game.game.prediction.clear_presented_for_test();
 
     let msgs = return_home(&mut game);
     let healed = vouched.iter().any(|sp| {

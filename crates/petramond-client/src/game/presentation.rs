@@ -202,7 +202,7 @@ impl GamePresentationScratch {
         // Light is client-sampled at the item's cell, from the REPLICA world.
         let world = &game.replica;
         self.item_entities
-            .extend(game.replicated_items.iter().map(|entry| {
+            .extend(game.entities.items().iter().map(|entry| {
                 let c = entry.curr.pos.block();
                 DroppedItemPresentation {
                     prev_pos: entry.prev.pos,
@@ -292,7 +292,7 @@ impl GamePresentationScratch {
     /// framed at each body's interpolated feet instead of a cell.
     fn collect_mob_draws(&mut self, game: &Game, tick_alpha: f32, view: &ViewVolume) {
         let world = &game.replica;
-        for entry in game.replicated_mobs.iter() {
+        for entry in game.entities.mobs().iter() {
             let Some(set) = &entry.draw else { continue };
             let Some((lo, hi)) = set.bounds else { continue };
             if entry.curr.dead {
@@ -347,7 +347,7 @@ impl GamePresentationScratch {
         // Light is client-sampled at the mob's body cell (the sim's sampling
         // point), from the REPLICA world.
         let world = &game.replica;
-        self.mobs.extend(game.replicated_mobs.iter().map(|entry| {
+        self.mobs.extend(game.entities.mobs().iter().map(|entry| {
             let (prev, curr) = (&entry.prev, &entry.curr);
             let c = lit_cell(world, (curr.pos + Vec3::new(0.0, 0.3, 0.0)).block());
             let emitters = body_emitters(&curr.emitters, &curr.conditions);
@@ -455,11 +455,11 @@ impl GamePresentationScratch {
                 p.on_ground
                     && speed >= MIN_FOOTSTEP_SPEED
                     && !game.predicted_input.sneak
-                    && game.self_mount.is_none(),
+                    && game.entities.own_mount().is_none(),
             ),
             sprinting: speed >= SPRINT_FOOTSTEP_SPEED,
         });
-        for (id, rp) in game.remote_players.iter_with_ids() {
+        for (id, rp) in game.entities.players().iter_with_ids() {
             if !rp.curr.visible {
                 continue;
             }
@@ -477,7 +477,7 @@ impl GamePresentationScratch {
                 sprinting: speed >= SPRINT_FOOTSTEP_SPEED,
             });
         }
-        for entry in game.replicated_mobs.iter() {
+        for entry in game.entities.mobs().iter() {
             let (prev, curr) = (&entry.prev, &entry.curr);
             if curr.dead || !petramond::mob::def(Mob(curr.kind_id)).footsteps {
                 continue;
@@ -502,7 +502,7 @@ impl GamePresentationScratch {
     fn collect_remote_players(&mut self, game: &Game, tick_alpha: f32, view: &ViewVolume) {
         self.remote_players.clear();
         let world = &game.replica;
-        for p in game.remote_players.iter() {
+        for p in game.entities.players().iter() {
             // Spectators and the dead ship rows (flags/actions keep flowing)
             // but draw no body.
             if !p.curr.visible {
@@ -523,7 +523,7 @@ impl GamePresentationScratch {
             if let Some(mount) = p
                 .curr
                 .mount
-                .and_then(|mount| game.replicated_mobs.mount_pose(mount, tick_alpha))
+                .and_then(|mount| game.entities.mobs().mount_pose(mount, tick_alpha))
             {
                 pos = mount.seat;
                 body_yaw = mount.body_yaw;
@@ -606,7 +606,7 @@ impl GamePresentationScratch {
             self.break_overlays
                 .push(break_overlay_at(game, block, stage));
         }
-        for p in game.remote_players.iter() {
+        for p in game.entities.players().iter() {
             if !p.curr.visible {
                 continue;
             }
@@ -615,7 +615,7 @@ impl GamePresentationScratch {
                     .push(break_overlay_at(game, block, stage));
             }
         }
-        for mob in game.replicated_mobs.iter() {
+        for mob in game.entities.mobs().iter() {
             if let Some((block, stage)) = mob.curr.dig {
                 self.break_overlays
                     .push(break_overlay_at(game, block, stage));
@@ -775,7 +775,7 @@ fn collect_player(
     let (skylight, blocklight) = game.held_item_light();
     // The body shares the first-person camera's auto-step vertical easing (a
     // negative, settling lag) so stepping up a ledge glides instead of popping.
-    let mut pos = game.player.pos + Vec3::new(0.0, game.camera_step_y_offset, 0.0);
+    let mut pos = game.player.pos + Vec3::new(0.0, game.camera_rig.step_y_offset(), 0.0);
     // Sleep state reads the replicated self view (the sim's SleepState stays
     // server-side).
     let sleeping = game.self_view.sleeping.is_some();
@@ -790,7 +790,7 @@ fn collect_player(
     // is the mount's facing, never the look-follow (which would spin the
     // whole body, legs through the hull); only the head follows the look,
     // clamped.
-    let seated = game.self_mount.is_some_and(mount_renders_seated);
+    let seated = game.entities.own_mount().is_some_and(mount_renders_seated);
     let mount = game.self_mount_pose();
     let body_yaw = local_body_yaw(game);
     let head_yaw = match mount {

@@ -123,7 +123,7 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
     // or the break delta cancelled its mining). The initiator MUST receive
     // BlockBroken; stripping it here was the silent-break bug. A predicted
     // finish merely in flight presents once regardless: the client's own
-    // suppress belt (`predicted_presentation_cells`) drops the wire copy.
+    // suppress belt (`PredictionLedger::mark_presented`) drops the wire copy.
     game.server.sessions[0].look = Some(super::common::hit(placed_at, IVec3::Y));
     game.server.sessions[0].intent_gameplay = true;
     game.server.sessions[0].intent_break_held = true;
@@ -184,7 +184,7 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
     );
 }
 
-/// The client-side suppress belt (`predicted_presentation_cells`): with the
+/// The client-side suppress belt (`PredictionLedger::mark_presented`): with the
 /// hold-path no longer stripping on assumption (a never-presented break must
 /// flow — the test above), this belt is what keeps a predicted finish whose
 /// request is still IN FLIGHT from presenting twice. A wire `BlockBroken`
@@ -199,7 +199,7 @@ fn wire_break_for_a_presented_cell_is_suppressed_while_its_request_is_pending() 
     let mut game = game();
     let presented = IVec3::new(8, 64, 8);
     let other = IVec3::new(3, 64, 3);
-    game.game.predicted_presentation_cells.insert(presented);
+    game.game.prediction.mark_presented(presented);
 
     let update = TickUpdate {
         events: vec![

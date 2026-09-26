@@ -127,7 +127,7 @@ fn drawable(data: &CellData) -> Option<(Record, ResolvedCell)> {
 impl Game {
     /// Mark the pieces holding any of `cells` for re-measurement.
     pub(super) fn note_ghost_changes(&mut self, cells: impl Iterator<Item = IVec3> + Clone) {
-        for index in self.ghosts.index.values_mut() {
+        for index in self.tools.ghosts.index.values_mut() {
             let origin = IVec3::from_array(index.placement.origin);
             let size = IVec3::from_array(index.size);
             for pos in cells.clone() {
@@ -150,21 +150,21 @@ impl Game {
         self.sync_ghost_index();
         let reach = (view_chunks.max(1) * 16) as f32;
         let camera = self.cam.pos;
-        let sweep = now - self.ghosts.last_sweep >= SWEEP_SECONDS;
+        let sweep = now - self.tools.ghosts.last_sweep >= SWEEP_SECONDS;
         if sweep {
-            self.ghosts.last_sweep = now;
+            self.tools.ghosts.last_sweep = now;
         }
         let mut out = Vec::new();
-        let keys: Vec<String> = self.ghosts.index.keys().cloned().collect();
+        let keys: Vec<String> = self.tools.ghosts.index.keys().cloned().collect();
         for key in keys {
-            let positioned = self.schematic_preview.positioning_tag();
-            if self.ghosts.index[&key].placement.yields_to_positioning
+            let positioned = self.tools.preview.positioning_tag();
+            if self.tools.ghosts.index[&key].placement.yields_to_positioning
                 && positioned == Some(key.as_str())
             {
                 continue;
             }
             let near: Vec<[i32; 3]> = {
-                let index = &self.ghosts.index[&key];
+                let index = &self.tools.ghosts.index[&key];
                 let origin = IVec3::from_array(index.placement.origin);
                 index
                     .pieces
@@ -179,15 +179,15 @@ impl Game {
                     .collect()
             };
             if sweep {
-                let index = self.ghosts.index.get_mut(&key).unwrap();
+                let index = self.tools.ghosts.index.get_mut(&key).unwrap();
                 index.dirty.extend(near.iter().copied());
             }
             for piece in &near {
-                if self.ghosts.index[&key].dirty.contains(piece) {
+                if self.tools.ghosts.index[&key].dirty.contains(piece) {
                     self.remeasure_piece(&key, *piece);
                 }
             }
-            let index = &self.ghosts.index[&key];
+            let index = &self.tools.ghosts.index[&key];
             for piece in near {
                 if let Some(built) = index.built.get(&piece) {
                     out.push(petramond_render::GhostPiece {
@@ -209,18 +209,18 @@ impl Game {
     }
 
     fn sync_ghost_index(&mut self) {
-        let wanted = &self.schematics.ghosts;
-        self.ghosts
+        let wanted = &self.tools.share.ghosts;
+        self.tools.ghosts
             .index
             .retain(|key, index| wanted.get(key) == Some(&index.placement));
         for (key, placement) in wanted.clone() {
-            if self.ghosts.index.contains_key(&key) {
+            if self.tools.ghosts.index.contains_key(&key) {
                 continue;
             }
             let Some(schematic) = self.schematic_design(&placement.digest).cloned() else {
                 continue;
             };
-            self.ghosts
+            self.tools.ghosts
                 .index
                 .insert(key, Index::new(placement, &schematic));
         }
@@ -229,7 +229,7 @@ impl Game {
     /// Measure one piece against the replica and rebuild its scene if the
     /// cells it shows changed.
     fn remeasure_piece(&mut self, key: &str, piece: [i32; 3]) {
-        let index = self.ghosts.index.get_mut(key).unwrap();
+        let index = self.tools.ghosts.index.get_mut(key).unwrap();
         index.dirty.remove(&piece);
         let origin = IVec3::from_array(index.placement.origin);
         let shows = |index: &Index, cell: &Cell| {
@@ -287,15 +287,15 @@ impl Game {
         let scene = Scene::from_cells(size, cells, |world| {
             self.client_mods.bake_custom_shapes(world)
         });
-        let index = self.ghosts.index.get_mut(key).unwrap();
+        let index = self.tools.ghosts.index.get_mut(key).unwrap();
         match scene {
             Ok(scene) => {
-                self.ghosts.next_revision += 1;
+                self.tools.ghosts.next_revision += 1;
                 index.built.insert(
                     piece,
                     Built {
                         shown,
-                        revision: self.ghosts.next_revision,
+                        revision: self.tools.ghosts.next_revision,
                         scene: Arc::new(scene),
                     },
                 );

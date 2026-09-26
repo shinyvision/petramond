@@ -40,6 +40,9 @@ use petramond_world::item::{ItemStack, ItemType};
 use super::tick::WorldEvent;
 use super::Game;
 
+mod entity_replica;
+pub use entity_replica::{Committed, EntityReplica};
+
 /// One `TickUpdate`'s entity rows, STAGED until render time crosses into
 /// their segment (see [`ReplicaClock`](super::tick::ReplicaClock)): the
 /// committed prev→curr pair under the render never shifts mid-segment, which
@@ -731,17 +734,9 @@ impl Game {
                         // handle right away (never the frame outbox): until
                         // the server re-streams the full payload this pos is
                         // a hole in the world.
-                        None => {
-                            if self
-                                .handle
-                                .send(petramond::net::protocol::ClientToServer::SectionCacheMiss {
-                                    pos,
-                                })
-                                .is_err()
-                            {
-                                self.note_connection_lost();
-                            }
-                        }
+                        None => self.net.send_now(
+                            petramond::net::protocol::ClientToServer::SectionCacheMiss { pos },
+                        ),
                     }
                 }
                 ServerToClient::Tick(update) => self.apply_tick_update(update),
@@ -751,10 +746,10 @@ impl Game {
                 // beats its PlayerJoined — the store refreshes names per
                 // batch).
                 ServerToClient::PlayerJoined { id, name } => {
-                    self.player_roster.insert(id, name);
+                    self.entities.player_joined(id, name);
                 }
                 ServerToClient::PlayerLeft { id } => {
-                    self.player_roster.remove(&id);
+                    self.entities.player_left(id);
                 }
                 ServerToClient::ChatLine(line) => {
                     self.pending_chat_lines.push(line);
@@ -771,21 +766,20 @@ impl Game {
                 // closes it into a measured apply rate and an immediate ack
                 // (both markers apply in THIS same drain loop, so the elapsed
                 // time is the real cost of installing the batch's messages).
-                ServerToClient::StreamBatchStart => {
-                    self.stream_batch_started = Some(std::time::Instant::now());
-                }
+                ServerToClient::StreamBatchStart => self.net.stream_batch_started(),
                 ServerToClient::StreamBatchEnd { count } => {
                     self.replica
                         .finish_remote_install_batch(&self.remote_section_installs);
                     self.remote_section_installs.clear();
-                    self.ack_stream_batch(count);
+                    self.net.stream_batch_ended(count);
                 }
                 ServerToClient::KeepAlive => {}
                 ServerToClient::ServerClosing => {
-                    self.note_connection_lost_because("the server closed");
+                    self.net.note_lost_because("the server closed");
                 }
                 ServerToClient::Disconnect { reason } => {
-                    self.note_connection_lost_because(&format!("disconnected: {reason}"));
+                    self.net
+                        .note_lost_because(&format!("disconnected: {reason}"));
                 }
                 // Handshake messages never reach a joined session.
                 other => {
@@ -813,106 +807,11 @@ impl Game {
     ) {
         let predicted = self
             .prediction
-            .predicted_cells()
-            .chain(self.predicted_presentation_cells.iter().copied())
+            .suppressed_cells()
             .any(|c| petramond_world::chunk::SectionPos::from_world(c.x, c.y, c.z) == Some(pos));
         if !predicted {
             self.section_cache.park(pos, section, hash);
         }
-    }
-
-    /// Close the open batch window into a rate sample and ack it RIGHT AWAY
-    /// through the handle (not the frame outbox: acks must flow even on
-    /// frames that never reach `tick_send`, or the server's window starves).
-    /// The EMA smooths per-batch noise; the server clamps whatever we report.
-    fn ack_stream_batch(&mut self, count: u32) {
-        let Some(started) = self.stream_batch_started.take() else {
-            return; // End without Start: tolerate, nothing to measure
-        };
-        let elapsed = started.elapsed().as_secs_f32().max(1e-4);
-        let sampled = count as f32 / elapsed;
-        let rate = match self.stream_rate_ema {
-            Some(ema) => ema * 0.75 + sampled * 0.25,
-            None => sampled,
-        };
-        self.stream_rate_ema = Some(rate);
-        if self
-            .handle
-            .send(petramond::net::protocol::ClientToServer::StreamBatchAck {
-                messages_per_second: rate,
-            })
-            .is_err()
-        {
-            self.note_connection_lost();
-        }
-    }
-
-    /// Adopt entity rows into the committed stores. Ordinary callers shift
-    /// curr→prev; an overflow resync seeds prev == curr for every entity so a
-    /// dropped backlog cannot become one segment of extreme-speed motion.
-    /// The own row's mount adopts HERE — the local body slaves to the same
-    /// committed pair every observer renders.
-    fn apply_committed_rows(&mut self, staged: StagedRows) {
-        let StagedRows {
-            mobs,
-            items,
-            players,
-            actions,
-            resync,
-        } = staged;
-        let was_mounted = self.self_mount.is_some();
-        // The own row always rides (a session tracks itself); a window that
-        // leaves it out left it unchanged.
-        if let Some(own) = players.iter().find(|row| row.id == self.self_id) {
-            self.self_mount = own.mount;
-        }
-        if resync {
-            self.replicated_mobs.resync(&mobs);
-            self.replicated_items.resync(&items);
-        } else {
-            self.replicated_mobs.apply(&mobs);
-            self.replicated_items.apply(&items);
-        }
-        // A resync's player rows snap rather than interpolate across the
-        // dropped gap.
-        self.remote_players
-            .apply(&players, &actions, self.self_id, resync);
-        if was_mounted && self.self_mount.is_none() {
-            self.predict_dismount_placement();
-        }
-    }
-
-    /// Queue one post-bootstrap row snapshot. Overflow is a declared resync:
-    /// every pending window folds into one (lanes compose, so no spawn or
-    /// despawn is lost and each entity keeps its newest row), and every
-    /// dropped batch's player actions survive in arrival order so one-shot
-    /// animation triggers are not lost.
-    fn stage_rows(&mut self, staged: StagedRows) {
-        let staged = if self.staged_rows.len() >= MAX_STAGED_ROW_BATCHES {
-            let action_count = self
-                .staged_rows
-                .iter()
-                .map(|rows| rows.actions.len())
-                .sum::<usize>()
-                + staged.actions.len();
-            let mut actions = Vec::with_capacity(action_count);
-            let mut pending = self.staged_rows.drain(..).chain(std::iter::once(staged));
-            let mut folded = pending.next().expect("the queue was full");
-            actions.extend(folded.actions.iter().cloned());
-            for rows in pending {
-                actions.extend(rows.actions.iter().cloned());
-                folded.mobs.absorb(rows.mobs);
-                folded.items.absorb(rows.items);
-                folded.players.absorb(rows.players);
-            }
-            folded.actions = actions.into();
-            folded.resync = true;
-            folded
-        } else {
-            staged
-        };
-        self.staged_rows.push_back(staged);
-        debug_assert!(self.staged_rows.len() <= MAX_STAGED_ROW_BATCHES);
     }
 
     /// Mount→None edge: predict the SAME side-of-the-hull landing spot the
@@ -938,21 +837,19 @@ impl Game {
     }
 
     /// Turn the interpolation window when render time crossed the current
-    /// segment: commit queued rows FIFO and consume exactly one crossed segment
-    /// per batch; starved queues hold at the segment end. Outside the first
-    /// bootstrap, this is the ONLY path that shifts committed prev/curr rows.
-    /// Runs each frame right after the batches drained (`tick_receive`), before
-    /// presentation samples `tick_alpha`.
+    /// segment: commit queued rows FIFO, one crossed segment per batch (see
+    /// [`EntityReplica::commit_next_due`]); a commit that dismounted the local
+    /// body lands it beside the hull. Runs each frame right after the batches
+    /// drained (`tick_receive`), before presentation samples `tick_alpha`.
     pub fn advance_interp_window(&mut self) {
-        while self.replica_clock.overdue() {
-            let Some(staged) = self.staged_rows.pop_front() else {
-                break;
-            };
-            self.apply_committed_rows(staged);
-            self.replica_clock.consume_segment();
+        while let Some(committed) = self.entities.commit_next_due() {
+            self.after_commit(committed);
         }
-        if self.staged_rows.is_empty() {
-            self.replica_clock.hold();
+    }
+
+    fn after_commit(&mut self, committed: Committed) {
+        if committed.dismounted {
+            self.predict_dismount_placement();
         }
     }
 
@@ -960,8 +857,8 @@ impl Game {
     /// how row-assertion tests step the staged interpolation deterministically.
     #[cfg(test)]
     pub fn commit_replication_window_for_test(&mut self) {
-        self.replica_clock
-            .advance(crate::game::tick::TICK_DT * 1.001);
+        self.entities
+            .advance_clock(crate::game::tick::TICK_DT * 1.001);
         self.advance_interp_window();
     }
 
@@ -972,7 +869,7 @@ impl Game {
         let update = *update;
         self.receive_creative_replies(update.creative);
         self.receive_schematic_notices(update.schematics);
-        self.replicated_tick = update.tick;
+        self.entities.set_tick(update.tick);
         // The batch's written cells, collected before the deltas are consumed
         // (the rollback and place-ghost checks below both key on them).
         let delta_cells: rustc_hash::FxHashSet<IVec3> =
@@ -1000,7 +897,6 @@ impl Game {
         // self state, events, menu — applies immediately: it is either an
         // authoritative correction or one-shot presentation, not interpolated
         // motion.
-        self.sleep_tally = update.sleep_tally;
         let staged = StagedRows {
             mobs: update.mobs,
             items: update.items,
@@ -1008,16 +904,8 @@ impl Game {
             actions: update.player_actions,
             resync: false,
         };
-        if !self.replica_clock.started() {
-            // Bootstrap: the first batch renders directly (prev == curr —
-            // there is nothing to interpolate from), without pretending a
-            // render-time segment was crossed, and starts the timeline.
-            debug_assert!(self.staged_rows.is_empty());
-            self.apply_committed_rows(staged);
-            self.replica_clock.start();
-        } else {
-            self.stage_rows(staged);
-        }
+        let committed = self.entities.receive(update.sleep_tally, staged);
+        self.after_commit(committed);
         // A batch's inventory / menu snapshot reflects the server state as of
         // the requests it ANSWERS. A snapshot-bearing prediction of the same
         // store that stays pending past this batch postdates that snapshot —
@@ -1073,20 +961,13 @@ impl Game {
         // Snapshot predicted cells BEFORE reconcile so accept/deny this batch
         // still suppress matching wire presentation events (the ledger entry
         // is about to drop).
-        let suppress: rustc_hash::FxHashSet<IVec3> = self
-            .prediction
-            .predicted_cells()
-            .chain(self.predicted_presentation_cells.iter().copied())
-            .collect();
+        let suppress: rustc_hash::FxHashSet<IVec3> = self.prediction.suppressed_cells().collect();
         // Authoritative inventory / block deltas win; then apply deny rollbacks
         // for any predicted mutations the server rejected. Snapshots come back
         // oldest-first, each capturing the state BEFORE its own prediction —
         // so a newer snapshot still embeds an older denied mutation. Applied
         // newest-first so the OLDEST snapshot wins.
-        let (rollbacks, resolved_cells) = self.prediction.reconcile(&update.action_outcomes);
-        for pos in &resolved_cells {
-            self.predicted_presentation_cells.remove(pos);
-        }
+        let rollbacks = self.prediction.reconcile(&update.action_outcomes);
         for snap in rollbacks.into_iter().rev() {
             match snap {
                 crate::game::prediction::PredictionSnapshot::None => {}
@@ -1126,19 +1007,11 @@ impl Game {
                             petramond_world::block::Block::from_id(prev_block_id),
                         );
                         restored.push((pos, before));
-                        if self.place_ghost.is_some_and(|(p, _)| p == pos) {
-                            self.place_ghost = None;
-                        }
                     }
                     // A rollback is a local edit too: its restored geometry
                     // and light publish under the same prediction fence.
                     self.replica.reconcile_predicted_edit(&restored);
                 }
-            }
-        }
-        if let Some((pos, _)) = self.place_ghost {
-            if delta_cells.contains(&pos) {
-                self.place_ghost = None;
             }
         }
         // Shader-param environment (day/night sky, mod visuals): applied into
@@ -1209,7 +1082,7 @@ impl Game {
             WorldEventMsg::ChestClosed { pos } => ev.world.push(WorldEvent::ChestClosed { pos }),
             WorldEventMsg::ItemPickedUp { pos, by } => ev.world.push(WorldEvent::ItemPickedUp {
                 pos,
-                by_self: by == self.self_id,
+                by_self: by == self.entities.self_id(),
             }),
             WorldEventMsg::MobSound {
                 mob_id,

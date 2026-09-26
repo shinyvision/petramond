@@ -1,7 +1,7 @@
 use super::App;
 use crate::game::Game;
 use petramond::server::game::ServerGame;
-use petramond::server::handle::LoopbackServer;
+use petramond::net::handle::LoopbackServer;
 use petramond_math::world_pos::WorldPos;
 use petramond_render::camera::Camera;
 use petramond_world::gui_state::MenuSlot;
@@ -172,7 +172,7 @@ impl TestApp {
         super::ui_snapshot::build(
             self.app.game.as_ref(),
             self.app.screen,
-            self.app.pointer.cursor(),
+            self.app.controls.pointer.cursor(),
             preview,
         )
     }
@@ -261,8 +261,8 @@ fn app() -> TestApp {
 
 fn app_with_render_dist(render_dist: i32) -> TestApp {
     ensure_test_data_dir();
-    let (server, bootstrap) = crate::game::session::build_session_inline("", 1, render_dist);
-    let (handle, pipe) = petramond::server::handle::ServerHandle::loopback();
+    let (server, bootstrap) = crate::game::tests::bootstrap::build_session_inline("", 1, render_dist);
+    let (handle, pipe) = petramond::net::handle::ServerHandle::loopback();
     let game = Game::assemble(
         Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0),
         handle,

@@ -4,10 +4,7 @@
 //! action can never sound twice (once locally, once via its broadcast event).
 
 use super::app;
-use crate::app::{
-    render::{tick_footstep_sounds, tick_idle_mob_sounds},
-    MobSoundState,
-};
+use crate::app::client_audio::MobSoundState;
 use crate::game::presentation::{FootstepSource, MobPresentation};
 use crate::game::{GameEvents, WorldEvent};
 use petramond_audio::SpatialListener;
@@ -57,12 +54,12 @@ fn world_anchored_sounds_come_from_events_once_never_from_one_shots() {
     app.play_game_event_sounds(&events, None, 0.0);
 
     assert!(
-        app.audio.take_played_for_test().is_empty(),
+        app.sound.take_played_for_test().is_empty(),
         "no immediate local play for placed/door/chest one-shots (they play \
          positionally from the buffered event cues at the next render)"
     );
     assert_eq!(
-        app.world_sound_cues.len(),
+        app.sound.world_cue_count(),
         5,
         "one positional cue per world event: place, door, chest open+close, \
          and the FOREIGN pickup (the self pickup stays non-positional)"
@@ -79,7 +76,7 @@ fn idle_sound_deadlines_are_consumed_while_inventory_is_open() {
     let positions: Vec<_> = mobs.iter().map(|mob| (mob.id, mob.pos)).collect();
     let due_tick = 100;
     for mob in &mobs {
-        test_app.mob_sound_state.insert(
+        test_app.sound.mob_states_mut().insert(
             mob.id,
             MobSoundState {
                 next_idle_tick: due_tick,
@@ -87,44 +84,29 @@ fn idle_sound_deadlines_are_consumed_while_inventory_is_open() {
             },
         );
     }
-    let first_handle = test_app.next_mob_sound_handle;
+    test_app.sound.set_mob_positions_for_test(positions);
+    let first_handle = test_app.sound.next_handle();
     let listener = SpatialListener {
         pos: WorldPos::ZERO,
         right: Vec3::X,
     };
 
     let app = &mut test_app.app;
-    tick_idle_mob_sounds(
-        &mut app.audio,
-        &mut app.mob_sound_state,
-        &mut app.next_mob_sound_handle,
-        listener,
-        &mobs,
-        &positions,
-        due_tick,
-    );
+    app.sound.tick_idle_mob_sounds(listener, &mobs, due_tick);
 
-    assert_eq!(app.next_mob_sound_handle, first_handle + 2);
+    assert_eq!(app.sound.next_handle(), first_handle + 2);
     for mob in &mobs {
-        let state = &app.mob_sound_state[&mob.id];
+        let state = &app.sound.mob_states_mut()[&mob.id];
         assert_eq!(state.sequence, 1);
         assert!(state.next_idle_tick > due_tick);
     }
 
     app.toggle_inventory();
     assert!(!app.screen.inventory_open());
-    tick_idle_mob_sounds(
-        &mut app.audio,
-        &mut app.mob_sound_state,
-        &mut app.next_mob_sound_handle,
-        listener,
-        &mobs,
-        &positions,
-        due_tick,
-    );
+    app.sound.tick_idle_mob_sounds(listener, &mobs, due_tick);
 
     assert_eq!(
-        app.next_mob_sound_handle,
+        app.sound.next_handle(),
         first_handle + 2,
         "closing inventory at the same tick must not release a mob-sound chorus"
     );
@@ -193,16 +175,9 @@ fn footsteps_fire_on_first_sight_then_hold_their_cadence() {
     };
     let app = &mut test_app.app;
     let steps = |app: &mut crate::app::App, rows: &[FootstepSource], tick: u64| -> u64 {
-        let before = app.next_mob_sound_handle;
-        tick_footstep_sounds(
-            &mut app.audio,
-            &mut app.footstep_next_tick,
-            &mut app.next_mob_sound_handle,
-            listener,
-            rows,
-            tick,
-        );
-        app.next_mob_sound_handle - before
+        let before = app.sound.next_handle();
+        app.sound.tick_footsteps(listener, rows, tick);
+        app.sound.next_handle() - before
     };
 
     // Two bodies seen walking for the first time both step at once.
@@ -229,7 +204,7 @@ fn footsteps_fire_on_first_sight_then_hold_their_cadence() {
     assert_eq!(steps(app, &[sprinting(0)], 578), 1);
 
     // Bodies that leave take their cadence state with them.
-    assert!(app.footstep_next_tick.contains_key(&0));
+    assert!(app.sound.footstep_tracks().contains_key(&0));
     steps(app, &[], 600);
-    assert!(app.footstep_next_tick.is_empty());
+    assert!(app.sound.footstep_tracks().is_empty());
 }

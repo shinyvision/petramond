@@ -13,10 +13,11 @@
 //! runs on its own; the melee passes on it, so it swings nothing.
 
 use super::entities::MOB_ATTACK_UP_RATIO;
-use super::game::{ServerGame, ATTACK_COOLDOWN_TICKS};
+use super::game::ServerGame;
 use crate::events::tick::TickEvents;
 use crate::events::{AttackAttempt, DamageSource, Outcome};
 use crate::player::{self, PlayerId};
+use crate::rules::combat::ATTACK_COOLDOWN_TICKS;
 use petramond_math::math::Vec3;
 
 /// Horizontal knockback speed of a player's melee hit on another player

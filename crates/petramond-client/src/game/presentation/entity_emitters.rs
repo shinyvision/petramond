@@ -151,7 +151,7 @@ impl GamePresentationScratch {
             }
             None => {
                 let (skylight, blocklight) = game.held_item_light();
-                let feet = game.player.pos + Vec3::new(0.0, game.camera_step_y_offset, 0.0);
+                let feet = game.player.pos + Vec3::new(0.0, game.camera_rig.step_y_offset(), 0.0);
                 EmitterBody::player(feet, local_body_yaw(game), skylight, blocklight, 0)
             }
         };

@@ -6,34 +6,9 @@
 use petramond::player::{self, Input, Player};
 use petramond_math::math::Vec3;
 
+use super::camera_rig::{EyeInputs, STEP_CAMERA_EPS};
 use super::replicated::MountPose;
 use super::{Game, GameInput};
-
-const STEP_CAMERA_SETTLE_SPEED: f32 = 12.0;
-const STEP_CAMERA_EPS: f32 = 0.001;
-/// Camera height above the feet while asleep: head-on-the-pillow, a touch
-/// above the mattress the body is standing on (vs the standing `player::EYE`).
-const SLEEP_EYE_HEIGHT: f32 = 0.25;
-/// Peak lateral camera sway while walking, in blocks. Subtle on purpose: this
-/// is the channel a player FEELS, and a big one is what makes view bob a motion
-/// sickness complaint rather than a sense of weight.
-const BOB_EYE_SWAY: f32 = 0.045;
-
-/// Peak vertical camera rise/dip while walking, in blocks — deliberately far
-/// smaller than the sway. Vertical camera motion is the more nauseating axis
-/// and it also fights the step-up glide above, which owns real height changes.
-const BOB_EYE_RISE: f32 = 0.018;
-
-/// How far the first-person eye drops while sneaking (blocks) — the in-view
-/// feedback that sneak is active. CAMERA ONLY: the sim eye (`player::EYE`),
-/// reach, and the collision box stay full height, exactly like the sleep
-/// pillow-height camera. Well inside the server's `REACH + 1` target-latch
-/// slack, so a raycast from the lowered eye never trips reach validation.
-const SNEAK_EYE_DROP: f32 = 0.3;
-/// Exponential settle rate of the sneak eye drop — matches the body pose's
-/// sneak blend rate so the first-person dip and the third-person crouch land
-/// together.
-const SNEAK_EYE_SETTLE_SPEED: f32 = 10.0;
 
 impl Game {
     pub(super) fn apply_camera_input(&mut self, input: &GameInput) {
@@ -137,10 +112,9 @@ impl Game {
         // checks. Before the mount early-return on purpose: the widening
         // follows the body's own selection wherever the body happens to be.
         let ratio = self.player.wish_speed(player_input) / player::WALK;
-        self.speed_fov.advance(dt, ratio);
-        self.cam.fov_y = self.speed_fov.fov_y();
-        self.first_person_look
-            .advance(dt, self.player.yaw, self.player.pitch);
+        self.cam.fov_y =
+            self.camera_rig
+                .advance_lens(dt, ratio, self.player.yaw, self.player.pitch);
 
         // Mounted: no local physics — the body slaves to the interpolated
         // mount at the seat offset, the same glue observers apply to mounted
@@ -181,12 +155,12 @@ impl Game {
     /// the slaved rider sits inside.
     pub(super) fn solid_entity_obstacles(&self) -> Vec<petramond_world::collision::DynBox> {
         let alpha = self.tick_alpha();
-        let own_mount = self.self_mount.and_then(|m| match m {
+        let own_mount = self.entities.own_mount().and_then(|m| match m {
             petramond::net::protocol::PlayerMount::Mob { id, .. } => Some(id),
             petramond::net::protocol::PlayerMount::Anchor { .. } => None,
         });
         let mut out = Vec::new();
-        for entry in self.replicated_mobs.iter() {
+        for entry in self.entities.mobs().iter() {
             let row = &entry.curr;
             if row.dead || Some(row.id) == own_mount {
                 continue;
@@ -207,8 +181,8 @@ impl Game {
     /// A rider sits square in its seat and leans with it; only the head
     /// follows the look (see `collect_player`).
     pub(super) fn self_mount_pose(&self) -> Option<MountPose> {
-        self.replicated_mobs
-            .mount_pose(self.self_mount?, self.tick_alpha())
+        self.entities.mobs()
+            .mount_pose(self.entities.own_mount()?, self.tick_alpha())
     }
 
     /// Per-frame push of the player out of overlapping soft bodies (mobs +
@@ -220,12 +194,12 @@ impl Game {
     pub(super) fn apply_entity_push(&mut self, dt: f32) {
         // A mounted body is slaved to its seat: nothing may jostle it (its
         // own mount overlaps it every frame).
-        if self.player.is_spectator() || self.self_mount.is_some() {
+        if self.player.is_spectator() || self.entities.own_mount().is_some() {
             return;
         }
         let body = self.player.body();
         let mut push = Vec3::ZERO;
-        for entry in self.replicated_mobs.iter() {
+        for entry in self.entities.mobs().iter() {
             if entry.curr.dead {
                 continue; // a ragdolling corpse doesn't push
             }
@@ -241,7 +215,7 @@ impl Game {
                 push += p;
             }
         }
-        for remote in self.remote_players.iter() {
+        for remote in self.entities.players().iter() {
             let Some(other) = remote.push_body() else {
                 continue; // hidden (spectator/dead) or asleep in a bed
             };
@@ -256,90 +230,32 @@ impl Game {
     }
 
     pub(super) fn sync_camera_to_player_eye(&mut self, dt: f32) {
-        let target = self.player.eye();
-        let eye_dy = (target.y - self.last_player_eye_y) as f32;
-        let grounded_still = self.player.on_ground && self.player.vel.y.abs() <= STEP_CAMERA_EPS;
-        // A mount carries the body: a seat rising up a slope is not a step,
-        // and gliding it would draw the rider (and the eye) under the seat.
-        if self.player.is_spectator() || self.self_mount.is_some() {
-            self.camera_step_y_offset = 0.0;
-        } else if grounded_still
-            && eye_dy > STEP_CAMERA_EPS
-            && eye_dy <= petramond_world::collision::STEP_HEIGHT + STEP_CAMERA_EPS
-        {
-            let max_lag = petramond_world::collision::STEP_HEIGHT * 1.5;
-            self.camera_step_y_offset = (self.camera_step_y_offset - eye_dy).max(-max_lag);
-        } else if grounded_still
-            && self.predicted_input.sneak
-            && (-(petramond_world::collision::STEP_HEIGHT + STEP_CAMERA_EPS)..-STEP_CAMERA_EPS)
-                .contains(&eye_dy)
-        {
-            // The sneak snap-down: physics dropped the feet onto the lower step
-            // instantly (grounded throughout, so the guard never let go); the
-            // camera starts the step ABOVE and settles down — the mirror of the
-            // step-up glide. Sneak-gated so ordinary landing dips keep their
-            // un-eased feel.
-            let max_lag = petramond_world::collision::STEP_HEIGHT * 1.5;
-            self.camera_step_y_offset = (self.camera_step_y_offset - eye_dy).min(max_lag);
-        }
-
-        let settle = 1.0 - (-STEP_CAMERA_SETTLE_SPEED * dt.max(0.0)).exp();
-        self.camera_step_y_offset += (0.0 - self.camera_step_y_offset) * settle;
-        if self.camera_step_y_offset.abs() <= STEP_CAMERA_EPS {
-            self.camera_step_y_offset = 0.0;
-        }
-
-        // The sneak eye drop eases toward its target so crouching dips instead
-        // of teleporting; the same intent drives the third-person stance blend.
-        let sneak_target = if !self.player.is_spectator() && self.predicted_input.sneak {
-            -SNEAK_EYE_DROP
-        } else {
-            0.0
+        let mounted = self.entities.own_mount().is_some();
+        let spectator = self.player.is_spectator();
+        let sleeping = self.self_view.sleeping.is_some();
+        let body = EyeInputs {
+            eye: self.player.eye(),
+            feet_y: self.player.pos.y,
+            grounded_still: self.player.on_ground && self.player.vel.y.abs() <= STEP_CAMERA_EPS,
+            carried: spectator || mounted,
+            sneaking: !spectator && self.predicted_input.sneak,
+            // A sleeper, rider, spectator or airborne body eases the sway back
+            // to rest. THIRD PERSON DOES NOT BOB: the boom camera is `self.cam`
+            // cloned and retreated (`update_third_person`, which runs after
+            // this), so suppressing the sway here is what keeps it out of the
+            // boom; easing to rest rather than skipping the apply means
+            // toggling back mid-stride eases the sway in.
+            striding: self.player.on_ground
+                && !spectator
+                && !mounted
+                && !sleeping
+                && !self.third_person_enabled(),
+            hspeed: Vec3::new(self.player.vel.x, 0.0, self.player.vel.z).length(),
+            sleeping,
+            // `cam.yaw` is already this frame's look (mirrored in `apply_look`).
+            yaw: self.cam.yaw,
         };
-        let sneak_settle = 1.0 - (-SNEAK_EYE_SETTLE_SPEED * dt.max(0.0)).exp();
-        self.camera_sneak_y_offset += (sneak_target - self.camera_sneak_y_offset) * sneak_settle;
-
-        // Walking sway. Presentation only, like both offsets above — see
-        // `view_bob`. A sleeper, rider, spectator or airborne body simply
-        // eases back to rest rather than being special-cased at the apply.
-        let hspeed = Vec3::new(self.player.vel.x, 0.0, self.player.vel.z).length();
-        let striding = self.player.on_ground
-            && !self.player.is_spectator()
-            && self.self_mount.is_none()
-            && self.self_view.sleeping.is_none()
-            // THIRD PERSON DOES NOT BOB. The boom camera is `self.cam` cloned
-            // and retreated (`update_third_person`, which runs after this), so
-            // suppressing the sway here is what keeps it out of the boom —
-            // there is no second place to gate. Easing the envelope to rest
-            // rather than skipping the APPLY is deliberate: toggling back
-            // mid-stride then eases the sway in instead of snapping the camera
-            // to wherever the phase had run to.
-            && !self.third_person_enabled();
-        self.view_bob.advance(dt, hspeed, striding);
-        let [bob_side, bob_up] = self.view_bob.offset();
-
-        // Lying in bed: the body stays a standing collision box on the
-        // mattress (physics unchanged), but the camera drops to pillow height
-        // so the player visibly lies down rather than standing on the bed.
-        // Sleep state reads the replicated self view.
-        let eye_y = if self.self_view.sleeping.is_some() {
-            self.player.pos.y + f64::from(SLEEP_EYE_HEIGHT)
-        } else {
-            target.y
-                + f64::from(
-                    self.camera_step_y_offset + self.camera_sneak_y_offset + bob_up * BOB_EYE_RISE,
-                )
-        };
-        // The sway is LATERAL in the camera's own frame, so it reads as the
-        // body swinging under the head whichever way the player is looking.
-        // `cam.yaw` is already this frame's look (mirrored in `apply_look`),
-        // and the horizontal right vector ignores pitch, so looking up or down
-        // cannot tilt the sway out of the horizon.
-        let (sin_yaw, cos_yaw) = self.cam.yaw.sin_cos();
-        let right = Vec3::new(cos_yaw, 0.0, -sin_yaw);
-        self.cam.pos = petramond_math::world_pos::WorldPos::new(target.x, eye_y, target.z)
-            + right * (bob_side * BOB_EYE_SWAY);
-        self.last_player_eye_y = target.y;
+        self.cam.pos = self.camera_rig.place_eye(dt, body);
     }
 
     /// Keep the REPLICA's view centre (mesh/light priority ordering + the
@@ -418,12 +334,12 @@ impl Game {
         max_dist: f32,
     ) -> Option<(u64, f32)> {
         let limit = max_dist.min(player::REACH);
-        let own_mount = self.self_mount.and_then(|m| match m {
+        let own_mount = self.entities.own_mount().and_then(|m| match m {
             petramond::net::protocol::PlayerMount::Mob { id, .. } => Some(id),
             petramond::net::protocol::PlayerMount::Anchor { .. } => None,
         });
         let alpha = self.tick_alpha();
-        let bodies = self.replicated_mobs.iter().filter_map(|entry| {
+        let bodies = self.entities.mobs().iter().filter_map(|entry| {
             let row = &entry.curr;
             (!row.dead && Some(row.id) != own_mount).then(|| {
                 let (pos, yaw) = entry.interpolated_pose(alpha);
@@ -454,7 +370,7 @@ impl Game {
     ) -> Option<(u8, f32)> {
         let limit = max_dist.min(player::REACH);
         let mut best: Option<(u8, f32)> = None;
-        for p in self.remote_players.iter() {
+        for p in self.entities.players().iter() {
             let row = &p.curr;
             if !row.visible || !row.alive {
                 continue;

@@ -26,12 +26,12 @@ impl App {
             return true;
         }
         let mut out = Vec::new();
-        self.binding_engine.on_input(
-            &self.action_table,
-            &self.settings.bindings,
+        self.controls.binding_engine.on_input(
+            &self.controls.action_table,
+            &self.options.settings.bindings,
             BoundInput::Key(code),
             down,
-            self.modifiers,
+            self.controls.modifiers,
             &mut out,
         );
         if !out.is_empty() {
@@ -50,18 +50,18 @@ impl App {
     /// Releases ALWAYS run through the binding engine so a held bound action
     /// can never stick across a screen change.
     pub fn handle_raw_mouse(&mut self, button: MouseButton, down: bool) {
-        if self.remap.is_some() && self.remap_capture_mouse(button, down) {
+        if self.options.remap().is_some() && self.remap_capture_mouse(button, down) {
             return;
         }
         let gameplay = self.screen.gameplay_enabled() && self.game.is_some();
         if gameplay || !down {
             let mut out = Vec::new();
-            self.binding_engine.on_input(
-                &self.action_table,
-                &self.settings.bindings,
+            self.controls.binding_engine.on_input(
+                &self.controls.action_table,
+                &self.options.settings.bindings,
                 BoundInput::Mouse(button),
                 down,
-                self.modifiers,
+                self.controls.modifiers,
                 &mut out,
             );
             self.dispatch_actions(out);
@@ -92,20 +92,20 @@ impl App {
         };
         for _ in 0..notches.unsigned_abs() {
             let mut out = Vec::new();
-            self.binding_engine.on_input(
-                &self.action_table,
-                &self.settings.bindings,
+            self.controls.binding_engine.on_input(
+                &self.controls.action_table,
+                &self.options.settings.bindings,
                 BoundInput::Scroll(dir),
                 true,
-                self.modifiers,
+                self.controls.modifiers,
                 &mut out,
             );
-            self.binding_engine.on_input(
-                &self.action_table,
-                &self.settings.bindings,
+            self.controls.binding_engine.on_input(
+                &self.controls.action_table,
+                &self.options.settings.bindings,
                 BoundInput::Scroll(dir),
                 false,
-                self.modifiers,
+                self.controls.modifiers,
                 &mut out,
             );
             self.dispatch_actions(out);
@@ -115,7 +115,7 @@ impl App {
     /// Release every held bound action (window focus loss, session teardown).
     pub fn release_input_bindings(&mut self) {
         let mut out = Vec::new();
-        self.binding_engine.release_all(&mut out);
+        self.controls.binding_engine.release_all(&mut out);
         self.dispatch_actions(out);
     }
 
@@ -159,7 +159,7 @@ impl App {
                 table.push_registered_action(id, label, category, default);
             }
         }
-        self.action_table = table;
+        self.controls.action_table = table;
     }
 
     // --- Remap capture (Options → Controls) ---
@@ -169,10 +169,10 @@ impl App {
     /// so capture never eats input elsewhere.
     fn active_remap(&mut self) -> Option<String> {
         if self.screen != AppScreen::OptionsControls {
-            self.cancel_remap();
+            self.options.cancel_remap();
             return None;
         }
-        self.remap.clone()
+        self.options.remap().map(str::to_owned)
     }
 
     /// Capture a raw KEY for the armed remap. Consumes everything while
@@ -185,20 +185,20 @@ impl App {
         };
         if code == KeyCode::Escape {
             if down {
-                self.cancel_remap();
+                self.options.cancel_remap();
             }
             return true;
         }
         if is_modifier_key(code) {
             if down {
-                self.remap_armed_mod = Some(code);
-            } else if self.remap_armed_mod == Some(code) {
+                self.options.arm_mod(code);
+            } else if self.options.armed_mod() == Some(code) {
                 // Tap-released with nothing else captured: bind the bare
                 // modifier (any OTHER still-held modifiers chord it).
-                self.finish_remap(
+                self.options.finish_remap(
                     &action,
                     Binding {
-                        mods: BindMods::from_modifiers(self.modifiers),
+                        mods: BindMods::from_modifiers(self.controls.modifiers),
                         input: BoundInput::Key(code),
                     },
                 );
@@ -206,10 +206,10 @@ impl App {
             return true;
         }
         if down {
-            self.finish_remap(
+            self.options.finish_remap(
                 &action,
                 Binding {
-                    mods: BindMods::from_modifiers(self.modifiers),
+                    mods: BindMods::from_modifiers(self.controls.modifiers),
                     input: BoundInput::Key(code),
                 },
             );
@@ -236,10 +236,10 @@ impl App {
             // remap and arms that one; Back cancels and leaves.
             return false;
         }
-        self.finish_remap(
+        self.options.finish_remap(
             &action,
             Binding {
-                mods: BindMods::from_modifiers(self.modifiers),
+                mods: BindMods::from_modifiers(self.controls.modifiers),
                 input: BoundInput::Mouse(button),
             },
         );
@@ -260,10 +260,10 @@ impl App {
         } else {
             ScrollDir::Up
         };
-        self.finish_remap(
+        self.options.finish_remap(
             &action,
             Binding {
-                mods: BindMods::from_modifiers(self.modifiers),
+                mods: BindMods::from_modifiers(self.controls.modifiers),
                 input: BoundInput::Scroll(dir),
             },
         );
@@ -272,7 +272,7 @@ impl App {
     /// Whether the cursor is over one of the controls document's widgets
     /// (bind buttons / Back) — presses there are UI clicks, not capture.
     fn cursor_over_interactive_widget(&self) -> bool {
-        let (x, y) = self.pointer.cursor();
+        let (x, y) = self.controls.pointer.cursor();
         self.ui.out().named.iter().any(|(key, rect)| {
             (key.id == "back" || key.id == "bind")
                 && x >= rect.x as f32
@@ -282,84 +282,44 @@ impl App {
         })
     }
 
-    /// Arm the action id for remapping (clicking another action's button
-    /// while one is armed switches — the previous remap cancels, per design).
-    pub(super) fn begin_remap(&mut self, action_id: &str) {
-        self.remap = Some(action_id.to_string());
-        self.remap_armed_mod = None;
-    }
-
-    pub(super) fn cancel_remap(&mut self) {
-        self.remap = None;
-        self.remap_armed_mod = None;
-    }
-
-    fn finish_remap(&mut self, action_id: &str, binding: Binding) {
-        self.settings.bindings.set_id(action_id, binding);
-        self.cancel_remap();
-        self.persist_settings();
-    }
-
     // --- Options screens: entry, back navigation ---
 
     /// Open the Options root, remembering where to return (title or pause).
     pub(super) fn open_options(&mut self, from_pause: bool) {
-        self.options_from_pause = from_pause;
+        self.options.enter(from_pause);
         self.screen = AppScreen::Options;
-        self.pointer.release_for_menu();
+        self.controls.pointer.release_for_menu();
     }
 
     /// Back/ESC from the Options root: to the pause menu when the flow was
     /// entered from a running game, else to the title.
     pub(super) fn close_options_root(&mut self) {
-        self.screen = if self.options_from_pause && self.game.is_some() {
+        self.screen = if self.options.from_pause() && self.game.is_some() {
             AppScreen::Pause
         } else {
             AppScreen::Title
         };
-        self.pointer.release_for_menu();
+        self.controls.pointer.release_for_menu();
     }
 
     /// Back/ESC from a category screen: to the Options root. Leaving the
     /// controls screen always disarms any pending remap.
     pub(super) fn close_options_category(&mut self) {
-        self.cancel_remap();
-        self.anti_aliasing_preview = None;
-        self.view_distance_preview = None;
+        self.options.cancel_remap();
+        self.options.clear_previews();
         self.screen = AppScreen::Options;
-        self.pointer.release_for_menu();
+        self.controls.pointer.release_for_menu();
     }
 
-    // --- Apply + persist ---
-
-    /// Write `client.json`. Suppressed under test (the suite must never
-    /// rewrite the developer's real file — same rule as `persist_identity`).
-    pub(super) fn persist_settings(&mut self) {
-        if cfg!(test) {
-            return;
-        }
-        // Merge into the current file so knobs the GUI doesn't own (fps caps,
-        // render scale, grade, identity) keep whatever the file says.
-        let mut on_disk = petramond::save::client::load();
-        on_disk.render_dist = self.settings.render_dist;
-        on_disk.master_volume = self.settings.master_volume;
-        on_disk.sound_volume = self.settings.sound_volume;
-        on_disk.music_volume = self.settings.music_volume;
-        on_disk.particles = self.settings.particles;
-        on_disk.screen_shake = self.settings.screen_shake;
-        on_disk.anti_aliasing = self.settings.anti_aliasing;
-        on_disk.bindings = self.settings.bindings.clone();
-        if let Err(e) = petramond::save::client::store(&on_disk) {
-            log::warn!("could not write client.json: {e}");
-        }
-    }
+    // --- Apply: the side effects an option has outside `OptionsState` ---
 
     /// Push the current volume settings into the audio engine (live).
     pub(super) fn apply_volumes(&mut self) {
-        self.audio.set_volumes(
-            self.settings.master_volume,
-            self.settings.sound_volume,
-            self.settings.music_volume,
+        let settings = &self.options.settings;
+        self.sound.set_volumes(
+            settings.master_volume,
+            settings.sound_volume,
+            settings.music_volume,
         );
     }
 
@@ -367,41 +327,21 @@ impl App {
     /// fleck system now, the renderer's emitter density on the next render.
     pub(super) fn apply_particles(&mut self) {
         if let Some(game) = self.game.as_mut() {
-            game.set_particles_mode(self.settings.particles);
+            game.set_particles_mode(self.options.settings.particles);
         }
-        self.renderer_options_dirty = true;
+        self.options.mark_renderer_dirty();
     }
 
-    /// Screen shake on or off: the renderer's half (camera bone, hand jitter)
-    /// on the next render; the hurt jitter on the camera reads the setting
-    /// every frame.
-    pub(super) fn apply_screen_shake(&mut self, on: bool) {
-        if self.settings.screen_shake != on {
-            self.settings.screen_shake = on;
-            self.renderer_options_dirty = true;
-        }
-    }
-
-    pub(super) fn apply_anti_aliasing(&mut self, mode: petramond::save::client::AntiAliasing) {
-        self.anti_aliasing_preview = None;
-        if self.settings.anti_aliasing != mode {
-            self.settings.anti_aliasing = mode;
-            self.renderer_options_dirty = true;
-        }
-    }
-
-    /// Apply a new view distance live: replica + server streaming through the
-    /// game session, fog/cull on the next render, and the App field every
-    /// future session start reads.
+    /// Apply and persist a committed view distance: replica + server
+    /// streaming through the game session, fog/cull on the next render, and
+    /// the render distance every future session start reads.
     pub(super) fn apply_view_distance(&mut self, chunks: i32) {
-        let chunks = chunks.clamp(4, 64);
-        self.view_distance_preview = None;
+        let chunks = self.options.set_view_distance(chunks);
         self.render_dist = chunks;
-        self.settings.render_dist = chunks;
         if let Some(game) = self.game.as_mut() {
             game.set_view_distance(chunks);
         }
-        self.renderer_options_dirty = true;
+        self.options.persist();
     }
 
     /// Hand the renderer every graphics setting it owns, when one changed.
@@ -411,15 +351,15 @@ impl App {
     /// answers with the anti-aliasing mode it can actually run; a fallback is
     /// written back and persisted so the options readout shows what runs.
     pub(crate) fn apply_graphics(&mut self, renderer: &mut petramond_render::Renderer) {
-        if !std::mem::take(&mut self.renderer_options_dirty)
-            && self.settings.anti_aliasing == renderer.anti_aliasing()
+        if !self.options.take_renderer_dirty()
+            && self.options.settings.anti_aliasing == renderer.anti_aliasing()
         {
             return;
         }
-        let applied = renderer.apply_graphics(&self.settings.graphics());
-        if applied != self.settings.anti_aliasing {
-            self.settings.anti_aliasing = applied;
-            self.persist_settings();
+        let applied = renderer.apply_graphics(&self.options.settings.graphics());
+        if applied != self.options.settings.anti_aliasing {
+            self.options.settings.anti_aliasing = applied;
+            self.options.persist();
         }
     }
 }

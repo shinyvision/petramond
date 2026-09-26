@@ -5,7 +5,8 @@
 //! identity) belongs to the CONSUMER that cares about it, read from the
 //! actor's state, never pre-interpreted by the dispatcher.
 //!
-//! The attempt walks `CONSUMERS` — an ordered registry, not an if-ladder.
+//! The attempt walks the consumer registry — ordered by the shared
+//! `rules::interact::ConsumerKind::CLAIM_ORDER`, not an if-ladder.
 //! Each consumer inspects the attempt and either claims it or passes; the
 //! first claim wins and nothing later runs. Mods participate through the
 //! `interact_attempt` bus event (one consumer entry dispatches it; a
@@ -20,6 +21,7 @@ use crate::events::tick::TickEvents;
 use crate::events::{InteractAttempt, Outcome, PostEvent};
 use crate::net::protocol::TargetRef;
 use crate::player::UseGesture;
+use crate::rules::interact::ConsumerKind;
 use crate::server::player::PendingUseClick;
 use petramond_math::math::IVec3;
 use petramond_world::block::{Block, BlockInteraction};
@@ -59,84 +61,50 @@ enum Claim {
 /// nothing else.
 type Consume = fn(&mut ServerGame, usize, &InteractAttempt, &ClickMeta, &mut TickEvents) -> Claim;
 
-/// Which registry row a consumer is — the handle the client's prediction
-/// mirror names its own step by, so it reads the row's facts instead of
-/// keeping a copy.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum ConsumerKind {
-    /// Registered `interact_attempt` handlers (mods).
-    Registered,
-    Shear,
-    BuiltinBlock,
-    ContextualPlace,
-    Eat,
-    ItemUse,
-    Place,
-}
-
-/// One consumer registry row.
-pub struct Consumer {
-    pub kind: ConsumerKind,
+/// One consumer registry row: a shared [`ConsumerKind`] paired with the
+/// server's claim function for it. The kind's facts (claim order,
+/// `presents_itself`) live in `crate::rules::interact`, where the client's
+/// prediction mirror reads them too.
+struct Consumer {
+    kind: ConsumerKind,
     consume: Consume,
-    /// The consumer's own gesture IS its presentation — an eat's raise — so
-    /// a claim by it plays no hand jab on either mirror.
-    pub presents_itself: bool,
 }
 
-const fn consumer(kind: ConsumerKind, consume: Consume) -> Consumer {
-    Consumer {
-        kind,
-        consume,
-        presents_itself: false,
+/// The server's claim function for each consumer kind.
+fn consume_fn(kind: ConsumerKind) -> Consume {
+    match kind {
+        // Mods first: every attempt, sneak or not, block or mob — a handler's
+        // Cancel is a claim (mod GUIs, boat boarding, the trough take-out).
+        ConsumerKind::Registered => ServerGame::consume_registered_attempt,
+        // Engine mob use: shears on a shearable mob.
+        ConsumerKind::Shear => ServerGame::consume_shear,
+        // The block's built-in capability (GUI open, door, bed) — passes on
+        // sneak via the shared claim rule the client predictions also run.
+        ConsumerKind::BuiltinBlock => ServerGame::consume_builtin_block,
+        // A dual-natured held item (food AND placeable — a plantable carrot)
+        // tries its placement before the eat gate: a VALID placement wins over
+        // starting to eat; a refused one passes so the eat still sees the click.
+        // Ordering the real attempt ahead of the eat keeps one dispatch per
+        // event: no dry-run duplicating `try_place`.
+        ConsumerKind::ContextualPlace => ServerGame::consume_contextual_place,
+        // Eating the held food (never started by a hold-repeat).
+        ConsumerKind::Eat => ServerGame::consume_eat,
+        // The held item's own use (`item_use_pre`, then the engine buckets).
+        ConsumerKind::ItemUse => ServerGame::consume_item_use,
+        // Ordinary placement of the held block (skipped for dual-natured items —
+        // their placement already ran above).
+        ConsumerKind::Place => ServerGame::consume_place,
     }
 }
 
-/// The consumer registry, in claim order. Deterministic and data-shaped: a
-/// new engine capability is a new entry here (plus its client prediction
-/// rule), never a branch in the dispatcher.
-const CONSUMERS: &[Consumer] = &[
-    // Mods first: every attempt, sneak or not, block or mob — a handler's
-    // Cancel is a claim (mod GUIs, boat boarding, the trough take-out).
-    consumer(
-        ConsumerKind::Registered,
-        ServerGame::consume_registered_attempt,
-    ),
-    // Engine mob use: shears on a shearable mob.
-    consumer(ConsumerKind::Shear, ServerGame::consume_shear),
-    // The block's built-in capability (GUI open, door, bed) — passes on
-    // sneak via the shared claim rule the client predictions also run.
-    consumer(
-        ConsumerKind::BuiltinBlock,
-        ServerGame::consume_builtin_block,
-    ),
-    // A dual-natured held item (food AND placeable — a plantable carrot)
-    // tries its placement before the eat gate: a VALID placement wins over
-    // starting to eat; a refused one passes so the eat still sees the click.
-    // Ordering the real attempt ahead of the eat keeps one dispatch per
-    // event: no dry-run duplicating `try_place`.
-    consumer(
-        ConsumerKind::ContextualPlace,
-        ServerGame::consume_contextual_place,
-    ),
-    // Eating the held food (never started by a hold-repeat).
-    Consumer {
-        kind: ConsumerKind::Eat,
-        consume: ServerGame::consume_eat,
-        presents_itself: true,
-    },
-    // The held item's own use (`item_use_pre`, then the engine buckets).
-    consumer(ConsumerKind::ItemUse, ServerGame::consume_item_use),
-    // Ordinary placement of the held block (skipped for dual-natured items —
-    // their placement already ran above).
-    consumer(ConsumerKind::Place, ServerGame::consume_place),
-];
-
-/// The registry row of `kind` (every kind has exactly one row).
-pub fn row(kind: ConsumerKind) -> &'static Consumer {
-    CONSUMERS
-        .iter()
-        .find(|c| c.kind == kind)
-        .expect("every consumer kind has a registry row")
+/// The consumer registry, in the shared claim order. Deterministic and
+/// data-shaped: a new engine capability is a new [`ConsumerKind`] (plus its
+/// client prediction rule), never a branch in the dispatcher.
+fn consumers() -> impl Iterator<Item = Consumer> {
+    ConsumerKind::CLAIM_ORDER.into_iter().map(|kind| Consumer {
+        kind,
+        consume: consume_fn(kind),
+    })
 }
 
 impl ServerGame {
@@ -270,7 +238,7 @@ impl ServerGame {
         // vocabulary. An empty off-hand runs no second pass: empty-hand
         // interactions stay a main-hand affair.
         let mut consumed = false;
-        let mut claimant: Option<&Consumer> = None;
+        let mut claimant: Option<ConsumerKind> = None;
         let mut placed_at = None;
         let mut off_hand_acted = false;
         for hand in [
@@ -283,7 +251,7 @@ impl ServerGame {
                 break;
             }
             self.sessions[s].player.acting_hand = hand;
-            for consumer in CONSUMERS {
+            for consumer in consumers() {
                 match (consumer.consume)(self, s, &attempt, &meta, events) {
                     Claim::Pass => continue,
                     Claim::Claimed => {
@@ -294,7 +262,7 @@ impl ServerGame {
                         placed_at = Some(pos);
                     }
                 }
-                claimant = Some(consumer);
+                claimant = Some(consumer.kind);
                 break;
             }
             off_hand_acted = consumed && hand == petramond_world::inventory::Hand::Off;
@@ -373,7 +341,7 @@ impl ServerGame {
         // right-click harvest) gets its hand jab echoed back; `jabbed`
         // guarantees this can never double an already-played one. A claimant
         // that presents itself has no jab to echo.
-        if consumed && !jabbed && !claimant.is_some_and(|c| c.presents_itself) {
+        if consumed && !jabbed && !claimant.is_some_and(ConsumerKind::presents_itself) {
             events.player(s).used_unpredicted = true;
         }
         // The client's ghost convention is `target.block + normal` — accept

@@ -4,13 +4,13 @@
 //! `tick_place` after block interaction and before placement.
 
 use super::game::ServerGame;
-use super::placement::facing_from_forward;
 use crate::entity::DroppedItem;
 use crate::events::tick::TickEvents;
 use crate::events::{BlockPlacePre, ItemUseEvent, ItemUsePre, Outcome, PostEvent};
 use crate::mob::ShearDrop;
 use crate::net::protocol::TargetRef;
 use crate::player::Player;
+use crate::rules::placement::facing_from_forward;
 use petramond_math::math::Vec3;
 use petramond_world::block::Block;
 use petramond_world::item::{ItemStack, ItemType, ItemUse};

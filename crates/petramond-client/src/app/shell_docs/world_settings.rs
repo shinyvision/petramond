@@ -5,26 +5,20 @@
 //! world-rename editor and the shared Back/Delete footer.
 
 use super::mods_tab;
-use crate::app::shell::SettingsTab;
-use crate::app::{App, AppScreen};
+use super::ScreenCtx;
+use crate::app::shell_state::SettingsTab;
+use crate::app::AppScreen;
 use petramond_ui::{NavKey, UiEvent, UiState, UiValue};
 
 /// Per-frame prep: adopt the off-thread save-dir size once it lands, then the
 /// shared pack-icon registration.
-pub(super) fn prepare(app: &mut App) -> bool {
-    if let Some(session) = app.world_settings.as_mut() {
-        if let Some(rx) = &session.size_rx {
-            if let Ok(bytes) = rx.try_recv() {
-                session.size_bytes = Some(bytes);
-                session.size_rx = None;
-            }
-        }
-    }
-    super::pack_icon_prepare(app)
+pub(super) fn prepare(ctx: &mut ScreenCtx) -> bool {
+    ctx.shell.poll_world_size();
+    super::pack_icon_prepare(ctx)
 }
 
-pub(super) fn populate(app: &App, state: &mut UiState) {
-    let Some(session) = app.world_settings.as_ref() else {
+pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
+    let Some(session) = ctx.shell.world_settings() else {
         return;
     };
     state.set("world_name", UiValue::Str(session.world_name.clone()));
@@ -76,10 +70,10 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
-pub(super) fn handle(app: &mut App, ev: UiEvent) {
+pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
     match ev {
         UiEvent::TabSelect { id, index } if id == "tabs" => {
-            if let Some(session) = app.world_settings.as_mut() {
+            if let Some(session) = ctx.shell.world_settings_mut() {
                 session.tab = SettingsTab::from_index(index);
             }
         }
@@ -87,74 +81,70 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
             id,
             item: Some(row),
             ..
-        } if id == "mod_on" => app.toggle_world_settings_row(row as usize),
-        UiEvent::Toggle { id, .. } if id == "keep_inventory" => app.toggle_keep_inventory(),
-        UiEvent::Toggle { id, .. } if id == "auto_lan" => app.toggle_auto_open_lan(),
+        } if id == "mod_on" => ctx.shell.toggle_world_settings_row(row as usize),
+        UiEvent::Toggle { id, .. } if id == "keep_inventory" => ctx.shell.toggle_keep_inventory(),
+        UiEvent::Toggle { id, .. } if id == "auto_lan" => ctx.shell.toggle_auto_open_lan(),
         UiEvent::SliderChange {
             id,
             value,
             committed,
             ..
         } if id == "day_minutes" => {
-            app.set_day_minutes(value.round() as u32, committed);
+            ctx.shell.set_day_minutes(value.round() as u32, committed);
         }
         UiEvent::ListSelect { id, index } if id == "mods" => {
-            if let Some(session) = app.world_settings.as_mut() {
+            if let Some(session) = ctx.shell.world_settings_mut() {
                 session.selected = index as usize;
             }
         }
         UiEvent::TextChanged { id, text } if id == "rename_input" => {
-            app.ui.state_mut().set("rename_text", UiValue::Str(text));
+            ctx.ui.state_mut().set("rename_text", UiValue::Str(text));
         }
-        UiEvent::Submit { id, text } if id == "rename_input" => apply_rename(app, &text),
+        UiEvent::Submit { id, text } if id == "rename_input" => apply_rename(ctx, &text),
         UiEvent::Click { id, .. } => match id.as_str() {
             "copy_seed" => {
-                if let Some(seed) = app.world_settings.as_ref().and_then(|s| s.seed) {
-                    app.ui.clipboard_mut().set_text(&seed.to_string());
+                if let Some(seed) = ctx.shell.world_settings().and_then(|s| s.seed) {
+                    ctx.ui.clipboard_mut().set_text(&seed.to_string());
                 }
             }
             "rename" => {
-                let name = app
-                    .world_settings
-                    .as_mut()
+                let name = ctx
+                    .shell
+                    .world_settings_mut()
                     .map(|s| {
                         s.renaming = true;
                         s.world_name.clone()
                     })
                     .unwrap_or_default();
-                app.ui
+                ctx.ui
                     .state_mut()
                     .set("rename_text", UiValue::Str(name.clone()));
-                app.ui.focus_text_input("rename_input", &name, 48);
+                ctx.ui.focus_text_input("rename_input", &name, 48);
             }
             "rename_confirm" => {
-                let text = app
+                let text = ctx
                     .ui
                     .state_mut()
                     .get_str("rename_text")
                     .unwrap_or_default()
                     .to_owned();
-                apply_rename(app, &text);
+                apply_rename(ctx, &text);
             }
             "back" => {
-                app.world_settings = None;
-                app.screen = AppScreen::WorldSelect;
-                app.pointer.release_for_menu();
+                ctx.shell.close_page();
+                ctx.goto(AppScreen::WorldSelect);
             }
-            "delete_world" => {
-                app.world_settings = None;
-                app.open_delete_world_confirm();
-            }
+            "delete_world" => open_delete_confirm(ctx),
             _ => {}
         },
         UiEvent::Key { key, .. } => match key {
             NavKey::Escape => {
-                if let Some(session) = app.world_settings.as_mut() {
+                if let Some(session) = ctx.shell.world_settings_mut() {
                     session.renaming = false;
                 }
             }
             NavKey::Left | NavKey::Right => {
-                if let Some(session) = app.world_settings.as_mut() {
+                if let Some(session) = ctx.shell.world_settings_mut() {
                     session.tab = match key {
                         NavKey::Left => SettingsTab::World,
                         _ => SettingsTab::Mods,
@@ -163,47 +153,54 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
             }
             NavKey::Enter => {
                 if let Some((row, SettingsTab::Mods)) =
-                    app.world_settings.as_ref().map(|s| (s.selected, s.tab))
+                    ctx.shell.world_settings().map(|s| (s.selected, s.tab))
                 {
-                    app.toggle_world_settings_row(row);
+                    ctx.shell.toggle_world_settings_row(row);
                 }
             }
-            NavKey::Delete => {
-                app.world_settings = None;
-                app.open_delete_world_confirm();
-            }
-            NavKey::Up => move_selection(app, -1),
-            NavKey::Down => move_selection(app, 1),
+            NavKey::Delete => open_delete_confirm(ctx),
+            NavKey::Up => move_selection(ctx, -1),
+            NavKey::Down => move_selection(ctx, 1),
             _ => {}
         },
         _ => {}
     }
 }
 
-fn apply_rename(app: &mut App, new_name: &str) {
-    let Some(session) = app.world_settings.as_mut() else {
-        return;
-    };
-    let new_name = new_name.trim();
-    if new_name.is_empty() {
-        session.renaming = false;
-        return;
-    }
-    match petramond::save::rename_world(&session.dir_name, new_name) {
-        Ok(()) => {
-            session.world_name = new_name.to_owned();
-            session.renaming = false;
-            app.refresh_worlds();
-        }
-        Err(e) => {
-            log::warn!("could not rename world '{}': {e}", session.world_name);
-            session.renaming = false;
-        }
+/// Leave the settings page for the delete confirmation of its world.
+fn open_delete_confirm(ctx: &mut ScreenCtx) {
+    ctx.shell.close_page();
+    if ctx.shell.selected_world_info().is_some() {
+        ctx.goto(AppScreen::DeleteWorld);
     }
 }
 
-fn move_selection(app: &mut App, step: i32) {
-    let Some(session) = app.world_settings.as_mut() else {
+fn apply_rename(ctx: &mut ScreenCtx, new_name: &str) {
+    let Some(session) = ctx.shell.world_settings_mut() else {
+        return;
+    };
+    let new_name = new_name.trim();
+    session.renaming = false;
+    if new_name.is_empty() {
+        return;
+    }
+    let renamed = match petramond::save::rename_world(&session.dir_name, new_name) {
+        Ok(()) => {
+            session.world_name = new_name.to_owned();
+            true
+        }
+        Err(e) => {
+            log::warn!("could not rename world '{}': {e}", session.world_name);
+            false
+        }
+    };
+    if renamed {
+        ctx.shell.refresh_worlds();
+    }
+}
+
+fn move_selection(ctx: &mut ScreenCtx, step: i32) {
+    let Some(session) = ctx.shell.world_settings_mut() else {
         return;
     };
     if session.tab != SettingsTab::Mods {

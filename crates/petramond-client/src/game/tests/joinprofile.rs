@@ -109,8 +109,8 @@ fn join_profile_sync() {
         .unwrap_or(32);
 
     let t_click = Instant::now();
-    let (mut server, bootstrap) = crate::game::session::build_session("joinprofile", 0x312, rd);
-    let (handle, pipe) = petramond::server::handle::ServerHandle::loopback();
+    let (mut server, bootstrap) = crate::game::tests::bootstrap::build_session("joinprofile", 0x312, rd);
+    let (handle, pipe) = petramond::net::handle::ServerHandle::loopback();
     let mut game = Game::assemble(
         Camera::new(WorldPos::new(8.0, 90.0, 8.0), 16.0 / 9.0),
         handle,

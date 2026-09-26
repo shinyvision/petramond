@@ -178,7 +178,7 @@ impl App {
         let Some([left, top, width, height]) = canvas.rect else {
             return;
         };
-        let (x, y) = self.pointer.cursor();
+        let (x, y) = self.controls.pointer.cursor();
         if x < left || y < top || x >= left + width || y >= top + height {
             return;
         }
@@ -247,13 +247,13 @@ impl App {
                     }
                     self.client_canvas = None;
                     self.screen = AppScreen::ClientModGui(kind);
-                    self.pointer.release_for_menu();
+                    self.controls.pointer.release_for_menu();
                     self.gui_router.reset_click_streak();
                 }
                 petramond::modding::ClientCommand::CloseGui { owner } => {
                     if client_gui_owned_by(self.screen, &owner) {
                         self.screen = AppScreen::Game;
-                        self.pointer.grab_for_gameplay();
+                        self.controls.pointer.grab_for_gameplay();
                     }
                 }
                 petramond::modding::ClientCommand::OpenCanvas {
@@ -278,14 +278,14 @@ impl App {
                         pending_scroll: 0.0,
                     });
                     self.screen = AppScreen::ClientCanvas;
-                    self.pointer.release_for_menu();
+                    self.controls.pointer.release_for_menu();
                     self.gui_router.reset_click_streak();
                 }
                 petramond::modding::ClientCommand::CloseCanvas { owner } => {
                     if client_canvas_owned_by(self.screen, &owner, &self.client_canvas) {
                         self.client_canvas = None;
                         self.screen = AppScreen::Game;
-                        self.pointer.grab_for_gameplay();
+                        self.controls.pointer.grab_for_gameplay();
                     }
                 }
             }

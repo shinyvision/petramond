@@ -89,16 +89,16 @@ impl Game {
     /// The held tool while it owns the edit controls: a placement preview
     /// takes them over.
     pub(super) fn editing_tool(&mut self) -> Option<&mut dyn WorldTool> {
-        if self.schematic_preview.is_up() {
+        if self.tools.preview.is_up() {
             return None;
         }
         let name = self.held_world_tool()?;
-        self.world_tools.get_mut(name)
+        self.tools.world.get_mut(name)
     }
 
     /// The held tool's current setting, for the change notice.
     pub fn held_tool_setting(&self) -> Option<&'static str> {
-        let tool = self.world_tools.get(self.held_world_tool()?)?;
+        let tool = self.tools.world.get(self.held_world_tool()?)?;
         Some(tool.setting_label())
     }
 
@@ -112,7 +112,7 @@ impl Game {
         let Some(name) = self.held_world_tool() else {
             return false;
         };
-        match self.world_tools.get_mut(name) {
+        match self.tools.world.get_mut(name) {
             Some(tool) => {
                 tool.adjust(steps);
                 true
@@ -125,26 +125,26 @@ impl Game {
     /// whether there was anything to take down.
     pub fn cancel_world_tools(&mut self) -> bool {
         self.cancel_pending_paste();
-        self.schematic_library.set_previewed(None);
-        self.world_tools.cancel_all() | self.schematic_preview.cancel()
+        self.tools.library.set_previewed(None);
+        self.tools.world.cancel_all() | self.tools.preview.cancel()
     }
 
     /// What the selection overlay shows: the held tool's view, and in
     /// creative the selection even with the tool put away.
     pub fn tool_overlay(&self) -> Option<ToolOverlay<'_>> {
-        match self.held_world_tool().and_then(|n| self.world_tools.get(n)) {
+        match self.held_world_tool().and_then(|n| self.tools.world.get(n)) {
             Some(tool) => Some(tool.overlay()),
             None => self
                 .creative_mode()
-                .then(|| self.world_tools.selection.overlay()),
+                .then(|| self.tools.world.selection.overlay()),
         }
     }
 
     pub(in crate::game) fn world_tool_holds_camera(&self) -> bool {
-        !self.schematic_preview.is_up()
+        !self.tools.preview.is_up()
             && self
                 .held_world_tool()
-                .and_then(|name| self.world_tools.get(name))
+                .and_then(|name| self.tools.world.get(name))
                 .is_some_and(|tool| tool.holds_camera())
     }
 
@@ -152,15 +152,15 @@ impl Game {
     /// world tool; with neither, the ordinary break/place path keeps them.
     pub(super) fn world_tool_input(&mut self, input: &mut GameInput) {
         self.poll_schematic_library();
-        if self.schematic_preview.is_up() && !self.schematic_preview_active() {
+        if self.tools.preview.is_up() && !self.schematic_preview_active() {
             // A paste preview never outlives creative mode.
             self.cancel_world_tools();
         }
         let held = self.held_world_tool();
-        if self.schematic_preview.is_up() {
-            self.world_tools.cancel_all();
+        if self.tools.preview.is_up() {
+            self.tools.world.cancel_all();
             self.schematic_preview_input(input);
-        } else if let Some(tool) = held.and_then(|name| self.world_tools.get_mut(name)) {
+        } else if let Some(tool) = held.and_then(|name| self.tools.world.get_mut(name)) {
             let mut ctx = ToolContext {
                 cam: &self.cam,
                 world: &self.replica,
@@ -168,7 +168,7 @@ impl Game {
             };
             tool.input(&mut ctx, input);
         } else {
-            self.world_tools.cancel_all();
+            self.tools.world.cancel_all();
             return;
         }
         input.break_held = false;

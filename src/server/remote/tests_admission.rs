@@ -6,7 +6,6 @@ use super::*;
 use crate::net::framing::{read_msg, write_msg};
 use crate::net::handshake::{client_handshake, installed_mod_ids, HandshakeError};
 use crate::net::identity::{JoinChallenge, PlayerIdentity};
-use crate::server::handle::ServerHandle;
 use petramond_util::test_time::TEST_HARD_DEADLINE;
 use petramond_world::item::{ItemStack, ItemType};
 use std::io::{Read, Write};
@@ -141,7 +140,7 @@ fn oversize_pre_join_frames_drop_the_connection() {
 #[test]
 fn joins_without_a_valid_identity_proof_are_refused() {
     let server = crate::server::session_build::build_headless_session("", 5, 2);
-    let mut host = ServerHandle::spawn(server);
+    let mut host = crate::server::handle::spawn(server);
     let port = host.open_to_lan(0).expect("bind an ephemeral port");
     let (alice, mallory) = (identity(), identity());
 

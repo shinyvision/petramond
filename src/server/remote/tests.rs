@@ -5,7 +5,7 @@ use crate::net::handshake::{client_handshake, installed_mod_ids};
 use crate::net::identity::PlayerIdentity;
 use crate::net::protocol::{PlayerAction, PlayerUpdate, TargetRef};
 use crate::net::remap::IdRemap;
-use crate::server::handle::ServerHandle;
+use crate::net::handle::ServerHandle;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 use petramond_util::test_time::TEST_HARD_DEADLINE;
@@ -263,7 +263,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
         std::thread::sleep(Duration::from_millis(1));
     }
     let place_target = IVec3::new(spawn.x + 2, spawn.y, spawn.z);
-    let mut host = ServerHandle::spawn(server);
+    let mut host = crate::server::handle::spawn(server);
     // One fixed tick per loop iteration, compute-bound. The pool stays
     // THREADED so handshake RTs are not stuck behind inline gen on the
     // server thread.
@@ -577,7 +577,7 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
     }
     assert_eq!(server.world.current_tick(), t0, "empty server: frozen");
 
-    let mut host = ServerHandle::spawn(server);
+    let mut host = crate::server::handle::spawn(server);
     let port = host.open_to_lan(0).expect("bind an ephemeral port");
 
     // First join claims id 0 — no local session holds it on headless.

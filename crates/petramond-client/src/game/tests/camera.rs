@@ -85,18 +85,20 @@ fn a_seat_rising_up_a_slope_is_not_a_step_the_body_glides_behind() {
     game.player.vel = Vec3::ZERO;
     game.player.on_ground = true;
     game.sync_camera_to_player_eye(1.0 / 60.0);
-    game.self_mount = Some(petramond::net::protocol::PlayerMount::Anchor {
-        pos: game.player.pos,
-        yaw: 0.0,
-        pose: 0,
-    });
+    let pos = game.player.pos;
+    game.entities
+        .set_own_mount(Some(petramond::net::protocol::PlayerMount::Anchor {
+            pos,
+            yaw: 0.0,
+            pose: 0,
+        }));
     for _ in 0..30 {
         // A 45° climb at a cart's pace, one frame at a time: each frame's
         // rise is well inside the step height the glide would ease.
         game.player.pos.y += 0.05;
         game.sync_camera_to_player_eye(1.0 / 60.0);
         assert_eq!(
-            game.camera_step_y_offset, 0.0,
+            game.camera_rig.step_y_offset(), 0.0,
             "a carried body never lags its seat"
         );
     }

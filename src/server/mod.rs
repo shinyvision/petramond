@@ -4,7 +4,7 @@
 //! recipes/loot, mod host, and the 20 TPS fixed-tick stage ladder) plus the
 //! per-connected-player state ([`player::ConnectedPlayer`]). The
 //! `ServerGame` runs on its OWN self-clocked thread
-//! ([`handle::ServerHandle`]); the client (`crate::game::Game`) talks to it
+//! ([`handle::spawn`]); the client talks to it
 //! exclusively over message channels. Remote (TCP) connections ride the same
 //! loop through [`remote::RemoteHub`] ("Open to LAN").
 

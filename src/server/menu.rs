@@ -12,10 +12,8 @@ use crate::events::{PostEvent, SimCtx};
 use crate::net::protocol::{GuiValueWire, ItemSlotWire, MenuSyncMsg, MenuTargetWire};
 use petramond_math::math::IVec3;
 use petramond_world::crafting::CraftingStation;
-use petramond_world::gui_state::ContainerView;
 use petramond_world::gui_state::PointerButton;
-use petramond_world::gui_state::{GuiStateMap, MenuSlot};
-use petramond_world::inventory::Inventory;
+use petramond_world::gui_state::MenuSlot;
 use petramond_world::item::ItemStack;
 
 use super::game::ServerGame;
@@ -23,21 +21,6 @@ use crate::events::tick::TickEvents;
 use crate::menu::{ContainerTarget, CraftMenuFailure, MenuAnchor};
 use crate::net::protocol::ActionDenyReason;
 use crate::server::player::PendingMenuAction;
-
-/// Read-only menu state consumed by the app's UI snapshot builder. The
-/// CLIENT assembles this entirely from its replicated stores
-/// (`SelfView.inventory` + the `MenuView` fed by `MenuSyncMsg`) — see
-/// `Game::menu_read_model`; nothing here reads a server session.
-pub struct MenuReadModel<'a> {
-    pub inventory: &'a Inventory,
-    pub craft_output: Option<ItemStack>,
-    /// The open mod GUI's state map (a shared snapshot), or `None` when the
-    /// open session is not a mod GUI.
-    pub gui_state: Option<std::sync::Arc<GuiStateMap>>,
-    /// The open mod GUI's container slots, or `None` when the session is not
-    /// a slot-bearing mod GUI.
-    pub container: Option<ContainerView>,
-}
 
 fn slot_wire(slot: Option<ItemStack>) -> Option<ItemSlotWire> {
     slot.map(ItemSlotWire::from_stack)

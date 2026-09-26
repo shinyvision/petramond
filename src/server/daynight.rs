@@ -1,47 +1,16 @@
-//! Core day/night cycle.
+//! Core day/night cycle system.
 //!
 //! This is intentionally built through the same tick-stage and shader-param
-//! surfaces mods use. The `petramond:*` keys are engine-owned public surface.
+//! surfaces mods use. The cycle arithmetic, the sky derivation and the
+//! engine-owned `petramond:*` keys live in `crate::rules::daynight`, shared
+//! with the client.
 
 use crate::events::{Attach, Stage, TickSystems};
+use crate::rules::daynight::{
+    clock_from_fraction, day_fraction, fresh_clock, moon_phase, morning_after, sky_params,
+    CLOCK_KEY, FROZEN_KEY, NIGHT_KEY, SKY_LIGHT_PARAM, SKY_TIME_PARAM, TIME_KEY,
+};
 use crate::world::World;
-
-/// Full day-night cycle ticks for the DEFAULT day length (15-minute day +
-/// 15-minute night at 20 TPS). The actual cycle is per-world: see
-/// [`cycle_ticks_for_day_minutes`] and `World::day_cycle_ticks`.
-pub const DEFAULT_CYCLE_TICKS: u64 =
-    cycle_ticks_for_day_minutes(crate::save::settings::DEFAULT_DAY_MINUTES);
-
-/// The world's full cycle ticks for a "day length" setting in real minutes:
-/// the night lasts as long as the day, so a 15-minute day is 18 000 day ticks
-/// + 18 000 night ticks at 20 TPS. Clamps to the slider range (10..=30 min).
-pub const fn cycle_ticks_for_day_minutes(minutes: u32) -> u64 {
-    let m = if minutes < 10 {
-        10
-    } else if minutes > 30 {
-        30
-    } else {
-        minutes
-    };
-    m as u64 * 60 * 20 * 2
-}
-
-/// Clock offset of "early morning" within a day (fraction 0.05, just after
-/// sunrise) — both the fresh-world start and where sleeping skips to.
-const fn fresh_clock(cycle: u64) -> u64 {
-    cycle / 20
-}
-const TRANSITION: f32 = 0.04;
-const NIGHT_SKY_SCALE: f32 = 0.04;
-const NIGHT_SKY_COLOR: [f32; 3] = [0.52, 0.62, 1.0];
-const MOON_PHASES: u64 = 8;
-
-pub const CLOCK_KEY: &str = "petramond:clock";
-pub const TIME_KEY: &str = "petramond:time";
-pub const NIGHT_KEY: &str = "petramond:is_night";
-pub const FROZEN_KEY: &str = "petramond:time_frozen";
-pub const SKY_TIME_PARAM: &str = "petramond:time";
-pub const SKY_LIGHT_PARAM: &str = "petramond:light";
 
 pub fn install_core(world: &mut World, systems: &mut TickSystems) {
     let mut cycle = DayNightCycle::from_world(world);
@@ -110,7 +79,7 @@ impl DayNightCycle {
     fn publish(&mut self, world: &mut World) {
         let t = day_fraction(self.clock, self.cycle);
         let t_bytes = t.to_le_bytes();
-        let phase = ((self.clock / self.cycle) % MOON_PHASES) as f32;
+        let phase = moon_phase(self.clock, self.cycle);
         let (time_param, light_param) = sky_params(t, phase);
 
         world.world_kv_set(CLOCK_KEY.into(), self.clock.to_le_bytes().to_vec());
@@ -123,26 +92,6 @@ impl DayNightCycle {
         world.set_shader_param(SKY_TIME_PARAM.into(), time_param);
         world.set_shader_param(SKY_LIGHT_PARAM.into(), light_param);
     }
-}
-
-/// The two sky shader params for a point in the cycle: `petramond:time`
-/// (`[fraction, daylight, moon phase, 0]`) and `petramond:light`
-/// (`[sky scale, r, g, b]`). Derived here rather than inline in `publish` so
-/// anything that drives the sky from a clock — the live cycle, an offscreen
-/// capture — gets the same sky for the same fraction.
-pub fn sky_params(day_fraction: f32, moon_phase: f32) -> ([f32; 4], [f32; 4]) {
-    let t = day_fraction.rem_euclid(1.0);
-    let day = daylight(t);
-    let scale = NIGHT_SKY_SCALE + (1.0 - NIGHT_SKY_SCALE) * day;
-    (
-        [t, day, moon_phase, 0.0],
-        [
-            scale,
-            lerp(NIGHT_SKY_COLOR[0], 1.0, day),
-            lerp(NIGHT_SKY_COLOR[1], 1.0, day),
-            lerp(NIGHT_SKY_COLOR[2], 1.0, day),
-        ],
-    )
 }
 
 /// Whether it is night per the published `petramond:is_night` KV (day fraction in
@@ -198,11 +147,6 @@ pub(super) fn skip_to_morning(world: &mut World) {
     world.world_kv_set(CLOCK_KEY.into(), next.to_le_bytes().to_vec());
 }
 
-/// The first early-morning clock strictly after `clock`.
-fn morning_after(clock: u64, cycle: u64) -> u64 {
-    (clock / cycle + 1) * cycle + fresh_clock(cycle)
-}
-
 fn read_clock(world: &World) -> Option<u64> {
     let raw: [u8; 8] = world.world_kv_get(CLOCK_KEY)?.try_into().ok()?;
     Some(u64::from_le_bytes(raw))
@@ -229,70 +173,18 @@ fn read_time_bytes(bytes: &[u8]) -> Option<[u8; 4]> {
     f32::from_le_bytes(raw).is_finite().then_some(raw)
 }
 
-fn clock_from_fraction(t: f32, current_clock: u64, cycle: u64) -> u64 {
-    let day = current_clock / cycle;
-    let tick = (t.rem_euclid(1.0) * cycle as f32).round() as u64 % cycle;
-    day * cycle + tick
-}
-
-fn day_fraction(clock: u64, cycle: u64) -> f32 {
-    (clock % cycle) as f32 / cycle as f32
-}
-
-fn daylight(t: f32) -> f32 {
-    let h = (std::f32::consts::PI * TRANSITION).sin();
-    smoothstep(-h, h, (std::f32::consts::TAU * t).sin())
-}
-
-fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
-    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
-fn lerp(a: f32, b: f32, t: f32) -> f32 {
-    a + (b - a) * t
-}
-
-/// The monsters mod's copy of [`daylight`] (its sunburn and spawn-light
-/// rules read only the published day fraction), compiled here verbatim so a
-/// retune of the curve fails this crate's tests and names the mirror.
-#[cfg(test)]
-#[path = "../../mods-src/monsters/src/daylight.rs"]
-mod monsters_daylight;
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use petramond_math::world_pos::WorldPos;
     use petramond_world::crafting::Recipes;
 
+    use crate::rules::daynight::DEFAULT_CYCLE_TICKS;
+
     const C: u64 = DEFAULT_CYCLE_TICKS;
 
     #[test]
-    fn day_minutes_map_to_cycle_ticks_and_clamp() {
-        // The spec point: a 15-minute day is 18 000 day ticks (36 000 cycle).
-        assert_eq!(cycle_ticks_for_day_minutes(15), 36_000);
-        assert_eq!(C, 36_000, "default day length is 15 minutes");
-        assert_eq!(cycle_ticks_for_day_minutes(10), 24_000);
-        assert_eq!(cycle_ticks_for_day_minutes(30), 72_000);
-        assert_eq!(cycle_ticks_for_day_minutes(5), 24_000, "clamped low");
-        assert_eq!(cycle_ticks_for_day_minutes(99), 72_000, "clamped high");
-        // "Early morning" stays the same fraction at every length.
-        assert_eq!(fresh_clock(C) as f32 / C as f32, 0.05);
-    }
-
-    #[test]
     fn sleeping_skips_to_the_next_early_morning() {
-        // Mid-night (t = 0.75 of day 0) → morning of day 1; already-morning
-        // still skips a whole day forward (strictly after).
-        assert_eq!(morning_after(C * 3 / 4, C), C + fresh_clock(C));
-        assert_eq!(morning_after(fresh_clock(C), C), C + fresh_clock(C));
-        // The target is always "early morning": same day fraction as fresh.
-        assert!(
-            (day_fraction(morning_after(123_456, C), C) - day_fraction(fresh_clock(C), C)).abs()
-                < 1e-6
-        );
-
         let mut world = World::new(1, 1);
         world.world_kv_set(CLOCK_KEY.into(), (C * 3 / 4).to_le_bytes().to_vec());
         skip_to_morning(&mut world);
@@ -304,7 +196,7 @@ mod tests {
 
         // A shorter per-world day skips by ITS cycle, not the default.
         let mut world = World::new(1, 1);
-        world.set_day_cycle_ticks(cycle_ticks_for_day_minutes(10));
+        world.set_day_cycle_ticks(crate::rules::daynight::cycle_ticks_for_day_minutes(10));
         let c10 = world.day_cycle_ticks();
         world.world_kv_set(CLOCK_KEY.into(), (c10 * 3 / 4).to_le_bytes().to_vec());
         skip_to_morning(&mut world);
@@ -454,17 +346,5 @@ mod tests {
             Some(frozen_at + 1),
             "unfreeze resumes without replaying frozen ticks"
         );
-    }
-
-    #[test]
-    fn the_monsters_mod_mirrors_the_daylight_curve() {
-        for i in 0..=2000 {
-            let t = i as f32 / 2000.0;
-            assert_eq!(
-                super::monsters_daylight::daylight(t),
-                daylight(t),
-                "mods-src/monsters/src/daylight.rs disagrees with the sky at t = {t}"
-            );
-        }
     }
 }

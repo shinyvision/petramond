@@ -1,11 +1,15 @@
-//! Client prediction ledger: pending request ids + undo snapshots.
+//! Client prediction ledger: pending request ids + undo snapshots, and the
+//! cells this client already presented a place/break for.
 //!
-//! The server remains authoritative; this module
-//! only tracks disposable local overlays until [`ActionOutcome`]s arrive.
+//! The server remains authoritative; this module only tracks disposable
+//! local overlays until [`ActionOutcome`]s arrive. It is the single funnel
+//! for "which cells must not replay wire presentation": every predicted
+//! world edit's cells, plus every presented cell, until its outcome lands.
 
 use petramond::net::protocol::{ActionOutcome, ClientRequestId};
 use petramond_math::math::IVec3;
 use petramond_world::inventory::Inventory;
+use rustc_hash::FxHashSet;
 
 use super::replicated::MenuView;
 
@@ -49,6 +53,12 @@ pub struct PredictionLedger {
     pending: Vec<Pending>,
     /// When true, new local mutations are refused until the queue drains.
     frozen: bool,
+    /// Cells this client already presented place/break for (local
+    /// `WorldEvent`). Wire `BlockPlaced` / `BlockBroken` for these cells are
+    /// dropped until the matching outcome clears the entry — never re-play
+    /// sound/particles for an optimistic action. Observers' breaks never
+    /// enter this set.
+    presented: FxHashSet<IVec3>,
 }
 
 impl PredictionLedger {
@@ -94,15 +104,33 @@ impl PredictionLedger {
         self.begin(PredictionSnapshot::None)
     }
 
-    /// Cells covered by pending World snapshots (and optionally by snapshots
-    /// about to be reconciled). Used to suppress wire place/break presentation.
-    pub fn predicted_cells(&self) -> impl Iterator<Item = IVec3> + '_ {
+    /// Cells covered by pending World snapshots.
+    fn predicted_cells(&self) -> impl Iterator<Item = IVec3> + '_ {
         self.pending.iter().flat_map(|p| match &p.snapshot {
             PredictionSnapshot::World { cells, .. } => {
                 cells.iter().map(|(c, _)| *c).collect::<Vec<_>>()
             }
             _ => Vec::new(),
         })
+    }
+
+    /// Record that this client presented a place/break at `cell`: the wire
+    /// copy of that event is suppressed until the cell's outcome arrives.
+    pub fn mark_presented(&mut self, cell: IVec3) {
+        self.presented.insert(cell);
+    }
+
+    /// Every cell whose wire place/break presentation must be suppressed —
+    /// pending predicted edits plus already-presented cells. Also the cells
+    /// whose replica copy may differ from the server's vouched content.
+    pub fn suppressed_cells(&self) -> impl Iterator<Item = IVec3> + '_ {
+        self.predicted_cells().chain(self.presented.iter().copied())
+    }
+
+    /// Forget every presented cell, for tests that stage the set by hand.
+    #[cfg(test)]
+    pub fn clear_presented_for_test(&mut self) {
+        self.presented.clear();
     }
 
     /// Whether an inventory-mutating prediction stays pending past this
@@ -132,21 +160,17 @@ impl PredictionLedger {
         })
     }
 
-    /// Apply one batch of outcomes. Returns `(rollbacks, resolved_cells)`:
-    /// deny snapshots to restore, and every World cell whose pending entry
-    /// was answered (accept or deny) so presentation suppress can clear.
+    /// Apply one batch of outcomes: returns the deny snapshots to restore,
+    /// and clears the presentation suppress of every World cell whose pending
+    /// entry was answered (accept or deny).
     ///
     /// Rollbacks come back OLDEST-FIRST by construction — the pending list is
     /// walked in allocation order, never the batch's emission order (the
     /// server may emit an immediate deny for a newer id before a tick-time
     /// deny for an older one). The caller applies them newest-first so the
     /// oldest snapshot wins.
-    pub fn reconcile(
-        &mut self,
-        outcomes: &[ActionOutcome],
-    ) -> (Vec<PredictionSnapshot>, Vec<IVec3>) {
+    pub fn reconcile(&mut self, outcomes: &[ActionOutcome]) -> Vec<PredictionSnapshot> {
         let mut rollbacks = Vec::new();
-        let mut resolved_cells = Vec::new();
         let mut i = 0;
         while i < self.pending.len() {
             let Some(outcome) = outcomes.iter().find(|o| o.id == self.pending[i].id) else {
@@ -155,7 +179,9 @@ impl PredictionLedger {
             };
             let pending = self.pending.remove(i);
             if let PredictionSnapshot::World { cells, .. } = &pending.snapshot {
-                resolved_cells.extend(cells.iter().map(|(c, _)| *c));
+                for (c, _) in cells {
+                    self.presented.remove(c);
+                }
             }
             if !outcome.accepted {
                 rollbacks.push(pending.snapshot);
@@ -164,7 +190,7 @@ impl PredictionLedger {
         if self.predicted_len() < LEDGER_CAP {
             self.frozen = false;
         }
-        (rollbacks, resolved_cells)
+        rollbacks
     }
 
     #[cfg(test)]
@@ -189,7 +215,7 @@ mod tests {
         let id = ledger.begin(PredictionSnapshot::Inventory(inv.clone()));
         assert_eq!(ledger.pending_len(), 1);
         let rollbacks = ledger.reconcile(&[ActionOutcome::accept(id)]);
-        assert!(rollbacks.0.is_empty());
+        assert!(rollbacks.is_empty());
         assert_eq!(ledger.pending_len(), 0);
 
         let id2 = ledger.begin(PredictionSnapshot::Inventory(inv));
@@ -197,7 +223,27 @@ mod tests {
             id2,
             petramond::net::protocol::ActionDenyReason::Denied,
         )]);
-        assert_eq!(rollbacks.0.len(), 1);
+        assert_eq!(rollbacks.len(), 1);
+    }
+
+    #[test]
+    fn presented_cells_stay_suppressed_until_their_outcome_lands() {
+        let mut ledger = PredictionLedger::new();
+        let cell = IVec3::new(1, 64, 1);
+        let id = ledger.begin(PredictionSnapshot::World {
+            inventory: None,
+            cells: vec![(cell, 0)],
+        });
+        ledger.mark_presented(cell);
+        ledger.mark_presented(IVec3::new(9, 64, 9));
+        assert!(ledger.suppressed_cells().any(|c| c == cell));
+        ledger.reconcile(&[ActionOutcome::accept(id)]);
+        let left: Vec<_> = ledger.suppressed_cells().collect();
+        assert_eq!(
+            left,
+            vec![IVec3::new(9, 64, 9)],
+            "the answered cell clears; an unanswered presented cell stays"
+        );
     }
 
     #[test]

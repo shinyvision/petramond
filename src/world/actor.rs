@@ -189,7 +189,7 @@ impl World {
             }
             let click = Click {
                 at: actor.eye + dir * dist,
-                facing: crate::server::placement::facing_from_forward(dir),
+                facing: crate::rules::placement::facing_from_forward(dir),
             };
             let key = (hit.block, hit.normal, click.facing);
             let known = judged

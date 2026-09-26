@@ -54,6 +54,16 @@ while IFS= read -r file; do
 done < <(rg --files -g '*.rs' \
     src crates mods-src gui-builder mod-sdk mod-api petramond-ui petramond-text)
 
+# Layering: the client shares rules with the server through `petramond::rules`
+# and reaches a server only through `petramond::net::handle` /
+# `petramond::local_host`. Its production code never names server internals;
+# test harnesses (tests/ directories, tests.rs) may drive a server directly.
+if server_refs=$(rg -n 'petramond::server' crates/petramond-client/src \
+    -g '!**/tests/**' -g '!**/tests.rs'); then
+    printf 'client production code imports server internals:\n%s\n' "$server_refs" >&2
+    failed=1
+fi
+
 if (( failed )); then
     exit 1
 fi

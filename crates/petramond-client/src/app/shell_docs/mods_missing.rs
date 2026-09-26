@@ -2,12 +2,13 @@
 //! lacks. Back (and Enter) returns to the connect screen with the attempted
 //! address intact; ESC does the same via the global close-screen control.
 
-use crate::app::App;
+use super::{ScreenCtx, ShellCommand};
 use petramond_ui::{NavKey, UiEvent, UiMap, UiState, UiValue};
 use std::sync::Arc;
 
-pub(super) fn populate(app: &App, state: &mut UiState) {
-    let rows: Vec<UiMap> = app
+pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
+    let rows: Vec<UiMap> = ctx
+        .shell
         .connect
         .missing
         .iter()
@@ -27,12 +28,14 @@ pub(super) fn populate(app: &App, state: &mut UiState) {
     state.set("missing_rows", UiValue::List(Arc::new(rows)));
 }
 
-pub(super) fn handle(app: &mut App, ev: UiEvent) {
+pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
     match ev {
-        UiEvent::Click { id, .. } if id == "back" => app.reopen_connect_server(),
+        UiEvent::Click { id, .. } if id == "back" => {
+            ctx.request(ShellCommand::ReopenConnectServer)
+        }
         UiEvent::Key {
             key: NavKey::Enter, ..
-        } => app.reopen_connect_server(),
+        } => ctx.request(ShellCommand::ReopenConnectServer),
         _ => {}
     }
 }

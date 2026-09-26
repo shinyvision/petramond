@@ -6,6 +6,7 @@
 //! layer.
 
 mod chat;
+mod client_audio;
 mod client_mod_ui;
 mod connect;
 mod crafting_browser;
@@ -13,52 +14,44 @@ mod creative;
 mod gui_router;
 mod gui_value;
 mod hotbar_notice;
+mod hud_fx;
 mod input;
 mod inventory_menu;
 mod item_tooltip;
 mod menu_lifecycle;
 mod music;
 mod options;
+mod options_state;
 mod pointer;
 mod presentation_events;
 mod render;
 mod schematic_library;
 mod screen;
+mod session_ui;
 mod shell;
 mod shell_docs;
+mod shell_state;
 mod ui_runtime;
 mod ui_snapshot;
 mod update;
-
-use std::collections::HashMap;
 
 use screen::AppScreen;
 pub use screen::{CursorIcon, CursorPolicy};
 
 use crate::app::gui_router::GuiRouter;
-use crate::app::input::{ControlEvent, InputController};
-use crate::app::pointer::PointerState;
+use crate::app::input::{ControlEvent, Controls};
 use crate::game::presentation::GamePresentationScratch;
 use crate::game::Game;
-use petramond_audio::Audio;
 use petramond_input::controls::{BindableAction, Control, Modifiers};
 use petramond_render::camera::Camera;
 use petramond_render::Scene;
 
-const MOB_SOUND_HANDLE_START: u64 = 1 << 63;
-
-/// How long the hurt screen/hand shake (and red edge flash) lasts. Punchy and
-/// short: an unmistakable "get out of here", not a lasting wobble.
-const HURT_SHAKE_SECS: f32 = 0.25;
-/// How long the hand remains visible after a bed click that opens the sleep
-/// overlay, giving the interact jab time to read before the sleeping view takes over.
-const SLEEP_INTERACT_HAND_SECS: f32 = 0.30;
-
 pub struct App {
     game: Option<Game>,
-    hotbar_notice: hotbar_notice::HotbarNotice,
-    creative_menu: creative::CreativeMenu,
-    library_form: schematic_library::LibraryForm,
+    /// App-side state scoped to the current game session (HUD notice, the
+    /// creative / schematic forms, LAN status), replaced wholesale when a
+    /// session starts or ends.
+    session_ui: session_ui::SessionUi,
     shell_camera: Camera,
     render_dist: i32,
     /// Reusable builder for neutral per-frame presentation data read from the game.
@@ -66,37 +59,13 @@ pub struct App {
     /// Render-side translation of neutral per-frame presentation data into the
     /// renderer's wire structs.
     scene: Scene,
-    /// Spatial sound commands emitted by ticks since the last render. They are
-    /// applied alongside the same mob presentation snapshot the renderer uses.
-    spatial_sound_commands: Vec<crate::game::SpatialSoundCommand>,
-    spatial_mob_positions: Vec<(u64, petramond_math::world_pos::WorldPos)>,
-    /// Gameplay-originated mob sound events waiting for the next presentation
-    /// snapshot, where they can be pinned to interpolated mob positions.
-    mob_sound_events: Vec<crate::game::MobSoundEvent>,
-    /// Positional world-event one-shots (block place/break, doors, chest
-    /// lids, foreign pickups) waiting for the next render's spatial listener.
-    world_sound_cues: Vec<(
-        petramond_world::sound_registry::Sound,
-        petramond_math::world_pos::WorldPos,
-    )>,
-    /// Client-owned idle sound scheduling per live mob session id.
-    mob_sound_state: HashMap<u64, MobSoundState>,
-    /// Client-owned footstep cadence per walking body (see
-    /// `crate::game::FootstepSource` for the key): the tick its next step is
-    /// due. Retired with the bodies themselves each frame.
-    footstep_next_tick: HashMap<u64, u64>,
-    /// Reused per-frame scratch for client-mod loop gains (rain/wind beds).
-    loop_gain_scratch: Vec<(petramond_world::sound_registry::Sound, f32)>,
-    next_mob_sound_handle: u64,
-    /// Client-side sound engine. Drains the sim's per-tick [`petramond_audio::SoundEvent`]s
-    /// each frame and plays them; never part of the deterministic simulation.
-    audio: Audio,
-    /// WHEN the soundtrack plays. Owns the gap between pieces and the choice
-    /// of the next one; `audio` owns the streaming.
-    music: music::MusicDirector,
+    /// Sound orchestration: the audio engine, the soundtrack, and the
+    /// client-owned cue/cadence bookkeeping between game events and plays.
+    sound: client_audio::ClientAudio,
     last: f64,
-    input: InputController,
-    pointer: PointerState,
+    /// Raw input resolution: held controls, pointer, modifiers, the action
+    /// table and the held bindings.
+    controls: Controls,
     gui_router: GuiRouter,
     /// GUI-document runtime driver (every screen is document-backed).
     ui: ui_runtime::AppUi,
@@ -112,113 +81,27 @@ pub struct App {
     client_overlay_images: Vec<petramond_render::ClientOverlayImage>,
     chat: chat::ChatUi,
     screen: AppScreen,
-    /// Physical Ctrl/Shift/Alt/Meta modifier state from the windowing system,
-    /// tracked apart from the rebindable controls. Drives UI modifiers (Ctrl =
-    /// drop whole stack, Shift = inventory quick-move) and binding chords.
-    modifiers: Modifiers,
-    /// Persistent per-machine settings (`client.json`): volumes, particles,
-    /// key bindings. `render_dist` mirrors the App field (the env override may
-    /// differ from the file at launch); every committed Options change stores
-    /// the file.
-    settings: petramond::save::client::ClientSettings,
-    /// Every remappable action of the current session: the engine actions
-    /// plus what the loaded client mods registered. Rebuilt on session
-    /// start/end (`rebuild_action_table`).
-    action_table: petramond_input::controls::ActionTable,
-    /// Which bound actions are currently held (raw input → action edges).
-    binding_engine: petramond_input::controls::BindingEngine,
-    /// The action ID armed for remapping on the Options → Controls screen
-    /// (`None` = not remapping; engine ids like `jump`, mod ids like
-    /// `minimap:open_map`). While set, raw input is CAPTURED as the new
-    /// binding instead of dispatching; ESC cancels.
-    remap: Option<String>,
-    /// The modifier key held down while remapping (a chord starter). If it
-    /// releases with nothing else captured, the tap binds the modifier itself.
-    remap_armed_mod: Option<petramond_input::keycode::KeyCode>,
-    /// Whether the open Options flow was entered from the pause menu (Back
-    /// returns there) rather than the title screen.
-    options_from_pause: bool,
-    /// Renderer-owned option values (fog/render distance, particle density)
-    /// changed and must be pushed on the next render.
-    renderer_options_dirty: bool,
-    /// Slider positions mid-drag, shown by the Graphics readouts but not yet
-    /// applied: applying per drag step would reallocate scene targets and
-    /// reshape streaming on every pixel of travel.
-    anti_aliasing_preview: Option<petramond::save::client::AntiAliasing>,
-    view_distance_preview: Option<i32>,
+    /// The Options flow: persistent settings (`client.json`), slider
+    /// previews, the armed control remap, the renderer refresh flag.
+    options: options_state::OptionsState,
     /// `now_seconds` of the last [`render`](Self::render), so the held-item animation
     /// advances by draw time even when the platform coalesces or skips a redraw.
     last_render: f64,
-    /// Graph events fired on the local player's rigs since the last render
-    /// (the engine's own gestures resolved through `player::one_shot`, and
-    /// mod fires), so a swing/place/break begun on an un-drawn update isn't
-    /// lost before the next draw. Consumed (taken) by [`App::render`] and by
-    /// NOTHING else: any other consumer of these one-shot edges keeps its own
-    /// latch (`Game::swing_events` is the client mods'), because a shared
-    /// latch is whoever-eats-first and the other reader always ate second.
-    hand_events: Vec<(petramond::player::RigId, u16)>,
-    /// Seconds left of the hurt screen/hand shake, latched to
-    /// [`HURT_SHAKE_SECS`] when a `player_damaged` event arrives and decayed by
-    /// render time. Presentation-only.
-    hurt_shake_t: f32,
-    /// Seconds left to keep the hand visible over the sleep overlay after the
-    /// bed interaction jab starts. Presentation-only.
-    sleep_interact_hand_t: f32,
-    /// The HUD health drawn last frame, for change detection: any difference
-    /// starts a heart wiggle. `None` while no bar is drawn (shell/spectator),
-    /// so re-entering never wiggles from a stale comparison. Presentation-only.
-    prev_heart_health: Option<i32>,
-    /// The active heart-wiggle burst: the CHANGED half-heart range plus its
-    /// wall-clock start (the 200 ms window is real time, not ticks — a paused
-    /// or slowed sim must not stretch it). Presentation-only.
-    heart_wiggle: Option<HeartWiggle>,
+    /// Short-lived HUD/hand presentation: hurt shake, sleep-overlay hand,
+    /// heart wiggle, and the local rigs' graph events awaiting the next draw.
+    hud_fx: hud_fx::HudFx,
     /// Returns the allocator's free pages to the OS once terrain settles (see
     /// [`petramond_util::memory`]).
     heap_reclaim: petramond_util::memory::IdleHeapReclaim,
-    worlds: Vec<petramond::save::WorldInfo>,
-    selected_world: Option<usize>,
-    /// The World Settings session for the selected world (`None` unless the
-    /// screen is open): installed pack rows + the world's disabled set.
-    world_settings: Option<shell::WorldSettingsSession>,
-    /// The Create World session (`None` unless the screen is open): installed
-    /// pack rows + the buffered settings the new world is created with.
-    create_world: Option<shell::CreateWorldSession>,
-    /// The Connect to Server session: entry fields, the off-thread connect
-    /// worker's channel, and the mods a refused join reported missing.
-    connect: connect::ConnectSession,
-    /// The port the running HOST session is open to LAN on (`None` = not
-    /// open). Drives the pause menu's Open to LAN button/label.
-    lan_port: Option<u16>,
-    /// The last Open to LAN failure, shown inline on the pause menu; cleared
-    /// when the pause screen closes.
-    lan_error: Option<String>,
-    /// Why the last session ended, shown by the Disconnected screen.
-    disconnect_message: String,
+    /// The title flow's state: world list and selection, the open page's
+    /// session, the connect session, the last disconnect reason.
+    shell: shell_state::ShellState,
     /// The last session's section cache, harvested at teardown: the next
     /// remote join claims it in its Join manifest so a reconnect re-promotes
     /// cached terrain instead of re-streaming it.
     retained_section_cache: Option<crate::game::section_cache::SectionCache>,
     quit_requested: bool,
     renderer_world_clear_pending: bool,
-}
-
-/// One heart-wiggle burst: hearts overlapping `[lo, hi)` (half-heart points —
-/// the points gained by a heal or lost to a hit) shake for
-/// [`HEART_WIGGLE_SECS`] of wall-clock time from `started`.
-#[derive(Copy, Clone)]
-struct HeartWiggle {
-    lo: i32,
-    hi: i32,
-    started: f64,
-}
-
-/// How long a changed heart wiggles, in REAL seconds (per design: not ticks).
-const HEART_WIGGLE_SECS: f64 = 0.2;
-
-#[derive(Default)]
-struct MobSoundState {
-    next_idle_tick: u64,
-    sequence: u64,
 }
 
 impl App {
@@ -234,34 +117,21 @@ impl App {
             petramond::save::client::load()
         };
         settings.render_dist = render_dist;
-        let mut audio = Audio::new();
-        audio.set_volumes(
+        let sound = client_audio::ClientAudio::new(
             settings.master_volume,
             settings.sound_volume,
             settings.music_volume,
         );
         let mut app = Self {
             game: None,
-            hotbar_notice: Default::default(),
-            creative_menu: Default::default(),
-            library_form: Default::default(),
+            session_ui: Default::default(),
             shell_camera: cam,
             render_dist,
             presentation: GamePresentationScratch::new(),
             scene: Scene::new(),
-            spatial_sound_commands: Vec::new(),
-            spatial_mob_positions: Vec::new(),
-            mob_sound_events: Vec::new(),
-            world_sound_cues: Vec::new(),
-            mob_sound_state: HashMap::new(),
-            footstep_next_tick: HashMap::new(),
-            loop_gain_scratch: Vec::new(),
-            music: music::MusicDirector::new(),
-            next_mob_sound_handle: MOB_SOUND_HANDLE_START,
-            audio,
+            sound,
             last: now_seconds(),
-            input: InputController::default(),
-            pointer: PointerState::default(),
+            controls: Controls::new(),
             gui_router: GuiRouter::default(),
             ui: ui_runtime::AppUi::new(),
             crafting_browser: Default::default(),
@@ -271,37 +141,17 @@ impl App {
             client_overlay_images: Vec::new(),
             chat: chat::ChatUi::default(),
             screen: AppScreen::Title,
-            modifiers: Modifiers::default(),
-            settings,
-            action_table: petramond_input::controls::ActionTable::engine(),
-            binding_engine: petramond_input::controls::BindingEngine::default(),
-            remap: None,
-            remap_armed_mod: None,
-            options_from_pause: false,
-            renderer_options_dirty: true,
-            anti_aliasing_preview: None,
-            view_distance_preview: None,
+            options: options_state::OptionsState::new(settings),
             last_render: now_seconds(),
-            hand_events: Vec::new(),
-            hurt_shake_t: 0.0,
-            sleep_interact_hand_t: 0.0,
-            prev_heart_health: None,
-            heart_wiggle: None,
+            hud_fx: Default::default(),
             heap_reclaim: Default::default(),
-            worlds: Vec::new(),
-            selected_world: None,
-            world_settings: None,
-            create_world: None,
-            connect: connect::ConnectSession::default(),
-            lan_port: None,
-            lan_error: None,
-            disconnect_message: String::new(),
+            shell: Default::default(),
             retained_section_cache: None,
             quit_requested: false,
             renderer_world_clear_pending: true,
         };
-        app.pointer.release_for_menu();
-        app.refresh_worlds();
+        app.controls.pointer.release_for_menu();
+        app.shell.refresh_worlds();
         app
     }
 
@@ -333,7 +183,7 @@ impl App {
     /// Apply a shared control event. Returns false only when the app did not
     /// consume the control, e.g. Escape with no screen open on native.
     pub fn handle_control(&mut self, control: Control, down: bool) -> bool {
-        let Some(event) = self.input.set_control(control, down) else {
+        let Some(event) = self.controls.input.set_control(control, down) else {
             return true;
         };
 
@@ -346,7 +196,7 @@ impl App {
                     if command {
                         self.chat.insert_text("/", now);
                     }
-                    self.pointer.release_for_menu();
+                    self.controls.pointer.release_for_menu();
                 }
                 true
             }
@@ -391,7 +241,7 @@ impl App {
                         .as_mut()
                         .is_some_and(|game| game.adjust_tool(steps));
                 if !taken {
-                    self.input.step_hotbar(self.hotbar_step_for_adjust(steps));
+                    self.controls.input.step_hotbar(self.hotbar_step_for_adjust(steps));
                 }
                 true
             }
@@ -410,7 +260,7 @@ impl App {
             // count in gameplay; releases always land so nothing sticks held.
             ControlEvent::Attack { down } => {
                 if self.screen.gameplay_enabled() || !down {
-                    self.pointer.set_gameplay_button(
+                    self.controls.pointer.set_gameplay_button(
                         petramond_world::gui_state::PointerButton::Primary,
                         down,
                     );
@@ -419,7 +269,7 @@ impl App {
             }
             ControlEvent::Interact { down } => {
                 if self.screen.gameplay_enabled() || !down {
-                    self.pointer.set_gameplay_button(
+                    self.controls.pointer.set_gameplay_button(
                         petramond_world::gui_state::PointerButton::Secondary,
                         down,
                     );
@@ -436,19 +286,19 @@ impl App {
             }
             ControlEvent::DropItem => {
                 if self.screen.ui_open() {
-                    let (x, y) = self.pointer.cursor();
+                    let (x, y) = self.controls.pointer.cursor();
                     if let (Some(slot), Some(game)) =
                         (self.ui.menu_slot_at(x, y), self.game.as_mut())
                     {
                         // Menu shortcuts deliberately use the physical Ctrl
                         // modifier; movement bindings do not redefine GUI
                         // conventions.
-                        game.menu_drop(slot, self.modifiers.ctrl);
+                        game.menu_drop(slot, self.controls.modifiers.ctrl);
                     }
                 } else if self.screen.gameplay_enabled() {
                     // In captured gameplay, holding the SPRINT control
                     // (wherever it is bound) drops the selected whole stack.
-                    let whole_stack = self.input.sprint_held();
+                    let whole_stack = self.controls.input.sprint_held();
                     if let Some(game) = self.game.as_mut() {
                         game.drop_selected_item(whole_stack);
                     }
@@ -462,7 +312,7 @@ impl App {
                 // selected hotbar slot. Focused text inputs already swallowed
                 // the press upstream (`handle_raw_key`).
                 if self.screen.ui_open() {
-                    let (x, y) = self.pointer.cursor();
+                    let (x, y) = self.controls.pointer.cursor();
                     if let (Some(slot), Some(game)) =
                         (self.ui.menu_slot_at(x, y), self.game.as_mut())
                     {
@@ -524,7 +374,7 @@ impl App {
             (BindableAction::HotbarNext, 1),
             (BindableAction::HotbarPrev, -1),
         ] {
-            if self.settings.bindings.binding(action).input == input {
+            if self.options.settings.bindings.binding(action).input == input {
                 return step;
             }
         }
@@ -532,9 +382,9 @@ impl App {
     }
 
     pub fn set_modifiers(&mut self, modifiers: Modifiers) {
-        self.modifiers = modifiers;
+        self.controls.modifiers = modifiers;
         let mut out = Vec::new();
-        self.binding_engine
+        self.controls.binding_engine
             .on_modifiers_changed(modifiers, &mut out);
         self.dispatch_actions(out);
     }

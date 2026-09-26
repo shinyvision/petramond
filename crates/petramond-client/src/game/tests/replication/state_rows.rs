@@ -211,8 +211,8 @@ fn shader_params_replicate_into_the_replica_environment() {
     }
     let server_params = game.server.world.environment().shader_params().clone();
     assert!(
-        server_params.contains_key(petramond::server::daynight::SKY_TIME_PARAM)
-            && server_params.contains_key(petramond::server::daynight::SKY_LIGHT_PARAM),
+        server_params.contains_key(petramond::rules::daynight::SKY_TIME_PARAM)
+            && server_params.contains_key(petramond::rules::daynight::SKY_LIGHT_PARAM),
         "day/night published its params server-side"
     );
     let replica_params = game.game.replica.environment().shader_params().clone();
@@ -235,7 +235,7 @@ fn env_params_ship_on_change_and_none_when_static() {
     assert!(
         shipped
             .iter()
-            .any(|(k, _)| k == petramond::server::daynight::SKY_TIME_PARAM),
+            .any(|(k, _)| k == petramond::rules::daynight::SKY_TIME_PARAM),
         "the day/night keys ride the batch: {shipped:?}"
     );
 
@@ -298,13 +298,13 @@ fn break_overlays_collect_own_and_visible_remote_miners() {
 
     let mut game = game();
     game.game.self_view.mining = Some((IVec3::new(1, 64, 1), 4));
-    let own_id = game.game.self_id;
+    let own_id = game.game.entities.self_id();
     let rows = [
         row(1, Some((IVec3::new(3, 64, 3), 7)), true),
         row(2, Some((IVec3::new(5, 64, 5), 2)), false), // hidden: no overlay
         row(3, None, true),                             // not mining: no overlay
     ];
-    game.game.remote_players.apply_snapshot(&rows, &[], own_id);
+    game.game.entities.players_mut().apply_snapshot(&rows, &[], own_id);
 
     let mut scratch = GamePresentationScratch::new();
     let presentation = scratch.snapshot(

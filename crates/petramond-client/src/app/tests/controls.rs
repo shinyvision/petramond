@@ -34,7 +34,7 @@ fn world_settings_requires_selection_and_hosts_the_delete_flow() {
     use petramond_world::gui_state::GuiKind;
     let mut app = App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     app.screen = crate::app::AppScreen::WorldSelect;
-    app.worlds = test_worlds(1);
+    app.shell.set_worlds_for_test(test_worlds(1));
     let screen = (1280, 720);
 
     // No selection: the (disabled) Settings button routes no click.
@@ -44,13 +44,13 @@ fn world_settings_requires_selection_and_hosts_the_delete_flow() {
     assert_eq!(app.screen, crate::app::AppScreen::WorldSelect);
 
     // With a selection it opens World Settings for that world.
-    app.selected_world = Some(0);
+    app.shell.select_world(Some(0));
     app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.2);
     click_doc_id(&mut app, "settings");
     app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.3);
     assert_eq!(app.screen, crate::app::AppScreen::WorldSettings);
     assert_eq!(
-        app.world_settings.as_ref().map(|s| s.world_name.as_str()),
+        app.shell.world_settings().map(|s| s.world_name.as_str()),
         Some("world-0")
     );
 
@@ -65,7 +65,7 @@ fn world_settings_requires_selection_and_hosts_the_delete_flow() {
     click_doc_id(&mut app, "cancel");
     app.drive_doc_ui(GuiKind::DeleteWorld, screen, 0.7);
     assert_eq!(app.screen, crate::app::AppScreen::WorldSelect);
-    assert_eq!(app.selected_world, Some(0));
+    assert_eq!(app.shell.selected_world(), Some(0));
 }
 
 /// End-to-end plumbing for the document-backed create-world screen: platform
@@ -167,14 +167,14 @@ fn document_shell_screens_flow_via_pointer_and_keys() {
     assert_eq!(app.screen, crate::app::AppScreen::WorldSelect);
 
     // World select with two stub worlds: keyboard selection enables Play.
-    app.worlds = test_worlds(2);
+    app.shell.set_worlds_for_test(test_worlds(2));
     app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.2);
     app.handle_text_key(TextKey::ArrowDown);
     app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.3);
-    assert_eq!(app.selected_world, Some(0));
+    assert_eq!(app.shell.selected_world(), Some(0));
     app.handle_text_key(TextKey::ArrowDown);
     app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.4);
-    assert_eq!(app.selected_world, Some(1));
+    assert_eq!(app.shell.selected_world(), Some(1));
 
     // Create → cancel round-trips; Back returns to the title.
     click_id(&mut app, "create");
@@ -200,16 +200,16 @@ fn shell_button_and_toggle_activations_play_ui_click_sound() {
     let screen = (1280, 720);
 
     app.drive_doc_ui(GuiKind::Title, screen, 0.0);
-    app.audio.take_played_for_test();
+    app.sound.take_played_for_test();
     click_doc_id(&mut app, "start");
     app.drive_doc_ui(GuiKind::Title, screen, 0.1);
-    assert_eq!(app.audio.take_played_for_test(), vec![Sound::UiClick]);
+    assert_eq!(app.sound.take_played_for_test(), vec![Sound::UiClick]);
 
     app.drive_doc_ui(GuiKind::Demo, screen, 0.2);
-    app.audio.take_played_for_test();
+    app.sound.take_played_for_test();
     click_doc_id(&mut app, "t1");
     app.drive_doc_ui(GuiKind::Demo, screen, 0.3);
-    assert_eq!(app.audio.take_played_for_test(), vec![Sound::UiClick]);
+    assert_eq!(app.sound.take_played_for_test(), vec![Sound::UiClick]);
 }
 
 #[test]
@@ -219,10 +219,10 @@ fn document_game_menu_clicks_do_not_play_shell_ui_click_sound() {
     let screen = (1280, 720);
     let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
 
-    app.audio.take_played_for_test();
+    app.sound.take_played_for_test();
     app.set_cursor_position(cx, cy);
     assert!(app.click_screen_for_test(screen, 0.0));
-    assert!(app.audio.take_played_for_test().is_empty());
+    assert!(app.sound.take_played_for_test().is_empty());
 }
 
 /// Renaming a world changes ONLY its display name; playing it must open the
@@ -236,14 +236,15 @@ fn play_after_rename_opens_the_original_save_directory() {
     petramond::save::rename_world(dir_name, "Renamed Display Name").expect("rename");
 
     let mut app = App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
-    app.refresh_worlds();
+    app.shell.refresh_worlds();
     let idx = app
-        .worlds
+        .shell
+        .worlds()
         .iter()
         .position(|w| w.dir_name == dir_name)
         .expect("renamed world listed");
-    assert_eq!(app.worlds[idx].name, "Renamed Display Name");
-    app.selected_world = Some(idx);
+    assert_eq!(app.shell.worlds()[idx].name, "Renamed Display Name");
+    app.shell.select_world(Some(idx));
     app.play_selected_world();
     assert!(app.game.is_some(), "world opened");
     app.save_on_exit();
@@ -267,14 +268,15 @@ fn play_after_rename_opens_the_original_save_directory() {
 /// Back/Delete footer is shared chrome present on both tabs.
 #[test]
 fn world_settings_tabs_swap_pages() {
-    use crate::app::shell::SettingsTab;
+    use crate::app::shell_state::SettingsTab;
     use petramond_world::gui_state::GuiKind;
     let mut app = App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     let screen = (1280, 720);
     app.screen = crate::app::AppScreen::WorldSelect;
-    app.worlds = test_worlds(1);
-    app.selected_world = Some(0);
-    app.open_world_settings();
+    app.shell.set_worlds_for_test(test_worlds(1));
+    app.shell.select_world(Some(0));
+    assert!(app.shell.open_world_settings());
+    app.screen = crate::app::AppScreen::WorldSettings;
 
     app.drive_doc_ui(GuiKind::WorldSettings, screen, 0.0);
     assert!(app.ui.out().rect("delete_world").is_some());
@@ -287,7 +289,7 @@ fn world_settings_tabs_swap_pages() {
     app.handle_text_key(TextKey::ArrowRight);
     app.drive_doc_ui(GuiKind::WorldSettings, screen, 0.1);
     assert_eq!(
-        app.world_settings.as_ref().map(|s| s.tab),
+        app.shell.world_settings().map(|s| s.tab),
         Some(SettingsTab::Mods)
     );
     app.drive_doc_ui(GuiKind::WorldSettings, screen, 0.2);
@@ -305,7 +307,7 @@ fn world_settings_tabs_swap_pages() {
     app.set_pointer_button(PointerButton::Primary, false);
     app.drive_doc_ui(GuiKind::WorldSettings, screen, 0.3);
     assert_eq!(
-        app.world_settings.as_ref().map(|s| s.tab),
+        app.shell.world_settings().map(|s| s.tab),
         Some(SettingsTab::World)
     );
     app.drive_doc_ui(GuiKind::WorldSettings, screen, 0.4);
@@ -330,7 +332,7 @@ fn create_world_writes_buffered_settings_at_create() {
     click_doc_id(&mut app, "create");
     app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.1);
     assert_eq!(app.screen, crate::app::AppScreen::CreateWorld);
-    assert!(app.create_world.is_some(), "create opens with a session");
+    assert!(app.shell.create_world().is_some(), "create opens with a session");
 
     // Type the name through the document's focused input, then let the
     // controller mirror it into bound state so Create enables.
@@ -345,8 +347,8 @@ fn create_world_writes_buffered_settings_at_create() {
 
     // A disabled pack in the buffered session (the Mods-tab toggles edit this
     // set; installed packs vary per environment, so seed it directly).
-    app.create_world
-        .as_mut()
+    app.shell
+        .create_world_mut()
         .expect("session while the screen is open")
         .settings
         .disabled_mods
@@ -420,10 +422,10 @@ fn inventory_toggle_is_once_per_press() {
 #[test]
 fn opening_inventory_releases_grab() {
     let mut app = app();
-    app.pointer.grab_for_gameplay();
+    app.controls.pointer.grab_for_gameplay();
     app.handle_control(Control::ToggleInventory, true);
     assert!(app.screen.inventory_open());
-    assert!(!app.pointer.is_grabbing());
+    assert!(!app.controls.pointer.is_grabbing());
 }
 
 #[test]
@@ -455,11 +457,11 @@ fn escape_closes_open_inventory_and_regrabs() {
     let mut app = app();
     app.handle_control(Control::ToggleInventory, true);
     assert!(app.screen.inventory_open());
-    assert!(!app.pointer.is_grabbing());
+    assert!(!app.controls.pointer.is_grabbing());
 
     assert!(app.handle_control(Control::CloseScreen, true));
     assert!(!app.screen.inventory_open());
-    assert!(app.pointer.is_grabbing());
+    assert!(app.controls.pointer.is_grabbing());
 }
 
 #[test]
@@ -469,7 +471,7 @@ fn escape_with_inventory_closed_opens_pause() {
     assert!(app.handle_control(Control::CloseScreen, true));
     assert!(!app.screen.inventory_open());
     assert_eq!(app.screen, crate::app::AppScreen::Pause);
-    assert!(!app.pointer.is_grabbing());
+    assert!(!app.controls.pointer.is_grabbing());
 }
 
 #[test]
@@ -481,7 +483,7 @@ fn escape_on_pause_resumes_gameplay_and_regrabs() {
     assert!(app.handle_control(Control::CloseScreen, true));
 
     assert_eq!(app.screen, crate::app::AppScreen::Game);
-    assert!(app.pointer.is_grabbing());
+    assert!(app.controls.pointer.is_grabbing());
 }
 
 #[test]
@@ -663,26 +665,26 @@ fn options_opens_from_title_and_esc_walks_back_out() {
     for (i, expected) in AntiAliasing::ALL.into_iter().enumerate() {
         let now = 0.4 + i as f64 * 0.3;
         app.drive_doc_ui(GuiKind::OptionsGraphics, screen, now);
-        let previous = app.settings.anti_aliasing;
+        let previous = app.options.settings.anti_aliasing;
         let r = app.ui.out().rect("anti_aliasing").expect("AA slider");
         let fraction = i as f32 / (AntiAliasing::ALL.len() - 1) as f32;
         let x = r.x as f32 + (fraction * r.w as f32).clamp(1.0, r.w as f32 - 1.0);
-        app.renderer_options_dirty = false;
+        app.options.take_renderer_dirty();
         app.set_cursor_position(x, (r.y + r.h / 2) as f32);
         app.set_pointer_button(PointerButton::Primary, true);
         app.drive_doc_ui(GuiKind::OptionsGraphics, screen, now + 0.1);
-        assert_eq!(app.anti_aliasing_preview, Some(expected));
+        assert_eq!(app.options.anti_aliasing_preview, Some(expected));
         assert_eq!(
-            app.settings.anti_aliasing, previous,
+            app.options.settings.anti_aliasing, previous,
             "dragging must not change renderer settings"
         );
-        assert!(!app.renderer_options_dirty);
+        assert!(!app.options.renderer_dirty());
         app.set_pointer_button(PointerButton::Primary, false);
         app.drive_doc_ui(GuiKind::OptionsGraphics, screen, now + 0.2);
-        assert_eq!(app.settings.anti_aliasing, expected);
-        assert_eq!(app.anti_aliasing_preview, None);
+        assert_eq!(app.options.settings.anti_aliasing, expected);
+        assert_eq!(app.options.anti_aliasing_preview, None);
         assert!(
-            app.renderer_options_dirty,
+            app.options.renderer_dirty(),
             "release must reach the renderer"
         );
     }
@@ -692,13 +694,13 @@ fn options_opens_from_title_and_esc_walks_back_out() {
     app.set_cursor_position((r.x + 1) as f32, (r.y + r.h / 2) as f32);
     app.set_pointer_button(PointerButton::Primary, true);
     app.drive_doc_ui(GuiKind::OptionsGraphics, screen, 2.0);
-    let applied = app.settings.anti_aliasing;
-    assert!(app.anti_aliasing_preview.is_some());
+    let applied = app.options.settings.anti_aliasing;
+    assert!(app.options.anti_aliasing_preview.is_some());
 
     // ESC: category → root → title (the flow began there).
     app.handle_control(Control::CloseScreen, true);
-    assert_eq!(app.anti_aliasing_preview, None);
-    assert_eq!(app.settings.anti_aliasing, applied);
+    assert_eq!(app.options.anti_aliasing_preview, None);
+    assert_eq!(app.options.settings.anti_aliasing, applied);
     assert_eq!(app.screen, crate::app::AppScreen::Options);
     app.handle_control(Control::CloseScreen, true);
     assert_eq!(app.screen, crate::app::AppScreen::Title);
@@ -745,13 +747,13 @@ fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.0);
     click_bind_row(&mut app, "strafe_right");
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.1);
-    assert_eq!(app.remap.as_deref(), Some("strafe_right"));
+    assert_eq!(app.options.remap(), Some("strafe_right"));
 
     // ESC cancels without touching the binding.
     assert!(app.remap_capture_key(KeyCode::Escape, true));
-    assert_eq!(app.remap, None);
+    assert_eq!(app.options.remap(), None);
     assert_eq!(
-        app.settings.bindings.binding(BindableAction::StrafeRight),
+        app.options.settings.bindings.binding(BindableAction::StrafeRight),
         Binding::key(KeyCode::KeyD)
     );
 
@@ -761,13 +763,13 @@ fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.3);
     click_bind_row(&mut app, "strafe_left");
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.4);
-    assert_eq!(app.remap.as_deref(), Some("strafe_left"));
+    assert_eq!(app.options.remap(), Some("strafe_left"));
 
     // Capture K (no chord): binding lands, remap disarms.
     assert!(app.remap_capture_key(KeyCode::KeyK, true));
-    assert_eq!(app.remap, None);
+    assert_eq!(app.options.remap(), None);
     assert_eq!(
-        app.settings.bindings.binding(BindableAction::StrafeLeft),
+        app.options.settings.bindings.binding(BindableAction::StrafeLeft),
         Binding::key(KeyCode::KeyK)
     );
 
@@ -782,12 +784,12 @@ fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
     let _ = app.handle_raw_key(KeyCode::KeyA, false);
 
     // A tapped modifier binds ITSELF (chord starters bind on release).
-    app.remap = Some("sprint".to_string());
+    app.options.begin_remap("sprint");
     assert!(app.remap_capture_key(KeyCode::AltLeft, true));
-    assert_eq!(app.remap.as_deref(), Some("sprint"), "hold = chord start");
+    assert_eq!(app.options.remap(), Some("sprint"), "hold = chord start");
     assert!(app.remap_capture_key(KeyCode::AltLeft, false));
     assert_eq!(
-        app.settings.bindings.binding(BindableAction::Sprint).input,
+        app.options.settings.bindings.binding(BindableAction::Sprint).input,
         BoundInput::Key(KeyCode::AltLeft)
     );
 }
@@ -796,7 +798,7 @@ fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
 /// `action_id`, resolved through the same row list the controller uses (the
 /// list interleaves category headers, so indexes are never hardcoded).
 fn click_bind_row(app: &mut App, action_id: &str) {
-    let index = crate::app::shell_docs::controls_action_row_index(&app.action_table, action_id)
+    let index = crate::app::shell_docs::controls_action_row_index(&app.controls.action_table, action_id)
         .unwrap_or_else(|| panic!("no controls row for '{action_id}'"));
     let rect = app
         .ui
@@ -826,9 +828,9 @@ fn attack_rebinds_from_mouse_to_key() {
     let input = app.take_game_input();
     assert!(input.break_held && input.attack_clicked);
     app.handle_raw_mouse(petramond_input::keycode::MouseButton::Left, false);
-    app.pointer.clear_edges();
+    app.controls.pointer.clear_edges();
 
-    app.settings
+    app.options.settings
         .bindings
         .set(BindableAction::Attack, Binding::key(KeyCode::KeyF));
     assert!(app.handle_raw_key(KeyCode::KeyF, true));
@@ -841,7 +843,7 @@ fn attack_rebinds_from_mouse_to_key() {
     let input = app.take_game_input();
     assert!(!input.break_held);
     // The unbound left button no longer mines...
-    app.pointer.clear_edges();
+    app.controls.pointer.clear_edges();
     app.handle_raw_mouse(petramond_input::keycode::MouseButton::Left, true);
     let input = app.take_game_input();
     assert!(
@@ -857,7 +859,7 @@ fn attack_rebinds_from_mouse_to_key() {
 #[test]
 fn mod_key_actions_join_the_controls_table_with_their_own_category() {
     let app = app();
-    let table = &app.action_table;
+    let table = &app.controls.action_table;
     let row = table
         .row("minimap:open_map")
         .expect("minimap's registered action is in the table");
@@ -968,18 +970,18 @@ fn the_screen_shake_checkbox_toggles_the_setting_and_reaches_the_renderer() {
     use petramond_world::gui_state::GuiKind;
     let mut app = App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     let screen = (1280, 720);
-    assert!(app.settings.screen_shake, "screen shake defaults on");
+    assert!(app.options.settings.screen_shake, "screen shake defaults on");
     app.screen = crate::app::AppScreen::OptionsGraphics;
     for (i, expected) in [false, true].into_iter().enumerate() {
         let now = i as f64 * 0.3;
         app.drive_doc_ui(GuiKind::OptionsGraphics, screen, now);
-        app.renderer_options_dirty = false;
+        app.options.take_renderer_dirty();
         click_doc_id(&mut app, "screen_shake");
         app.drive_doc_ui(GuiKind::OptionsGraphics, screen, now + 0.1);
-        assert_eq!(app.settings.screen_shake, expected);
-        assert_eq!(app.settings.graphics().screen_shake, expected);
+        assert_eq!(app.options.settings.screen_shake, expected);
+        assert_eq!(app.options.settings.graphics().screen_shake, expected);
         assert!(
-            app.renderer_options_dirty,
+            app.options.renderer_dirty(),
             "the toggle must reach the renderer"
         );
     }
@@ -1015,16 +1017,16 @@ fn a_tool_adjust_with_nothing_to_adjust_steps_the_hotbar_the_way_the_wheel_does(
     ] {
         let mut app = super::app();
         assert!(app.screen.gameplay_enabled());
-        app.settings
+        app.options.settings
             .bindings
             .set(BindableAction::HotbarNext, Binding::scroll(ScrollDir::Down));
-        app.settings
+        app.options.settings
             .bindings
             .set(BindableAction::HotbarPrev, Binding::scroll(ScrollDir::Up));
-        app.settings
+        app.options.settings
             .bindings
             .set(BindableAction::AdjustToolNext, chord(adjust_next));
-        app.settings
+        app.options.settings
             .bindings
             .set(BindableAction::AdjustToolPrev, chord(adjust_prev));
         app.rebuild_action_table();
@@ -1032,7 +1034,7 @@ fn a_tool_adjust_with_nothing_to_adjust_steps_the_hotbar_the_way_the_wheel_does(
         for notch in [-1.0, 1.0] {
             app.set_modifiers(Modifiers::default());
             app.add_scroll_delta(notch);
-            let plain = app.input.take_hotbar_steps();
+            let plain = app.controls.input.take_hotbar_steps();
             assert_ne!(plain, 0, "the bare wheel steps the hotbar");
 
             // Sprinting holds Ctrl, so this notch matches the tool chord.
@@ -1042,7 +1044,7 @@ fn a_tool_adjust_with_nothing_to_adjust_steps_the_hotbar_the_way_the_wheel_does(
                 ..Default::default()
             });
             app.add_scroll_delta(notch);
-            let sprinting = app.input.take_hotbar_steps();
+            let sprinting = app.controls.input.take_hotbar_steps();
             app.handle_raw_key(petramond_input::keycode::KeyCode::ControlLeft, false);
 
             assert_eq!(
