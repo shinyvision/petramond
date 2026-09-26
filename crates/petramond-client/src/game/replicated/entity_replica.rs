@@ -193,59 +193,51 @@ impl EntityReplica {
     /// own row's mount adopts HERE — the local body slaves to the same
     /// committed pair every observer renders.
     fn commit(&mut self, staged: StagedRows) -> Committed {
-        let StagedRows {
-            mobs,
-            items,
-            players,
-            actions,
-            resync,
-        } = staged;
         let was_mounted = self.own_mount.is_some();
-        // The own row always rides (a session tracks itself); a window that
-        // leaves it out left it unchanged.
-        if let Some(own) = players.iter().find(|row| row.id == self.self_id) {
-            self.own_mount = own.mount;
+        // A folded entry replays its windows oldest first, so every entity
+        // ends on its newest row; a resync's rows seed the pair in place
+        // rather than interpolate across the dropped gap.
+        for window in staged.windows() {
+            // The own row always rides (a session tracks itself); a window
+            // that leaves it out left it unchanged.
+            if let Some(own) = window.players.iter().find(|row| row.id == self.self_id) {
+                self.own_mount = own.mount;
+            }
+            if staged.resync {
+                self.mobs.resync(&window.mobs);
+                self.items.resync(&window.items);
+            } else {
+                self.mobs.apply(&window.mobs);
+                self.items.apply(&window.items);
+            }
+            self.players
+                .apply(&window.players, self.self_id, staged.resync);
         }
-        if resync {
-            self.mobs.resync(&mobs);
-            self.items.resync(&items);
-        } else {
-            self.mobs.apply(&mobs);
-            self.items.apply(&items);
+        // Actions land after every window's rows, so a body that entered
+        // interest anywhere in a folded span still takes its earlier edges.
+        for window in staged.windows() {
+            self.players.queue_actions(&window.actions);
         }
-        // A resync's player rows snap rather than interpolate across the
-        // dropped gap.
-        self.players
-            .apply(&players, &actions, self.self_id, resync);
         Committed {
             dismounted: was_mounted && self.own_mount.is_none(),
         }
     }
 
     /// Queue one post-bootstrap batch. Overflow is a declared resync: every
-    /// pending window folds into one (lanes compose, so no spawn or despawn
-    /// is lost and each entity keeps its newest row), and every dropped
-    /// batch's player actions survive in arrival order so one-shot animation
-    /// triggers are not lost.
+    /// pending window folds into one entry that keeps each window's shared
+    /// lanes and actions (lanes compose in order, so no spawn or despawn is
+    /// lost and each entity ends on its newest row; every dropped batch's
+    /// player actions survive in arrival order so one-shot animation triggers
+    /// are not lost). No row is copied: the fold moves windows, and the
+    /// commit replays them.
     fn stage(&mut self, staged: StagedRows) {
         let staged = if self.staged.len() >= MAX_STAGED_ROW_BATCHES {
-            let action_count = self
-                .staged
-                .iter()
-                .map(|rows| rows.actions.len())
-                .sum::<usize>()
-                + staged.actions.len();
-            let mut actions = Vec::with_capacity(action_count);
             let mut pending = self.staged.drain(..).chain(std::iter::once(staged));
             let mut folded = pending.next().expect("the queue was full");
-            actions.extend(folded.actions.iter().cloned());
             for rows in pending {
-                actions.extend(rows.actions.iter().cloned());
-                folded.mobs.absorb(rows.mobs);
-                folded.items.absorb(rows.items);
-                folded.players.absorb(rows.players);
+                folded.folded.push(rows.window);
+                folded.folded.extend(rows.folded);
             }
-            folded.actions = actions.into();
             folded.resync = true;
             folded
         } else {

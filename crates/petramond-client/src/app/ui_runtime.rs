@@ -8,10 +8,13 @@
 //! leak into the deterministic tick. The only tick-bound artifact is a
 //! [`UiEvent`] the caller explicitly latches.
 
+use std::collections::HashMap;
+
 use petramond::gui::{doc_theme, documents};
 
 use petramond_ui::{DocImages, FrameArgs, FrameOutput, FrameState, InputEvent, UiRuntime, UiState};
 use petramond_world::gui_state::GuiKind;
+use petramond_world::item::ItemType;
 
 /// A document's image registry: document-local images first, then the
 /// host-registered extras (controller-provided icons), in one
@@ -56,6 +59,17 @@ pub(super) struct AppUi {
     image_sources: Vec<petramond::gui::DocImageSource>,
     viewport_generation: u64,
     frame_stamp: Option<(GuiKind, petramond::gui::UiViewport)>,
+    /// Counts solved frames; the derived slot/hook lists below describe the
+    /// solve numbered `geometry_serial`.
+    solve_serial: u64,
+    geometry_serial: Option<u64>,
+    /// The solved frame's slot cells and hooks as game-typed renderer input,
+    /// rebuilt in place once per solve.
+    doc_slots: Vec<petramond::gui::DocSlot>,
+    doc_hooks: Vec<petramond::gui::DocHook>,
+    /// Parsed `bind.item` layer lists, by bound string: each distinct value
+    /// is split and resolved once per open screen, not once per frame.
+    item_layers: HashMap<String, Box<[(ItemType, bool)]>>,
     /// Native clipboard by default; tests inject an in-memory one so text
     /// tests never touch the OS.
     clipboard: Box<dyn petramond_ui::TextClipboard>,
@@ -104,6 +118,11 @@ impl AppUi {
             image_sources: Vec::new(),
             viewport_generation: 0,
             frame_stamp: None,
+            solve_serial: 0,
+            geometry_serial: None,
+            doc_slots: Vec::new(),
+            doc_hooks: Vec::new(),
+            item_layers: HashMap::new(),
             clipboard: Box::new(DocClipboard::default()),
         }
     }
@@ -221,6 +240,9 @@ impl AppUi {
         self.frame_stamp = None;
         self.out.hover_slot = None;
         self.out.hover_item = None;
+        // Item names resolve against the session's registry; the next screen
+        // (or session) parses afresh.
+        self.item_layers.clear();
     }
 
     /// Run one runtime frame for `kind`; queued input drains into this frame.
@@ -286,6 +308,7 @@ impl AppUi {
             &mut self.fs,
             &mut self.out,
         );
+        self.solve_serial = self.solve_serial.wrapping_add(1);
         self.frame_stamp = Some((kind, viewport));
         true
     }
@@ -364,100 +387,74 @@ impl AppUi {
         &mut self.out.draw
     }
 
-    /// The last frame's slot cells as game-typed [`petramond::gui::DocSlot`]s
-    /// (unknown roles drop — they can't own game content).
-    pub fn doc_slots(&self) -> std::sync::Arc<Vec<petramond::gui::DocSlot>> {
-        std::sync::Arc::new(
-            self.out
-                .slots
-                .iter()
-                .filter_map(|s| {
-                    let role = petramond::gui::Role::from_key(&s.role)?;
-                    let mut slot = petramond::gui::DocSlot::new(
-                        role,
-                        s.index,
-                        petramond::gui::SlotRect {
-                            x: s.rect.x as f32,
-                            y: s.rect.y as f32,
-                            w: s.rect.w as f32,
-                            h: s.rect.h as f32,
-                        },
-                    );
-                    slot.raised = s.raised;
-                    Some(slot)
-                })
-                .collect(),
-        )
+    /// Derive the last solved frame's slot cells (as game-typed
+    /// [`petramond::gui::DocSlot`]s — unknown roles drop, they can't own game
+    /// content) and recipe/item hooks into the reused lists
+    /// [`doc_geometry`](Self::doc_geometry) hands out. Runs once per solve
+    /// however often it is called, and allocates nothing in steady state:
+    /// the lists keep their capacity and `bind.item` layer lists are parsed
+    /// once per distinct string.
+    pub fn refresh_doc_geometry(&mut self) {
+        if self.geometry_serial == Some(self.solve_serial) {
+            return;
+        }
+        self.geometry_serial = Some(self.solve_serial);
+        self.doc_slots.clear();
+        self.doc_slots.extend(self.out.slots.iter().filter_map(|s| {
+            let role = petramond::gui::Role::from_key(&s.role)?;
+            let mut slot = petramond::gui::DocSlot::new(role, s.index, slot_rect(s.rect));
+            slot.raised = s.raised;
+            Some(slot)
+        }));
+        self.doc_hooks.clear();
+        for hook in &self.out.hooks {
+            let rect = slot_rect(hook.rect);
+            let clip = hook.clip.map(slot_rect);
+            let doc_hook = |kind, index| petramond::gui::DocHook {
+                kind,
+                index,
+                rect,
+                clip,
+                overlay: hook.overlay,
+            };
+            // An `item`-bound hook is generic (any document, any id): its
+            // bound value is an ordered comma-list of item names (the
+            // `petramond:overlay` convention), one composited layer per name,
+            // first name bottom-most; a `~` prefix marks that layer a GHOST
+            // (drawn dimmed). Unknown names contribute nothing — lenient like
+            // every by-reference item read. The bare ids are the crafting
+            // browser's bespoke hooks.
+            if let Some(names) = hook.item.as_deref() {
+                if !self.item_layers.contains_key(names) {
+                    self.item_layers
+                        .insert(names.to_owned(), parse_item_layers(names));
+                }
+                self.doc_hooks.extend(self.item_layers[names].iter().map(|&(item, dim)| {
+                    doc_hook(petramond::gui::DocHookKind::ItemView { item, dim }, 0)
+                }));
+                continue;
+            }
+            // Only the grid cells are list stamps; the detail and tooltip
+            // hooks describe the recipe the snapshot names.
+            let hook_view = match hook.key.id.as_str() {
+                "recipe_result" => hook
+                    .key
+                    .item
+                    .map(|row| doc_hook(petramond::gui::DocHookKind::RecipeResult, row as usize)),
+                "craft_tip_result" => Some(doc_hook(petramond::gui::DocHookKind::TipResult, 0)),
+                "craft_tip_ingredients" => {
+                    Some(doc_hook(petramond::gui::DocHookKind::TipIngredients, 0))
+                }
+                _ => None,
+            };
+            self.doc_hooks.extend(hook_view);
+        }
     }
 
-    /// Recipe-browser host hooks from the same solved frame as `doc_slots`.
-    /// Unknown hook ids and non-list instances are deliberately ignored.
-    pub fn doc_hooks(&self) -> std::sync::Arc<Vec<petramond::gui::DocHook>> {
-        std::sync::Arc::new(
-            self.out
-                .hooks
-                .iter()
-                .flat_map(|hook| {
-                    // An `item`-bound hook is generic (any document, any id):
-                    // its bound value is an ordered comma-list of item names
-                    // (the `petramond:overlay` convention), one composited
-                    // layer per name, first name bottom-most; a `~` prefix
-                    // marks that layer a GHOST (drawn dimmed). Unknown names
-                    // contribute nothing — lenient like every by-reference
-                    // item read. The bare ids are the crafting browser's
-                    // bespoke hooks.
-                    let kinds: Vec<petramond::gui::DocHookKind> =
-                        if let Some(names) = hook.item.as_deref() {
-                            names
-                                .split(',')
-                                .filter_map(|name| {
-                                    let (name, dim) = item_view_layer(name);
-                                    Some(petramond::gui::DocHookKind::ItemView {
-                                        item: petramond_world::item::ItemType::by_name(name)?,
-                                        dim,
-                                    })
-                                })
-                                .collect()
-                        } else {
-                            match hook.key.id.as_str() {
-                                "recipe_result" => vec![petramond::gui::DocHookKind::RecipeResult],
-                                "craft_tip_result" => vec![petramond::gui::DocHookKind::TipResult],
-                                "craft_tip_ingredients" => {
-                                    vec![petramond::gui::DocHookKind::TipIngredients]
-                                }
-                                _ => Vec::new(),
-                            }
-                        };
-                    kinds.into_iter().filter_map(move |kind| {
-                        // Only the grid cells are list stamps; the detail and
-                        // tooltip hooks describe the recipe the snapshot names.
-                        let index = match kind {
-                            petramond::gui::DocHookKind::RecipeResult => hook.key.item? as usize,
-                            _ => 0,
-                        };
-                        let rect = petramond::gui::SlotRect {
-                            x: hook.rect.x as f32,
-                            y: hook.rect.y as f32,
-                            w: hook.rect.w as f32,
-                            h: hook.rect.h as f32,
-                        };
-                        let clip = hook.clip.map(|clip| petramond::gui::SlotRect {
-                            x: clip.x as f32,
-                            y: clip.y as f32,
-                            w: clip.w as f32,
-                            h: clip.h as f32,
-                        });
-                        Some(petramond::gui::DocHook {
-                            kind,
-                            index,
-                            rect,
-                            clip,
-                            overlay: hook.overlay,
-                        })
-                    })
-                })
-                .collect(),
-        )
+    /// The slot cells and hooks [`refresh_doc_geometry`](Self::refresh_doc_geometry)
+    /// derived from the last solved frame.
+    pub fn doc_geometry(&self) -> (&[petramond::gui::DocSlot], &[petramond::gui::DocHook]) {
+        (&self.doc_slots, &self.doc_hooks)
     }
 
     /// Drop the active screen's ephemeral state (screen closed/changed).
@@ -467,6 +464,28 @@ impl AppUi {
         }
         self.input.clear();
     }
+}
+
+/// A renderer slot rect from a solved physical rect.
+fn slot_rect(r: petramond_ui::RectI) -> petramond::gui::SlotRect {
+    petramond::gui::SlotRect {
+        x: r.x as f32,
+        y: r.y as f32,
+        w: r.w as f32,
+        h: r.h as f32,
+    }
+}
+
+/// A `bind.item` layer list resolved to items, in list order; unknown names
+/// drop.
+fn parse_item_layers(names: &str) -> Box<[(ItemType, bool)]> {
+    names
+        .split(',')
+        .filter_map(|name| {
+            let (name, dim) = item_view_layer(name);
+            Some((ItemType::by_name(name)?, dim))
+        })
+        .collect()
 }
 
 /// One entry of a `bind.item` layer list: the registry name, and whether the
@@ -500,6 +519,58 @@ mod frame_stamp_tests {
             ("petramond:diamond", true)
         );
         assert_eq!(item_view_layer(""), ("", false));
+    }
+
+    /// The renderer's slot/hook lists are derived once per solve: asking
+    /// again without a new solve re-derives nothing, and each distinct
+    /// `bind.item` list is parsed once, unknown names dropped.
+    #[test]
+    fn doc_geometry_is_derived_once_per_solve() {
+        let stone = ItemType::by_name("petramond:stone").expect("stone is registered");
+        let dirt = ItemType::by_name("petramond:dirt").expect("dirt is registered");
+        let mut ui = AppUi::new();
+        ui.out.hooks.push(petramond_ui::HookRectOut {
+            key: petramond_ui::InstKey {
+                id: "subject".into(),
+                item: None,
+            },
+            rect: petramond_ui::RectI {
+                x: 1,
+                y: 2,
+                w: 3,
+                h: 4,
+            },
+            clip: None,
+            overlay: false,
+            item: Some("petramond:stone, ~petramond:no_such_item, ~petramond:dirt".into()),
+        });
+        ui.refresh_doc_geometry();
+        let kinds: Vec<_> = ui.doc_geometry().1.iter().map(|hook| hook.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                petramond::gui::DocHookKind::ItemView {
+                    item: stone,
+                    dim: false
+                },
+                petramond::gui::DocHookKind::ItemView {
+                    item: dirt,
+                    dim: true
+                },
+            ]
+        );
+
+        // No new solve: the lists stand as derived.
+        ui.out.hooks.clear();
+        ui.refresh_doc_geometry();
+        assert_eq!(ui.doc_geometry().1.len(), 2);
+        assert_eq!(ui.item_layers.len(), 1, "one distinct list, parsed once");
+
+        // A new solve re-derives from its own output.
+        assert!(ui.frame(GuiKind::Hotbar, (1280, 720), 0.0, None));
+        ui.out.hooks.clear();
+        ui.refresh_doc_geometry();
+        assert!(ui.doc_geometry().1.is_empty());
     }
 
     #[test]

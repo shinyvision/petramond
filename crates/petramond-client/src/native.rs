@@ -27,7 +27,7 @@ pub fn run() {
     // first read a catalog.
     let client_stages: [&'static dyn petramond_world::content::Stage; 3] = [
         &petramond_audio::music_registry::CATALOG,
-        &petramond_render::player_model::LOCOMOTION,
+        &crate::animation::locomotion::TABLE,
         petramond_render::atlas::stage(),
     ];
     if let Err(e) = petramond::content::install_from_env(&client_stages) {

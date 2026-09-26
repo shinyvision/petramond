@@ -7,9 +7,10 @@ use petramond_anim::test_rig::{clip, rig};
 use petramond_anim::{Animator, Graph};
 use petramond_world::item::{ItemRenderKind, ItemType};
 
+use petramond_render::HeldItemFrame;
+
 use super::{item_facts, kind_fact, BodyDriver, BodyMotion, HandInputs};
-use crate::views::AnimatorParamRow;
-use crate::{AnimatorInputs, HeldItemFrame};
+use crate::animation::{AnimatorInputs, AnimatorParamRow};
 
 const RIG: RigId = RigId(5);
 const DT: f32 = 1.0 / 60.0;

@@ -3,6 +3,7 @@
 //! close-screen control path).
 
 use super::{ScreenCtx, ShellCommand};
+use crate::app::AppScreen;
 use petramond_ui::{NavKey, UiEvent, UiState, UiValue};
 
 pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
@@ -28,7 +29,7 @@ pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
     match ev {
         UiEvent::Click { id, .. } => match id.as_str() {
             "resume" => ctx.request(ShellCommand::ResumeGame),
-            "options" => ctx.request(ShellCommand::OpenOptions { from_pause: true }),
+            "options" => ctx.request(ShellCommand::Push(AppScreen::Options)),
             "open_lan" => ctx.request(ShellCommand::OpenLan),
             "disconnect" => ctx.request(ShellCommand::DisconnectToTitle),
             "save_quit" => ctx.request(ShellCommand::SaveAndQuitToTitle),

@@ -1,4 +1,5 @@
-use super::{now_seconds, App};
+use super::screen::ScreenRole;
+use super::{now_seconds, App, AppScreen};
 use petramond_render::Renderer;
 
 impl App {
@@ -16,7 +17,7 @@ impl App {
     /// bound state answers the server, and a menu frame cap would tax every
     /// round trip twice (input sampling and drain-to-present).
     pub fn game_menu_open(&self) -> bool {
-        self.game.is_some() && self.game_menu_kind().is_some()
+        self.session.is_some() && self.game_menu_kind().is_some()
     }
 
     /// Whether a client-mod modal canvas (e.g. the world map) is on screen.
@@ -36,10 +37,10 @@ impl App {
     /// twice per frame and paced by [`game_menu_open`](Self::game_menu_open),
     /// and those must not disagree about what is on screen.
     fn game_menu_kind(&self) -> Option<petramond_world::gui_state::GuiKind> {
-        if self.screen.client_ui_open() || self.doc_shell_kind().is_some() {
-            return None;
+        match self.screen.role() {
+            ScreenRole::GameMenu | ScreenRole::Overlay => self.doc_ui_kind(),
+            _ => None,
         }
-        self.doc_ui_kind()
     }
 
     /// [`update`](Self::update) behind the renderer handoff — the whole frame
@@ -61,27 +62,24 @@ impl App {
 
         self.drive_client_mod_frame(dt, screen_size);
 
+        // Shell screens freeze the world — unless the pause is ineffective
+        // (a multiplayer pause menu runs the sim on, so the cart that passes
+        // behind it stays audible).
+        let pause_runs_sim = self.multiplayer_pause_runs_sim();
+        let world_frozen =
+            self.session.is_some() && !pause_runs_sim && !self.screen.role().runs_sim();
+        // The soundtrack is driven HERE, above every screen's early return:
+        // music belongs to the SESSION, not to whatever screen is open over
+        // it — an inventory or a chest must never stop it. A frozen world lets
+        // the current track finish but schedules no new one, and its spatial
+        // sounds freeze exactly when it does.
+        self.sound
+            .update_session(self.session.is_some(), world_frozen, dt);
+
         // Document-backed SHELL screens run their whole UI frame here (input
         // → events → controller) and skip the simulation entirely; render
         // only hands the built draw list over. The legacy click routers must
         // not also fire on their invisible layouts.
-        let pause_runs_sim = self.multiplayer_pause_runs_sim();
-        // The world's sounds freeze exactly when the world does: on the two
-        // early returns below that skip `Game::tick` (a shell screen over a
-        // live game whose pause is effective). A multiplayer pause menu runs
-        // the sim on, so the cart that passes behind it stays audible.
-        let world_frozen = self.game.is_some()
-            && !pause_runs_sim
-            && (self.doc_shell_kind().is_some() || self.screen.shell_open());
-        // The soundtrack is driven HERE, above every screen's early return:
-        // music belongs to the SESSION, not to whatever screen is open over
-        // it — an inventory or a chest must never stop it. `world_frozen` is
-        // reused as the pause rule because it is already the honest answer to
-        // "is the game actually stopped" (a multiplayer pause menu runs the
-        // sim on, so it is not a pause): a frozen world lets the current
-        // track finish but schedules no new one.
-        self.sound
-            .update_session(self.game.is_some(), world_frozen, dt);
         if let Some(kind) = self.doc_shell_kind() {
             self.sound.stop_mining_loop(now);
             self.controls.pointer.clear_edges();
@@ -96,43 +94,53 @@ impl App {
             // Multiplayer pause menu: fall through to the simulation below.
         }
 
-        // Gameplay OVERLAYS (sleep fade, death screen) drive the document like
-        // a shell screen — their buttons dispatch to controllers — but fall
-        // through to the simulation below: the sleep timer and respawn are
-        // tick-owned, so the world must keep ticking behind them.
-        if let Some(kind) = self.doc_overlay_kind() {
-            self.drive_doc_ui(kind, screen_size, now);
-            self.controls.pointer.clear_edges();
-        }
-        // Document-backed game MENUS (mod GUIs, containers) drive their UI
-        // frame here too — slot/widget clicks latch to the tick through the
-        // document runtime (there is no other click route) — and the
-        // simulation continues below. Clearing the pointer edges keeps a
-        // menu-consumed click from also firing block break/placement.
-        else if self.screen == super::AppScreen::Schematics {
-            self.drive_schematics_screen(screen_size, now);
-            self.controls.pointer.clear_edges();
-        } else if self.screen.client_ui_open() {
-            if let Some(kind) = self.doc_ui_kind() {
-                self.drive_client_doc_ui(kind, screen_size, now);
+        // Every other document-backed screen drives its UI frame here, by the
+        // role of the screen that is up NOW — the shell document just driven
+        // may have switched screens. A document being up means the click was
+        // never the world's, so the pointer edges clear either way.
+        match self.screen.role() {
+            // Gameplay OVERLAYS (sleep fade, death screen) drive the document
+            // like a shell screen — their buttons dispatch to controllers —
+            // but the simulation continues below: the sleep timer and respawn
+            // are tick-owned.
+            ScreenRole::Overlay => {
+                if let Some(kind) = self.doc_overlay_kind() {
+                    self.drive_doc_ui(kind, screen_size, now);
+                    self.controls.pointer.clear_edges();
+                }
             }
-            self.controls.pointer.clear_edges();
-        } else if self.doc_ui_kind().is_some() {
-            // A shell document is the SHELL branch's to drive, and
-            // `game_menu_kind` withholds it here: the multiplayer
-            // fall-through reaches this arm, and the shell doc just driven
-            // may have flipped the screen to ANOTHER shell doc. Driving that
-            // as a menu would stamp a frame its controller never populated —
-            // presenting one frame of unbound state (the options title
-            // backdrop over a live game). The edges clear either way: a
-            // document is up, so the click was never the world's.
-            if let Some(kind) = self.game_menu_kind() {
-                self.drive_doc_menu(kind, screen_size, now);
+            ScreenRole::ClientDoc => {
+                if self.screen == AppScreen::Schematics {
+                    self.drive_schematics_screen(screen_size, now);
+                } else if let Some(kind) = self.doc_ui_kind() {
+                    self.drive_client_doc_ui(kind, screen_size, now);
+                }
+                self.controls.pointer.clear_edges();
             }
-            self.controls.pointer.clear_edges();
+            // Document-backed game MENUS (mod GUIs, containers): slot/widget
+            // clicks latch to the tick through the document runtime (there is
+            // no other click route), and the simulation continues below.
+            ScreenRole::GameMenu => {
+                if let Some(kind) = self.game_menu_kind() {
+                    self.drive_doc_menu(kind, screen_size, now);
+                    self.controls.pointer.clear_edges();
+                }
+            }
+            // A shell document is the SHELL branch's to drive. The
+            // multiplayer fall-through lands here, and the shell doc just
+            // driven may have flipped the screen to ANOTHER shell doc; driving
+            // that as a menu would stamp a frame its controller never
+            // populated — presenting one frame of unbound state (the options
+            // title backdrop over a live game).
+            ScreenRole::Shell => {
+                if self.doc_ui_kind().is_some() {
+                    self.controls.pointer.clear_edges();
+                }
+            }
+            ScreenRole::Gameplay | ScreenRole::Chat | ScreenRole::Canvas => {}
         }
 
-        if (self.screen.shell_open() && !pause_runs_sim) || self.game.is_none() {
+        if (self.screen.shell_open() && !pause_runs_sim) || self.session.is_none() {
             self.sound.stop_mining_loop(now);
             self.controls.pointer.clear_edges();
             // Same as the doc-shell path above: keep draining the server.
@@ -142,9 +150,10 @@ impl App {
 
         let game_input = self.take_game_input();
         let events = self
-            .game
+            .session
             .as_mut()
-            .expect("game exists after shell/no-game guard")
+            .expect("session exists after shell/no-session guard")
+            .game
             .tick(dt, &game_input);
         self.adopt_chat_lines(now);
         self.handle_open_screen_events(&events);
@@ -158,16 +167,13 @@ impl App {
         if let Some(kind) = self.game_menu_kind() {
             self.drive_doc_menu(kind, screen_size, now);
         }
-        let mining_block = (self.screen.gameplay_enabled() && game_input.break_held)
-            .then(|| {
-                self.game
-                    .as_ref()
-                    .expect("game exists after shell/no-game guard")
-                    .client_frame(now)
-                    .held_item
-                    .mining_block
-            })
-            .flatten();
+        // Only the mined block feeds the dig loop: read it alone rather than
+        // assembling a whole client frame.
+        let mining_block = self
+            .session
+            .as_ref()
+            .filter(|_| self.screen.gameplay_enabled() && game_input.break_held)
+            .and_then(|session| session.game.mining_block());
         self.play_game_event_sounds(&events, mining_block, now);
         self.controls.pointer.clear_edges();
         self.latch_game_event_hand_triggers(&events);
@@ -181,37 +187,38 @@ impl App {
     /// client would stop its `PlayerUpdate`s and per-frame systems (entity
     /// push, interpolation) while the world runs on — a statue that can't be
     /// jostled. Gameplay INPUT stays disabled on the Pause screen regardless
-    /// (`take_game_input`).
+    /// (`take_game_input`). The Options flow pushed over the pause menu keeps
+    /// it in force.
     fn multiplayer_pause_runs_sim(&self) -> bool {
-        (self.screen == super::AppScreen::Pause || self.screen.options_open())
+        self.pause_open()
             && self
-                .game
+                .session
                 .as_ref()
-                .is_some_and(|g| g.is_remote() || self.session_ui.lan_port.is_some())
+                .is_some_and(|s| s.game.is_remote() || s.lan_port.is_some())
     }
 
     /// Drain the server while `Game::tick` is suppressed (shell screens over
     /// a live game — the pause menu), and still notice a lost connection:
     /// ticks surface it through `GameEvents`, but here nobody assembles them.
     fn pump_network_and_watch(&mut self) {
-        let lost = if let Some(game) = self.game.as_mut() {
-            game.pump_network();
-            game.take_connection_lost()
+        let lost = if let Some(session) = self.session.as_mut() {
+            session.game.pump_network();
+            session.game.take_connection_lost()
         } else {
             None
         };
-        self.adopt_chat_lines(super::now_seconds());
+        self.adopt_chat_lines(now_seconds());
         if let Some(reason) = lost {
             self.enter_connection_lost(reason);
         }
     }
 
     fn adopt_chat_lines(&mut self, now: f64) {
-        let Some(game) = self.game.as_mut() else {
+        let Some(session) = self.session.as_mut() else {
             return;
         };
-        for line in game.take_chat_lines() {
-            self.chat.push(line, now);
+        for line in session.game.take_chat_lines() {
+            session.chat.push(line, now);
         }
     }
 }

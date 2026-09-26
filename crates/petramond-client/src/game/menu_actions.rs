@@ -15,11 +15,13 @@ pub struct MenuReadModel<'a> {
     pub inventory: &'a Inventory,
     pub craft_output: Option<ItemStack>,
     /// The open mod GUI's state map (a shared snapshot), or `None` when the
-    /// open session is not a mod GUI.
-    pub gui_state: Option<std::sync::Arc<GuiStateMap>>,
+    /// open session is not a mod GUI. Borrowed: readers that keep it clone
+    /// the `Arc`.
+    pub gui_state: Option<&'a std::sync::Arc<GuiStateMap>>,
     /// The open mod GUI's container slots, or `None` when the session is not
-    /// a slot-bearing mod GUI.
-    pub container: Option<ContainerView>,
+    /// a slot-bearing mod GUI. Borrowed: a per-frame reader of one field
+    /// (the HUD's active slot) must not copy the container.
+    pub container: Option<&'a ContainerView>,
 }
 
 impl Game {
@@ -32,7 +34,7 @@ impl Game {
     ) -> (bool, petramond::net::protocol::ClientRequestId) {
         let can = self.prediction.can_predict();
         let snapshot = if can {
-            crate::game::prediction::PredictionSnapshot::Inventory(self.self_view.inventory.clone())
+            crate::game::prediction::PredictionSnapshot::Inventory(self.replica.self_view.inventory.clone())
         } else {
             crate::game::prediction::PredictionSnapshot::None
         };
@@ -48,8 +50,8 @@ impl Game {
         let can = self.prediction.can_predict();
         let snapshot = if can {
             crate::game::prediction::PredictionSnapshot::Menu {
-                inventory: self.self_view.inventory.clone(),
-                menu: self.menu_view.clone(),
+                inventory: self.replica.self_view.inventory.clone(),
+                menu: self.replica.menu_view.clone(),
             }
         } else {
             crate::game::prediction::PredictionSnapshot::None
@@ -63,19 +65,19 @@ impl Game {
     pub fn drop_selected_item(&mut self, all: bool) {
         // P0 throw animation is client-owned: trigger when the hand holds
         // anything (the server never echoes the one-shot back).
-        let slot = self.self_view.inventory.active_slot() as usize;
+        let slot = self.replica.self_view.inventory.active_slot() as usize;
         self.hand
-            .latch_throw(self.self_view.inventory.slot(slot).is_some());
+            .latch_throw(self.replica.self_view.inventory.slot(slot).is_some());
         let (can, request_id) = self.begin_inventory_prediction();
         if can {
-            let slot = self.self_view.inventory.active_slot() as usize;
+            let slot = self.replica.self_view.inventory.active_slot() as usize;
             if all {
                 let _ = self
-                    .self_view
+                    .replica.self_view
                     .inventory
                     .slot_mut(slot)
                     .and_then(|c| c.take());
-            } else if let Some(cell) = self.self_view.inventory.slot_mut(slot) {
+            } else if let Some(cell) = self.replica.self_view.inventory.slot_mut(slot) {
                 if let Some(stack) = cell.as_mut() {
                     stack.count = stack.count.saturating_sub(1);
                     if stack.count == 0 {
@@ -98,7 +100,7 @@ impl Game {
         // The index is client-owned and `player.inventory` is its stated
         // owner (contents live on the replicated view; see the
         // client-prediction "what not to do" list).
-        let active = self.player.inventory.active_slot() as usize;
+        let active = self.local.player.inventory.active_slot() as usize;
         self.menu_swap_off_hand(petramond_world::gui_state::MenuSlot::Inventory(active));
     }
 
@@ -107,10 +109,10 @@ impl Game {
     /// `amount`. No-op when the cursor is empty.
     pub fn throw_cursor(&mut self, amount: ThrowAmount) {
         self.hand
-            .latch_throw(self.self_view.inventory.cursor().is_some());
+            .latch_throw(self.replica.self_view.inventory.cursor().is_some());
         let (can, request_id) = self.begin_inventory_prediction();
         if can {
-            let cursor = self.self_view.inventory.cursor_mut();
+            let cursor = self.replica.self_view.inventory.cursor_mut();
             match amount {
                 ThrowAmount::All => *cursor = None,
                 ThrowAmount::One => {
@@ -144,45 +146,45 @@ impl Game {
     /// The recipe browser's craftable-only filter preference (mirrored from
     /// the world's player data at join; client-owned afterwards).
     pub fn craft_craftable_only(&self) -> bool {
-        self.player.craft_craftable_only
+        self.local.player.craft_craftable_only
     }
 
     /// Flip the craftable-only filter locally and tell the server, which
     /// stores it on the player so it persists with the world's player data.
     pub fn set_craft_craftable_only(&mut self, craftable_only: bool) {
-        if self.player.craft_craftable_only == craftable_only {
+        if self.local.player.craft_craftable_only == craftable_only {
             return;
         }
-        self.player.craft_craftable_only = craftable_only;
+        self.local.player.craft_craftable_only = craftable_only;
         self.net.queue(ClientToServer::SetCraftFilter { craftable_only });
     }
 
     pub fn crafting_catalog(&self) -> &petramond_world::crafting::CraftingCatalog {
-        &self.crafting
+        &self.replica.crafting
     }
 
     /// The local player's discovery record, mirrored from the server (the
     /// unlocked half — see `SelfRestore::unlocked_recipes`). The browser lists
     /// exactly these recipes.
     pub fn progression(&self) -> &petramond::player::Progression {
-        &self.player.progression
+        &self.local.player.progression
     }
 
     #[cfg(test)]
     pub fn replica_for_test(&self) -> &petramond::world::ReplicaWorld {
-        &self.replica
+        &self.replica.world
     }
 
     /// Pin the locally-simulated player for tests that need a deterministic
     /// sampling location (the server session is placed by the caller).
     #[cfg(test)]
     pub fn place_player_for_test(&mut self, feet: petramond_math::world_pos::WorldPos) {
-        self.player.pos = feet;
-        self.player.vel = petramond_math::math::Vec3::ZERO;
+        self.local.player.pos = feet;
+        self.local.player.vel = petramond_math::math::Vec3::ZERO;
     }
 
     pub fn replicated_inventory_revision(&self) -> u64 {
-        self.self_view.inventory_revision
+        self.replica.self_view.inventory_revision
     }
 
     /// Install a browser catalog AND unlock all of it, the way a real session
@@ -195,9 +197,9 @@ impl Game {
         catalog: petramond_world::crafting::CraftingCatalog,
     ) {
         for recipe in catalog.iter() {
-            self.player.progression.unlock(recipe.key());
+            self.local.player.progression.unlock(recipe.key());
         }
-        self.crafting = catalog;
+        self.replica.crafting = catalog;
     }
 
     /// Whether the LOCAL cursor currently holds a stack, from the REPLICATED
@@ -205,19 +207,19 @@ impl Game {
     /// which only fires while a stack is being dragged; the gather verdict
     /// ships in the `MenuClick` message.
     pub fn cursor_has_stack(&self) -> bool {
-        self.self_view.inventory.cursor().is_some()
+        self.replica.self_view.inventory.cursor().is_some()
     }
 
     /// Read-only state needed to build the UI snapshot for the LOCAL player's
     /// current menu — assembled from the client mirrors: replicated state plus
     /// any unresolved P1 prediction. No server-session reads.
     pub fn menu_read_model(&self) -> MenuReadModel<'_> {
-        let view = &self.menu_view;
+        let view = &self.replica.menu_view;
         MenuReadModel {
-            inventory: &self.self_view.inventory,
+            inventory: &self.replica.self_view.inventory,
             craft_output: view.craft_output,
-            gui_state: view.gui_state.clone(),
-            container: view.container.clone(),
+            gui_state: view.gui_state.as_ref(),
+            container: view.container.as_ref(),
         }
     }
 

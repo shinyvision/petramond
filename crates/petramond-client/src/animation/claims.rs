@@ -1,6 +1,6 @@
 //! Applying a body's resolved animator claims (params set, slots played, and
 //! the graph events fired — [`AnimatorInputs`]) to one rig's [`Animator`] —
-//! the render-side end of the mod ABI's `set` / `play` / `fire` primitives,
+//! the client-side end of the mod ABI's `set` / `play` / `fire` primitives,
 //! shared by the first-person viewmodel and every body.
 //!
 //! A frame runs in two halves around the engine driver's own inputs:
@@ -19,12 +19,89 @@
 //! inertially, so a claim starting, releasing or changing clip keeps its
 //! motion instead of cross-dissolving.
 
-use petramond::player::{AnimatorClock, RigId};
+use petramond::player::{AnimatorClock, AnimatorParam, AnimatorPlay, AnimatorValue, RigId};
 use petramond_anim::{
     Animator, ClipId, EventId, Graph, ParamId, PlayId, PlaySpec, PlayState, SlotId,
 };
+use petramond_render::ArenaRange;
 
-use crate::AnimatorInputs;
+/// One claimed graph param with its value resolved to the number the
+/// animator takes — a name claim interned ONCE, where the claim arrives
+/// ([`NameCache`]), never per frame.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct AnimatorParamRow {
+    pub rig: RigId,
+    pub param: u16,
+    pub value: f32,
+}
+
+/// Interned name values, cached by string so a claim that repeats a name
+/// never takes the global intern lock again.
+#[derive(Default)]
+pub struct NameCache {
+    names: rustc_hash::FxHashMap<Box<str>, f32>,
+}
+
+impl NameCache {
+    pub fn row(&mut self, p: &AnimatorParam) -> AnimatorParamRow {
+        let value = match &p.value {
+            AnimatorValue::Number(v) => *v,
+            AnimatorValue::Name(n) => match self.names.get(n.as_str()) {
+                Some(v) => *v,
+                None => {
+                    let v = petramond_anim::expr::intern(n);
+                    self.names.insert(n.as_str().into(), v);
+                    v
+                }
+            },
+        };
+        AnimatorParamRow {
+            rig: p.rig,
+            param: p.param,
+            value,
+        }
+    }
+
+    /// Resolve every param of `claims` onto the end of `out`.
+    pub fn rows(&mut self, params: &[AnimatorParam], out: &mut Vec<AnimatorParamRow>) {
+        out.extend(params.iter().map(|p| self.row(p)));
+    }
+}
+
+/// One body's resolved animator claims and the graph events fired on it
+/// this frame, borrowed from the frame's arenas
+/// ([`BodyFrame`](super::BodyFrame) carries every body's rows back to back;
+/// a body addresses its own by [`AnimatorRanges`]).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AnimatorInputs<'a> {
+    pub params: &'a [AnimatorParamRow],
+    pub plays: &'a [AnimatorPlay],
+    pub events: &'a [(RigId, u16)],
+}
+
+/// One body's slices of the frame's animator arenas.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct AnimatorRanges {
+    pub params: ArenaRange,
+    pub plays: ArenaRange,
+    pub events: ArenaRange,
+}
+
+impl AnimatorRanges {
+    /// This body's rows of the frame's arenas.
+    pub fn of<'a>(
+        self,
+        params: &'a [AnimatorParamRow],
+        plays: &'a [AnimatorPlay],
+        events: &'a [(RigId, u16)],
+    ) -> AnimatorInputs<'a> {
+        AnimatorInputs {
+            params: self.params.of(params),
+            plays: self.plays.of(plays),
+            events: self.events.of(events),
+        }
+    }
+}
 
 /// Seconds a claim takes to settle in, out, or from one clip into the next.
 const CLAIM_SETTLE: f32 = 0.12;

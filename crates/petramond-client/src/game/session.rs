@@ -1,7 +1,6 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use crate::particle::ParticleSystem;
 use petramond::local_host::LocalSession;
 use petramond::net::handle::ServerHandle;
 use petramond::net::identity::{PlayerIdentity, PlayerKey};
@@ -114,7 +113,7 @@ impl Game {
         // Loopback skips the remap, so the local vocabulary IS the session's
         // — binding it keys this cache for a later harvest (a remote join to
         // a server with identical tables may legitimately claim it).
-        game.section_cache.adopt_session(section_cache_registry_key(
+        game.replica.section_cache.adopt_session(section_cache_registry_key(
             &petramond::net::remap::local_name_tables(),
         ));
         log::debug!(
@@ -167,62 +166,37 @@ impl Game {
         // SectionCacheMiss fallback.
         let mut cache = retained_section_cache.unwrap_or_default();
         cache.adopt_session(registry_key);
-        game.section_cache = cache;
+        game.replica.section_cache = cache;
         game
     }
 
     /// Hand the section cache to the app shell at session teardown — the next
     /// remote join's manifest claims it.
     pub fn take_section_cache(&mut self) -> crate::game::section_cache::SectionCache {
-        std::mem::take(&mut self.section_cache)
+        std::mem::take(&mut self.replica.section_cache)
     }
 
     /// Assemble the client half around an already-connected server handle.
-    pub fn assemble(mut cam: Camera, handle: ServerHandle, bootstrap: ClientBootstrap) -> Self {
-        sync_camera_to_player(&mut cam, &bootstrap.client_player);
-        // The camera the caller built carries the authored FOV; the per-frame
-        // speed widening multiplies on top of it (see `CameraRig`).
-        let camera_rig =
-            super::camera_rig::CameraRig::new(cam.fov_y, bootstrap.client_player.eye().y);
+    pub fn assemble(cam: Camera, handle: ServerHandle, bootstrap: ClientBootstrap) -> Self {
+        let entities =
+            super::replicated::EntityReplica::new(bootstrap.self_id, bootstrap.players);
         Self {
-            cam,
-            player: bootstrap.client_player,
-            look: None,
-            use_look: None,
-            targeted_mob: None,
-            targeted_player: None,
-            held_rotation: Default::default(),
-            camera_rig,
-            third_person: Default::default(),
-            net: super::net_link::NetLink::new(handle, bootstrap.remote),
-            last_sent_transform: None,
-            remote_section_installs: Vec::new(),
-            pending_chat_lines: Vec::new(),
-            replica: bootstrap.replica,
-            client_mods: bootstrap.client_mods,
-            self_view: bootstrap.self_view,
-            menu_view: Default::default(),
-            crafting: bootstrap.crafting,
-            pending_events: Default::default(),
-            entities: super::replicated::EntityReplica::new(bootstrap.self_id, bootstrap.players),
-            prediction: super::prediction::PredictionLedger::new(),
             jobs: bootstrap.jobs,
             notice: String::new(),
             tools: Default::default(),
-            flight_toggle: Default::default(),
-            break_repeat: Default::default(),
-            local_mining: petramond_world::mining::MiningState::new(),
-            predicted_input: Default::default(),
-            local_bones: Default::default(),
-            local_bone_target: Vec::new(),
-            intent_use_held: false,
+            net: super::net_link::NetLink::new(handle, bootstrap.remote),
+            replica: super::replica_state::ReplicaState::new(
+                bootstrap.replica,
+                entities,
+                bootstrap.self_view,
+                bootstrap.crafting,
+                bootstrap.fallback_world,
+            ),
+            local: super::local_player::LocalPlayer::new(cam, bootstrap.client_player),
+            client_mods: bootstrap.client_mods,
+            prediction: super::prediction::PredictionLedger::new(),
             hand: Default::default(),
-            section_cache: Default::default(),
-            fallback_world: bootstrap.fallback_world,
-            particles: ParticleSystem::new(),
-            mining_feedback: Default::default(),
-            mob_digging: HashMap::new(),
-            block_animations: Default::default(),
+            fx: Default::default(),
         }
     }
 }
@@ -285,10 +259,4 @@ fn player_from_restore(r: &petramond::net::protocol::SelfRestore) -> Player {
         }
     }
     player
-}
-
-fn sync_camera_to_player(cam: &mut Camera, player: &Player) {
-    cam.pos = player.eye();
-    cam.yaw = player.yaw;
-    cam.pitch = player.pitch;
 }

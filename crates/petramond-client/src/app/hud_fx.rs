@@ -3,7 +3,9 @@
 //! wiggle, and the local rigs' graph events waiting for the next draw.
 //!
 //! Presentation only — decayed by render time (the heart wiggle by wall-clock
-//! time) and never read by the simulation.
+//! time) and never read by the simulation. Owned by the game session, so a
+//! new world starts with no shake, no latched gestures and no stale health to
+//! wiggle against.
 
 use crate::game::GameEvents;
 use petramond_world::gui_state::HealthView;
@@ -81,19 +83,6 @@ impl HudFx {
         self.hand_events.extend_from_slice(&events.animator_events);
     }
 
-    /// A session began or ended: nothing latched for the old one carries over.
-    pub(super) fn reset_session(&mut self) {
-        self.hand_events.clear();
-        self.sleep_hand_t = 0.0;
-    }
-
-    /// No session, no health bar: a fresh world must never wiggle off a
-    /// comparison against the previous session's last health.
-    pub(super) fn forget_health(&mut self) {
-        self.prev_heart_health = None;
-        self.heart_wiggle = None;
-    }
-
     /// Decay the timers by one render's `dt`.
     pub(super) fn advance(&mut self, dt: f32) {
         self.sleep_hand_t = (self.sleep_hand_t - dt).max(0.0);
@@ -134,9 +123,14 @@ impl HudFx {
         }
     }
 
-    /// Take the local rigs' graph events for this draw.
-    pub(super) fn take_hand_events(&mut self) -> Vec<(petramond::player::RigId, u16)> {
-        std::mem::take(&mut self.hand_events)
+    /// The local rigs' graph events latched for this draw.
+    pub(super) fn hand_events(&self) -> &[(petramond::player::RigId, u16)] {
+        &self.hand_events
+    }
+
+    /// The draw consumed the latched graph events (the buffer is kept).
+    pub(super) fn clear_hand_events(&mut self) {
+        self.hand_events.clear();
     }
 
     /// Heart-wiggle bookkeeping for this frame's HUD `health`: ANY change — a
@@ -169,11 +163,6 @@ impl HudFx {
             return None;
         }
         Some((w.lo, w.hi, t as f32))
-    }
-
-    #[cfg(test)]
-    pub(super) fn hand_events(&self) -> &[(petramond::player::RigId, u16)] {
-        &self.hand_events
     }
 }
 

@@ -4,6 +4,7 @@
 mod catalog;
 
 use super::schematic_library::LibraryPage;
+use super::session::Session;
 use super::App;
 use petramond_ui::{UiEvent, UiValue};
 use petramond_world::gui_state::GuiKind;
@@ -25,33 +26,39 @@ pub(super) struct CreativeMenu {
 
 impl App {
     pub(super) fn drive_creative_menu(&mut self, screen: (u32, u32), now: f64) {
-        let Some(game) = self.game.as_mut() else {
+        let Some(session) = self.session.as_mut() else {
             return;
         };
+        let game = &mut session.game;
         game.poll_schematic_library();
         if game.take_paste_preview_ready() || !game.creative_mode() {
             self.close_screen();
             return;
         }
         self.ui.ensure_active(GuiKind::Creative);
-        let on_library = self.session_ui.creative_menu.tab == CreativeTab::Schematics;
+        let on_library = session.creative_menu.tab == CreativeTab::Schematics;
         self.drive_library_form("creative_library_scroll", on_library);
-        let game = self.game.as_mut().expect("checked above");
-        let (items, item_rows) = self.session_ui.creative_menu.catalog.view(&self.session_ui.creative_menu.query);
+        let Session {
+            game,
+            creative_menu,
+            library_form,
+            hotbar_notice,
+            ..
+        } = self.session.as_mut().expect("checked above");
+        let (items, item_rows) = creative_menu.catalog.view(&creative_menu.query);
         let hovered = self
             .ui
             .hover_item("creative_items")
             .and_then(|i| items.get(i));
         let state = self.ui.state_mut();
         let slot = game.menu_read_model().inventory.active_slot();
-        self.session_ui.hotbar_notice.populate(
+        hotbar_notice.populate(
             game.held_tool_setting().map(|label| (slot, label)),
             &mut game.notice,
             now,
             state,
         );
-        let menu = &self.session_ui.creative_menu;
-        let page = on_library.then_some(self.session_ui.library_form.page);
+        let page = on_library.then_some(library_form.page);
         state.set("tab", UiValue::I32(i32::from(on_library)));
         // Each key shows one page of the document; a delete confirmation
         // covers them all.
@@ -60,17 +67,13 @@ impl App {
             ("selection_tab", Some(LibraryPage::Save)),
             ("library_tab", Some(LibraryPage::Library)),
         ] {
-            let visible = self.session_ui.library_form.pending_delete.is_none() && page == shown;
+            let visible = library_form.pending_delete.is_none() && page == shown;
             state.set(key, UiValue::Bool(visible));
         }
-        state.set("search", UiValue::Str(menu.query.clone()));
-        state.set(
-            "active_slot",
-            UiValue::I32(i32::from(game.menu_read_model().inventory.active_slot())),
-        );
+        state.set("search", UiValue::Str(creative_menu.query.clone()));
+        state.set("active_slot", UiValue::I32(i32::from(slot)));
         state.set("items", UiValue::List(item_rows));
-        let thumbnails =
-            super::schematic_library::populate_library(game, &self.session_ui.library_form, state);
+        let thumbnails = super::schematic_library::populate_library(game, library_form, state);
         let mut images = Vec::new();
         let hover_slot = self.ui.out().hover_slot.clone();
         let state = self.ui.state_mut();
@@ -102,22 +105,27 @@ impl App {
         self.ui
             .frame(GuiKind::Creative, screen, now, Some([0.0, 0.0, 0.0, 0.6]));
         for event in self.ui.take_events() {
-            let game = self.game.as_mut().expect("open game menu");
-            if self.session_ui.library_form.handle(game, &event) {
+            let Session {
+                game,
+                creative_menu,
+                library_form,
+                ..
+            } = self.session.as_mut().expect("open game menu");
+            if library_form.handle(game, &event) {
                 continue;
             }
             match event {
                 UiEvent::TabSelect { id, index } if id == "creative_tabs" => {
-                    self.session_ui.creative_menu.tab = if index == 0 {
+                    creative_menu.tab = if index == 0 {
                         CreativeTab::Items
                     } else {
                         CreativeTab::Schematics
                     };
-                    self.session_ui.library_form.page = LibraryPage::Library;
+                    library_form.page = LibraryPage::Library;
                     game.notice.clear();
                 }
                 UiEvent::TextChanged { id, text } if id == "creative_search" => {
-                    self.session_ui.creative_menu.query = text
+                    creative_menu.query = text
                 }
                 UiEvent::Click {
                     id,

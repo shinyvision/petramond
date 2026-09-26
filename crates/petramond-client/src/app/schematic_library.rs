@@ -3,6 +3,7 @@
 //! thumbnail, choosing one design, and saving the wand's selection. Its cards
 //! and save page share their population with the creative menu's library.
 
+use super::session::Session;
 use super::{App, AppScreen};
 use crate::game::Game;
 use petramond::schematic::library::Entry;
@@ -32,39 +33,38 @@ pub(super) struct LibraryForm {
 impl App {
     /// Open the library for a choice the server just opened, over gameplay
     /// or over the menu whose button asked for it.
+    /// The screen opens on the card list (the screen funnel resets the page).
     pub(super) fn open_requested_schematic_library(&mut self) {
-        let Some(game) = self.game.as_mut() else {
+        let Some(session) = self.session.as_mut() else {
             return;
         };
-        if !game.take_schematic_library_request() {
+        if !session.game.take_schematic_library_request() {
             return;
         }
         if self.screen.ui_open() {
             self.close_menu();
         }
-        if !matches!(self.screen, AppScreen::Game) {
-            return;
+        if self.screen == AppScreen::Game {
+            self.set_screen(AppScreen::Schematics);
         }
-        self.session_ui.library_form.page = LibraryPage::Library;
-        self.session_ui.library_form.pending_delete = None;
-        self.screen = AppScreen::Schematics;
-        self.controls.pointer.release_for_menu();
-        self.gui_router.reset_click_streak();
     }
 
     pub(super) fn drive_schematics_screen(&mut self, screen: (u32, u32), now: f64) {
-        let Some(game) = self.game.as_mut() else {
+        let Some(session) = self.session.as_mut() else {
             return;
         };
-        game.poll_schematic_library();
-        if !game.schematic_choice_open() {
+        session.game.poll_schematic_library();
+        if !session.game.schematic_choice_open() {
             self.close_screen();
             return;
         }
         self.ui.ensure_active(GuiKind::Schematics);
         self.drive_library_form("schematics_library_scroll", true);
-        let game = self.game.as_mut().expect("checked above");
-        let form = &self.session_ui.library_form;
+        let Session {
+            game,
+            library_form: form,
+            ..
+        } = self.session.as_mut().expect("checked above");
         let state = self.ui.state_mut();
         let thumbnails = populate_library(game, form, state);
         let browsing = form.pending_delete.is_none();
@@ -84,8 +84,10 @@ impl App {
             .frame(GuiKind::Schematics, screen, now, Some([0.0, 0.0, 0.0, 0.6]));
         let mut leave = false;
         for event in self.ui.take_events() {
-            let game = self.game.as_mut().expect("open schematics screen");
-            if self.session_ui.library_form.handle(game, &event) {
+            let Session {
+                game, library_form, ..
+            } = self.session.as_mut().expect("open schematics screen");
+            if library_form.handle(game, &event) {
                 continue;
             }
             if let UiEvent::Click {
@@ -109,10 +111,14 @@ impl App {
     /// returns from the Save page, and the cards in view ask for thumbnails.
     pub(super) fn drive_library_form(&mut self, scroll: &str, library_shown: bool) {
         let visible = self.visible_schematic_cards(scroll);
-        let Some(game) = self.game.as_mut() else {
+        let Some(Session {
+            game,
+            library_form: form,
+            ..
+        }) = self.session.as_mut()
+        else {
             return;
         };
-        let form = &mut self.session_ui.library_form;
         // Only from the Save page: a player who already left it stays put.
         if game.tools.library.take_saved() && form.page == LibraryPage::Save {
             form.page = LibraryPage::Library;

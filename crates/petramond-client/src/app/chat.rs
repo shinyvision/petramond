@@ -2,6 +2,8 @@
 //!
 //! The server owns accepted/formatted chat lines. This module owns only local
 //! presentation: history retention, draft editing, scrolling, and fade timing.
+//! Each history line keeps its wrapped form for the current panel width, so a
+//! frame re-wraps nothing unless the width changed.
 
 use std::collections::VecDeque;
 
@@ -17,10 +19,11 @@ const OPEN_HISTORY_H: i32 = 118;
 const PAD: i32 = 4;
 const INPUT_PREFIX: &str = "> ";
 
-#[derive(Clone)]
 struct TimedLine {
     line: ChatLine,
     received_at: f64,
+    /// The line flowed to [`ChatUi::wrap_chars`].
+    wrapped: Vec<Vec<ColoredText>>,
 }
 
 #[derive(Copy, Clone)]
@@ -38,7 +41,10 @@ pub(super) struct ChatUi {
     draft_backup: Option<String>,
     editor: petramond_ui::TextInput,
     scroll_lines: usize,
-    history_chars: usize,
+    /// The characters per visual line every history entry is wrapped to.
+    wrap_chars: usize,
+    /// Visual lines across the whole history at `wrap_chars`.
+    visual_lines: usize,
     input_layout: Option<InputLayout>,
     drag_anchor: Option<usize>,
 }
@@ -52,7 +58,8 @@ impl Default for ChatUi {
             draft_backup: None,
             editor: petramond_ui::TextInput::new(MAX_CHAT_CHARS),
             scroll_lines: 0,
-            history_chars: chars_for_width(CHAT_W - PAD * 2),
+            wrap_chars: chars_for_width(CHAT_W - PAD * 2),
+            visual_lines: 0,
             input_layout: None,
             drag_anchor: None,
         }
@@ -62,13 +69,32 @@ impl Default for ChatUi {
 impl ChatUi {
     pub(super) fn push(&mut self, line: ChatLine, now: f64) {
         if self.history.len() == MAX_HISTORY {
-            self.history.pop_front();
+            if let Some(dropped) = self.history.pop_front() {
+                self.visual_lines -= dropped.wrapped.len();
+            }
         }
+        let wrapped = wrap_spans(&line.spans, self.wrap_chars);
+        self.visual_lines += wrapped.len();
         self.history.push_back(TimedLine {
             line,
             received_at: now,
+            wrapped,
         });
         self.scroll_lines = self.scroll_lines.min(self.max_scroll_lines());
+    }
+
+    /// Flow the history to `max_chars` per visual line — only when the panel
+    /// width changed since the last flow.
+    fn rewrap(&mut self, max_chars: usize) {
+        if max_chars == self.wrap_chars {
+            return;
+        }
+        self.wrap_chars = max_chars;
+        self.visual_lines = 0;
+        for line in &mut self.history {
+            line.wrapped = wrap_spans(&line.line.spans, max_chars);
+            self.visual_lines += line.wrapped.len();
+        }
     }
 
     pub(super) fn insert_text(&mut self, text: &str, now: f64) {
@@ -261,8 +287,7 @@ impl ChatUi {
     fn draw_passive(&mut self, p: &mut petramond_ui::Painter<'_>, screen: (u32, u32), now: f64) {
         let logical = logical_screen(screen);
         let w = CHAT_W.min(logical.0 - 16).max(120);
-        let max_chars = chars_for_width(w - PAD * 2);
-        self.history_chars = max_chars;
+        self.rewrap(chars_for_width(w - PAD * 2));
         let mut y = logical.1 - 64;
         let mut drawn = 0usize;
         for line in self.history.iter().rev() {
@@ -274,8 +299,7 @@ impl ChatUi {
             } else {
                 continue;
             };
-            let wrapped = wrap_spans(&line.line.spans, max_chars);
-            for visual in wrapped.iter().rev() {
+            for visual in line.wrapped.iter().rev() {
                 if drawn >= PASSIVE_MAX_LINES || y < 4 {
                     return;
                 }
@@ -308,17 +332,14 @@ impl ChatUi {
         };
         p.solid(history, [0.0, 0.0, 0.0, 0.58], None);
 
-        let max_chars = chars_for_width(w - PAD * 2);
-        self.history_chars = max_chars;
-        let lines = self.visual_history(max_chars);
+        self.rewrap(chars_for_width(w - PAD * 2));
+        let total = self.visual_lines;
         let visible = open_history_visible_lines();
-        let end = lines
-            .len()
-            .saturating_sub(self.scroll_lines.min(lines.len()));
+        let end = total.saturating_sub(self.scroll_lines.min(total));
         let start = end.saturating_sub(visible);
         let visible_count = end.saturating_sub(start);
         let mut y = open_history_first_line_y(history, visible_count);
-        for visual in &lines[start..end] {
+        for visual in self.visual_history().skip(start).take(visible_count) {
             draw_visual_line(p, x + PAD, y, visual, 1.0, Some(history));
             y += p.font.line_advance();
         }
@@ -358,17 +379,14 @@ impl ChatUi {
         );
     }
 
-    fn visual_history(&self, max_chars: usize) -> Vec<Vec<ColoredText>> {
-        self.history
-            .iter()
-            .flat_map(|line| wrap_spans(&line.line.spans, max_chars))
-            .collect()
+    /// Every visual line of the history, oldest first, as currently wrapped.
+    fn visual_history(&self) -> impl Iterator<Item = &Vec<ColoredText>> {
+        self.history.iter().flat_map(|line| line.wrapped.iter())
     }
 
     fn max_scroll_lines(&self) -> usize {
-        let lines = self.visual_history(self.history_chars);
-        let visible = open_history_visible_lines();
-        lines.len().saturating_sub(visible)
+        self.visual_lines
+            .saturating_sub(open_history_visible_lines())
     }
 
     fn input_visible_chars(&self) -> usize {
@@ -542,6 +560,40 @@ mod tests {
         }
         assert_eq!(chat.history.len(), MAX_HISTORY);
         assert_eq!(chat.history.front().unwrap().line.seq, 44);
+    }
+
+    /// Wrapped lines are cached per width: the running visual-line count
+    /// always equals a fresh wrap of the whole history, through pushes, cap
+    /// evictions and width changes.
+    #[test]
+    fn wrapped_history_is_cached_per_width() {
+        let fresh = |chat: &ChatUi, width: usize| -> usize {
+            chat.history
+                .iter()
+                .map(|line| wrap_spans(&line.line.spans, width).len())
+                .sum()
+        };
+        let mut chat = ChatUi::default();
+        let long = "word ".repeat(40);
+        for i in 0..MAX_HISTORY as u64 + 20 {
+            chat.push(line(i, if i % 3 == 0 { long.as_str() } else { "short" }), 0.0);
+        }
+        assert_eq!(chat.visual_lines, fresh(&chat, chat.wrap_chars));
+        assert!(chat.visual_lines > chat.history.len(), "long lines wrap");
+
+        chat.rewrap(12);
+        assert_eq!(chat.wrap_chars, 12);
+        assert_eq!(chat.visual_lines, fresh(&chat, 12));
+        assert_eq!(chat.visual_history().count(), chat.visual_lines);
+
+        // The same width again re-flows nothing (entries keep their lines).
+        let first = chat.history[0].wrapped.as_ptr();
+        chat.rewrap(12);
+        assert_eq!(chat.history[0].wrapped.as_ptr(), first);
+        assert_eq!(
+            chat.max_scroll_lines(),
+            chat.visual_lines.saturating_sub(open_history_visible_lines())
+        );
     }
 
     #[test]

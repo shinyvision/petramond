@@ -28,8 +28,8 @@ pub(super) fn build(
     snapshot.off_hand = inv.off_hand().copied();
     snapshot.craft_output = menu.craft_output;
     snapshot.cursor = inv.cursor().copied();
-    snapshot.container = menu.container;
-    snapshot.gui_state = menu.gui_state;
+    snapshot.container = menu.container.cloned();
+    snapshot.gui_state = menu.gui_state.cloned();
     snapshot.health = game.player_health();
     snapshot.effects = game.player_effect_icons();
 

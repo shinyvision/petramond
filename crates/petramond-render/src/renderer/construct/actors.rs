@@ -65,6 +65,7 @@ pub(super) fn build_mob_gpu(
                 cull_y0: bmin.y * d.scale - MOB_CULL_SLACK,
                 cull_y1: bmax.y * d.scale + MOB_CULL_SLACK,
                 visible: Vec::new(),
+                pose: Default::default(),
             }
         })
         .collect()

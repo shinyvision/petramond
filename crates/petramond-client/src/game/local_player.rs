@@ -1,52 +1,148 @@
-//! The client's locally-simulated player: per-frame look/movement physics on
-//! `Game::player`, the camera mirror, and the per-frame target refresh
-//! (`Game::look`/`Game::targeted_mob`). None of this touches the sessions —
-//! the results reach the sim as the next `PlayerUpdate` message.
+//! The client's locally-simulated player as one owned subsystem: per-frame
+//! look/movement physics on [`LocalPlayer::player`], the camera and its
+//! easing, the third-person view, per-frame targeting and the input intents
+//! the next `PlayerUpdate` carries. None of this touches the sessions — the
+//! results reach the sim as the next `PlayerUpdate` message.
+//!
+//! Every world read goes through the [`ReplicaState`] borrow `Game` passes
+//! in; `Game` keeps only thin coordinator entry points that combine this
+//! subsystem with the others (the tools' camera hold, client-mod use holds).
 
+use petramond::net::protocol::SelfTransform;
+use petramond::player::{self, Input, Player, RaycastHit};
 use petramond_world::world::raycast;
-use petramond::player::{self, Input};
 use petramond_math::math::Vec3;
+use petramond_render::camera::Camera;
+use petramond_world::mining::MiningState;
+use petramond_world::world::placement::HeldRotation;
 
-use super::camera_rig::{EyeInputs, STEP_CAMERA_EPS};
-use super::replicated::MountPose;
+use super::camera_rig::{CameraRig, EyeInputs, STEP_CAMERA_EPS};
+use super::creative::{BreakRepeat, FlightToggle};
+use super::replica_state::ReplicaState;
+use super::third_person::ThirdPerson;
 use super::{Game, GameInput};
 
-impl Game {
-    pub(super) fn apply_camera_input(&mut self, input: &GameInput) {
-        if !input.gameplay_enabled || self.world_tool_holds_camera() {
-            return;
+/// Mouse-look sensitivity (radians per raw mouse count).
+const LOOK_SENSITIVITY: f32 = 0.0025;
+
+pub(super) struct LocalPlayer {
+    /// The client's LOCALLY-SIMULATED player: movement physics runs on this
+    /// copy every frame and the camera mirrors its eye. Its transform is sent
+    /// to the server in each frame's `PlayerUpdate` (trusted verbatim for the
+    /// local session); server-side transform mutations (teleports, knockback)
+    /// are adopted back after the fixed ticks. Its INVENTORY CONTENTS are a
+    /// stale clone — only the active-slot index is meaningful client-side; the
+    /// authoritative inventory lives on the session.
+    pub(super) player: Player,
+    /// The authoritative first-person eye every presentation consumer reads
+    /// (raycast, streaming, audio, reach). The third-person boom camera is
+    /// derived from it, never the other way round.
+    pub(super) cam: Camera,
+    /// The first-person camera's presentation easing (step glide, sneak dip,
+    /// walking sway, pillow eye, speed FOV).
+    pub(super) camera_rig: CameraRig,
+    /// Third-person view state (boom camera + body pose). `cam` above stays
+    /// the authoritative first-person eye; see `third_person.rs`.
+    pub(super) third_person: ThirdPerson,
+    /// The client's per-frame raycast target: presentation (selection
+    /// outline, mining dust) + the `PlayerUpdate.target` message source.
+    /// `None` when a mob or player is the closer target.
+    pub(super) look: Option<RaycastHit>,
+    /// The USE-click target this frame: equal to [`look`](Self::look) unless
+    /// a held item declares a water-stopping use ray (`use_ray: water` in
+    /// `items.json`), in which case the first water cell in reach can be the
+    /// target. Rides `UseClick.target` only — selection outline, mining, and
+    /// the look latch keep the normal water-transparent ray.
+    pub(super) use_look: Option<RaycastHit>,
+    /// The mob under the crosshair this frame (STABLE replicated id), nearer
+    /// than any block. At most one of `targeted_mob`/`targeted_player` is set;
+    /// the click actions carry it on the wire.
+    pub(super) targeted_mob: Option<u64>,
+    /// The remote PLAYER under the crosshair this frame (`PlayerId` byte),
+    /// nearer than any block or mob — the PvP attack target.
+    pub(super) targeted_player: Option<u8>,
+    /// The client-owned R-key placement-rotation cycle; its raw counter rides
+    /// `PlayerUpdate.held_rotation` (the session keeps its own latched copy).
+    pub(super) held_rotation: HeldRotation,
+    /// The movement `Input` this frame's local physics consumed
+    /// ([`Game::tick_player`]) — reused verbatim by `build_player_update` so
+    /// the wire intent can never drift from what the prediction simulated.
+    pub(super) predicted_input: Input,
+    /// The gameplay-gated use (interact) button intent this frame — the
+    /// client twin of the server's `sess.using()`; feeds the client actor
+    /// snapshot's `use_held` for mod predictors.
+    pub(super) intent_use_held: bool,
+    /// The transform of the last `PlayerUpdate` this client SENT. A
+    /// `SelfState::transform` correction adopts only the fields that differ
+    /// from it: fields equal to what we last claimed are just the server
+    /// echoing us, and the local (possibly newer) value wins.
+    pub(super) last_sent_transform: Option<SelfTransform>,
+    /// Local mining timer for crack overlay + `BreakFinished` (P2).
+    pub(super) mining: MiningState,
+    /// Creative double-jump flight toggling.
+    pub(super) flight_toggle: FlightToggle,
+    /// Creative instant-break repeat pacing while the button is held.
+    pub(super) break_repeat: BreakRepeat,
+}
+
+impl LocalPlayer {
+    /// The local player restored from the join, with the camera placed at its
+    /// eye. The camera the caller built carries the authored FOV; the
+    /// per-frame speed widening multiplies on top of it (see `CameraRig`).
+    pub(super) fn new(mut cam: Camera, player: Player) -> Self {
+        cam.pos = player.eye();
+        cam.yaw = player.yaw;
+        cam.pitch = player.pitch;
+        let camera_rig = CameraRig::new(cam.fov_y, player.eye().y);
+        Self {
+            player,
+            cam,
+            camera_rig,
+            third_person: ThirdPerson::default(),
+            look: None,
+            use_look: None,
+            targeted_mob: None,
+            targeted_player: None,
+            held_rotation: HeldRotation::default(),
+            predicted_input: Input::default(),
+            intent_use_held: false,
+            last_sent_transform: None,
+            mining: MiningState::new(),
+            flight_toggle: FlightToggle::default(),
+            break_repeat: BreakRepeat::default(),
         }
-        let (dx, dy) = input.look_delta;
+    }
+
+    /// Turn the body by a raw mouse delta and mirror the look onto the camera
+    /// now, before this frame's movement and raycast read `cam.forward()`.
+    fn apply_look(&mut self, (dx, dy): (f32, f32)) {
         if dx == 0.0 && dy == 0.0 {
             return;
         }
-        const SENS: f32 = 0.0025;
-        self.player.rotate(-dx * SENS, -dy * SENS);
-        // Mirror the player's look onto the camera now, before this tick's
-        // movement and raycast read `cam.forward()`.
+        self.player.rotate(-dx * LOOK_SENSITIVITY, -dy * LOOK_SENSITIVITY);
         self.cam.yaw = self.player.yaw;
         self.cam.pitch = self.player.pitch;
     }
 
-    pub(super) fn apply_hotbar_input(&mut self, input: &GameInput) {
-        if input.gameplay_enabled && input.hotbar_scroll != 0 {
-            // Client-owned selection (only the INDEX matters — contents are
-            // session-owned); the slot rides `PlayerUpdate.hotbar_slot`. Any
-            // hotbar change resets the R-key rotation cycle so the raw wire
-            // counter unambiguously means "R pressed on the current selection".
-            let before = self.player.inventory.active_slot();
-            self.player.inventory.scroll_active(input.hotbar_scroll);
-            let after = self.player.inventory.active_slot();
-            if after != before {
-                self.held_rotation.clear();
-            }
-            // Mirror into the replicated view (selection is client-owned;
-            // the server never echoes it back).
-            self.self_view.inventory.set_active(after);
+    /// Scroll the client-owned hotbar selection (only the INDEX matters —
+    /// contents are session-owned); the slot rides `PlayerUpdate.hotbar_slot`.
+    /// Any hotbar change resets the R-key rotation cycle so the raw wire
+    /// counter unambiguously means "R pressed on the current selection".
+    /// Returns the selected slot.
+    fn scroll_hotbar(&mut self, scroll: i32) -> u8 {
+        let before = self.player.inventory.active_slot();
+        self.player.inventory.scroll_active(scroll);
+        let after = self.player.inventory.active_slot();
+        if after != before {
+            self.held_rotation.clear();
         }
+        after
     }
 
-    pub(super) fn tick_player(&mut self, dt: f32, input: &GameInput) {
+    /// This frame's movement intent from the gameplay-gated input, relative to
+    /// the camera: flat for a walker, full 3D (plus jump/sneak as up/down) for
+    /// a spectator.
+    fn movement_intent(&self, input: &GameInput) -> Input {
         let spectator = self.player.is_spectator();
         let f = self.cam.forward();
         let fwd = if spectator {
@@ -56,36 +152,35 @@ impl Game {
         };
         let right = self.cam.right();
         let mut wishdir = Vec3::ZERO;
-
         if input.gameplay_enabled {
-            if input.movement.forward {
-                wishdir += fwd;
-            }
-            if input.movement.backward {
-                wishdir -= fwd;
-            }
-            if input.movement.right {
-                wishdir += right;
-            }
-            if input.movement.left {
-                wishdir -= right;
-            }
-            if spectator {
-                if input.movement.jump {
-                    wishdir += Vec3::Y;
-                }
-                if input.movement.sneak {
-                    wishdir -= Vec3::Y;
+            let m = &input.movement;
+            for (held, dir) in [
+                (m.forward, fwd),
+                (m.backward, -fwd),
+                (m.right, right),
+                (m.left, -right),
+                (spectator && m.jump, Vec3::Y),
+                (spectator && m.sneak, -Vec3::Y),
+            ] {
+                if held {
+                    wishdir += dir;
                 }
             }
         }
-
-        let player_input = Input {
+        Input {
             wishdir: wishdir.normalize_or_zero(),
             jump: input.gameplay_enabled && input.movement.jump,
             sprint: input.gameplay_enabled && input.movement.sprint,
             sneak: input.gameplay_enabled && input.movement.sneak,
-        };
+        }
+    }
+
+    /// One frame of local movement: latch the intents, re-derive the body's
+    /// engine claims, ease the speed FOV, then either slave to the mount's
+    /// seat or integrate physics against the replica (and its solid
+    /// entities), and finally place the eye.
+    fn simulate(&mut self, replica: &ReplicaState, dt: f32, input: &GameInput) {
+        let player_input = self.movement_intent(input);
         // Stash for `build_player_update`: the wire intent must be the exact
         // input the local physics consumed this frame.
         self.predicted_input = player_input;
@@ -93,11 +188,9 @@ impl Game {
         // server's `sess.using()` (the snapshot's `use_held`, and what the
         // wire ships in `PlayerUpdate`).
         self.intent_use_held = input.use_held && input.gameplay_enabled;
-        // LETTING GO ends the gesture, here as on the server. Every hold is
-        // released together: whoever had the press, they no longer do.
+        // LETTING GO ends the gesture, here as on the server.
         if !self.intent_use_held {
-            self.client_mods.release_use();
-            self.player.use_gesture = petramond::player::UseGesture::Free;
+            self.player.use_gesture = player::UseGesture::Free;
         }
         // The engine's own half of this body's claims, re-derived here rather
         // than waited for: every input is state the client already holds, so
@@ -122,68 +215,32 @@ impl Game {
         // remotes, so rider and mount can never visibly separate. The intent
         // stashed above still rides `PlayerUpdate` (that IS the steering
         // input the driving mod reads server-side).
-        if let Some(seat_pos) = self.self_mount_pose().map(|m| m.seat) {
+        if let Some(seat_pos) = replica.self_mount_pose().map(|m| m.seat) {
             self.player.pos = seat_pos;
             self.player.vel = Vec3::ZERO;
             self.player.on_ground = true;
-            self.sync_camera_to_player_eye(dt);
+            self.sync_camera_to_eye(replica, dt);
             return;
         }
 
         // Physics gates on the REPLICA's loaded columns: until the spawn area's
         // payloads land, the player holds still (exactly the fresh-world
         // stream-in wait; absent-Mixed sections would read as air and lie).
-        if spectator || self.player.columns_loaded(self.replica.data()) {
+        if self.player.is_spectator() || self.player.columns_loaded(replica.world.data()) {
             // Solid entities (a boat's hull) block the predicted body exactly
             // like the server's integration does — sourced from the
             // interpolated replicated rows, the same transform they render at.
-            let obstacles = self.solid_entity_obstacles();
+            let obstacles = replica.solid_entity_obstacles();
             let mut remaining = dt.min(0.25);
             while remaining > 0.0 {
                 let step = remaining.min(player::DT_MAX);
                 self.player
-                    .update_with_obstacles(step, self.replica.data(), player_input, &obstacles);
+                    .update_with_obstacles(step, replica.world.data(), player_input, &obstacles);
                 remaining -= step;
             }
         }
 
-        self.sync_camera_to_player_eye(dt);
-    }
-
-    /// Dynamic collision boxes for the local player's physics this frame:
-    /// every live SOLID entity (see `MobCollision::Solid`) at its
-    /// interpolated replicated transform — except the own mount, whose box
-    /// the slaved rider sits inside.
-    pub(super) fn solid_entity_obstacles(&self) -> Vec<petramond_world::collision::DynBox> {
-        let alpha = self.tick_alpha();
-        let own_mount = self.entities.own_mount().and_then(|m| match m {
-            petramond::net::protocol::PlayerMount::Mob { id, .. } => Some(id),
-            petramond::net::protocol::PlayerMount::Anchor { .. } => None,
-        });
-        let mut out = Vec::new();
-        for entry in self.entities.mobs().iter() {
-            let row = &entry.curr;
-            if row.dead || Some(row.id) == own_mount {
-                continue;
-            }
-            let d = petramond::mob::def(petramond::mob::Mob(row.kind_id));
-            if d.collision != petramond::mob::MobCollision::Solid {
-                continue;
-            }
-            let (pos, yaw) = entry.interpolated_pose(alpha);
-            petramond::mob::solid_boxes(row.id, pos, yaw, d.size, &mut out);
-        }
-        out
-    }
-
-    /// The local player's frame on its mount this frame: `None` when
-    /// unmounted, or while a mob mount's rows are not available yet — the
-    /// caller keeps its current transform and waits for the rows to agree.
-    /// A rider sits square in its seat and leans with it; only the head
-    /// follows the look (see `collect_player`).
-    pub(super) fn self_mount_pose(&self) -> Option<MountPose> {
-        self.entities.mobs()
-            .mount_pose(self.entities.own_mount()?, self.tick_alpha())
+        self.sync_camera_to_eye(replica, dt);
     }
 
     /// Per-frame push of the player out of overlapping soft bodies (mobs +
@@ -192,15 +249,15 @@ impl Game {
     /// only ever shoves ITSELF (the shove rides its next `PlayerUpdate`), so
     /// player↔player separation stays symmetric with no server-side push step;
     /// the mobs' own half runs on the tick (`game_tick_step`).
-    pub(super) fn apply_entity_push(&mut self, dt: f32) {
+    fn apply_entity_push(&mut self, replica: &ReplicaState, dt: f32) {
         // A mounted body is slaved to its seat: nothing may jostle it (its
         // own mount overlaps it every frame).
-        if self.player.is_spectator() || self.entities.own_mount().is_some() {
+        if self.player.is_spectator() || replica.entities.own_mount().is_some() {
             return;
         }
         let body = self.player.body();
         let mut push = Vec3::ZERO;
-        for entry in self.entities.mobs().iter() {
+        for entry in replica.entities.mobs().iter() {
             if entry.curr.dead {
                 continue; // a ragdolling corpse doesn't push
             }
@@ -216,7 +273,7 @@ impl Game {
                 push += p;
             }
         }
-        for remote in self.entities.players().iter() {
+        for remote in replica.entities.players().iter() {
             let Some(other) = remote.push_body() else {
                 continue; // hidden (spectator/dead) or asleep in a bed
             };
@@ -225,15 +282,17 @@ impl Game {
             }
         }
         if push != Vec3::ZERO {
-            self.player.shove(push * dt, self.replica.data());
-            self.sync_camera_to_player_eye(dt);
+            self.player.shove(push * dt, replica.world.data());
+            self.sync_camera_to_eye(replica, dt);
         }
     }
 
-    pub(super) fn sync_camera_to_player_eye(&mut self, dt: f32) {
-        let mounted = self.entities.own_mount().is_some();
+    /// Place the first-person eye through the camera rig's easing (step
+    /// glide, sneak dip, walking sway, pillow eye).
+    fn sync_camera_to_eye(&mut self, replica: &ReplicaState, dt: f32) {
+        let mounted = replica.entities.own_mount().is_some();
         let spectator = self.player.is_spectator();
-        let sleeping = self.self_view.sleeping.is_some();
+        let sleeping = replica.self_view.sleeping.is_some();
         let body = EyeInputs {
             eye: self.player.eye(),
             feet_y: self.player.pos.y,
@@ -241,7 +300,7 @@ impl Game {
             carried: spectator || mounted,
             sneaking: !spectator && self.predicted_input.sneak,
             // A sleeper, rider, spectator or airborne body eases the sway back
-            // to rest. THIRD PERSON DOES NOT BOB: the boom camera is `self.cam`
+            // to rest. THIRD PERSON DOES NOT BOB: the boom camera is `cam`
             // cloned and retreated (`update_third_person`, which runs after
             // this), so suppressing the sway here is what keeps it out of the
             // boom; easing to rest rather than skipping the apply means
@@ -250,7 +309,7 @@ impl Game {
                 && !spectator
                 && !mounted
                 && !sleeping
-                && !self.third_person_enabled(),
+                && !self.third_person.enabled,
             hspeed: Vec3::new(self.player.vel.x, 0.0, self.player.vel.z).length(),
             sleeping,
             // `cam.yaw` is already this frame's look (mirrored in `apply_look`).
@@ -259,25 +318,17 @@ impl Game {
         self.cam.pos = self.camera_rig.place_eye(dt, body);
     }
 
-    /// Keep the REPLICA's view centre (mesh/light priority ordering + the
-    /// always-mesh near ring) on the camera. Streaming itself is server-side
-    /// (`ServerGame::pump_streaming`); the replica never generates.
-    pub(super) fn tick_replica_view(&mut self) {
-        let cam_cx = (self.cam.pos.x.floor() as i32).div_euclid(16);
-        let cam_cy = (self.cam.pos.y.floor() as i32).div_euclid(16);
-        let cam_cz = (self.cam.pos.z.floor() as i32).div_euclid(16);
-        self.replica.set_replica_view_center(cam_cx, cam_cy, cam_cz);
-    }
-
-    /// Refresh the CLIENT's per-frame targeting: the raycast hit (presentation +
-    /// `PlayerUpdate.target` source) against the REPLICA world, the mob
+    /// Refresh the CLIENT's per-frame targeting: the raycast hit (presentation
+    /// + `PlayerUpdate.target` source) against the replica world, the mob
     /// under the crosshair from the REPLICATED rows, and the remote PLAYER
     /// under the crosshair from the remote-player rows (PvP). All three
     /// compete by distance — the nearest wins; a closer block occludes both
     /// entity kinds. At most one of `targeted_mob`/`targeted_player` is set
     /// (the click actions carry them on the wire).
-    pub(super) fn refresh_target(&mut self) {
-        let block_hit = raycast::with_dist(self.cam.pos, self.cam.forward(), self.replica.data());
+    fn refresh_target(&mut self, replica: &ReplicaState) {
+        let eye = self.cam.pos;
+        let dir = self.cam.forward();
+        let block_hit = raycast::with_dist(eye, dir, replica.world.data());
         self.look = block_hit.map(|(h, _)| h);
         // The use-click target: a held item may declare a fluid-stopping use
         // ray (a boat item targets the water surface); everything else keeps
@@ -292,18 +343,16 @@ impl Game {
             st.map(|st| st.item.use_ray())
                 .filter(|ray| ray.sees_fluid())
         };
-        let held_fluid_ray = fluid_ray(self.self_view.inventory.selected())
-            .or_else(|| fluid_ray(self.self_view.inventory.off_hand()));
+        let inventory = &replica.self_view.inventory;
+        let held_fluid_ray =
+            fluid_ray(inventory.selected()).or_else(|| fluid_ray(inventory.off_hand()));
         self.use_look = match held_fluid_ray {
-            Some(ray) => {
-                raycast::use_ray(self.cam.pos, self.cam.forward(), self.replica.data(), ray)
-                    .map(|(h, _)| h)
-            }
+            Some(ray) => raycast::use_ray(eye, dir, replica.world.data(), ray).map(|(h, _)| h),
             None => self.look,
         };
         let block_dist = block_hit.map(|(_, d)| d).unwrap_or(player::REACH);
-        let mob = self.closest_mob(self.cam.pos, self.cam.forward(), block_dist);
-        let remote = self.closest_remote_player(self.cam.pos, self.cam.forward(), block_dist);
+        let mob = replica.closest_mob(eye, dir, block_dist);
+        let remote = replica.closest_remote_player(eye, dir, block_dist);
         self.targeted_mob = None;
         self.targeted_player = None;
         match (mob, remote) {
@@ -318,77 +367,70 @@ impl Game {
         }
     }
 
+    /// The replica section the camera is in — the replica's view centre
+    /// (mesh/light priority ordering + the always-mesh near ring).
+    fn view_section(&self) -> (i32, i32, i32) {
+        let section = |v: f64| (v.floor() as i32).div_euclid(16);
+        (
+            section(self.cam.pos.x),
+            section(self.cam.pos.y),
+            section(self.cam.pos.z),
+        )
+    }
+}
+
+impl Game {
+    pub(super) fn apply_camera_input(&mut self, input: &GameInput) {
+        if !input.gameplay_enabled || self.world_tool_holds_camera() {
+            return;
+        }
+        self.local.apply_look(input.look_delta);
+    }
+
+    pub(super) fn apply_hotbar_input(&mut self, input: &GameInput) {
+        if input.gameplay_enabled && input.hotbar_scroll != 0 {
+            let slot = self.local.scroll_hotbar(input.hotbar_scroll);
+            // Mirror into the replicated view (selection is client-owned;
+            // the server never echoes it back).
+            self.replica.self_view.inventory.set_active(slot);
+        }
+    }
+
+    pub(super) fn tick_player(&mut self, dt: f32, input: &GameInput) {
+        self.local.simulate(&self.replica, dt, input);
+        // Letting go of use releases every client-mod hold together: whoever
+        // had the press, they no longer do.
+        if !self.local.intent_use_held {
+            self.client_mods.release_use();
+        }
+    }
+
+    pub(super) fn apply_entity_push(&mut self, dt: f32) {
+        self.local.apply_entity_push(&self.replica, dt);
+    }
+
+    pub(super) fn sync_camera_to_player_eye(&mut self, dt: f32) {
+        self.local.sync_camera_to_eye(&self.replica, dt);
+    }
+
+    /// Keep the REPLICA's view centre on the camera. Streaming itself is
+    /// server-side (`ServerGame::pump_streaming`); the replica never
+    /// generates.
+    pub(super) fn tick_replica_view(&mut self) {
+        let (cx, cy, cz) = self.local.view_section();
+        self.replica.world.set_replica_view_center(cx, cy, cz);
+    }
+
+    pub(super) fn refresh_target(&mut self) {
+        self.local.refresh_target(&self.replica);
+    }
+
     /// The stable id of the mob currently under the crosshair — what a click
     /// action carries on the wire.
     pub(super) fn targeted_mob_id(&self) -> Option<u64> {
-        self.targeted_mob
-    }
-
-    /// The closest replicated mob in front of the eye whose shared body boxes
-    /// the ray enters within `max_dist` (and within reach), with its ray
-    /// distance; skips dead corpses. `max_dist` is the block hit distance, so
-    /// a mob *behind* the block isn't targeted (the block occludes it).
-    pub(super) fn closest_mob(
-        &self,
-        eye: petramond_math::world_pos::WorldPos,
-        dir: Vec3,
-        max_dist: f32,
-    ) -> Option<(u64, f32)> {
-        let limit = max_dist.min(player::REACH);
-        let own_mount = self.entities.own_mount().and_then(|m| match m {
-            petramond::net::protocol::PlayerMount::Mob { id, .. } => Some(id),
-            petramond::net::protocol::PlayerMount::Anchor { .. } => None,
-        });
-        let alpha = self.tick_alpha();
-        let bodies = self.entities.mobs().iter().filter_map(|entry| {
-            let row = &entry.curr;
-            (!row.dead && Some(row.id) != own_mount).then(|| {
-                let (pos, yaw) = entry.interpolated_pose(alpha);
-                (
-                    row.id,
-                    pos,
-                    yaw,
-                    petramond::mob::def(petramond::mob::Mob(row.kind_id)).size,
-                )
-            })
-        });
-        petramond::mob::closest_body_ray_hit(eye, dir, limit, bodies)
-    }
-
-    /// The closest VISIBLE, alive remote player whose body AABB (row feet
-    /// position + the player half-extents) the ray enters within `max_dist`
-    /// (and within reach), with its ray distance — [`closest_mob`] over the
-    /// remote-player rows. The store never holds the own id, so self-targeting
-    /// is impossible; spectators and the dead ship `visible: false`/`alive:
-    /// false` rows and are skipped.
-    ///
-    /// [`closest_mob`]: Self::closest_mob
-    pub(super) fn closest_remote_player(
-        &self,
-        eye: petramond_math::world_pos::WorldPos,
-        dir: Vec3,
-        max_dist: f32,
-    ) -> Option<(u8, f32)> {
-        let limit = max_dist.min(player::REACH);
-        let mut best: Option<(u8, f32)> = None;
-        for p in self.entities.players().iter() {
-            let row = &p.curr;
-            if !row.visible || !row.alive {
-                continue;
-            }
-            let pos = row.transform.pos - eye;
-            let min = Vec3::new(pos.x - player::HALF_W, pos.y, pos.z - player::HALF_W);
-            let max = Vec3::new(
-                pos.x + player::HALF_W,
-                pos.y + player::HEIGHT,
-                pos.z + player::HALF_W,
-            );
-            if let Some(t) = player::ray_vs_aabb(Vec3::ZERO, dir, min, max) {
-                if t <= limit && best.is_none_or(|(_, bt)| t < bt) {
-                    best = Some((row.id.0, t));
-                }
-            }
-        }
-        best
+        self.local.targeted_mob
     }
 }
+
+#[cfg(test)]
+mod tests;

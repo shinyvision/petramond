@@ -5,10 +5,12 @@
 //! identity) belongs to the CONSUMER that cares about it, read from the
 //! actor's state, never pre-interpreted by the dispatcher.
 //!
-//! The attempt walks the consumer registry — ordered by the shared
-//! `rules::interact::ConsumerKind::CLAIM_ORDER`, not an if-ladder.
-//! Each consumer inspects the attempt and either claims it or passes; the
-//! first claim wins and nothing later runs. Mods participate through the
+//! The attempt walks the consumer registry through the SHARED walk
+//! (`rules::use_click::run_use_click`: the main/off-hand ladder over
+//! `ConsumerKind::CLAIM_ORDER`) — the same walk the client's prediction runs
+//! against its replica, not an if-ladder kept twice. Each consumer inspects
+//! the attempt and either claims it or passes; the first claim wins and
+//! nothing later runs. Mods participate through the
 //! `interact_attempt` bus event (one consumer entry dispatches it; a
 //! handler's Cancel is a claim); engine capabilities are sibling entries in
 //! the same registry. Whether the hand jabs is exactly whether ANYTHING
@@ -22,14 +24,11 @@ use crate::events::tick::TickEvents;
 use crate::events::{InteractAttempt, Outcome, PostEvent};
 use crate::net::protocol::TargetRef;
 use crate::player::UseGesture;
-use crate::rules::interact::ConsumerKind;
+use crate::rules::interact::{ConsumerKind, USE_REPEAT_TICKS};
+use crate::rules::use_click::{self, UseClickConsumers};
 use crate::server::player::PendingUseClick;
 use petramond_math::math::IVec3;
 use petramond_world::block::{Block, BlockInteraction};
-
-/// Hold-to-interact repeat cadence: a HELD use button re-runs the interact
-/// dispatch this many ticks apart (250 ms at the 20 TPS tick).
-pub const USE_REPEAT_TICKS: u32 = 5;
 
 /// Click plumbing that rides beside the attempt but is not part of the
 /// gesture: the raw click target (the placement consumers' input), the
@@ -45,16 +44,9 @@ pub struct ClickMeta {
     pub repeat: bool,
 }
 
-/// One consumer's verdict on the attempt.
-enum Claim {
-    /// Not this consumer's business — the walk continues.
-    Pass,
-    /// The attempt is consumed; the walk ends.
-    Claimed,
-    /// Consumed by a placement that landed its anchor at this cell (the
-    /// ghost-accept convention needs the exact anchor).
-    Placed(IVec3),
-}
+/// One consumer's verdict on the attempt: a placement claim carries the
+/// cell its anchor landed at (the ghost-accept convention needs it).
+type Claim = use_click::Claim<IVec3>;
 
 /// One consumer's claim function: it is offered the attempt and either
 /// claims it or passes. The signature is the whole contract — a consumer sees
@@ -62,16 +54,10 @@ enum Claim {
 /// nothing else.
 type Consume = fn(&mut ServerGame, usize, &InteractAttempt, &ClickMeta, &mut TickEvents) -> Claim;
 
-/// One consumer registry row: a shared [`ConsumerKind`] paired with the
-/// server's claim function for it. The kind's facts (claim order,
-/// `presents_itself`) live in `crate::rules::interact`, where the client's
-/// prediction mirror reads them too.
-struct Consumer {
-    kind: ConsumerKind,
-    consume: Consume,
-}
-
-/// The server's claim function for each consumer kind.
+/// The server's claim function for each consumer kind. The kind's facts
+/// (claim order, `presents_itself`) live in `crate::rules::interact`, and
+/// the walk over them in `crate::rules::use_click`, where the client's
+/// prediction mirror reads both too.
 fn consume_fn(kind: ConsumerKind) -> Consume {
     match kind {
         // Mods first: every attempt, sneak or not, block or mob — a handler's
@@ -98,14 +84,37 @@ fn consume_fn(kind: ConsumerKind) -> Consume {
     }
 }
 
-/// The consumer registry, in the shared claim order. Deterministic and
-/// data-shaped: a new engine capability is a new [`ConsumerKind`] (plus its
-/// client prediction rule), never a branch in the dispatcher.
-fn consumers() -> impl Iterator<Item = Consumer> {
-    ConsumerKind::CLAIM_ORDER.into_iter().map(|kind| Consumer {
-        kind,
-        consume: consume_fn(kind),
-    })
+/// The server's consumer registry as the shared walk sees it: every offer
+/// EXECUTES the kind's consumer against the authoritative world.
+/// Deterministic and data-shaped: a new engine capability is a new
+/// [`ConsumerKind`] (plus its client prediction arm), never a branch in the
+/// dispatcher.
+struct ServerConsumers<'a> {
+    game: &'a mut ServerGame,
+    s: usize,
+    attempt: &'a InteractAttempt,
+    meta: &'a ClickMeta,
+    events: &'a mut TickEvents,
+}
+
+impl UseClickConsumers for ServerConsumers<'_> {
+    type Placement = IVec3;
+
+    fn off_hand_occupied(&self) -> bool {
+        self.game.sessions[self.s]
+            .player
+            .inventory
+            .off_hand()
+            .is_some()
+    }
+
+    fn set_acting_hand(&mut self, hand: petramond_world::inventory::Hand) {
+        self.game.sessions[self.s].player.acting_hand = hand;
+    }
+
+    fn offer(&mut self, kind: ConsumerKind) -> Claim {
+        consume_fn(kind)(self.game, self.s, self.attempt, self.meta, self.events)
+    }
 }
 
 impl ServerGame {
@@ -228,48 +237,25 @@ impl ServerGame {
             predicted,
             repeat,
         };
-        // The rule: if the RIGHT hand can act, it acts; only when the whole
-        // registry passes does the ladder run again with the OFF hand as the
-        // acting hand. The attempt payload never names a hand — the acting
-        // hand is actor context (`Player::acting_hand`), so every consumer
-        // and every mod host call (`PlayerState`, `PlayerHeld`, `ConsumeHeld`)
-        // resolves the off-hand item on the second pass with no new
-        // vocabulary. An empty off-hand runs no second pass: empty-hand
-        // interactions stay a main-hand affair.
-        let mut consumed = false;
-        let mut claimant: Option<ConsumerKind> = None;
-        let mut placed_at = None;
-        let mut off_hand_acted = false;
-        for hand in [
-            petramond_world::inventory::Hand::Main,
-            petramond_world::inventory::Hand::Off,
-        ] {
-            if hand == petramond_world::inventory::Hand::Off
-                && (consumed || self.sessions[s].player.inventory.off_hand().is_none())
-            {
-                break;
-            }
-            self.sessions[s].player.acting_hand = hand;
-            for consumer in consumers() {
-                match (consumer.consume)(self, s, &attempt, &meta, events) {
-                    Claim::Pass => continue,
-                    Claim::Claimed => {
-                        consumed = true;
-                    }
-                    Claim::Placed(pos) => {
-                        consumed = true;
-                        placed_at = Some(pos);
-                    }
-                }
-                claimant = Some(consumer.kind);
-                break;
-            }
-            off_hand_acted = consumed && hand == petramond_world::inventory::Hand::Off;
-        }
-        // The acting hand is DISPATCH context only — never leak it past the
-        // ladder (level-state reads like the roster and replication are
-        // main-hand by definition).
-        self.sessions[s].player.acting_hand = petramond_world::inventory::Hand::Main;
+        // The shared ladder: if the RIGHT hand can act, it acts; only when
+        // the whole registry passes does the walk run again with the OFF hand
+        // as the acting hand. The attempt payload never names a hand — the
+        // acting hand is actor context (`Player::acting_hand`), so every
+        // consumer and every mod host call (`PlayerState`, `PlayerHeld`,
+        // `ConsumeHeld`) resolves the off-hand item on the second pass with
+        // no new vocabulary. The walk resets the acting hand to `Main`
+        // before returning (level-state reads like the roster and
+        // replication are main-hand by definition).
+        let outcome = use_click::run_use_click(&mut ServerConsumers {
+            game: &mut *self,
+            s,
+            attempt: &attempt,
+            meta: &meta,
+            events: &mut *events,
+        });
+        let consumed = outcome.consumed();
+        let off_hand_acted = outcome.off_hand_acted();
+        let placed_at = outcome.placement;
         events.player(s).click_off_hand = off_hand_acted;
         if consumed {
             // The acting hand's jab, mirrored onto the swing facts the roster
@@ -334,7 +320,7 @@ impl ServerGame {
         // right-click harvest) gets its hand jab echoed back; `jabbed`
         // guarantees this can never double an already-played one. A claimant
         // that presents itself has no jab to echo.
-        if consumed && !jabbed && !claimant.is_some_and(ConsumerKind::presents_itself) {
+        if consumed && !jabbed && !outcome.presents_itself() {
             events.player(s).used_unpredicted = true;
         }
         // The client's ghost convention is `target.block + normal` — accept
@@ -405,7 +391,7 @@ impl ServerGame {
         _meta: &ClickMeta,
         events: &mut TickEvents,
     ) -> Claim {
-        if attempt.block.is_none() && attempt.mob.is_none() {
+        if !use_click::registered_offered(attempt.block, attempt.mob) {
             return Claim::Pass;
         }
         let mut ev = *attempt;
@@ -474,7 +460,7 @@ impl ServerGame {
 
     /// The block's built-in capability as a consumer: claims the attempt when
     /// the target block has one AND the shared claim rule says this attempt
-    /// is its business (`block::builtin_claims_click` — built-ins pass on
+    /// is its business (`use_click::builtin_claims_at` — built-ins pass on
     /// sneak clicks; the client jab/ghost prediction runs the SAME rule).
     fn consume_builtin_block(
         &mut self,
@@ -486,10 +472,10 @@ impl ServerGame {
         let Some(pos) = attempt.block else {
             return Claim::Pass;
         };
-        let block = Block::from_id(self.world.data().chunk_block(pos.x, pos.y, pos.z));
-        if !petramond_world::block::builtin_claims_click(block, self.sessions[s].sneaking()) {
+        if !use_click::builtin_claims_at(self.world.data(), pos, self.sessions[s].sneaking()) {
             return Claim::Pass;
         }
+        let block = Block::from_id(self.world.data().chunk_block(pos.x, pos.y, pos.z));
         // Menu opens join the ordered menu-action stream. Placement resolves
         // before the Menu stage, so this appends behind any close/click/craft
         // messages already received for the old screen.
@@ -554,12 +540,11 @@ impl ServerGame {
     }
 
     /// Whether the ACTING hand's item is BOTH food and placeable (a plantable
-    /// carrot) — the dual nature the contextual-place / ordinary-place pair
-    /// splits on.
+    /// carrot) — the shared split the contextual-place / ordinary-place pair
+    /// makes on both mirrors.
     fn held_is_contextual_placeable(&self, s: usize) -> bool {
-        self.sessions[s].player.held().is_some_and(|st| {
-            st.item.food().is_some() && st.item.as_block().is_some_and(|b| b != Block::Air)
-        })
+        crate::rules::item_use::held_item(&self.sessions[s].player)
+            .is_some_and(crate::rules::item_use::is_contextual_placeable)
     }
 
     fn consume_contextual_place(

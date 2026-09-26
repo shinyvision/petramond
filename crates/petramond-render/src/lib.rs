@@ -1,7 +1,7 @@
 //! WGPU renderer: atlas texture, opaque + transparent pipelines, fog.
 
-pub(crate) mod animation_inputs;
-pub(crate) mod animator_claims;
+#![allow(clippy::too_many_arguments)]
+
 pub mod atlas;
 pub mod block_draw;
 pub mod block_entity_model;
@@ -51,10 +51,11 @@ pub use renderer::{
 };
 pub use views::BreakOverlayView;
 pub use views::EntityShadow;
+pub use views::{AnimId, AnimInterner, AnimLayer, AnimNames, GaitFade, MobArena};
 
 pub use scene::Scene;
 
-use glam::{Quat, Vec3};
+use glam::Vec3;
 use petramond_math::math::Tilt;
 use petramond_world::block_state::HeldBlockState;
 use petramond_world::item::ItemType;
@@ -209,7 +210,7 @@ pub struct HeldPose {
 /// replicated publisher's 20 Hz steps into a glide.
 ///
 /// ONE rate for everything posed — the item in a hand ([`HeldPose`]) and the
-/// bones carrying it ([`BoneOffset`]) alike. A body whose arm snaps to a stance
+/// claimed bone offsets carrying it alike. A body whose arm snaps to a stance
 /// while the thing in its fist glides there is the item visibly trailing its
 /// own hand.
 pub const POSE_EASE_RATE: f32 = 22.0;
@@ -245,9 +246,9 @@ impl Default for HeldItemView {
 }
 
 /// Sim intent for one hand this frame: what it holds and its levels — the
-/// animator drivers' per-hand inputs. The hand's one-shot gestures are not
-/// here: they reach the drivers as resolved graph events
-/// (`AnimatorInputs::events`).
+/// client animator drivers' per-hand inputs, and what [`HeldItemEase`] turns
+/// into the hand's [`HeldItemView`]. The hand's one-shot gestures are not
+/// here: they reach the drivers as resolved graph events.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct HeldItemFrame {
     pub item: Option<ItemType>,
@@ -273,23 +274,18 @@ pub struct HeldItemFrame {
     pub pose_target: Option<HeldPose>,
 }
 
-/// One body's resolved animator claims and the graph events fired on it
-/// this frame, borrowed from the frame's arenas
-/// ([`GamePresentation`](views::GamePresentation) carries every body's rows
-/// back to back; a body addresses its own by [`AnimatorRanges`]).
-#[derive(Clone, Copy, Debug, Default)]
-pub struct AnimatorInputs<'a> {
-    pub params: &'a [views::AnimatorParamRow],
-    pub plays: &'a [petramond::player::AnimatorPlay],
-    pub events: &'a [(petramond::player::RigId, u16)],
-}
-
-/// One body's slices of the frame's animator arenas.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub struct AnimatorRanges {
-    pub params: ArenaRange,
-    pub plays: ArenaRange,
-    pub events: ArenaRange,
+/// The local player's presentation for one frame, built by the client's
+/// animation stage: both hands' eased held views and the first-person
+/// viewmodel's posed bones. [`Renderer::update_uniforms`] draws the world
+/// through the viewmodel's camera bone, so the client hands this over first.
+#[derive(Clone, Copy, Debug)]
+pub struct LocalFrame<'a> {
+    /// Each hand's eased held view, `[main, off]` (`item == None` draws
+    /// nothing in that hand).
+    pub held: [HeldItemView; 2],
+    /// The viewmodel rig's posed bones (model space, rig pixels); empty
+    /// without a viewmodel animator, which leaves the rig at rest.
+    pub first_person: &'a [glam::Mat4],
 }
 
 /// How a dropped item entity is turned this frame. The contract holds for
@@ -344,7 +340,11 @@ pub enum GaitClip {
 /// adapter fills a slice of these by interpolating the sim's live mob instances; the
 /// renderer groups them by species, frustum-culls, and poses each with
 /// `mob_model::pose_mob_instances` for that species' skinned mesh + texture.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// A plain `Copy` row: its variable-length parts (fading gaits, named layers,
+/// ragdoll bones) are ranges into the frame's [`MobArena`], like a body's
+/// [`BoneRange`].
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct MobRenderInstance {
     /// Which species (selects the model / texture / draw buffers).
     pub kind: petramond::mob::Mob,
@@ -364,8 +364,9 @@ pub struct MobRenderInstance {
     pub idle_anim: Option<u8>,
     /// How far the active gait (walk or idle) has eased in, 0..1.
     pub gait_weight: f32,
-    /// Gaits eased out of and still fading: `(clip, held phase, weight)`.
-    pub gait_fades: Vec<(GaitClip, f32, f32)>,
+    /// Gaits eased out of and still fading, as a range into
+    /// [`MobArena::gait_fades`].
+    pub gait_fades: ArenaRange,
     /// Head orientation relative to the body (radians): yaw swivel, pitch tilt.
     /// Applied to the model's `head` bone unless the active animation moves the head.
     pub head_yaw: f32,
@@ -387,39 +388,21 @@ pub struct MobRenderInstance {
     /// How much of its light the body provides itself (`0..=1`, the strongest
     /// active emitter's `body_self_lit`): a burning body stays visible in the dark.
     pub emitter_self_lit: f32,
-    /// Named model animations (mod-driven, replicated) as
-    /// `(name, phase, weight)` — each is layered over the walk/idle/rest
-    /// base pose at its OWN phase (seconds into the clip), scaled by its
-    /// blend weight; names the model doesn't have are skipped.
-    pub anims: Vec<(String, f32, f32)>,
+    /// Named model animations (mod-driven, replicated) as a range into
+    /// [`MobArena::anims`] — each is layered over the walk/idle/rest base pose
+    /// at its OWN phase (seconds into the clip), scaled by its blend weight;
+    /// names the model doesn't have are skipped.
+    pub anims: ArenaRange,
     /// When the mob is dying, its per-bone ragdoll pose — `(rest-pivot position,
     /// rotation delta)` per bone in model space, already interpolated for this frame —
-    /// used over the authored rest pose. `None` for a live mob. `Arc` so cloning a
-    /// visible instance into its per-species batch stays cheap.
-    pub ragdoll: Option<Arc<[(Vec3, Quat)]>>,
+    /// used over the authored rest pose, as a range into [`MobArena::ragdoll`].
+    /// `None` for a live mob.
+    pub ragdoll: Option<ArenaRange>,
     /// The items drawn in the species' main and off hand bones.
     pub held: [Option<petramond_world::item::ItemType>; 2],
 }
 
-/// One rig-bone offset, resolved to a bone INDEX by the caller.
-///
-/// Composed onto whatever the body's own animation already put that bone at,
-/// about the bone's posed pivot, and carried through every descendant bone —
-/// so an offset on a shoulder moves the whole arm and its held item.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct BoneOffset {
-    /// Index into the player model's bone list.
-    pub bone: usize,
-    /// Rotation in DEGREES about the bone's pivot, applied X, Y, Z.
-    pub rotation: [f32; 3],
-    /// Translation in 1/16-BLOCK pixels, in the bone's frame.
-    pub translation: [f32; 3],
-    /// Whether this layers over the body's animation or REPLACES that bone's
-    /// share of it (a stance, which must not also swing with the stride).
-    pub hold: bool,
-}
-
-/// One row's slice of a frame arena (the bone offsets, the animator claims).
+/// One row's slice of a frame arena (a body's posed bones).
 ///
 /// Rows carry a RANGE rather than their own list so a render instance stays
 /// a plain `Copy` value with no per-body allocation, and so nothing has to cap
@@ -439,6 +422,14 @@ impl ArenaRange {
         }
     }
 
+    /// The rows appended to `arena` since it held `start` of them.
+    pub fn since(arena: &[impl Sized], start: usize) -> Self {
+        Self {
+            start: start as u32,
+            len: arena.len().saturating_sub(start) as u32,
+        }
+    }
+
     /// This range's rows. An out-of-bounds range (a stale row, never a
     /// correctly built one) reads as empty rather than panicking mid-frame.
     pub fn of<T>(self, arena: &[T]) -> &[T] {
@@ -449,15 +440,9 @@ impl ArenaRange {
     }
 }
 
-/// One body's slice of the frame's shared bone-offset arena
-/// ([`GamePresentation::bone_offsets`](crate::views::GamePresentation)).
-pub type BoneRange = ArenaRange;
-
-/// The local player's third-person body to draw this frame (absent in first
-/// person): the compiled `player.bbmodel` at `pos` (feet), body facing
-/// `body_yaw` with the head turned `head_yaw`/`head_pitch` relative to it,
-/// walking (`moving`) at `anim_time` into the authored walk cycle. Its held
-/// items and actions come from the renderer's own local hand state.
+/// One posed player body to draw this frame: the body rig skinned from the
+/// bones the client's animation posed, placed at `pos` (feet). The renderer
+/// computes no pose — it only places, lights and tints what it is given.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct PlayerRenderInstance {
     /// Multiply body tint from the body's active emitter bundles (its
@@ -468,61 +453,33 @@ pub struct PlayerRenderInstance {
     pub emitter_self_lit: f32,
     /// World position of the feet (model `y=0`).
     pub pos: petramond_math::world_pos::WorldPos,
-    /// Body facing yaw in radians (engine yaw space).
-    pub body_yaw: f32,
-    /// Head yaw relative to the body, and look pitch (radians).
-    pub head_yaw: f32,
-    pub head_pitch: f32,
-    /// Normalized stride phase; each clip supplies its own duration.
-    pub anim_time: f32,
-    /// Walk-pose blend weight (`0` standing … `1` full walk cycle), eased by the
-    /// game so starts/stops transition instead of snapping.
-    pub walk_weight: f32,
-    /// Sneak-stance blend weight (`0` upright … `1` crouched), eased like the
-    /// walk blend. Cross-fades the authored `sneak` clip in: frame 0 while
-    /// standing, its own cycle (instead of `walk`) while moving.
-    pub sneak_weight: f32,
-    pub locomotion: crate::views::LocomotionBlend,
-    /// Asleep in a bed: render lying on the back, feet at `pos`, head toward
-    /// `body_yaw`; head-look and the arm swing are suppressed.
+    /// Asleep in a bed: the hands stay empty (the held items would poke
+    /// through the bed).
     pub sleeping: bool,
-    /// Seated on a mob seat (mounted): thighs swing forward and shins hang
-    /// from the knees, anchored at `pos` (the seat), walk/sneak layers rest;
-    /// head-look and the arm swing stay live so a rider can look and punch.
-    pub seated: bool,
-    /// The mount's body tilt: a seated body leans with its mount about the
-    /// hips, so a rider sits IN a cart on a slope instead of upright through
-    /// its front. Ignored unless `seated`.
-    pub seat_tilt: Tilt,
     /// Hurt-flash intensity `[0, 1]` — tints the body red like a hurt mob.
     pub hurt: f32,
     /// 6-bit two-channel light sampled at the player.
     pub skylight: u8,
     pub blocklight: petramond_world::light::BlockLight6,
-    /// This body's bone offsets, as a range into the frame's arena. Applied
-    /// after the engine's own animation layers, so they compose with a walk, a
-    /// punch or a head-look instead of replacing it.
-    pub bones: BoneRange,
+    /// This body's posed bones — model-space matrices in rig pixels, one per
+    /// bone of the body rig — as a range into the frame's pose arena.
+    pub pose: ArenaRange,
+    /// Stands the posed rig about `pos`: body yaw, seat lean or the lying
+    /// turn, and the model scale. The renderer prepends only the translation
+    /// to the feet.
+    pub placement: glam::Mat4,
 }
 
-/// One REMOTE player's body + held items to draw this frame, already
-/// interpolated/posed by the game's presentation layer: the same
-/// [`PlayerRenderInstance`] shape the local third-person body uses (so both
-/// pose through `pose_player_body` identically), plus that remote's OWN
-/// eased [`HeldItemView`]s and what drives its body animator.
+/// One player body to draw this frame — the local third-person body or a
+/// remote — posed by the client's animation, with the eased [`HeldItemView`]
+/// of each hand.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct RemotePlayerRender {
+pub struct PlayerBodyRender {
     pub body: PlayerRenderInstance,
     pub held: HeldItemView,
-    /// The remote's OFF-hand item view — drawn in the body's left hand
-    /// (`item == None` = empty, nothing attached).
+    /// The OFF-hand item view — drawn in the body's left hand (`item ==
+    /// None` = empty, nothing attached).
     pub held_off: HeldItemView,
-    /// Stable across frames (the player id), so this body keeps its animator.
-    pub key: u32,
-    /// The two hands' frames (`[main, off]`) the body animator reads.
-    pub frames: [HeldItemFrame; 2],
-    /// This body's claims and fired events, as ranges into the frame's arenas.
-    pub animator: AnimatorRanges,
 }
 
 /// A placed ANIMATED block to draw in the world this frame — a chest, a door, a

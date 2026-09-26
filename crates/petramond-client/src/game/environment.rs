@@ -25,19 +25,19 @@ impl Game {
         // Fog/murk follow the RENDERED camera: a third-person boom dipping into
         // a fluid must show its murk even while the player's eye is dry.
         let eye = self.render_camera().pos;
-        let (fog, eye_fluid) = camera_fog(&self.replica, eye, |wx, wz| {
-            if let Some(id) = self.replica.data().column_biome(wx, wz) {
+        let (fog, eye_fluid) = camera_fog(&self.replica.world, eye, |wx, wz| {
+            if let Some(id) = self.replica.world.data().column_biome(wx, wz) {
                 return Biome::from_id(id);
             }
 
-            self.fallback_world.biome_at(wx, wz)
+            self.replica.fallback_world.biome_at(wx, wz)
         });
 
         GameEnvironment {
             fog,
             eye_fluid,
             time: (now % 3600.0) as f32,
-            shader_params: self.replica.data().environment().shader_params().clone(),
+            shader_params: self.replica.world.data().environment().shader_params().clone(),
         }
     }
 }
@@ -168,15 +168,15 @@ mod tests {
         );
         // The environment reads the REPLICA (what the camera sees); a full
         // empty column (every section present) so a fluid write at any Y lands.
-        game.replica.clear_world();
-        game.replica
+        game.replica.world.clear_world();
+        game.replica.world
             .insert_empty_column_for_test(ChunkPos::new(0, 0));
         game
     }
 
     fn set_fluid(game: &mut Game, pos: IVec3, meta: u8) {
         let section = game
-            .replica
+            .replica.world
             .section_at_world_mut_for_test(pos.x, pos.y, pos.z)
             .expect("test section must be installed");
         section.set_fluid(
@@ -190,7 +190,7 @@ mod tests {
 
     fn inside(game: &Game, p: IVec3, y: f32) -> bool {
         let eye = WorldPos::new(p.x as f64 + 0.5, f64::from(y), p.z as f64 + 0.5);
-        eye_inside(&game.replica, eye, Block::Water, Some(MARGIN))
+        eye_inside(&game.replica.world, eye, Block::Water, Some(MARGIN))
     }
 
     #[test]
@@ -220,7 +220,7 @@ mod tests {
             p.z as f64 + 0.5,
         );
         assert!(
-            eye_inside(&game.replica, eye, Block::Water, None),
+            eye_inside(&game.replica.world, eye, Block::Water, None),
             "a medium without a margin counts any eye in its cell"
         );
     }
@@ -248,7 +248,7 @@ mod tests {
         let p = IVec3::new(8, 64, 8);
         set_fluid(&mut game, p, 0);
         set_fluid(&mut game, p + IVec3::Y, 0);
-        game.cam.pos = WorldPos::new(p.x as f64 + 0.5, p.y as f64 + 0.5, p.z as f64 + 0.5);
+        game.local.cam.pos = WorldPos::new(p.x as f64 + 0.5, p.y as f64 + 0.5, p.z as f64 + 0.5);
         assert_eq!(game.environment(0.0).eye_fluid, Some(Block::Water));
     }
 }

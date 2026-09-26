@@ -53,7 +53,7 @@ impl App {
         if self.options.remap().is_some() && self.remap_capture_mouse(button, down) {
             return;
         }
-        let gameplay = self.screen.gameplay_enabled() && self.game.is_some();
+        let gameplay = self.screen.gameplay_enabled() && self.session.is_some();
         if gameplay || !down {
             let mut out = Vec::new();
             self.controls.binding_engine.on_input(
@@ -142,8 +142,8 @@ impl App {
         ) {
             return;
         }
-        if let Some(game) = self.game.as_mut() {
-            game.client_mod_action(id, pressed);
+        if let Some(session) = self.session.as_mut() {
+            session.game.client_mod_action(id, pressed);
         }
         self.apply_client_mod_commands();
     }
@@ -154,8 +154,8 @@ impl App {
     pub(super) fn rebuild_action_table(&mut self) {
         self.release_input_bindings();
         let mut table = petramond_input::controls::ActionTable::engine();
-        if let Some(game) = self.game.as_ref() {
-            for (id, label, category, default) in game.client_bindable_actions() {
+        if let Some(session) = self.session.as_ref() {
+            for (id, label, category, default) in session.game.client_bindable_actions() {
                 table.push_registered_action(id, label, category, default);
             }
         }
@@ -282,35 +282,6 @@ impl App {
         })
     }
 
-    // --- Options screens: entry, back navigation ---
-
-    /// Open the Options root, remembering where to return (title or pause).
-    pub(super) fn open_options(&mut self, from_pause: bool) {
-        self.options.enter(from_pause);
-        self.screen = AppScreen::Options;
-        self.controls.pointer.release_for_menu();
-    }
-
-    /// Back/ESC from the Options root: to the pause menu when the flow was
-    /// entered from a running game, else to the title.
-    pub(super) fn close_options_root(&mut self) {
-        self.screen = if self.options.from_pause() && self.game.is_some() {
-            AppScreen::Pause
-        } else {
-            AppScreen::Title
-        };
-        self.controls.pointer.release_for_menu();
-    }
-
-    /// Back/ESC from a category screen: to the Options root. Leaving the
-    /// controls screen always disarms any pending remap.
-    pub(super) fn close_options_category(&mut self) {
-        self.options.cancel_remap();
-        self.options.clear_previews();
-        self.screen = AppScreen::Options;
-        self.controls.pointer.release_for_menu();
-    }
-
     // --- Apply: the side effects an option has outside `OptionsState` ---
 
     /// Push the current volume settings into the audio engine (live).
@@ -326,8 +297,8 @@ impl App {
     /// Apply the particles mode to both presentation halves: the game-side
     /// fleck system now, the renderer's emitter density on the next render.
     pub(super) fn apply_particles(&mut self) {
-        if let Some(game) = self.game.as_mut() {
-            game.set_particles_mode(self.options.settings.particles);
+        if let Some(session) = self.session.as_mut() {
+            session.game.set_particles_mode(self.options.settings.particles);
         }
         self.options.mark_renderer_dirty();
     }
@@ -338,8 +309,8 @@ impl App {
     pub(super) fn apply_view_distance(&mut self, chunks: i32) {
         let chunks = self.options.set_view_distance(chunks);
         self.render_dist = chunks;
-        if let Some(game) = self.game.as_mut() {
-            game.set_view_distance(chunks);
+        if let Some(session) = self.session.as_mut() {
+            session.game.set_view_distance(chunks);
         }
         self.options.persist();
     }

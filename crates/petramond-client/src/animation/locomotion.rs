@@ -18,7 +18,10 @@ use rustc_hash::FxHashMap;
 use serde::Deserialize;
 use smallvec::SmallVec;
 
-use crate::PlayerRenderInstance;
+use super::motion::BodyState;
+
+/// Where the shipped table and every pack's layer over it live.
+const TABLE_ASSET: &str = "animations/player_locomotion.json";
 
 /// Layers lighter than this are dropped: they would move nothing visible and
 /// only cost a pose blend.
@@ -67,13 +70,13 @@ impl Inputs {
         "swim_rising",
     ];
 
-    fn from_instance(inst: &PlayerRenderInstance) -> Self {
-        let mix = inst.locomotion;
+    fn from_state(state: &BodyState) -> Self {
+        let mix = state.locomotion;
         let swim = mix.swim;
         let unit = |v: f32| v.clamp(0.0, 1.0);
         Self {
-            walking: unit(inst.walk_weight),
-            sneak: unit(inst.sneak_weight),
+            walking: unit(state.walk_weight),
+            sneak: unit(state.sneak_weight),
             run: unit(mix.run),
             backward: unit(mix.backward),
             strafe: mix.strafe.abs().min(1.0),
@@ -109,10 +112,10 @@ impl Inputs {
     }
 
     /// The phase each layer samples its clip at, by `phase` source.
-    fn phase(inst: &PlayerRenderInstance, source: Phase) -> f32 {
+    fn phase(state: &BodyState, source: Phase) -> f32 {
         match source {
-            Phase::Stride => inst.anim_time,
-            Phase::Swim => inst.locomotion.swim.phase,
+            Phase::Stride => state.anim_time,
+            Phase::Swim => state.locomotion.swim.phase,
             Phase::Rest => 0.0,
         }
     }
@@ -212,6 +215,27 @@ pub struct LocomotionTable {
 }
 
 impl LocomotionTable {
+    /// A table with no layers: bodies stand in their rest pose, and the body
+    /// animator still plays over it.
+    fn empty() -> Self {
+        Self {
+            derived: Box::new([]),
+            requires: vec![Box::<[String]>::default(); Inputs::NAMES.len()].into_boxed_slice(),
+            layers: Box::new([]),
+        }
+    }
+
+    /// Read and merge every asset layer of the table. A missing or malformed
+    /// table is an error for the caller to report, never a panic.
+    pub fn load() -> Result<Self, String> {
+        let layers = petramond_world::assets::read_layers(TABLE_ASSET);
+        if layers.is_empty() {
+            return Err(format!("{TABLE_ASSET} not found"));
+        }
+        let texts: Vec<&str> = layers.iter().map(|(text, _)| text.as_str()).collect();
+        Self::parse_layers(&texts).map_err(|e| format!("{TABLE_ASSET}: {e}"))
+    }
+
     /// Number of value slots (inputs + derived).
     fn slots(&self) -> usize {
         Inputs::NAMES.len() + self.derived.len()
@@ -353,20 +377,13 @@ impl LocomotionTable {
     }
 }
 
-/// The locomotion table as a content-registry stage (all layers). The client
-/// registers it with its loader, so a missing or malformed table is part of
-/// the load report instead of a panic mid-frame.
+/// The client locomotion table participates in the content load report.
 pub static TABLE: petramond_world::content::Slot<LocomotionTable> =
-    petramond_world::content::Slot::new("animations/player_locomotion.json", &[], load_table);
+    petramond_world::content::Slot::new(TABLE_ASSET, &[], load_table);
 
-fn load_table(
-    reg: &petramond_world::content::ContentRegistry,
-) -> Result<LocomotionTable, String> {
+fn load_table(reg: &petramond_world::content::ContentRegistry) -> Result<LocomotionTable, String> {
     petramond_world::registry::read_catalog(
-        reg.packs(),
-        "animations/player_locomotion.json",
-        "player locomotion",
-        LocomotionTable::parse_layers,
+        reg.packs(), TABLE_ASSET, "player locomotion", LocomotionTable::parse_layers,
     )
 }
 
@@ -379,16 +396,16 @@ fn table() -> &'static LocomotionTable {
 /// table's size.
 pub(super) fn layers<'a>(
     model: &'a Model,
-    inst: &PlayerRenderInstance,
+    state: &BodyState,
 ) -> SmallVec<[(&'a Animation, f32, f32); 24]> {
     let mut out = SmallVec::new();
-    if inst.sleeping || inst.seated {
+    if state.sleeping || state.seated {
         return out;
     }
-    let inputs = Inputs::from_instance(inst);
+    let inputs = Inputs::from_state(state);
     for (clip, phase, weight) in table().weights(&inputs, |name| model.animation(name).is_some()) {
         if let Some(anim) = model.animation(clip) {
-            out.push((anim, Inputs::phase(inst, phase) * anim.length, weight));
+            out.push((anim, Inputs::phase(state, phase) * anim.length, weight));
         }
     }
     out
@@ -399,15 +416,15 @@ pub(super) fn stabilize_swim_gaze(
     model: &Model,
     pose: &mut [glam::Mat4],
     head: usize,
-    inst: &PlayerRenderInstance,
+    state: &BodyState,
 ) {
-    let water = inst.locomotion.swim.weight.clamp(0.0, 1.0);
+    let water = state.locomotion.swim.weight.clamp(0.0, 1.0);
     if water == 0.0 {
         return;
     }
     let current = pose[head].to_scale_rotation_translation().1;
-    let target = glam::Quat::from_rotation_y(inst.head_yaw)
-        * glam::Quat::from_rotation_x(inst.head_pitch)
+    let target = glam::Quat::from_rotation_y(state.head_yaw)
+        * glam::Quat::from_rotation_x(state.head_pitch)
         * petramond_world::bbmodel::euler_quat(model.bones[head].rotation);
     model.apply_bone_rotation(
         pose,

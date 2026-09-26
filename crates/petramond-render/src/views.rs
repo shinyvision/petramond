@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use glam::{IVec3, Quat, Vec3};
 
-use crate::RemotePlayerRender;
 use petramond::mob::Mob;
 use petramond::world::PlacedEmitter;
 use petramond_math::math::Tilt;
@@ -129,7 +128,7 @@ pub struct ParticlePresentation {
     pub blocklight: petramond_world::light::BlockLight6,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct MobPresentation {
     pub id: u64,
     pub kind: Mob,
@@ -145,10 +144,10 @@ pub struct MobPresentation {
     pub anim_time: f32,
     pub moving: bool,
     pub idle_anim: Option<u8>,
-    /// The active gait's eased-in weight and the gaits still fading out
-    /// (`(clip, held phase, weight)`): a body never snaps between gaits.
+    /// The active gait's eased-in weight, and the gaits still fading out as a
+    /// range into [`MobArena::gait_fades`]: a body never snaps between gaits.
     pub gait_weight: f32,
-    pub gait_fades: Vec<(crate::GaitClip, f32, f32)>,
+    pub gait_fades: crate::ArenaRange,
     pub prev_head_yaw: f32,
     pub head_yaw: f32,
     pub prev_head_pitch: f32,
@@ -158,116 +157,134 @@ pub struct MobPresentation {
     pub hurt_flash: f32,
     pub dead: bool,
     pub shorn: bool,
-    /// Replicated active particle-emitter bundle ids (client-local
-    /// `particle_emitters.json` catalog ids).
-    pub emitters: Vec<u8>,
-    /// Named model animations as `(name, phase, weight)` — each layered by
-    /// the renderer over the walk/idle/rest base pose at its own
-    /// tick-interpolated PHASE (seconds into the clip; a paused oar's phase
-    /// holds) and CLIENT-side blend weight (fading in toward 1, out toward 0).
-    pub anims: Vec<(String, f32, f32)>,
+    /// Named model animation layers as a range into [`MobArena::anims`] —
+    /// each layered by the renderer over the walk/idle/rest base pose at its
+    /// own tick-interpolated PHASE (seconds into the clip; a paused oar's
+    /// phase holds) and CLIENT-side blend weight (fading in toward 1, out
+    /// toward 0).
+    pub anims: crate::ArenaRange,
     /// Body tint composed from the active bundles' `tint` values (white when
     /// none) — multiplied into the render tint like the hurt flash.
     pub emitter_tint: [f32; 3],
     /// Body self-lighting from the active bundles (`0..=1`, strongest wins).
     pub emitter_self_lit: f32,
-    pub ragdoll_pose: Option<Arc<[(Vec3, Quat)]>>,
+    /// The dying body's per-bone ragdoll pose, already interpolated for this
+    /// frame, as a range into [`MobArena::ragdoll`]; `None` for a live mob.
+    pub ragdoll_pose: Option<crate::ArenaRange>,
     /// The items drawn in the species' main and off hand bones.
     pub held: [Option<petramond_world::item::ItemType>; 2],
 }
 
-/// Water movement shares a stroke clock across treading and directional styles.
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
-pub struct SwimBlend {
-    pub grounded: f32,
-    pub weight: f32,
+/// A mob animation name, interned once per session by [`AnimInterner`] where
+/// the replicated row carries it, so no per-frame path clones or compares a
+/// name. Resolved through the session's [`AnimNames`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct AnimId(pub u32);
+
+/// A session's interned animation names, indexed by [`AnimId`]. Append-only
+/// and shared: a clone is a refcount bump, and a holder keeps its copy current
+/// with [`adopt`](Self::adopt) — a pointer compare on every frame the table
+/// did not grow.
+#[derive(Clone, Debug, Default)]
+pub struct AnimNames(Arc<Vec<Arc<str>>>);
+
+impl AnimNames {
+    pub fn get(&self, id: AnimId) -> Option<&Arc<str>> {
+        self.0.get(id.0 as usize)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Take `other`'s table when it is a different one (grown, or another
+    /// session's).
+    pub fn adopt(&mut self, other: &AnimNames) {
+        if !Arc::ptr_eq(&self.0, &other.0) {
+            self.0 = Arc::clone(&other.0);
+        }
+    }
+}
+
+/// Interns animation names into one session's [`AnimNames`]. Owned by the
+/// session's entity replica, so a new session starts a fresh table and no
+/// name state is process-global.
+#[derive(Debug, Default)]
+pub struct AnimInterner {
+    names: AnimNames,
+    ids: rustc_hash::FxHashMap<Arc<str>, AnimId>,
+}
+
+impl AnimInterner {
+    /// `name`'s id, adding it to the table the first time it is seen. A new
+    /// name copies the table's pointer list only while a reader still holds
+    /// the previous table.
+    pub fn intern(&mut self, name: &str) -> AnimId {
+        if let Some(&id) = self.ids.get(name) {
+            return id;
+        }
+        let id = AnimId(self.names.len() as u32);
+        let name: Arc<str> = name.into();
+        Arc::make_mut(&mut self.names.0).push(Arc::clone(&name));
+        self.ids.insert(name, id);
+        id
+    }
+
+    pub fn names(&self) -> &AnimNames {
+        &self.names
+    }
+}
+
+/// One gait a mob body eased out of and is still fading.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct GaitFade {
+    pub clip: crate::GaitClip,
+    /// The phase the gait holds while it fades (seconds into the clip).
     pub phase: f32,
-    pub moving: f32,
-    pub backward: f32,
-    pub rising: f32,
+    pub weight: f32,
 }
 
-/// Presentation weights for the authored locomotion styles. No simulation state.
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
-pub struct LocomotionBlend {
-    pub swim: SwimBlend,
-    pub run: f32,
-    pub backward: f32,
-    pub airborne: f32,
-    pub falling: f32,
-    pub landing: f32,
-    /// Signed lateral balance, positive toward the body's right.
-    pub strafe: f32,
-}
-
-/// The local player's third-person body for this frame, or absent in first person.
-/// Player movement/look are per-frame (already smooth), so unlike mobs there are
-/// no prev/current pairs to interpolate.
+/// One named animation layer on a mob body this frame.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct PlayerPresentation {
-    /// Multiply body tint from the body's active emitter bundles (its
-    /// conditions' stage emitters), composed with the hurt flash.
-    pub emitter_tint: [f32; 3],
-    /// Body self-lighting from the active bundles (`0..=1`, strongest wins).
-    pub emitter_self_lit: f32,
-    /// Feet centre (model `y=0`).
-    pub pos: petramond_math::world_pos::WorldPos,
-    /// Body facing yaw (engine yaw space).
-    pub body_yaw: f32,
-    /// Head yaw relative to the body (radians) and look pitch.
-    pub head_yaw: f32,
-    pub head_pitch: f32,
-    /// Normalized stride phase; each clip supplies its own duration.
-    pub anim_time: f32,
-    /// The body renders seated (legs forward): mounted on a mob seat, or
-    /// pinned at a pose anchor whose pose is `sitting`. Anchor poses outside
-    /// the known vocabulary render the rest pose (see `mount_renders_seated`).
-    pub seated: bool,
-    /// The mount's body tilt a seated body leans with about its hips; level
-    /// when unmounted.
-    pub seat_tilt: Tilt,
-    /// Walk-pose blend weight (`0` standing … `1` full walk cycle).
-    pub walk_weight: f32,
-    /// Sneak-stance blend weight (`0` upright … `1` fully crouched).
-    pub sneak_weight: f32,
-    pub locomotion: crate::views::LocomotionBlend,
-    /// Asleep in a bed: the body renders lying on its back, feet at `pos`,
-    /// head toward `body_yaw`.
-    pub sleeping: bool,
-    pub skylight: u8,
-    pub blocklight: petramond_world::light::BlockLight6,
-    /// This body's bone offsets, as a range into
-    /// [`GamePresentation::bone_offsets`](GamePresentation::bone_offsets).
-    pub bones: crate::BoneRange,
+pub struct AnimLayer {
+    pub anim: AnimId,
+    /// Seconds into the clip.
+    pub phase: f32,
+    /// Blend weight, `0..=1`.
+    pub weight: f32,
 }
 
-/// One body whose FOOTSTEPS the client may sound this frame — the local player
-/// and every visible remote, together, so a step is heard at whoever took it.
-///
-/// Built here rather than in `App` because deciding it needs the world: the
-/// sound is the block UNDER the feet, and only presentation has the replica.
-/// The cadence itself is `App`'s (see `tick_footstep_sounds`), like the mob
-/// idle schedule.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct FootstepSource {
-    /// Stable cadence key: `0` is the local player, a remote is `1 + its
-    /// PlayerId`. Ids are only compared, never sent.
-    pub id: u64,
-    /// Feet centre — where the sound plays, so a remote's steps arrive from
-    /// their body and attenuate with distance like any other world sound.
-    pub pos: petramond_math::world_pos::WorldPos,
-    /// The block being walked on, or `None` when this body is not making
-    /// footsteps at all: standing still, SNEAKING, airborne (the cell below is
-    /// air), seated, asleep, or over an unloaded cell. `App` never re-decides
-    /// this.
-    pub ground: Option<petramond_world::block::Block>,
-    /// Moving at a sprint — the gait `App` picks the step interval from.
-    ///
-    /// Derived from the body's ACTUAL horizontal speed on both sides rather
-    /// than from a sprint key: a key held while the body is blocked, wading, or
-    /// climbing must not quicken the cadence, and speed needs no new
-    /// replication (a remote's velocity already ships for its walk blend).
-    pub sprinting: bool,
+/// Every mob's variable-length rows for one frame, back to back: each
+/// [`MobPresentation`] and [`MobRenderInstance`](crate::MobRenderInstance)
+/// addresses its own by [`ArenaRange`](crate::ArenaRange), so a mob row stays
+/// a plain `Copy` value with no per-entity allocation.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MobArena {
+    pub gait_fades: Vec<GaitFade>,
+    pub anims: Vec<AnimLayer>,
+    /// Ragdoll bones as `(rest-pivot position, rotation delta)` in model space.
+    pub ragdoll: Vec<(Vec3, Quat)>,
+}
+
+impl MobArena {
+    pub fn clear(&mut self) {
+        self.gait_fades.clear();
+        self.anims.clear();
+        self.ragdoll.clear();
+    }
+
+    /// Replace this arena's rows with `other`'s, reusing capacity: ranges
+    /// into `other` then address the same rows here.
+    pub fn copy_from(&mut self, other: &MobArena) {
+        self.clear();
+        self.gait_fades.extend_from_slice(&other.gait_fades);
+        self.anims.extend_from_slice(&other.anims);
+        self.ragdoll.extend_from_slice(&other.ragdoll);
+    }
 }
 
 /// One entity blob-shadow decal to draw this frame: a soft radial darkening
@@ -285,92 +302,6 @@ pub struct EntityShadow {
     pub strength: f32,
 }
 
-/// One claimed graph param with its value resolved to the number the
-/// animator takes — a name claim interned ONCE, where the claim arrives
-/// ([`NameCache`]), never per frame.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct AnimatorParamRow {
-    pub rig: petramond::player::RigId,
-    pub param: u16,
-    pub value: f32,
-}
-
-/// Interned name values, cached by string so a claim that repeats a name
-/// never takes the global intern lock again.
-#[derive(Default)]
-pub struct NameCache {
-    names: rustc_hash::FxHashMap<Box<str>, f32>,
-}
-
-impl NameCache {
-    pub fn row(&mut self, p: &petramond::player::AnimatorParam) -> AnimatorParamRow {
-        let value = match &p.value {
-            petramond::player::AnimatorValue::Number(v) => *v,
-            petramond::player::AnimatorValue::Name(n) => match self.names.get(n.as_str()) {
-                Some(v) => *v,
-                None => {
-                    let v = petramond_anim::expr::intern(n);
-                    self.names.insert(n.as_str().into(), v);
-                    v
-                }
-            },
-        };
-        AnimatorParamRow {
-            rig: p.rig,
-            param: p.param,
-            value,
-        }
-    }
-
-    /// Resolve every param of `claims` onto the end of `out`.
-    pub fn rows(
-        &mut self,
-        params: &[petramond::player::AnimatorParam],
-        out: &mut Vec<AnimatorParamRow>,
-    ) {
-        out.extend(params.iter().map(|p| self.row(p)));
-    }
-}
-
-/// What the local player's body is doing this frame, as the first-person
-/// animator's driver reads it beside the two hands' frames.
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
-pub struct LocalMotion {
-    /// Horizontal speed, blocks per second.
-    pub speed: f32,
-    /// Horizontal velocity along the look's forward and rightward axes.
-    pub forward: f32,
-    pub strafe: f32,
-    /// Vertical velocity, blocks per second, up positive.
-    pub vertical: f32,
-    pub grounded: bool,
-    pub sneaking: bool,
-    pub sprinting: bool,
-    pub swimming: bool,
-    pub climbing: bool,
-    /// Look pitch in degrees, up positive.
-    pub pitch: f32,
-    /// How fast the look is turning, degrees per second (rightward, upward).
-    pub yaw_rate: f32,
-    pub pitch_rate: f32,
-    /// The walk bob: 0..1 through a stride, and how much of it is playing.
-    pub stride: f32,
-    pub stride_weight: f32,
-    /// Seconds of hurt shake left; a rise is a fresh hit.
-    pub hurt: f32,
-    /// What the crosshair rests on within reach.
-    pub target: AimTarget,
-}
-
-/// What the local player's crosshair rests on within reach.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum AimTarget {
-    #[default]
-    Nothing = 0,
-    Block = 1,
-    Creature = 2,
-}
-
 pub struct GamePresentation<'a> {
     pub tick_alpha: f32,
     pub item_entities: &'a [DroppedItemPresentation],
@@ -384,27 +315,20 @@ pub struct GamePresentation<'a> {
     /// gather's own rows, handed on without a re-spelling copy.
     pub block_draws: &'a [petramond::world::draw::BlockDrawInstance],
     pub mobs: &'a [MobPresentation],
-    /// Every OTHER connected player's body + held item for this frame,
-    /// already interpolated and posed — the render input rows themselves
-    /// (`pose_player_body` consumes `PlayerRenderInstance` directly, so no
-    /// second translation buys anything).
-    pub remote_players: &'a [RemotePlayerRender],
-    /// Every drawn body's bone offsets, back to back — the local third-person
-    /// body and each remote address their own slice by
-    /// [`BoneRange`](crate::BoneRange). One arena keeps every render row a
-    /// plain `Copy` value and puts no ceiling on how many bones a body wears.
-    pub bone_offsets: &'a [crate::BoneOffset],
-    /// Every remote body's animator claims and fired graph events, back to
-    /// back like the bone offsets; each remote addresses its own by
-    /// [`AnimatorRanges`](crate::AnimatorRanges).
-    pub animator_params: &'a [AnimatorParamRow],
-    pub animator_plays: &'a [petramond::player::AnimatorPlay],
-    pub animator_events: &'a [(petramond::player::RigId, u16)],
-    /// Every body that could sound a footstep this frame (see
-    /// [`FootstepSource`]) — INCLUDING bodies standing still, so `App` can
-    /// retire the cadence state of players who left without a second list.
-    pub footsteps: &'a [FootstepSource],
-    pub player: Option<PlayerPresentation>,
+    /// The mob rows' fading gaits, animation layers and ragdoll poses, which
+    /// each [`MobPresentation`] addresses by range.
+    pub mob_arena: &'a MobArena,
+    /// The session's animation-name table the layers' [`AnimId`]s index.
+    pub anim_names: &'a AnimNames,
+    /// Every player body in view — the local third-person body first when
+    /// it is drawn, then each remote — already posed by the client's
+    /// animation. The render input rows themselves, so no second
+    /// translation buys anything.
+    pub bodies: &'a [crate::PlayerBodyRender],
+    /// Every posed body's bones, back to back — each body addresses its own
+    /// slice by `PlayerRenderInstance::pose`. One arena keeps every render
+    /// row a plain `Copy` value and puts no ceiling on a rig's bone count.
+    pub body_poses: &'a [glam::Mat4],
     pub held_item_light: (u8, petramond_world::light::BlockLight6),
     /// Every break (crack) overlay to draw this frame: the LOCAL player's own
     /// mining target plus each visible remote's replicated one, capped at the

@@ -59,12 +59,12 @@ fn join_profile() {
     let t_playable = loop {
         game.tick(dt, &input);
         frames += 1;
-        let feet = game.player.pos;
+        let feet = game.local.player.pos;
         let pc = ChunkPos::new(
             (feet.x.floor() as i32).div_euclid(16),
             (feet.z.floor() as i32).div_euclid(16),
         );
-        let installed = game.replica.data().loaded_section_count();
+        let installed = game.replica.world.loaded_section_count();
         let handoff = game.terrain_render_handoff();
         if t_first_mesh.is_none() && handoff.has_column_mesh(pc) {
             t_first_mesh = Some(t_click.elapsed());
@@ -143,12 +143,12 @@ fn join_profile_sync() {
         }
         game.tick_receive(dt);
         frames += 1;
-        let feet = game.player.pos;
+        let feet = game.local.player.pos;
         let pc = ChunkPos::new(
             (feet.x.floor() as i32).div_euclid(16),
             (feet.z.floor() as i32).div_euclid(16),
         );
-        if t_first_server_install.is_none() && server.world().data().loaded_section_count() > 0 {
+        if t_first_server_install.is_none() && server.world.loaded_section_count() > 0 {
             t_first_server_install = Some(t_click.elapsed());
         }
         if t_server_spawn_light_final.is_none() {
@@ -162,19 +162,19 @@ fn join_profile_sync() {
                             pc.cz + dz,
                         );
                         let loaded = server
-                            .world()
+                            .world
                             .section_at_world_for_test(sp.cx * 16, sp.cy * 16, sp.cz * 16)
                             .is_some();
-                        !loaded || server.world().section_light_final(sp)
+                        !loaded || server.world.section_light_final(sp)
                     })
                 })
             });
-            let any_loaded = server.world().data().loaded_section_count() > 0;
+            let any_loaded = server.world.loaded_section_count() > 0;
             if any_loaded && all_final {
                 t_server_spawn_light_final = Some(t_click.elapsed());
             }
         }
-        if t_first_client_install.is_none() && game.replica.data().loaded_section_count() > 0 {
+        if t_first_client_install.is_none() && game.replica.world.loaded_section_count() > 0 {
             t_first_client_install = Some(t_click.elapsed());
         }
         let handoff = game.terrain_render_handoff();

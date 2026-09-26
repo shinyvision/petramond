@@ -10,6 +10,9 @@
 //! - [`rest`] — the hour an area sits out attraction after it has produced
 //!   a visitor, kept in world KV per 16×16 column.
 //! - [`worldgen`] — wild wheat/carrot/potato patches after the Trees stage.
+//! - [`claims`] — the click claim chains (item use, interact) and their
+//!   order, written once: the server executes the gated plans, the client
+//!   instance predicts from the same gates against the replica.
 //! - [`tilling`] — the iron hoe turning grass/dirt into farmland.
 //! - [`farmland`] — the shared hydration probe (ground water OR overhead
 //!   rain via the weather field's `weather:field` channel) + farmland's dry/wet visual
@@ -37,6 +40,7 @@
 //! later", never as state to act on.
 
 mod attract;
+mod claims;
 mod compost;
 mod content;
 mod crops;
@@ -50,7 +54,6 @@ mod hop;
 mod husbandry;
 mod keys;
 mod kv_counter;
-mod predict;
 mod rest;
 mod spread;
 mod tilling;
@@ -63,15 +66,6 @@ use weather_core::feed::FieldFeed;
 
 use content::Content;
 use crops::Growth;
-
-/// First-Cancel-wins handler composition: run `next` only while the event is
-/// still live. Every multi-link dispatch below chains through this.
-fn chain(first: Outcome, next: impl FnOnce() -> Outcome) -> Outcome {
-    match first {
-        Outcome::Cancel => Outcome::Cancel,
-        Outcome::Continue => next(),
-    }
-}
 
 // Event handler ids (stable registration keys, mod-local).
 const ON_ITEM_USE_PRE: u32 = 1;
@@ -185,19 +179,22 @@ impl Mod for Farming {
             return Outcome::Continue;
         };
         if self.client {
-            // Prediction dispatch: same events, gate-only mirrors.
+            // Prediction dispatch: the same events through the SAME claim
+            // chains and gates (`claims`), against the replica — a gated
+            // plan is a predicted claim, never executed.
+            let replica = SideWorld::Replica;
             return match (handler_id, &*payload) {
                 (
                     ON_INTERACT_ATTEMPT,
                     EventPayload::InteractAttempt {
                         block: Some(pos), ..
                     },
-                ) => predict::on_interact_attempt(content, *pos),
+                ) => claims::interact(content, &replica, *pos, |_| Outcome::Cancel),
                 (ON_ITEM_USE_PRE, EventPayload::ItemUsePre { item, target }) => {
-                    predict::on_item_use(content, *item, *target)
+                    claims::item_use(content, &replica, *item, *target, |_, _| Outcome::Cancel)
                 }
                 (ON_BLOCK_PLACE_PRE, EventPayload::BlockPlacePre { pos, block, .. }) => {
-                    predict::on_place_pre(content, *pos, *block)
+                    crops::predict_place_pre(content, *pos, *block)
                 }
                 _ => Outcome::Continue,
             };
@@ -209,15 +206,10 @@ impl Mod for Farming {
         let sky = self.weather.params();
         match (handler_id, &mut *payload) {
             (ON_ITEM_USE_PRE, EventPayload::ItemUsePre { item, target, .. }) => {
-                // The hoe first (it consumes eligible clicks), then the
-                // fertilizer targets, then the compostable barrel fill, then
-                // the water trough bucket swap — each falls through quietly
-                // when the held item is not its business.
-                let first = chain(tilling::on_item_use(content, sky.as_ref(), *item, *target), || {
-                    fertilize::on_item_use(content, *item, *target)
-                });
-                let second = chain(first, || compost::on_item_use(content, *item, *target));
-                chain(second, || trough::on_item_use(content, *item, *target))
+                let item = *item;
+                claims::item_use(content, &SideWorld::Server, item, *target, |pos, plan| {
+                    plan.execute(content, sky.as_ref(), item, pos)
+                })
             }
             (ON_BLOCK_PLACE_PRE, EventPayload::BlockPlacePre { pos, block, .. }) => {
                 crops::on_place_pre(content, *pos, *block)
@@ -233,29 +225,10 @@ impl Mod for Farming {
                     block: Some(pos), ..
                 },
             ) => {
-                // The attempt is the bare gesture: consumers read the world
-                // and the acting player's snapshot themselves. A frozen cell
-                // (`None`) passes — nothing here may claim a click it cannot
-                // inspect.
-                let Some(block) = get_block(*pos) else {
-                    return Outcome::Continue;
-                };
-                let actor = player_state();
-                // Crops first, then the compost collect, then the trough's
-                // sneak take-out — each falls through on Continue.
-                let first = chain(
-                    crops::on_interact(
-                        content,
-                        &mut self.growth,
-                        *pos,
-                        block,
-                        actor.held,
-                        actor.sneak,
-                    ),
-                    || compost::on_interact(content, *pos, block),
-                );
-                chain(first, || {
-                    trough::on_interact(content, *pos, block, actor.held, actor.sneak)
+                let pos = *pos;
+                let growth = &mut self.growth;
+                claims::interact(content, &SideWorld::Server, pos, |plan| {
+                    plan.execute(content, growth, pos)
                 })
             }
             (ON_PLAYER_DAMAGE_PRE, EventPayload::PlayerDamagePre { amount, .. }) => {

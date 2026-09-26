@@ -12,16 +12,9 @@ use petramond_world::{
 
 fn creative_app() -> TestApp {
     let mut app = app();
-    app.server.sessions_mut()[0].player_mut().set_mode(PlayerMode::Creative);
+    app.set_server_player_mode(PlayerMode::Creative);
     app.add_to_inventory(ItemStack::new(ItemType::Dirt, 1));
-    let state = app.server.build_self_state(0);
-    app.game
-        .as_mut()
-        .unwrap()
-        .apply_tick_update(Box::new(petramond::net::protocol::TickUpdate {
-            self_state: Some(state),
-            ..Default::default()
-        }));
+    app.sync_server_self_state();
     app.handle_control(Control::ToggleInventory, true);
     app.handle_control(Control::ToggleInventory, false);
     assert_eq!(app.doc_ui_kind(), Some(GuiKind::Creative));
@@ -29,31 +22,32 @@ fn creative_app() -> TestApp {
 }
 
 fn open_items(app: &mut TestApp) {
-    app.session_ui.creative_menu.tab = CreativeTab::Items;
+    app.sess_mut().creative_menu.tab = CreativeTab::Items;
 }
 
 fn open_library(app: &mut TestApp) {
-    app.session_ui.creative_menu.tab = CreativeTab::Schematics;
-    app.session_ui.library_form.page = LibraryPage::Library;
+    app.sess_mut().creative_menu.tab = CreativeTab::Schematics;
+    app.sess_mut().library_form.page = LibraryPage::Library;
 }
 
 fn open_save_page(app: &mut TestApp) {
-    app.session_ui.creative_menu.tab = CreativeTab::Schematics;
-    app.session_ui.library_form.page = LibraryPage::Save;
+    app.sess_mut().creative_menu.tab = CreativeTab::Schematics;
+    app.sess_mut().library_form.page = LibraryPage::Save;
 }
 
 fn on_save_page(app: &TestApp) -> bool {
-    app.session_ui.creative_menu.tab == CreativeTab::Schematics && app.session_ui.library_form.page == LibraryPage::Save
+    app.sess().creative_menu.tab == CreativeTab::Schematics
+        && app.sess().library_form.page == LibraryPage::Save
 }
 
 fn on_library_page(app: &TestApp) -> bool {
-    app.session_ui.creative_menu.tab == CreativeTab::Schematics
-        && app.session_ui.library_form.page == LibraryPage::Library
+    app.sess().creative_menu.tab == CreativeTab::Schematics
+        && app.sess().library_form.page == LibraryPage::Library
 }
 
 fn settle_actions(app: &mut TestApp) {
     app.apply_latched_actions_for_test();
-    app.server.game_tick_step(&mut Default::default());
+    app.tick_server();
     app.apply_latched_actions_for_test();
 }
 
@@ -61,7 +55,7 @@ fn settle_actions(app: &mut TestApp) {
 fn catalog_pickup_uses_the_inventory_cursor_and_regular_slot_operations() {
     let mut app = creative_app();
     let screen = (1280, 720);
-    app.session_ui.creative_menu.query = "petramond:stone".into();
+    app.sess_mut().creative_menu.query = "petramond:stone".into();
     let source = cursor_over_widget(&mut app, screen, "creative_item", Some(0));
     app.set_cursor_position(source.0, source.1);
     app.click_screen_for_test(screen, 1.0);
@@ -98,7 +92,7 @@ fn a_catalog_stack_can_be_distributed_with_the_existing_inventory_drag() {
     use petramond_world::gui_state::{MenuSlot, PointerButton};
     let mut app = creative_app();
     let screen = (1280, 720);
-    app.session_ui.creative_menu.query = "petramond:stone".into();
+    app.sess_mut().creative_menu.query = "petramond:stone".into();
     let source = cursor_over_widget(&mut app, screen, "creative_item", Some(0));
     app.set_cursor_position(source.0, source.1);
     app.click_screen_for_test(screen, 0.0);
@@ -131,13 +125,13 @@ fn catalog_clicks_discard_the_cursor_on_items_gaps_and_empty_searches() {
     let mut app = creative_app();
     let screen = (1280, 720);
     for case in 0..3 {
-        app.session_ui.creative_menu.query = "petramond:stone".into();
+        app.sess_mut().creative_menu.query = "petramond:stone".into();
         let source = cursor_over_widget(&mut app, screen, "creative_item", Some(0));
         app.set_cursor_position(source.0, source.1);
         app.click_screen_for_test(screen, 0.0);
         assert!(app.menu_snapshot_for_test().cursor.is_some());
         if case == 2 {
-            app.session_ui.creative_menu.query = "no matching items here".into();
+            app.sess_mut().creative_menu.query = "no matching items here".into();
         }
         app.solve_menu_frame_for_test(screen);
         let grid = app.ui.out().rect("creative_catalog_scroll").unwrap();
@@ -168,10 +162,8 @@ fn schematic_save_is_a_library_action_and_back_keeps_the_draft() {
     app.set_cursor_position(add.0, add.1);
     app.click_screen_for_test(screen, 0.0);
     assert!(on_save_page(&app));
-    app.session_ui.library_form.name = "Draft".into();
-    app.game
-        .as_mut()
-        .unwrap()
+    app.sess_mut().library_form.name = "Draft".into();
+    app.game_mut()
         .tools.world
         .selection
         .selection
@@ -184,7 +176,7 @@ fn schematic_save_is_a_library_action_and_back_keeps_the_draft() {
     let add = cursor_over_widget(&mut app, screen, "new_schematic", None);
     app.set_cursor_position(add.0, add.1);
     app.click_screen_for_test(screen, 1.0);
-    assert_eq!(app.session_ui.library_form.name, "Draft");
+    assert_eq!(app.sess_mut().library_form.name, "Draft");
     assert_eq!(app.game().tools.world.selection.selection.len(), 1);
 }
 
@@ -193,13 +185,13 @@ fn clearing_a_selection_in_the_menu_can_be_undone() {
     let mut app = creative_app();
     let screen = (1280, 720);
     open_save_page(&mut app);
-    let tool = &mut app.game.as_mut().unwrap().tools.world.selection;
+    let tool = &mut app.game_mut().tools.world.selection;
     tool.selection.region([0, 0, 0], [2, 2, 2], false).unwrap();
     tool.set_pending_corner([4, 4, 4]);
     let button = cursor_over_widget(&mut app, screen, "clear_selection", None);
     app.set_cursor_position(button.0, button.1);
     app.click_screen_for_test(screen, 0.0);
-    let tool = &mut app.game.as_mut().unwrap().tools.world.selection;
+    let tool = &mut app.game_mut().tools.world.selection;
     assert!(tool.selection.is_empty());
     assert!(!tool.has_pending_corner());
     assert!(tool.selection.undo());
@@ -247,11 +239,11 @@ fn schematic_deletion_waits_for_confirmation_and_keeps_the_confirmed_identity() 
         .iter()
         .any(|e| e.path == other)
     {
-        app.game.as_mut().unwrap().poll_schematic_library();
+        app.game_mut().poll_schematic_library();
         assert!(start.elapsed().as_secs_f32() < 3.0, "library did not load");
         std::thread::yield_now();
     }
-    let entries = app.game.as_mut().unwrap().tools.library.entries_mut();
+    let entries = app.game_mut().tools.library.entries_mut();
     // Other tests save into the shared process library while this pointer test runs.
     entries.retain(|e| e.path == path || e.path == other);
     let target = entries.iter().position(|e| e.path == path).unwrap();
@@ -268,18 +260,16 @@ fn schematic_deletion_waits_for_confirmation_and_keeps_the_confirmed_identity() 
     app.set_cursor_position(delete.0, delete.1);
     app.click_screen_for_test(screen, 0.0);
     assert!(path.is_file());
-    assert_eq!(app.session_ui.library_form.pending_delete.as_ref().unwrap().path, path);
+    assert_eq!(app.sess_mut().library_form.pending_delete.as_ref().unwrap().path, path);
     let cancel = cursor_over_widget(&mut app, screen, "cancel_delete", None);
     app.set_cursor_position(cancel.0, cancel.1);
     app.click_screen_for_test(screen, 0.5);
-    assert!(app.session_ui.library_form.pending_delete.is_none());
+    assert!(app.sess_mut().library_form.pending_delete.is_none());
     assert!(path.is_file());
     let delete = cursor_over_widget(&mut app, screen, "delete_schematic", Some(target as u32));
     app.set_cursor_position(delete.0, delete.1);
     app.click_screen_for_test(screen, 1.0);
-    app.game
-        .as_mut()
-        .unwrap()
+    app.game_mut()
         .tools.library
         .entries_mut()
         .reverse();
@@ -288,7 +278,7 @@ fn schematic_deletion_waits_for_confirmation_and_keeps_the_confirmed_identity() 
     app.click_screen_for_test(screen, 1.5);
     let start = std::time::Instant::now();
     while path.exists() {
-        app.game.as_mut().unwrap().poll_schematic_library();
+        app.game_mut().poll_schematic_library();
         assert!(
             start.elapsed().as_secs_f32() < 3.0,
             "confirmed deletion did not complete"
@@ -312,8 +302,8 @@ fn schematic_save_returns_to_the_library_only_after_success() {
         let mut fixture = schematic_fixture();
         fixture.name = format!("Save navigation {success} {left}");
         open_save_page(&mut app);
-        app.session_ui.library_form.name = fixture.name.clone();
-        let game = app.game.as_mut().unwrap();
+        app.sess_mut().library_form.name = fixture.name.clone();
+        let game = app.game_mut();
         game.schematic_captured(std::sync::Arc::new(fixture.clone()));
         // The first poll may spend itself listing the library.
         let pending = (0..4)
@@ -326,14 +316,14 @@ fn schematic_save_returns_to_the_library_only_after_success() {
         assert!(on_save_page(&app), "capture is not a completed save");
         if left {
             open_items(&mut app);
-            app.session_ui.library_form.page = LibraryPage::Save;
+            app.sess_mut().library_form.page = LibraryPage::Save;
         }
         let thumbnail = if success {
             Ok(png.clone())
         } else {
             Err("Save failed".to_string())
         };
-        let game = app.game.as_mut().unwrap();
+        let game = app.game_mut();
         let jobs = game.jobs().clone();
         game.tools.library
             .start_save(&jobs, pending, move || thumbnail);
@@ -358,14 +348,14 @@ fn schematic_save_returns_to_the_library_only_after_success() {
         app.solve_menu_frame_for_test(screen);
         if left {
             assert!(
-                app.session_ui.creative_menu.tab == CreativeTab::Items,
+                app.sess_mut().creative_menu.tab == CreativeTab::Items,
                 "the player left Save"
             );
         } else {
             assert_eq!(on_library_page(&app), success);
             assert_eq!(on_save_page(&app), !success);
         }
-        assert_eq!(app.session_ui.library_form.name, fixture.name);
+        assert_eq!(app.sess_mut().library_form.name, fixture.name);
     }
 }
 
@@ -378,8 +368,7 @@ fn creative_menu_visual_check() {
         screen.0,
         screen.1,
         wgpu::TextureFormat::Rgba8UnormSrgb,
-    ))
-    .expect("offscreen renderer");
+    ));
     let dir = std::path::PathBuf::from(
         std::env::var_os("PETRAMOND_CREATIVE_QA").expect("capture directory"),
     );
@@ -413,20 +402,18 @@ fn creative_menu_visual_check() {
     settle_actions(&mut app);
     capture(&mut app, &mut renderer, "creative-drop.png");
     open_save_page(&mut app);
-    app.game
-        .as_mut()
-        .unwrap()
+    app.game_mut()
         .tools.world
         .selection
         .selection
         .region([0, 0, 0], [4, 3, 4], false)
         .unwrap();
-    app.session_ui.library_form.name = "Workshop".into();
+    app.sess_mut().library_form.name = "Workshop".into();
     app.set_cursor_position(0.0, 0.0);
     let checkbox = cursor_over_widget(&mut app, screen, "include_air", None);
     app.set_cursor_position(checkbox.0, checkbox.1);
     app.click_screen_for_test(screen, 1.0);
-    assert!(app.session_ui.library_form.include_air);
+    assert!(app.sess_mut().library_form.include_air);
     app.set_cursor_position(0.0, 0.0);
     capture(&mut app, &mut renderer, "creative-save.png");
     let save = cursor_over_widget(&mut app, screen, "save_schematic", None);
@@ -473,9 +460,7 @@ fn creative_menu_visual_check() {
             saved.size
         );
     }
-    app.game
-        .as_mut()
-        .unwrap()
+    app.game_mut()
         .schematic_captured(std::sync::Arc::new(saved.clone()));
     let start = std::time::Instant::now();
     let saved_entry = loop {
@@ -512,7 +497,7 @@ fn creative_menu_visual_check() {
     )
     .unwrap();
     library::delete(&saved_entry.path).unwrap();
-    *app.game.as_mut().unwrap().tools.library.entries_mut() = entries;
+    *app.game_mut().tools.library.entries_mut() = entries;
     open_library(&mut app);
     let selected = app
         .game()
@@ -525,7 +510,7 @@ fn creative_menu_visual_check() {
     app.set_cursor_position(card.0, card.1);
     app.click_screen_for_test(screen, 1.1);
     assert!(!app.game().tools.preview.is_up());
-    assert!(app.session_ui.library_form.pending_delete.is_none());
+    assert!(app.sess_mut().library_form.pending_delete.is_none());
     let start = std::time::Instant::now();
     while app
         .game()
@@ -571,7 +556,7 @@ fn creative_menu_visual_check() {
     }
     assert!(app.screen.gameplay_enabled());
     assert!(app.game().tools.preview.is_up());
-    app.game.as_mut().unwrap().cancel_world_tools();
+    app.game_mut().cancel_world_tools();
     app.handle_control(Control::ToggleInventory, true);
     app.handle_control(Control::ToggleInventory, false);
     open_items(&mut app);
@@ -592,7 +577,7 @@ fn creative_menu_visual_check() {
         ("rail", "creative-rails.png"),
         ("forge:", "creative-forge.png"),
     ] {
-        app.session_ui.creative_menu.query = query.into();
+        app.sess_mut().creative_menu.query = query.into();
         app.ui.ensure_active(GuiKind::Hotbar);
         app.set_cursor_position(0.0, 0.0);
         capture(&mut app, &mut renderer, filename);
@@ -604,13 +589,13 @@ fn creative_menu_visual_check() {
     let slot = (0..9)
         .find(|i| app.inventory().slot(*i).is_some_and(|s| s.item == wand))
         .unwrap();
-    app.game.as_mut().unwrap().set_active_hotbar(slot as u8);
+    app.game_mut().set_active_hotbar(slot as u8);
     capture(&mut app, &mut renderer, "creative-wand-mode.png");
     std::thread::sleep(std::time::Duration::from_millis(2450));
     capture(&mut app, &mut renderer, "creative-wand-fade.png");
     std::thread::sleep(std::time::Duration::from_millis(650));
     capture(&mut app, &mut renderer, "creative-wand-expired.png");
-    app.game.as_mut().unwrap().adjust_tool(1);
+    app.game_mut().adjust_tool(1);
     capture(&mut app, &mut renderer, "creative-wand-cell.png");
 }
 
@@ -625,7 +610,7 @@ fn ctrl_scroll_cycles_the_held_wand_without_changing_hotbar_slots() {
     let slot = (0..9)
         .find(|i| app.inventory().slot(*i).is_some_and(|s| s.item == wand))
         .unwrap();
-    app.game.as_mut().unwrap().set_active_hotbar(slot as u8);
+    app.game_mut().set_active_hotbar(slot as u8);
     app.set_modifiers(Modifiers {
         ctrl: true,
         ..Default::default()
@@ -667,7 +652,7 @@ fn asynchronous_schematic_loads_respect_replacement_and_menu_cancellation() {
         .iter()
         .any(|e| e.path == chosen)
     {
-        app.game.as_mut().unwrap().poll_schematic_library();
+        app.game_mut().poll_schematic_library();
         assert!(start.elapsed().as_secs_f32() < 3.0);
         std::thread::yield_now();
     }
@@ -683,7 +668,7 @@ fn asynchronous_schematic_loads_respect_replacement_and_menu_cancellation() {
     let target = index(&app, &chosen);
     for path in [&first, &bad] {
         let old = index(&app, path);
-        let game = app.game.as_mut().unwrap();
+        let game = app.game_mut();
         game.cancel_world_tools();
         game.tools.preview
             .begin_paste(std::sync::Arc::new(fixture.clone()));
@@ -711,11 +696,11 @@ fn asynchronous_schematic_loads_respect_replacement_and_menu_cancellation() {
         );
         assert!(game.notice.is_empty());
     }
-    app.game.as_mut().unwrap().cancel_world_tools();
-    app.game.as_mut().unwrap().begin_schematic_paste(target);
-    app.game.as_mut().unwrap().poll_schematic_library();
+    app.game_mut().cancel_world_tools();
+    app.game_mut().begin_schematic_paste(target);
+    app.game_mut().poll_schematic_library();
     app.close_screen();
-    let game = app.game.as_mut().unwrap();
+    let game = app.game_mut();
     game.tools.library.request_thumbnails(&[target]);
     let entry = game.tools.library.entries()[target].clone();
     let start = std::time::Instant::now();
@@ -737,9 +722,7 @@ fn ctrl_scroll_raises_and_lowers_the_preview_before_wand_or_hotbar_bindings() {
     use petramond_input::controls::Modifiers;
     let mut app = creative_app();
     app.close_screen();
-    app.game
-        .as_mut()
-        .unwrap()
+    app.game_mut()
         .tools.preview
         .begin_paste(std::sync::Arc::new(schematic_fixture()));
     app.set_modifiers(Modifiers {
@@ -762,7 +745,7 @@ fn ctrl_scroll_raises_and_lowers_the_preview_before_wand_or_hotbar_bindings() {
     let slot = (0..9)
         .find(|i| app.inventory().slot(*i).is_some_and(|s| s.item == wand))
         .unwrap();
-    app.game.as_mut().unwrap().set_active_hotbar(slot as u8);
+    app.game_mut().set_active_hotbar(slot as u8);
     app.set_modifiers(Modifiers {
         ctrl: true,
         ..Default::default()
@@ -780,7 +763,7 @@ fn ctrl_scroll_raises_and_lowers_the_preview_before_wand_or_hotbar_bindings() {
         "menu scrolling must not move the preview"
     );
     app.close_screen();
-    app.game.as_mut().unwrap().cancel_world_tools();
+    app.game_mut().cancel_world_tools();
     app.add_scroll_delta(1.0);
     assert!(app.game().tools.world.selection.mode() == SelectionMode::Cell);
     assert_eq!(app.game().tools.preview.vertical_offset(), 0);

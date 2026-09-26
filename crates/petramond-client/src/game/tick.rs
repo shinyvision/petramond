@@ -3,12 +3,9 @@
 //! client's per-frame [`Game::tick`] driver. The fixed-tick stage ladder
 //! itself lives on the server, behind the session's `ServerHandle`.
 
-use super::world_prediction::UseClaim;
 use super::Game;
 use petramond::net::protocol::{ClientToServer, OpenScreen, PlayerAction, PlayerUpdate, TargetRef};
-use petramond::rules::interact::ConsumerKind;
 use petramond_math::math::IVec3;
-use petramond_world::inventory::Hand;
 
 mod events;
 mod replica_clock;
@@ -99,7 +96,7 @@ impl Game {
         // samples it, or the rider's camera clamps at the segment end for one
         // frame every tick (a 20 Hz stutter) while the world glides on. The
         // receive half turns it again for batches that arrive already overdue.
-        self.entities.advance_clock(dt);
+        self.replica.entities.advance_clock(dt);
         self.advance_interp_window();
         // Per-frame exceptions kept for local feel: look, hotbar, local player, entity push.
         self.apply_camera_input(input);
@@ -113,16 +110,12 @@ impl Game {
         // — the local player sees their own arms in third person, and an arm
         // that snaps while its shield glides is the shield trailing its own
         // hand.
-        let mut target = std::mem::take(&mut self.local_bone_target);
-        target.clear();
-        super::render_bone_offsets(
+        self.fx.ease_local_bones(
             &self
                 .client_mods
-                .local_bone_poses(&self.self_view.bone_poses),
-            &mut target,
+                .local_bone_poses(&self.replica.self_view.bone_poses),
+            dt,
         );
-        self.local_bones.advance(&target, dt);
-        self.local_bone_target = target;
         let mut tool_input = *input;
         self.world_tool_input(&mut tool_input);
         let input = &tool_input;
@@ -134,7 +127,7 @@ impl Game {
         // What we are claiming this frame — the reference a later
         // `SelfState::transform` correction diffs against (fields the server
         // merely echoes back must not stomp newer local values).
-        self.last_sent_transform = Some(petramond::net::protocol::SelfTransform {
+        self.local.last_sent_transform = Some(petramond::net::protocol::SelfTransform {
             transform: update.transform,
             on_ground: update.on_ground,
         });
@@ -167,25 +160,27 @@ impl Game {
         // Remote players' per-frame animation state (shared body pose,
         // held-item easing, animator plays, hurt/eat ramps) advances right after the batches
         // applied, so this frame's latched one-shots jab this frame.
-        let replica = &self.replica;
-        self.entities
+        let replica = &self.replica.world;
+        self.replica.entities
             .advance_animation(dt, |pos| super::body_pose::movement_medium(replica, pos));
-        let events = std::mem::take(&mut self.pending_events);
+        let mut events = std::mem::take(&mut self.replica.events);
         self.deliver_client_mod_events(&events.self_events.client_events);
         self.sync_sleep_camera_on_open(&events.self_events);
         // World-anchored effects the tick batch carried (break bursts, door
         // swings) spawn from the replicated events — the identical path a
         // remote client drives them from off the wire.
-        self.apply_world_effects(&events.world);
-        self.tick_mining_dust(dt);
-        let digging = self.tick_mob_digging(dt);
-        self.tick_entities(dt);
-        self.advance_block_animations(dt);
+        let world = &self.replica.world;
+        self.fx.apply_world_effects(world, &events.world);
+        let mining = self.replica.self_view.mining.map(|(cell, _)| cell);
+        self.fx.tick_mining_dust(world, mining, self.local.look, dt);
+        // Mob dig hits join the frame's sounds after the replicated ones.
+        self.fx
+            .tick_mob_digging(world, self.replica.entities.mobs(), dt, &mut events.sounds);
+        self.fx.tick_particles(world, dt);
+        self.fx.advance_block_animations(world, dt);
         self.tick_mesh_budget();
 
-        let mut out = self.assemble_game_events(events, dt);
-        out.sounds.extend(digging);
-        out
+        self.assemble_game_events(events, dt)
     }
 
     /// Drain and apply every pending server→client message. `Game::tick` runs
@@ -204,28 +199,28 @@ impl Game {
     /// fully applies the break it can see (cell clear, hand, local world
     /// event).
     fn tick_local_mining(&mut self, dt: f32, input: &GameInput) {
-        let tool = self.self_view.inventory.selected().and_then(|st| st.tool());
-        let look = self.look.map(|h| h.block);
+        let tool = self.replica.self_view.inventory.selected().and_then(|st| st.tool());
+        let look = self.local.look.map(|h| h.block);
         // One question, the same one the server asks: a body barred from mining
         // stops predicting one, whether the bar is a pack's claim or the open
         // menu the engine claims for. Without it the crack creeps up a block
         // the authority already refused and then snaps back.
         let barred = self
-            .player
+            .local.player
             .denied_actions()
             .denies(mod_api::BodyAction::Mine);
-        self.break_repeat.tick(dt);
-        if self.player.is_creative() {
-            self.local_mining = Default::default();
-            self.self_view.mining = None;
-            if !barred && input.break_held && self.break_repeat.ready() {
+        self.local.break_repeat.tick(dt);
+        if self.local.player.is_creative() {
+            self.local.mining = Default::default();
+            self.replica.self_view.mining = None;
+            if !barred && input.break_held && self.local.break_repeat.ready() {
                 if let Some(pos) = look {
                     let block = petramond_world::block::Block::from_id(
-                        self.replica.data().chunk_block(pos.x, pos.y, pos.z),
+                        self.replica.world.data().chunk_block(pos.x, pos.y, pos.z),
                     );
                     if block != petramond_world::block::Block::Air {
-                        self.break_repeat.arm();
-                        let normal = self.look.map(|h| h.normal);
+                        self.local.break_repeat.arm();
+                        let normal = self.local.look.map(|h| h.normal);
                         self.apply_predicted_break(pos, block, normal);
                     }
                 }
@@ -233,16 +228,16 @@ impl Game {
             return;
         }
         let event =
-            self.local_mining
-                .update(dt, look, input.break_held, barred, self.replica.data(), tool);
+            self.local.mining
+                .update(dt, look, input.break_held, barred, &self.replica.world, tool);
         // The own crack overlay is CLIENT-OWNED: the local timer is its only
         // source (the server never ships it back — SelfState carries no
         // `mining` echo).
-        self.self_view.mining = self.local_mining.overlay();
+        self.replica.self_view.mining = self.local.mining.overlay();
 
         if let Some(ev) = event {
             let normal = self
-                .look
+                .local.look
                 .filter(|h| h.block == ev.pos && h.normal != IVec3::ZERO)
                 .map(|h| h.normal);
             self.apply_predicted_break(ev.pos, ev.block, normal);
@@ -323,15 +318,15 @@ impl Game {
         // consumed (`tick_player` stashes it) — re-deriving it here would read
         // the camera after `sync_camera_to_player_eye` moved it and drift the
         // wire intent from the prediction.
-        let intent = self.predicted_input;
+        let intent = self.local.predicted_input;
         PlayerUpdate {
             transform: petramond::net::protocol::Transform {
-                pos: self.player.pos,
-                vel: self.player.vel,
-                yaw: self.player.yaw,
-                pitch: self.player.pitch,
+                pos: self.local.player.pos,
+                vel: self.local.player.vel,
+                yaw: self.local.player.yaw,
+                pitch: self.local.player.pitch,
             },
-            on_ground: self.player.on_ground,
+            on_ground: self.local.player.on_ground,
             // Sneak is part of the F2 movement intent now: ship EXACTLY what the
             // local physics consumed (gameplay-gated), so the server integrates
             // the same edge-guarded, half-speed step the prediction ran.
@@ -339,22 +334,22 @@ impl Game {
             gameplay: input.gameplay_enabled,
             break_held: input.break_held,
             use_held: input.use_held,
-            target: self.look.map(|h| TargetRef::of_hit(&h)),
-            hotbar_slot: self.player.inventory.active_slot(),
-            held_rotation: self.held_rotation.rotation,
+            target: self.local.look.map(|h| TargetRef::of_hit(&h)),
+            hotbar_slot: self.local.player.inventory.active_slot(),
+            held_rotation: self.local.held_rotation.rotation,
             wishdir: intent.wishdir,
             jump: intent.jump,
             sprint: intent.sprint,
         }
     }
 
-    /// The whole use-click prediction verdict, mirroring the server's
-    /// two-pass ladder: the MAIN hand first; only when nothing is predicted
-    /// to act does the OFF hand evaluate (acting hand = actor context,
-    /// exactly like the server's dispatch — every held read in the
-    /// prediction resolves through `player.acting_hand`). At most one pass
-    /// opens a ledger entry: pass 2 runs only when pass 1 predicted nothing
-    /// at all. Returns `(jabbed, off_hand_acted, place)`.
+    /// The whole use-click prediction verdict: the SHARED consumer walk
+    /// (`rules::use_click` — the server's own two-pass ladder and registry
+    /// order) with every rung answered against the replica (see
+    /// [`predict_use_click`](Self::predict_use_click)). The MAIN hand first;
+    /// only when nothing is predicted to act does the OFF hand evaluate. At
+    /// most one pass opens a ledger entry: a place ghost claims its rung and
+    /// ends the walk.
     ///
     /// The jab fires when the click predictably does something — including a
     /// PLAUSIBLE placement the ghost convention keeps unpredicted (oriented
@@ -368,45 +363,17 @@ impl Game {
         input: &GameInput,
         use_mob: Option<u64>,
     ) -> ClickVerdict {
-        self.player.acting_hand = Hand::Main;
-        let (mod_claimed, mut place) = self.predict_use_click(input.movement.sneak, use_mob);
-        let mut claim = if mod_claimed {
-            UseClaim::Claimed(ConsumerKind::Registered)
-        } else if !matches!(place, PlacePrediction::No) {
-            UseClaim::Claimed(ConsumerKind::Place)
-        } else {
-            self.use_click_claim(input, use_mob)
-        };
-        let mut off_hand = false;
-        if claim == UseClaim::Unclaimed && self.self_view.inventory.off_hand().is_some() {
-            self.player.acting_hand = Hand::Off;
-            let (mod_claimed_off, place_off) =
-                self.predict_use_click(input.movement.sneak, use_mob);
-            let off_claim = if mod_claimed_off {
-                UseClaim::Claimed(ConsumerKind::Registered)
-            } else if !matches!(place_off, PlacePrediction::No) {
-                UseClaim::Claimed(ConsumerKind::Place)
-            } else {
-                self.use_click_claim(input, use_mob)
-            };
-            if off_claim != UseClaim::Unclaimed {
-                place = place_off;
-                claim = off_claim;
-                off_hand = true;
-            }
-        }
-        // Never leak the acting hand past the verdict (level-state reads —
-        // the render frame, the roster — are main-hand by definition).
-        self.player.acting_hand = Hand::Main;
-        let consumed = claim != UseClaim::Unclaimed;
+        let outcome = self.predict_use_click(input.movement.sneak, use_mob);
+        let place = outcome.placement.unwrap_or(PlacePrediction::No);
+        let consumed = outcome.consumed();
         // NOTHING claimed it: offer the gesture, exactly as the server does
         // once its own chain has passed. This is the frame a guard goes up on.
         if !consumed {
             let payload = mod_api::EventPayload::UseUnclaimed {
-                block: self.look.map(|h| h.block.to_array()),
-                face: self.look.map(|h| h.normal.to_array()),
+                block: self.local.look.map(|h| h.block.to_array()),
+                face: self.local.look.map(|h| h.normal.to_array()),
                 mob: use_mob,
-                player: mod_api::PlayerId(self.entities.self_id().0),
+                player: mod_api::PlayerId(self.replica.entities.self_id().0),
             };
             // The verdict is NOT a jab: nothing happened to the world, and
             // whoever took the gesture poses the body itself. Predicting a
@@ -418,15 +385,15 @@ impl Game {
         }
         // Mirror whoever took it onto the body, so the predicted player answers
         // "is this press spoken for" the way the authority will.
-        self.player.use_gesture = match self.client_mods.use_holder() {
+        self.local.player.use_gesture = match self.client_mods.use_holder() {
             Some(owner) => petramond::player::UseGesture::Held(owner.into()),
             None => petramond::player::UseGesture::Free,
         };
         ClickVerdict {
             consumed,
-            presents_itself: claim.presents_itself(),
+            presents_itself: outcome.presents_itself(),
             places: !matches!(place, PlacePrediction::No),
-            off_hand,
+            off_hand: outcome.off_hand_acted(),
             place,
         }
     }
@@ -437,11 +404,11 @@ impl Game {
     /// cooldown the server paces the hand by.
     fn attack_press(&mut self, input: &GameInput) -> bool {
         let denied = self
-            .player
+            .local.player
             .denied_actions()
             .denies(mod_api::BodyAction::Attack);
-        let mining = self.self_view.mining.is_some();
-        let player = &self.player;
+        let mining = self.replica.self_view.mining.is_some();
+        let player = &self.local.player;
         self.hand
             .attack_press(denied, mining, input.attack_clicked, || {
                 petramond::events::tick::TICK_DT
@@ -472,21 +439,21 @@ impl Game {
         let attack_mob = attacks.then(|| self.targeted_mob_id()).flatten();
         // At most one of mob/player is targeted per frame (refresh_target's
         // nearest-wins pick), so the click carries at most one.
-        let attack_player = attacks.then_some(self.targeted_player).flatten();
+        let attack_player = attacks.then_some(self.local.targeted_player).flatten();
         self.net.push_frame(ClientToServer::PlayerUpdate(update));
         if input.gameplay_enabled {
             // A barred body sends no click, runs no prediction and plays no
             // jab: the server would spend the press for nothing, so predicting
             // one would put a place ghost on screen that the next batch takes
             // straight back. The button is dead on both mirrors at once.
-            let denied = self.player.denied_actions();
+            let denied = self.local.player.denied_actions();
             if input.place_clicked && !denied.denies(mod_api::BodyAction::Use) {
                 // The click's block target rides the wire: the server resolves
                 // the interact/place against THIS cell, never a fresher look —
                 // a click racing the crosshair must land where the ghost is.
                 // `use_look` == `look` unless the held item declares a
                 // water-stopping use ray (see `refresh_target`).
-                let target = self.use_look.map(|h| TargetRef::of_hit(&h));
+                let target = self.local.use_look.map(|h| TargetRef::of_hit(&h));
                 let verdict = self.predict_click_verdict(input, use_mob);
                 let request_id = match verdict.place {
                     PlacePrediction::Predicted(id) | PlacePrediction::TrackOnly(id) => Some(id),
@@ -544,15 +511,15 @@ impl Game {
     /// If a server feature must one day force a look, it needs an explicit
     /// signal on the wire, not this echo channel.
     pub fn adopt_authoritative_transform(&mut self, t: &petramond::net::protocol::SelfTransform) {
-        let sent = self.last_sent_transform;
+        let sent = self.local.last_sent_transform;
         if sent.is_none_or(|s| s.transform.pos != t.transform.pos) {
-            self.player.teleport(t.transform.pos);
+            self.local.player.teleport(t.transform.pos);
         }
         if sent.is_none_or(|s| s.transform.vel != t.transform.vel) {
-            self.player.vel = t.transform.vel;
+            self.local.player.vel = t.transform.vel;
         }
         if sent.is_none_or(|s| s.on_ground != t.on_ground) {
-            self.player.on_ground = t.on_ground;
+            self.local.player.on_ground = t.on_ground;
         }
     }
 }

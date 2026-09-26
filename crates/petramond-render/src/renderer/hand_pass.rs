@@ -35,7 +35,7 @@ pub(super) struct HandPass {
     /// Vertex count of the hand geometry — the OFF-hand geometry appends
     /// after it in the shared model3d vbuf, so its `base_vertex` starts here.
     pub(super) vertex_count: u32,
-    // --- The OFF (left) hand: its own view/animator, its geometry appended
+    // --- The OFF (left) hand: its own view, its geometry appended
     // --- into the SAME buffers after the main hand's, MVP slot 1. Drawn only
     // --- while the off-hand slot holds an item (no bare left arm).
     /// Off-hand held item state (`item == None` = empty, nothing drawn).
@@ -65,8 +65,6 @@ pub(super) struct HandPass {
     pub(super) break_overlays: Vec<BreakOverlayView>,
     /// The main hand's held item state.
     pub(super) held_item: HeldItemView,
-    /// Each hand's eased claimed pose (`[main, off]`).
-    pub(super) held_ease: [crate::HeldItemEase; 2],
     pub(super) visible: bool,
     /// Screen-space (NDC) offset applied to the whole hand/held-item draw this
     /// frame — the hurt-shake jitter. Zero when calm.
@@ -76,21 +74,9 @@ pub(super) struct HandPass {
     pub(super) screen_shake: bool,
     pub(super) held_item_skylight: u8,
     pub(super) held_item_blocklight: petramond_world::light::BlockLight6,
-    /// The first-person rig and its animator. `None` (either asset missing)
-    /// draws no hand at all.
+    /// The first-person rig and the bones the client's animation posed it
+    /// in. `None` (either asset missing) draws no hand at all.
     pub(super) first_person: Option<crate::first_person::FirstPersonHand>,
-    /// This frame's two hand frames (`[main, off]`), kept for the local
-    /// player's animators, and the seconds since the last frame's.
-    pub(super) frames: Option<[crate::HeldItemFrame; 2]>,
-    pub(super) frame_dt: f32,
-    /// The local player's resolved animator claims and the graph events
-    /// fired on it this frame, for both of its rigs. The body bake consumes
-    /// the events, so a second bake before the next claims fires nothing.
-    pub(super) local_params: Vec<crate::views::AnimatorParamRow>,
-    pub(super) local_plays: Vec<petramond::player::AnimatorPlay>,
-    pub(super) local_events: Vec<(petramond::player::RigId, u16)>,
-    /// Name-valued claims, interned once per distinct name.
-    pub(super) names: crate::views::NameCache,
     /// The rig's arms in the item3d stream, `[arm_start, arm_start +
     /// arm_count)`, drawn with the player's skin.
     pub(super) arm_start: u32,
@@ -98,7 +84,7 @@ pub(super) struct HandPass {
 }
 
 impl HandPass {
-    /// Drop the world-scoped hand state. The held item and its animator
+    /// Drop the world-scoped hand state. The held item and the rig's pose
     /// are world state too — a stale pose must not survive into the next.
     pub(super) fn clear_world(&mut self) {
         self.visible = false;
@@ -108,7 +94,6 @@ impl HandPass {
         self.held_is_model = false;
         self.held_item = HeldItemView::default();
         self.off_item = HeldItemView::default();
-        self.held_ease = Default::default();
         self.off_item3d_start = 0;
         self.off_item3d_count = 0;
         self.off_is_model = false;
@@ -118,11 +103,6 @@ impl HandPass {
         if let Some(first_person) = &mut self.first_person {
             first_person.reset();
         }
-        self.frames = None;
-        self.frame_dt = 0.0;
-        self.local_params.clear();
-        self.local_plays.clear();
-        self.local_events.clear();
         self.arm_start = 0;
         self.arm_count = 0;
     }

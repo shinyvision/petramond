@@ -16,7 +16,8 @@ use petramond_world::block::{Block, BlockSoundAction};
 use petramond_world::sound_registry::Sound;
 
 use super::music::MusicDirector;
-use crate::game::presentation::{FootstepSource, MobPresentation};
+use crate::animation::FootstepSource;
+use crate::game::presentation::MobPresentation;
 use crate::game::{GameEvents, MobSoundEvent, SpatialSoundCommand, WorldEvent};
 
 /// The first client-local spatial handle: the top half of the handle space,
@@ -35,6 +36,10 @@ pub(super) struct MobSoundState {
     pub(super) sequence: u64,
 }
 
+/// The app-lifetime half of sound: the engine and the soundtrack. Everything
+/// that schedules or buffers a session's world sounds lives in the session's
+/// [`SessionSounds`], which the per-frame calls borrow — so a new session can
+/// never inherit the last one's cadences, cues or handle pool.
 pub(super) struct ClientAudio {
     /// Client-side sound engine: plays the sim's sounds, never part of the
     /// deterministic simulation.
@@ -42,6 +47,11 @@ pub(super) struct ClientAudio {
     /// WHEN the soundtrack plays. Owns the gap between pieces and the choice
     /// of the next one; `audio` owns the streaming.
     music: MusicDirector,
+}
+
+/// The session-scoped sound bookkeeping between game events and plays, owned
+/// by [`super::session::Session`] and dropped with it.
+pub(super) struct SessionSounds {
     /// Spatial sound commands emitted by ticks since the last render, applied
     /// against the same mob presentation snapshot the renderer uses.
     spatial_commands: Vec<SpatialSoundCommand>,
@@ -64,13 +74,9 @@ pub(super) struct ClientAudio {
     next_handle: u64,
 }
 
-impl ClientAudio {
-    pub(super) fn new(master: f32, sound: f32, music: f32) -> Self {
-        let mut audio = Audio::new();
-        audio.set_volumes(master, sound, music);
+impl Default for SessionSounds {
+    fn default() -> Self {
         Self {
-            audio,
-            music: MusicDirector::new(),
             spatial_commands: Vec::new(),
             mob_positions: Vec::new(),
             mob_events: Vec::new(),
@@ -79,6 +85,17 @@ impl ClientAudio {
             footstep_next_tick: HashMap::new(),
             loop_gains: Vec::new(),
             next_handle: MOB_SOUND_HANDLE_START,
+        }
+    }
+}
+
+impl ClientAudio {
+    pub(super) fn new(master: f32, sound: f32, music: f32) -> Self {
+        let mut audio = Audio::new();
+        audio.set_volumes(master, sound, music);
+        Self {
+            audio,
+            music: MusicDirector::new(),
         }
     }
 
@@ -101,25 +118,26 @@ impl ClientAudio {
     /// world lets the current track finish but schedules no new one.
     pub(super) fn update_session(&mut self, in_session: bool, world_frozen: bool, dt: f32) {
         self.audio.set_spatial_paused(world_frozen);
-        self.music
-            .update(&mut self.audio, in_session, world_frozen, dt);
+        self.music.update(&mut self.audio, in_session, world_frozen, dt);
     }
 
-    /// The session ended: mod-driven presentation state is session-scoped, so
-    /// the title screen (or the next world) must never inherit this session's
-    /// mining loop or rain bed.
+    /// The session ended: silence every voice it started in the engine — the
+    /// mining loop, the client-mod ambience beds and every positional voice.
+    /// Its scheduling state died with its [`SessionSounds`].
     pub(super) fn end_session(&mut self, now: f64) {
         self.audio.set_loop(None, now);
         self.audio.stop_gain_loops();
+        self.audio.clear_spatial();
     }
 
     /// Queue one frame's game-event sounds: the mining loop follows
     /// `mining_block`, mod sounds play at once (attenuated by distance to the
     /// `listener` when positional), and spatial commands, mob sounds and
-    /// positional world cues buffer for the next render, where the spatial
-    /// listener exists.
+    /// positional world cues buffer in `sounds` for the next render, where
+    /// the spatial listener exists.
     pub(super) fn queue_game_events(
         &mut self,
+        sounds: &mut SessionSounds,
         events: &GameEvents,
         mining_block: Option<Block>,
         listener: Option<WorldPos>,
@@ -137,14 +155,16 @@ impl ClientAudio {
             };
             self.audio.play_attenuated(s.sound, gain);
         }
-        self.spatial_commands
+        sounds
+            .spatial_commands
             .extend(events.spatial_sounds.iter().copied());
-        self.mob_events.extend(events.mob_sounds.iter().copied());
+        sounds.mob_events.extend(events.mob_sounds.iter().copied());
 
         // World-anchored one-shots play POSITIONALLY, from the replicated
         // events (every observer hears them at the event's place — including
         // the local player's own actions).
-        self.world_cues
+        sounds
+            .world_cues
             .extend(events.world_events.iter().filter_map(world_cue));
 
         if events.picked_up_item {
@@ -155,16 +175,6 @@ impl ClientAudio {
         }
     }
 
-    /// No session: drop every buffered cue and positional voice.
-    pub(super) fn clear_world(&mut self) {
-        self.audio.clear_spatial();
-        self.spatial_commands.clear();
-        self.mob_positions.clear();
-        self.mob_events.clear();
-        self.world_cues.clear();
-        self.mob_states.clear();
-    }
-
     /// One render's positional audio against this frame's presentation: pin
     /// mob sounds to the interpolated `mobs`, apply the buffered spatial
     /// commands and cues, advance footsteps and idle cadence on the live
@@ -172,26 +182,32 @@ impl ClientAudio {
     /// moving), and ease the client-mod ambience loops `loop_gains` fills.
     pub(super) fn render_world(
         &mut self,
+        sounds: &mut SessionSounds,
         frame: WorldAudioFrame<'_>,
         loop_gains: impl FnOnce(&mut Vec<(Sound, f32)>),
         dt: f32,
     ) {
         let listener = frame.listener;
-        self.set_mob_positions(frame.mobs, frame.tick_alpha);
-        for command in std::mem::take(&mut self.spatial_commands) {
-            self.apply_spatial_command(command, listener);
+        sounds.set_mob_positions(frame.mobs, frame.tick_alpha);
+        let mut commands = std::mem::take(&mut sounds.spatial_commands);
+        for command in commands.drain(..) {
+            self.apply_spatial_command(sounds, command, listener);
         }
-        for event in std::mem::take(&mut self.mob_events) {
+        sounds.spatial_commands = commands;
+        let mut mob_events = std::mem::take(&mut sounds.mob_events);
+        for event in mob_events.drain(..) {
             let Some(spec) = petramond::mob::def(event.kind).sound_for(event.category) else {
                 continue;
             };
-            let initial = self.mob_position(event.mob_id).unwrap_or(event.pos);
-            self.play_mob_sound(spec.sound, event.mob_id, listener, initial);
+            let initial = sounds.mob_position(event.mob_id).unwrap_or(event.pos);
+            self.play_mob_sound(sounds, spec.sound, event.mob_id, listener, initial);
         }
+        sounds.mob_events = mob_events;
         // Positional world-event one-shots: fire-and-forget spatial plays off
         // the same client-local wrapping handle pool the mob sounds use.
-        for (sound, pos) in std::mem::take(&mut self.world_cues) {
-            let handle = self.alloc_handle();
+        let mut cues = std::mem::take(&mut sounds.world_cues);
+        for (sound, pos) in cues.drain(..) {
+            let handle = sounds.alloc_handle();
             self.audio.play_spatial_randomized(
                 handle,
                 sound,
@@ -200,23 +216,20 @@ impl ClientAudio {
                 pos,
             );
         }
-        self.tick_footsteps(listener, frame.footsteps, frame.current_tick);
-        self.tick_idle_mob_sounds(listener, frame.mobs, frame.current_tick);
-        self.audio.update_spatial(listener, &self.mob_positions);
-        loop_gains(&mut self.loop_gains);
-        self.audio.update_gain_loops(&self.loop_gains, dt);
+        sounds.world_cues = cues;
+        self.tick_footsteps(sounds, listener, frame.footsteps, frame.current_tick);
+        self.tick_idle_mob_sounds(sounds, listener, frame.mobs, frame.current_tick);
+        self.audio.update_spatial(listener, &sounds.mob_positions);
+        loop_gains(&mut sounds.loop_gains);
+        self.audio.update_gain_loops(&sounds.loop_gains, dt);
     }
 
-    /// Record this render's interpolated mob positions.
-    fn set_mob_positions(&mut self, mobs: &[MobPresentation], tick_alpha: f32) {
-        self.mob_positions.clear();
-        self.mob_positions.extend(
-            mobs.iter()
-                .map(|m| (m.id, m.prev_pos.lerp(m.pos, tick_alpha))),
-        );
-    }
-
-    fn apply_spatial_command(&mut self, command: SpatialSoundCommand, listener: SpatialListener) {
+    fn apply_spatial_command(
+        &mut self,
+        sounds: &SessionSounds,
+        command: SpatialSoundCommand,
+        listener: SpatialListener,
+    ) {
         match command {
             SpatialSoundCommand::PlayAt {
                 handle,
@@ -241,7 +254,7 @@ impl ClientAudio {
                 pitch,
                 last_pos,
             } => {
-                let initial = self.mob_position(mob_id).unwrap_or(last_pos);
+                let initial = sounds.mob_position(mob_id).unwrap_or(last_pos);
                 self.audio.play_spatial(
                     handle,
                     sound,
@@ -271,12 +284,16 @@ impl ClientAudio {
     /// players too, which makes that retire exact).
     pub(super) fn tick_footsteps(
         &mut self,
+        sounds: &mut SessionSounds,
         listener: SpatialListener,
         footsteps: &[FootstepSource],
         current_tick: u64,
     ) {
         for step in footsteps {
-            let due = self.footstep_next_tick.entry(step.id).or_insert(current_tick);
+            let due = sounds
+                .footstep_next_tick
+                .entry(step.id)
+                .or_insert(current_tick);
             let Some(ground) = step.ground else {
                 continue;
             };
@@ -293,7 +310,7 @@ impl ClientAudio {
             };
             // Fire-and-forget at the FEET, so a remote's steps arrive from
             // their body.
-            let handle = self.alloc_handle();
+            let handle = sounds.alloc_handle();
             self.audio.play_spatial_randomized(
                 handle,
                 sound,
@@ -302,13 +319,15 @@ impl ClientAudio {
                 step.pos,
             );
         }
-        self.footstep_next_tick
+        sounds
+            .footstep_next_tick
             .retain(|id, _| footsteps.iter().any(|s| s.id == *id));
     }
 
     /// Idle cadence per live mob, on the live world clock.
     pub(super) fn tick_idle_mob_sounds(
         &mut self,
+        sounds: &mut SessionSounds,
         listener: SpatialListener,
         mobs: &[MobPresentation],
         current_tick: u64,
@@ -320,7 +339,7 @@ impl ClientAudio {
             let Some(spec) = petramond::mob::def(mob.kind).sound_for(MobSoundCategory::Idle) else {
                 continue;
             };
-            let state = self
+            let state = sounds
                 .mob_states
                 .entry(mob.id)
                 .or_insert_with(|| MobSoundState {
@@ -333,27 +352,46 @@ impl ClientAudio {
             state.sequence = state.sequence.wrapping_add(1);
             state.next_idle_tick =
                 current_tick.saturating_add(idle_delay_ticks(mob.id, state.sequence, spec));
-            let initial = self.mob_position(mob.id).unwrap_or(mob.pos);
-            self.play_mob_sound(spec.sound, mob.id, listener, initial);
+            let initial = sounds.mob_position(mob.id).unwrap_or(mob.pos);
+            self.play_mob_sound(sounds, spec.sound, mob.id, listener, initial);
         }
-        self.mob_states
+        sounds
+            .mob_states
             .retain(|id, _| mobs.iter().any(|m| m.id == *id && !m.dead));
     }
 
     fn play_mob_sound(
         &mut self,
+        sounds: &mut SessionSounds,
         sound: Sound,
         mob_id: u64,
         listener: SpatialListener,
         initial: WorldPos,
     ) {
-        let handle = self.alloc_handle();
+        let handle = sounds.alloc_handle();
         self.audio.play_spatial_randomized(
             handle,
             sound,
             SpatialSoundSource::Mob(mob_id),
             listener,
             initial,
+        );
+    }
+
+    /// Everything played non-positionally since the last call.
+    #[cfg(test)]
+    pub(super) fn take_played_for_test(&mut self) -> Vec<Sound> {
+        self.audio.take_played_for_test()
+    }
+}
+
+impl SessionSounds {
+    /// Record this render's interpolated mob positions.
+    fn set_mob_positions(&mut self, mobs: &[MobPresentation], tick_alpha: f32) {
+        self.mob_positions.clear();
+        self.mob_positions.extend(
+            mobs.iter()
+                .map(|m| (m.id, m.prev_pos.lerp(m.pos, tick_alpha))),
         );
     }
 
@@ -368,12 +406,6 @@ impl ClientAudio {
             .iter()
             .find(|(id, _)| *id == mob_id)
             .map(|(_, pos)| *pos)
-    }
-
-    /// Everything played non-positionally since the last call.
-    #[cfg(test)]
-    pub(super) fn take_played_for_test(&mut self) -> Vec<Sound> {
-        self.audio.take_played_for_test()
     }
 
     #[cfg(test)]

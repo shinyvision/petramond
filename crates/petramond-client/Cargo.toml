@@ -30,6 +30,7 @@ audio = ["petramond-audio/playback"]
 petramond = { workspace = true }
 petramond-audio = { workspace = true }
 petramond-render = { workspace = true }
+petramond-anim = { workspace = true }
 petramond-math = { workspace = true }
 petramond-world = { workspace = true }
 petramond-input = { workspace = true }
@@ -47,10 +48,12 @@ wgpu = { workspace = true }
 pollster = { workspace = true }
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 rustc-hash = { workspace = true }
+smallvec = "1"
 mimalloc = { workspace = true }
 image = { workspace = true }
 
 [dev-dependencies]
+petramond-anim = { workspace = true, features = ["test-support"] }
 petramond-util = { workspace = true, features = ["test-support"] }
 petramond-audio = { workspace = true, features = ["test-support"] }
 env_logger = { workspace = true }

@@ -238,8 +238,12 @@ impl Mod for Furniture {
                 },
             ) => {
                 let actor = player_state();
+                // The client instance runs the SAME gates against the replica
+                // and answers the claim; the server executes.
                 let claimed = if self.client {
-                    self.predict_use_cauldron(*pos, &actor) || self.predict_sit(*pos, &actor)
+                    let replica = SideWorld::Replica;
+                    self.cauldron_claims(&replica, *pos, &actor)
+                        || self.seat_gate(&replica, *pos, &actor).is_some()
                 } else {
                     self.try_use_cauldron(*pos, &actor) || self.try_sit(*pos, *player, &actor)
                 };

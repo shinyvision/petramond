@@ -153,24 +153,19 @@ fn unknown_and_forward_names_are_load_errors() {
 /// survives re-authoring.
 #[test]
 fn shipped_table_loads() {
-    let layers = petramond_world::assets::read_layers("animations/player_locomotion.json");
-    let texts: Vec<&str> = layers.iter().map(|(t, _)| t.as_str()).collect();
-    let table = LocomotionTable::parse_layers(&texts).expect("shipped table");
+    let table = LocomotionTable::load().expect("shipped table");
     assert!(!table.layers.is_empty());
 }
 
-/// The fallback for a missing or malformed table poses nothing, whatever
-/// the body is doing — a rest pose, never a crash.
+/// The fallback a missing or broken table leaves the bodies on: every input
+/// still evaluates (the `requires` gates cover each slot) and no layer draws.
 #[test]
-fn the_empty_fallback_table_poses_nothing() {
-    let table = LocomotionTable::empty();
+fn the_empty_fallback_table_weighs_nothing() {
     let inputs = Inputs {
         walking: 1.0,
         run: 1.0,
         swim: 1.0,
-        landing: 1.0,
         ..Default::default()
     };
-    assert!(weights_of(&table, &inputs, all).is_empty());
-    assert_eq!(table.slots(), Inputs::NAMES.len());
+    assert!(weights_of(&LocomotionTable::empty(), &inputs, all).is_empty());
 }

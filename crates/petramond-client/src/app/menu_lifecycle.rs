@@ -1,5 +1,6 @@
 use super::{App, AppScreen};
 use crate::game::GameEvents;
+use petramond_world::gui_state::GuiKind;
 
 impl App {
     pub(super) fn toggle_inventory(&mut self) {
@@ -23,7 +24,7 @@ impl App {
         // interaction (engine container or mod `open_gui` row) or a mod's
         // `GuiOpen` request; one lane for every kind.
         if let Some((kind, anchor)) = events.open_gui {
-            if self.screen.gameplay_enabled() || matches!(self.screen, AppScreen::Menu(_)) {
+            if self.screen.gameplay_enabled() || self.screen.ui_open() {
                 self.open_gui(kind, anchor);
             }
         }
@@ -36,182 +37,74 @@ impl App {
         }
         // Right-clicking a bed starts the sleep overlay.
         if events.open_sleep && self.screen.gameplay_enabled() {
-            self.screen = AppScreen::Sleeping;
-            self.controls.pointer.release_for_menu();
+            self.set_screen(AppScreen::Sleeping);
         }
         // The tick ended the sleep (completed or wake applied): drop the
         // overlay. A cancel via ESC/button already left the screen — this
         // then no-ops.
-        if events.sleep_ended && matches!(self.screen, AppScreen::Sleeping) {
-            self.screen = AppScreen::Game;
-            self.controls.pointer.grab_for_gameplay();
+        if events.sleep_ended && self.screen == AppScreen::Sleeping {
+            self.set_screen(AppScreen::Game);
         }
         // Death overrides whatever is up (gameplay, a container, the sleep
         // overlay); an open container menu is closed properly first so its
         // cursor stack and edit target are cleaned up on the tick.
         if events.player_died {
             if self.screen.ui_open() {
-                if let Some(game) = self.game.as_mut() {
-                    game.close_open_menu();
+                if let Some(session) = self.session.as_mut() {
+                    session.game.close_open_menu();
                 }
             }
-            self.screen = AppScreen::Dead;
-            self.controls.pointer.release_for_menu();
+            self.set_screen(AppScreen::Dead);
         }
         // The tick applied the respawn: back to gameplay.
-        if events.respawned && matches!(self.screen, AppScreen::Dead) {
-            self.screen = AppScreen::Game;
-            self.controls.pointer.grab_for_gameplay();
+        if events.respawned && self.screen == AppScreen::Dead {
+            self.set_screen(AppScreen::Game);
         }
     }
 
     /// Cancel an in-progress sleep (ESC or the "Leave bed" button): ask the
     /// tick to wake the player beside the bed and drop the overlay now.
     pub(super) fn cancel_sleep(&mut self) {
-        if let Some(game) = self.game.as_mut() {
-            game.request_wake();
+        if let Some(session) = self.session.as_mut() {
+            session.game.request_wake();
         }
-        self.screen = AppScreen::Game;
-        self.controls.pointer.grab_for_gameplay();
+        self.set_screen(AppScreen::Game);
     }
 
     fn open_inventory(&mut self) {
-        self.enter_menu(AppScreen::Menu(
-            if self.game.as_ref().is_some_and(|g| g.creative_mode()) {
-                petramond_world::gui_state::GuiKind::Creative
-            } else {
-                petramond_world::gui_state::GuiKind::Inventory
-            },
-        ));
-        if let Some(game) = self.game.as_mut() {
-            game.request_open_inventory();
+        let creative = self
+            .session
+            .as_ref()
+            .is_some_and(|session| session.game.creative_mode());
+        self.set_screen(AppScreen::Menu(if creative {
+            GuiKind::Creative
+        } else {
+            GuiKind::Inventory
+        }));
+        if let Some(session) = self.session.as_mut() {
+            session.game.request_open_inventory();
         }
     }
 
     /// Open the screen for a server-opened GUI session — any kind, engine
     /// container or mod GUI. `anchor` is the block or mob it opened on, if any.
-    fn open_gui(
-        &mut self,
-        kind: petramond_world::gui_state::GuiKind,
-        anchor: Option<petramond::menu::MenuAnchor>,
-    ) {
-        self.enter_menu(AppScreen::Menu(kind));
-        if let Some(game) = self.game.as_mut() {
-            game.open_gui_screen(kind, anchor);
+    fn open_gui(&mut self, kind: GuiKind, anchor: Option<petramond::menu::MenuAnchor>) {
+        self.set_screen(AppScreen::Menu(kind));
+        if let Some(session) = self.session.as_mut() {
+            session.game.open_gui_screen(kind, anchor);
         }
     }
 
-    /// Shared menu-open bookkeeping: release the pointer grab, show + recenter the
-    /// cursor next tick, and clear any stale click streak so the first click
-    /// can't register a phantom double.
-    fn enter_menu(&mut self, screen: AppScreen) {
-        // The player-crafting browser is the compound controller behind
-        // every crafting-station kind (engine station or pack workbench).
-        if matches!(
-            screen,
-            AppScreen::Menu(k) if petramond_world::crafting::CraftingStation::of_kind(k).is_some()
-        ) {
-            self.crafting_browser.reset();
-        }
-        self.screen = screen;
-        self.controls.pointer.release_for_menu();
-        self.gui_router.reset_click_streak();
-    }
-
-    /// Close any open menu: recover transient cursor/output/input stacks, drop
-    /// back to gameplay, and re-grab the pointer. The chest-close SOUND is event-driven
-    /// now: the server's viewer release emits a positional `ChestClosed` world
-    /// event on the tick this close lands on (so every observer hears it, at
-    /// the chest).
+    /// Close any open menu: recover transient cursor/output/input stacks and
+    /// drop back to gameplay. The chest-close SOUND is event-driven now: the
+    /// server's viewer release emits a positional `ChestClosed` world event
+    /// on the tick this close lands on (so every observer hears it, at the
+    /// chest).
     pub(super) fn close_menu(&mut self) {
-        self.session_ui.library_form.pending_delete = None;
-        if let Some(game) = self.game.as_mut() {
-            game.cancel_pending_paste();
-            game.close_open_menu();
+        if let Some(session) = self.session.as_mut() {
+            session.game.cancel_pending_paste();
+            session.game.close_open_menu();
         }
-        self.screen = AppScreen::Game;
-        self.crafting_browser.reset();
-        self.controls.pointer.grab_for_gameplay();
-    }
-
-    pub(super) fn close_screen(&mut self) -> bool {
-        if matches!(self.screen, AppScreen::Chat) {
-            self.chat.clear_draft(super::now_seconds());
-            self.screen = AppScreen::Game;
-            self.controls.pointer.grab_for_gameplay();
-            true
-        } else if self.screen.client_ui_open() {
-            self.screen = AppScreen::Game;
-            self.controls.pointer.grab_for_gameplay();
-            true
-        } else if self.screen.client_canvas_open() {
-            self.client_canvas = None;
-            self.screen = AppScreen::Game;
-            self.controls.pointer.grab_for_gameplay();
-            true
-        } else if self.screen.ui_open() {
-            self.close_menu();
-            true
-        } else if matches!(self.screen, AppScreen::Sleeping) {
-            self.cancel_sleep();
-            true
-        } else if matches!(self.screen, AppScreen::Dead) {
-            // Death cannot be escaped — only the screen's buttons leave.
-            true
-        } else if matches!(self.screen, AppScreen::Game) {
-            if self
-                .game
-                .as_mut()
-                .is_some_and(|game| game.cancel_world_tools())
-            {
-                return true;
-            }
-            self.open_pause();
-            true
-        } else if matches!(self.screen, AppScreen::Pause) {
-            self.resume_game();
-            true
-        } else if matches!(self.screen, AppScreen::Options) {
-            self.close_options_root();
-            true
-        } else if self.screen.options_open() {
-            // A category screen. ESC while a remap is armed only cancels the
-            // remap (the raw-input capture path normally eats ESC first; this
-            // covers direct control dispatch, e.g. tests).
-            if self.options.remap().is_some() {
-                self.options.cancel_remap();
-            } else {
-                self.close_options_category();
-            }
-            true
-        } else if matches!(self.screen, AppScreen::CreateWorld | AppScreen::DeleteWorld) {
-            self.shell.close_page();
-            self.screen = AppScreen::WorldSelect;
-            self.controls.pointer.release_for_menu();
-            true
-        } else if matches!(self.screen, AppScreen::WorldSettings) {
-            self.shell.close_page();
-            self.screen = AppScreen::WorldSelect;
-            self.controls.pointer.release_for_menu();
-            true
-        } else if matches!(self.screen, AppScreen::ConnectServer) {
-            self.shell.connect.cancel();
-            self.screen = AppScreen::Title;
-            self.controls.pointer.release_for_menu();
-            true
-        } else if matches!(self.screen, AppScreen::ModsMissing) {
-            // Back to the connect screen, attempted address preserved.
-            self.reopen_connect_server();
-            true
-        } else if matches!(
-            self.screen,
-            AppScreen::ConnectionLost | AppScreen::WorldSelect
-        ) {
-            self.screen = AppScreen::Title;
-            self.controls.pointer.release_for_menu();
-            true
-        } else {
-            false
-        }
+        self.set_screen(AppScreen::Game);
     }
 }

@@ -23,10 +23,10 @@ use std::sync::Arc;
 use petramond::player::RigId;
 use petramond_anim::expr::intern;
 use petramond_anim::{Animator, EventId, Graph, ParamId};
+use petramond_render::HeldItemFrame;
 use petramond_world::item::ItemType;
 
-use crate::animator_claims::ClaimDriver;
-use crate::{AnimatorInputs, HeldItemFrame};
+use super::claims::{AnimatorInputs, ClaimDriver};
 
 type HandInput = fn(&HeldItemFrame) -> f32;
 

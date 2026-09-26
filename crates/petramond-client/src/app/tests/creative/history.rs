@@ -24,7 +24,7 @@ fn redo_chord_replays_selection_once_and_respects_menu_and_wand_routing() {
     let slot = (0..9)
         .find(|i| app.inventory().slot(*i).is_some_and(|s| s.item == wand))
         .unwrap();
-    let game = app.game.as_mut().unwrap();
+    let game = app.game_mut();
     game.set_active_hotbar(slot as u8);
     for x in 0..3 {
         game.tools.world
@@ -54,9 +54,7 @@ fn redo_chord_replays_selection_once_and_respects_menu_and_wand_routing() {
     shortcut(&mut app, true);
     assert_eq!(app.game().tools.world.selection.selection.len(), 3);
 
-    app.game
-        .as_mut()
-        .unwrap()
+    app.game_mut()
         .tools.world
         .selection
         .set_pending_corner([5; 3]);
@@ -70,7 +68,7 @@ fn redo_chord_replays_selection_once_and_respects_menu_and_wand_routing() {
     );
 
     for preview in [false, true] {
-        let game = app.game.as_mut().unwrap();
+        let game = app.game_mut();
         game.set_active_hotbar(if preview { slot as u8 } else { 0 });
         if preview {
             game.tools.preview
@@ -78,7 +76,7 @@ fn redo_chord_replays_selection_once_and_respects_menu_and_wand_routing() {
         }
         game.take_outbox_for_test();
         shortcut(&mut app, true);
-        let sent = app.game.as_mut().unwrap().take_outbox_for_test();
+        let sent = app.game_mut().take_outbox_for_test();
         assert_eq!(
             sent,
             vec![ClientToServer::Action(PlayerAction::Creative(
@@ -86,16 +84,9 @@ fn redo_chord_replays_selection_once_and_respects_menu_and_wand_routing() {
             ))]
         );
     }
-    app.server.sessions_mut()[0].player_mut().set_mode(PlayerMode::Survival);
-    let state = app.server.build_self_state(0);
-    app.game
-        .as_mut()
-        .unwrap()
-        .apply_tick_update(Box::new(petramond::net::protocol::TickUpdate {
-            self_state: Some(state),
-            ..Default::default()
-        }));
+    app.set_server_player_mode(PlayerMode::Survival);
+    app.sync_server_self_state();
     assert!(!app.game().creative_mode());
     shortcut(&mut app, true);
-    assert!(app.game.as_mut().unwrap().take_outbox_for_test().is_empty());
+    assert!(app.game_mut().take_outbox_for_test().is_empty());
 }

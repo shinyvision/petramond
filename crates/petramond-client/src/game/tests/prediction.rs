@@ -1,13 +1,14 @@
-//! Optimistic client prediction: ledger rollback, mining deny, movement snap.
+//! Optimistic client prediction: ledger rollback, menu and placement
+//! prediction, mining deny. Movement claims live in `movement_claims.rs`.
 
 use super::common::*;
 use crate::game::prediction::PredictionSnapshot;
 use crate::game::tick::{GameInput, PlacePrediction};
 use petramond::events::tick::{TickEvents, TICK_DT};
 use petramond::net::protocol::{
-    ActionDenyReason, ClientToServer, MenuSlotWire, PlayerAction, SelfTransform, TickUpdate,
+    ActionDenyReason, ClientToServer, MenuSlotWire, PlayerAction, TickUpdate,
 };
-use petramond_math::math::{IVec3, Vec3};
+use petramond_math::math::IVec3;
 use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::gui_state::PointerButton;
@@ -16,13 +17,13 @@ use petramond_world::gui_state::{GuiKind, MenuSlot};
 #[test]
 fn menu_click_deny_restores_inventory_snapshot() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory = filled_inventory();
+    game.server_player_mut().inventory = filled_inventory();
     game.sync_self_view_for_test();
 
-    let before_cursor = game.self_view.inventory.cursor().copied();
+    let before_cursor = game.replica.self_view.inventory.cursor().copied();
     game.menu_click(MenuSlot::Inventory(0), PointerButton::Primary, false, false);
     assert!(
-        game.self_view.inventory.cursor().is_some(),
+        game.replica.self_view.inventory.cursor().is_some(),
         "optimistic pick onto cursor"
     );
 
@@ -46,17 +47,17 @@ fn menu_click_deny_restores_inventory_snapshot() {
 fn mixed_menu_drag_prediction_rolls_back_as_one_unit_on_deny() {
     let mut game = game();
     game.game
-        .self_view
+        .replica.self_view
         .inventory
         .add(petramond_world::item::ItemStack::new(
             petramond_world::item::ItemType::Grass,
             10,
         ));
-    game.game.self_view.inventory.click_slot(0);
-    game.game.menu_view.container = Some(petramond_world::gui_state::ContainerView {
+    game.game.replica.self_view.inventory.click_slot(0);
+    game.game.replica.menu_view.container = Some(petramond_world::gui_state::ContainerView {
         slots: vec![None; petramond::world::chest::CHEST_SLOTS],
     });
-    game.game.menu_view.container_kind =
+    game.game.replica.menu_view.container_kind =
         petramond_world::gui_state::resolve_kind("petramond:chest");
 
     game.game.menu_drag(
@@ -64,17 +65,17 @@ fn mixed_menu_drag_prediction_rolls_back_as_one_unit_on_deny() {
         vec![MenuSlot::Inventory(9), MenuSlot::Container(0)],
         PointerButton::Primary,
     );
-    assert!(game.game.self_view.inventory.cursor().is_none());
+    assert!(game.game.replica.self_view.inventory.cursor().is_none());
     assert_eq!(
         game.game
-            .self_view
+            .replica.self_view
             .inventory
             .slot(9)
             .map(|stack| stack.count),
         Some(5)
     );
     assert_eq!(
-        game.game.menu_view.container.as_ref().unwrap().slots[0].map(|stack| stack.count),
+        game.game.replica.menu_view.container.as_ref().unwrap().slots[0].map(|stack| stack.count),
         Some(5)
     );
 
@@ -87,34 +88,32 @@ fn mixed_menu_drag_prediction_rolls_back_as_one_unit_on_deny() {
     }));
     assert_eq!(
         game.game
-            .self_view
+            .replica.self_view
             .inventory
             .cursor()
             .map(|stack| stack.count),
         Some(10)
     );
-    assert!(game.game.self_view.inventory.slot(9).is_none());
-    assert!(game.game.menu_view.container.as_ref().unwrap().slots[0].is_none());
+    assert!(game.game.replica.self_view.inventory.slot(9).is_none());
+    assert!(game.game.replica.menu_view.container.as_ref().unwrap().slots[0].is_none());
 }
 
 #[test]
 fn accepted_menu_drag_prediction_reconciles_without_double_applying() {
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
-    game.server.world_mut().set_block_world(3, 64, 3, Block::Chest);
-    game.server
-        .world_mut()
+    game.server_world_mut().set_block_world(3, 64, 3, Block::Chest);
+    game.server_world_mut()
         .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
-    game.server.sessions_mut()[0]
-        .player_mut()
+    game.server_player_mut()
         .inventory
         .add(petramond_world::item::ItemStack::new(
             petramond_world::item::ItemType::Grass,
             10,
         ));
-    game.server.sessions_mut()[0].player_mut().inventory.click_slot(0);
+    game.server_player_mut().inventory.click_slot(0);
     let mut ev = TickEvents::default();
-    game.server.open_chest_screen_for(0, pos, &mut ev);
+    game.sim_mut().open_chest_screen_for(0, pos, &mut ev);
     game.sync_self_view_for_test();
     game.sync_menu_view_for_test();
 
@@ -124,10 +123,10 @@ fn accepted_menu_drag_prediction_reconciles_without_double_applying() {
         PointerButton::Primary,
     );
     assert_eq!(game.game.prediction.pending_len(), 1);
-    assert!(game.game.self_view.inventory.cursor().is_none());
+    assert!(game.game.replica.self_view.inventory.cursor().is_none());
     assert_eq!(
         game.game
-            .self_view
+            .replica.self_view
             .inventory
             .slot(9)
             .map(|stack| stack.count),
@@ -135,7 +134,7 @@ fn accepted_menu_drag_prediction_reconciles_without_double_applying() {
     );
     assert_eq!(
         game.game
-            .menu_view
+            .replica.menu_view
             .container
             .as_ref()
             .and_then(|chest| chest.slots[0])
@@ -146,10 +145,10 @@ fn accepted_menu_drag_prediction_reconciles_without_double_applying() {
     game.tick(TICK_DT, &GameInput::default());
 
     assert_eq!(game.game.prediction.pending_len(), 0);
-    assert!(game.game.self_view.inventory.cursor().is_none());
+    assert!(game.game.replica.self_view.inventory.cursor().is_none());
     assert_eq!(
         game.game
-            .self_view
+            .replica.self_view
             .inventory
             .slot(9)
             .map(|stack| stack.count),
@@ -157,7 +156,7 @@ fn accepted_menu_drag_prediction_reconciles_without_double_applying() {
     );
     assert_eq!(
         game.game
-            .menu_view
+            .replica.menu_view
             .container
             .as_ref()
             .and_then(|chest| chest.slots[0])
@@ -179,21 +178,19 @@ fn accepted_menu_drag_prediction_reconciles_without_double_applying() {
 fn a_drag_leg_over_a_filtered_slot_predicts_what_the_server_applies() {
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
-    game.server.world_mut().set_block_world(3, 64, 3, Block::Furnace);
-    game.server
-        .world_mut()
+    game.server_world_mut().set_block_world(3, 64, 3, Block::Furnace);
+    game.server_world_mut()
         .insert_furnace(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
     // Grass is neither fuel nor smeltable, so the furnace's fuel slot refuses
     // it — the one slot of the gesture that is not a destination.
-    game.server.sessions_mut()[0]
-        .player_mut()
+    game.server_player_mut()
         .inventory
         .add(petramond_world::item::ItemStack::new(
             petramond_world::item::ItemType::Grass,
             10,
         ));
-    game.server.sessions_mut()[0].player_mut().inventory.click_slot(0);
-    game.server.open_furnace_screen_for(0, pos);
+    game.server_player_mut().inventory.click_slot(0);
+    game.sim_mut().open_furnace_screen_for(0, pos);
     game.sync_self_view_for_test();
     game.sync_menu_view_for_test();
 
@@ -205,7 +202,7 @@ fn a_drag_leg_over_a_filtered_slot_predicts_what_the_server_applies() {
         ],
         PointerButton::Primary,
     );
-    let predicted_inv = game.game.self_view.inventory.slot(9).map(|s| s.count);
+    let predicted_inv = game.game.replica.self_view.inventory.slot(9).map(|s| s.count);
     assert_eq!(
         predicted_inv,
         Some(10),
@@ -214,8 +211,7 @@ fn a_drag_leg_over_a_filtered_slot_predicts_what_the_server_applies() {
 
     game.tick(TICK_DT, &GameInput::default());
     assert_eq!(
-        game.server.sessions()[0]
-            .player()
+        game.server_player()
             .inventory
             .slot(9)
             .map(|s| s.count),
@@ -223,8 +219,7 @@ fn a_drag_leg_over_a_filtered_slot_predicts_what_the_server_applies() {
         "the server split the same way the client predicted"
     );
     assert!(
-        game.server
-            .world()
+        game.server_world()
             .container_at(pos)
             .is_some_and(|c| c.slots[petramond_world::furnace::SLOT_FUEL].is_none()),
         "and nothing reached the filtered slot"
@@ -239,20 +234,18 @@ fn a_drag_leg_over_a_filtered_slot_predicts_what_the_server_applies() {
 fn predicted_chest_slot_click_applies_immediately_and_survives_reconcile() {
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
-    game.server.world_mut().set_block_world(3, 64, 3, Block::Chest);
-    game.server
-        .world_mut()
+    game.server_world_mut().set_block_world(3, 64, 3, Block::Chest);
+    game.server_world_mut()
         .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
-    game.server.sessions_mut()[0]
-        .player_mut()
+    game.server_player_mut()
         .inventory
         .add(petramond_world::item::ItemStack::new(
             petramond_world::item::ItemType::Grass,
             10,
         ));
-    game.server.sessions_mut()[0].player_mut().inventory.click_slot(0);
+    game.server_player_mut().inventory.click_slot(0);
     let mut ev = TickEvents::default();
-    game.server.open_chest_screen_for(0, pos, &mut ev);
+    game.sim_mut().open_chest_screen_for(0, pos, &mut ev);
     game.sync_self_view_for_test();
     game.sync_menu_view_for_test();
 
@@ -263,13 +256,13 @@ fn predicted_chest_slot_click_applies_immediately_and_survives_reconcile() {
         false,
     );
     assert_eq!(
-        game.game.menu_view.container.as_ref().unwrap().slots[0].map(|stack| stack.count),
+        game.game.replica.menu_view.container.as_ref().unwrap().slots[0].map(|stack| stack.count),
         Some(1),
         "the mirror slot fills at click time"
     );
     assert_eq!(
         game.game
-            .self_view
+            .replica.self_view
             .inventory
             .cursor()
             .map(|stack| stack.count),
@@ -281,13 +274,13 @@ fn predicted_chest_slot_click_applies_immediately_and_survives_reconcile() {
 
     assert_eq!(game.game.prediction.pending_len(), 0);
     assert_eq!(
-        game.game.menu_view.container.as_ref().unwrap().slots[0].map(|stack| stack.count),
+        game.game.replica.menu_view.container.as_ref().unwrap().slots[0].map(|stack| stack.count),
         Some(1),
         "the authoritative pair confirms the prediction in place"
     );
     assert_eq!(
         game.game
-            .self_view
+            .replica.self_view
             .inventory
             .cursor()
             .map(|stack| stack.count),
@@ -307,14 +300,14 @@ fn a_stale_authoritative_pair_does_not_stomp_a_newer_pending_click() {
     let pos = IVec3::new(3, 64, 3);
     let mut game = game();
     game.game
-        .self_view
+        .replica.self_view
         .inventory
         .add(petramond_world::item::ItemStack::new(grass, 10));
-    game.game.self_view.inventory.click_slot(0);
-    game.game.menu_view.container = Some(petramond_world::gui_state::ContainerView {
+    game.game.replica.self_view.inventory.click_slot(0);
+    game.game.replica.menu_view.container = Some(petramond_world::gui_state::ContainerView {
         slots: vec![None; petramond::world::chest::CHEST_SLOTS],
     });
-    game.game.menu_view.container_kind =
+    game.game.replica.menu_view.container_kind =
         petramond_world::gui_state::resolve_kind("petramond:chest");
 
     game.game.menu_click(
@@ -330,11 +323,11 @@ fn a_stale_authoritative_pair_does_not_stomp_a_newer_pending_click() {
         false,
     );
     let chest_count = |game: &TestGame| {
-        game.game.menu_view.container.as_ref().unwrap().slots[0].map(|stack| stack.count)
+        game.game.replica.menu_view.container.as_ref().unwrap().slots[0].map(|stack| stack.count)
     };
     let cursor_count = |game: &TestGame| {
         game.game
-            .self_view
+            .replica.self_view
             .inventory
             .cursor()
             .map(|stack| stack.count)
@@ -418,18 +411,15 @@ fn break_finished_without_observed_mining_is_denied() {
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(2, 64, 2);
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
 
-    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(2.5, 65.0, 4.5);
-    game.server.sessions_mut()[0].input_mut().claim_pos = game.server.sessions()[0].player().pos;
+    game.server_player_mut().pos = WorldPos::new(2.5, 65.0, 4.5);
+    game.session_mut().claim_pos = game.server_player().pos;
 
     // Never started mining: the finish is TooFast-deferred, then abandoned
     // in the same tick (no active target) — deny + corrective, no clear.
-    game.server.apply_message(
-        0,
-        ClientToServer::Action(PlayerAction::BreakFinished {
+    game.send_to_server(ClientToServer::Action(PlayerAction::BreakFinished {
             request_id: 7,
             pos,
             tool_item_id: None,
@@ -437,19 +427,19 @@ fn break_finished_without_observed_mining_is_denied() {
         }),
     );
     let mut ev = TickEvents::default();
-    game.server.tick_mining(0, &mut ev);
+    game.sim_mut().tick_mining(0, &mut ev);
     assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(pos.x, pos.y, pos.z)),
+        Block::from_id(game.server_world().chunk_block(pos.x, pos.y, pos.z)),
         Block::Stone,
         "too-fast break must not clear the cell"
     );
-    let outcomes = &game.server.sessions()[0].replication().pending_action_outcomes;
+    let outcomes = &game.session().pending_action_outcomes;
     assert_eq!(outcomes.len(), 1);
     assert!(!outcomes[0].accepted);
     assert_eq!(outcomes[0].reason, Some(ActionDenyReason::TooFast));
     assert!(
-        game.server.sessions()[0]
-            .replication().pending_corrective_cells
+        game.session()
+            .pending_corrective_cells
             .contains(&pos),
         "abandoned TooFast must correct the optimistic clear"
     );
@@ -461,48 +451,42 @@ fn two_instabreak_finishes_in_one_tick_window_both_accept() {
     let a = IVec3::new(2, 64, 2);
     let b = IVec3::new(3, 64, 2);
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .set_block_world(a.x, a.y, a.z, Block::Poppy));
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .set_block_world(b.x, b.y, b.z, Block::Poppy));
-    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(2.5, 65.0, 4.5);
-    game.server.sessions_mut()[0].input_mut().claim_pos = game.server.sessions()[0].player().pos;
+    game.server_player_mut().pos = WorldPos::new(2.5, 65.0, 4.5);
+    game.session_mut().claim_pos = game.server_player().pos;
 
     // Two instabreak blocks broken back-to-back land in the same tick window.
-    game.server.apply_message(
-        0,
-        ClientToServer::Action(PlayerAction::BreakFinished {
+    game.send_to_server(ClientToServer::Action(PlayerAction::BreakFinished {
             request_id: 1,
             pos: a,
             tool_item_id: None,
             predicted: true,
         }),
     );
-    game.server.apply_message(
-        0,
-        ClientToServer::Action(PlayerAction::BreakFinished {
+    game.send_to_server(ClientToServer::Action(PlayerAction::BreakFinished {
             request_id: 2,
             pos: b,
             tool_item_id: None,
             predicted: true,
         }),
     );
-    game.server.tick_mining(0, &mut TickEvents::default());
+    game.sim_mut().tick_mining(0, &mut TickEvents::default());
 
     assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(a.x, a.y, a.z)),
+        Block::from_id(game.server_world().chunk_block(a.x, a.y, a.z)),
         Block::Air,
         "the first instabreak must clear its cell"
     );
     assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(b.x, b.y, b.z)),
+        Block::from_id(game.server_world().chunk_block(b.x, b.y, b.z)),
         Block::Air,
         "the second instabreak must clear its cell"
     );
-    let outcomes = &game.server.sessions()[0].replication().pending_action_outcomes;
+    let outcomes = &game.session().pending_action_outcomes;
     assert!(
         outcomes.iter().any(|o| o.id == 1 && o.accepted),
         "the first finish must accept, got {outcomes:?}"
@@ -512,7 +496,7 @@ fn two_instabreak_finishes_in_one_tick_window_both_accept() {
         "the second finish must accept, got {outcomes:?}"
     );
     assert!(
-        game.server.sessions()[0].replication().pending_corrective_cells.is_empty(),
+        game.session().pending_corrective_cells.is_empty(),
         "no corrective cells for two legitimate instabreaks"
     );
 }
@@ -522,60 +506,56 @@ fn lagged_break_finished_after_hold_path_accepts_without_restore() {
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(8, 64, 8);
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
-    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(8.5, 65.0, 10.5);
-    game.server.sessions_mut()[0].input_mut().claim_pos = game.server.sessions()[0].player().pos;
+    game.server_player_mut().pos = WorldPos::new(8.5, 65.0, 10.5);
+    game.session_mut().claim_pos = game.server_player().pos;
 
     let mut u = player_update(&game, true);
     u.break_held = true;
     u.target = Some(hit(pos, IVec3::new(0, 0, 1)));
-    game.server
-        .apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.send_to_server(ClientToServer::PlayerUpdate(u));
 
     // Hold-path clears the cell BEFORE BreakFinished arrives (slow uplink).
     let expected_ticks =
         (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     for _ in 0..expected_ticks + 2 {
-        game.server.tick_mining(0, &mut TickEvents::default());
-        if Block::from_id(game.server.world().data().chunk_block(pos.x, pos.y, pos.z)) == Block::Air {
+        game.sim_mut().tick_mining(0, &mut TickEvents::default());
+        if Block::from_id(game.server_world().chunk_block(pos.x, pos.y, pos.z)) == Block::Air {
             break;
         }
     }
     assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(pos.x, pos.y, pos.z)),
+        Block::from_id(game.server_world().chunk_block(pos.x, pos.y, pos.z)),
         Block::Air
     );
     assert!(
-        game.server.sessions()[0].input().pending_break_ack.contains_key(&pos),
+        game.session().pending_break_ack.contains_key(&pos),
         "hold-path owes a BreakFinished accept"
     );
 
-    game.server.apply_message(
-        0,
-        ClientToServer::Action(PlayerAction::BreakFinished {
+    game.send_to_server(ClientToServer::Action(PlayerAction::BreakFinished {
             request_id: 22,
             pos,
             tool_item_id: None,
             predicted: true,
         }),
     );
-    game.server.tick_mining(0, &mut TickEvents::default());
+    game.sim_mut().tick_mining(0, &mut TickEvents::default());
     assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(pos.x, pos.y, pos.z)),
+        Block::from_id(game.server_world().chunk_block(pos.x, pos.y, pos.z)),
         Block::Air,
         "lagged finish must NOT restore the block"
     );
     assert!(
-        game.server.sessions()[0]
-            .replication().pending_action_outcomes
+        game.session()
+            .pending_action_outcomes
             .iter()
             .any(|o| o.id == 22 && o.accepted),
         "lagged finish after own hold-path must accept"
     );
     assert!(
-        game.server.sessions()[0].replication().pending_corrective_cells.is_empty(),
+        game.session().pending_corrective_cells.is_empty(),
         "accept must not ship corrective cells"
     );
 }
@@ -585,45 +565,41 @@ fn early_break_finished_defers_then_accepts_on_hold_path_without_restore() {
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(8, 64, 8);
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
-    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(8.5, 65.0, 10.5);
-    game.server.sessions_mut()[0].input_mut().claim_pos = game.server.sessions()[0].player().pos;
+    game.server_player_mut().pos = WorldPos::new(8.5, 65.0, 10.5);
+    game.session_mut().claim_pos = game.server_player().pos;
 
     // Start the server's observed mining window.
     let mut u = player_update(&game, true);
     u.break_held = true;
     u.target = Some(hit(pos, IVec3::new(0, 0, 1)));
-    game.server
-        .apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.send_to_server(ClientToServer::PlayerUpdate(u));
 
     // One tick of progress — far short of stone's break time.
-    game.server.tick_mining(0, &mut TickEvents::default());
-    game.server.apply_message(
-        0,
-        ClientToServer::Action(PlayerAction::BreakFinished {
+    game.sim_mut().tick_mining(0, &mut TickEvents::default());
+    game.send_to_server(ClientToServer::Action(PlayerAction::BreakFinished {
             request_id: 11,
             pos,
             tool_item_id: None,
             predicted: true,
         }),
     );
-    game.server.tick_mining(0, &mut TickEvents::default());
+    game.sim_mut().tick_mining(0, &mut TickEvents::default());
     assert!(
-        game.server.sessions()[0].replication().pending_action_outcomes.is_empty(),
+        game.session().pending_action_outcomes.is_empty(),
         "TooFast while mining must defer, not deny (no restore)"
     );
     assert!(
-        game.server.sessions()[0].input().deferred_break_finished.is_some(),
+        game.session().deferred_break_finished.is_some(),
         "the finish waits for the hold-path"
     );
     assert!(
-        game.server.sessions()[0].replication().pending_corrective_cells.is_empty(),
+        game.session().pending_corrective_cells.is_empty(),
         "deferred TooFast must not ship corrective cells"
     );
     assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(pos.x, pos.y, pos.z)),
+        Block::from_id(game.server_world().chunk_block(pos.x, pos.y, pos.z)),
         Block::Stone,
         "server cell stays until the hold-path finishes"
     );
@@ -632,23 +608,23 @@ fn early_break_finished_defers_then_accepts_on_hold_path_without_restore() {
     let expected_ticks =
         (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     for _ in 0..expected_ticks + 2 {
-        game.server.tick_mining(0, &mut TickEvents::default());
-        if Block::from_id(game.server.world().data().chunk_block(pos.x, pos.y, pos.z)) == Block::Air {
+        game.sim_mut().tick_mining(0, &mut TickEvents::default());
+        if Block::from_id(game.server_world().chunk_block(pos.x, pos.y, pos.z)) == Block::Air {
             break;
         }
     }
     assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(pos.x, pos.y, pos.z)),
+        Block::from_id(game.server_world().chunk_block(pos.x, pos.y, pos.z)),
         Block::Air,
         "hold-path clears the cell"
     );
-    let outcomes = &game.server.sessions()[0].replication().pending_action_outcomes;
+    let outcomes = &game.session().pending_action_outcomes;
     assert!(
         outcomes.iter().any(|o| o.id == 11 && o.accepted),
         "deferred finish accepts when the hold-path breaks, got {outcomes:?}"
     );
     assert!(
-        game.server.sessions()[0].replication().presented_breaks.contains(&pos),
+        game.session().presented_breaks.contains(&pos),
         "a deferred PREDICTED finish strips the initiator's BlockBroken"
     );
 }
@@ -658,225 +634,63 @@ fn break_finished_after_the_observed_mining_window_is_accepted() {
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(8, 64, 8);
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
-    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(8.5, 65.0, 10.5);
+    game.server_player_mut().pos = WorldPos::new(8.5, 65.0, 10.5);
 
     // Latch a held break on the target: the server's own mining timer is the
     // observation the finish is validated against.
     let mut u = player_update(&game, true);
     u.break_held = true;
     u.target = Some(hit(pos, IVec3::new(0, 0, 1)));
-    game.server
-        .apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.send_to_server(ClientToServer::PlayerUpdate(u));
 
     let expected_ticks =
         (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     // Hold just short of the server's own finish, then deliver the client's.
     for _ in 0..expected_ticks - 2 {
-        game.server.tick_mining(0, &mut TickEvents::default());
+        game.sim_mut().tick_mining(0, &mut TickEvents::default());
     }
-    game.server.apply_message(
-        0,
-        ClientToServer::Action(PlayerAction::BreakFinished {
+    game.send_to_server(ClientToServer::Action(PlayerAction::BreakFinished {
             request_id: 6,
             pos,
             tool_item_id: None,
             predicted: true,
         }),
     );
-    game.server.tick_mining(0, &mut TickEvents::default());
+    game.sim_mut().tick_mining(0, &mut TickEvents::default());
     assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(pos.x, pos.y, pos.z)),
+        Block::from_id(game.server_world().chunk_block(pos.x, pos.y, pos.z)),
         Block::Air,
         "an observed full mining window accepts the client's finish"
     );
-    let outcomes = &game.server.sessions()[0].replication().pending_action_outcomes;
+    let outcomes = &game.session().pending_action_outcomes;
     assert!(outcomes.iter().any(|o| o.id == 6 && o.accepted));
-}
-
-/// F1 movement-claim validation: every case sends ONE `PlayerUpdate` claim
-/// from the same airborne start, ticks movement, and asserts the claim was
-/// soft-accepted verbatim or rejected (the integrated result stays near the
-/// start). Claims that assert other quantities — anti-noclip geometry, reach,
-/// fall-damage tracking — keep their own tests.
-#[test]
-fn movement_claim_validation_cases() {
-    enum Expect {
-        /// The claim transform is adopted exactly (velocity too when flagged).
-        Accepted { adopts_vel: bool },
-        /// The claim is refused: the kept position stays within this distance
-        /// of the start.
-        RejectedWithin(f32),
-    }
-    struct Case {
-        label: &'static str,
-        /// Free-run ticks between an at-rest claim and the claim under test
-        /// (a slow client's report gap widens the drift ring).
-        gap_ticks: usize,
-        claim_offset: Vec3,
-        claim_vel: Vec3,
-        /// `Some` overrides the claim's grounded flag.
-        on_ground: Option<bool>,
-        expect: Expect,
-    }
-    let cases = [
-        Case {
-            label: "impossible speed claim keeps the integrated pos",
-            gap_ticks: 0,
-            claim_offset: Vec3::new(50.0, 0.0, 0.0),
-            claim_vel: Vec3::new(200.0, 0.0, 0.0),
-            on_ground: None,
-            expect: Expect::RejectedWithin(5.0),
-        },
-        Case {
-            // A position jump under an innocent velocity must not teleport.
-            label: "teleport claim with a plausible velocity",
-            gap_ticks: 0,
-            claim_offset: Vec3::new(50.0, 0.0, 0.0),
-            claim_vel: Vec3::ZERO,
-            on_ground: None,
-            expect: Expect::RejectedWithin(5.0),
-        },
-        Case {
-            // A sideways hop far beyond any legitimate horizontal speed,
-            // under an innocent velocity — the old isotropic (terminal-speed)
-            // ring accepted this; the per-axis ring must not.
-            label: "horizontal teleport inside the old isotropic ring",
-            gap_ticks: 0,
-            claim_offset: Vec3::new(3.5, 0.0, 0.0),
-            claim_vel: Vec3::new(5.0, 0.0, 0.0),
-            on_ground: None,
-            expect: Expect::RejectedWithin(2.0),
-        },
-        Case {
-            // Take-off frame of a sprint jump: horizontal sprint + full jump
-            // speed. The caps are per-axis, so the combined magnitude must
-            // still pass.
-            label: "sprint-jump take-off frame",
-            gap_ticks: 0,
-            claim_offset: Vec3::new(0.2, 0.0, 0.0),
-            claim_vel: Vec3::new(5.6, 8.4, 0.0),
-            on_ground: Some(false),
-            expect: Expect::Accepted { adopts_vel: true },
-        },
-        Case {
-            // A slow client free-runs several server ticks with no fresh
-            // claim, so its next report legitimately drifted further than one
-            // frame's worth. The closeness ring scales with the claim gap —
-            // no rubber-banding.
-            label: "claim after a slow-client gap",
-            gap_ticks: 4,
-            claim_offset: Vec3::new(3.5, 0.0, 0.0),
-            claim_vel: Vec3::new(5.6, 0.0, 0.0),
-            on_ground: None,
-            expect: Expect::Accepted { adopts_vel: false },
-        },
-    ];
-
-    for case in cases {
-        let mut game = game_on_empty_chunk();
-        let start = WorldPos::new(8.5, 70.0, 8.5);
-        game.server.sessions_mut()[0].player_mut().pos = start;
-        if case.gap_ticks > 0 {
-            let mut u = player_update(&game, true);
-            u.transform.pos = start;
-            u.transform.vel = Vec3::ZERO;
-            game.server
-                .apply_message(0, ClientToServer::PlayerUpdate(u));
-            game.server.tick_movement(0);
-            for _ in 0..case.gap_ticks {
-                game.server.tick_movement(0);
-            }
-        }
-
-        let mut u = player_update(&game, true);
-        u.transform.pos = start + case.claim_offset;
-        u.transform.vel = case.claim_vel;
-        if let Some(on_ground) = case.on_ground {
-            u.on_ground = on_ground;
-        }
-        let claim = u;
-        game.server
-            .apply_message(0, ClientToServer::PlayerUpdate(u));
-        game.server.tick_movement(0);
-
-        let sess = &game.server.sessions()[0];
-        let after = sess.player().pos;
-        match case.expect {
-            Expect::Accepted { adopts_vel } => {
-                assert_eq!(
-                    after, claim.transform.pos,
-                    "[{}] a legitimate claim must be soft-accepted",
-                    case.label
-                );
-                if adopts_vel {
-                    assert_eq!(
-                        sess.player().vel, claim.transform.vel,
-                        "[{}] the accepted claim's velocity is adopted",
-                        case.label
-                    );
-                }
-            }
-            Expect::RejectedWithin(max_drift) => {
-                assert!(
-                    (after - start).length() < max_drift,
-                    "[{}] the claim must not be adopted (start={start:?} after={after:?})",
-                    case.label
-                );
-            }
-        }
-    }
-}
-
-#[test]
-fn claim_inside_solid_geometry_is_rejected() {
-    let mut game = game_on_empty_chunk();
-    assert!(game.server.world_mut().set_block_world(8, 64, 8, Block::Stone));
-    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(8.5, 66.0, 8.5);
-    let mut u = player_update(&game, true);
-    u.transform.pos = WorldPos::new(8.5, 64.3, 8.5); // feet well inside the stone cell
-    u.transform.vel = Vec3::ZERO;
-    game.server
-        .apply_message(0, ClientToServer::PlayerUpdate(u));
-    game.server.tick_movement(0);
-    let after = game.server.sessions()[0].player().pos;
-    assert!(
-        after.y > 65.0,
-        "a claim inside solid geometry must not be adopted (after={after:?})"
-    );
 }
 
 #[test]
 fn each_queued_drop_in_one_tick_window_gets_its_own_outcome() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory = filled_inventory();
-    game.server.apply_message(
-        0,
-        ClientToServer::Action(PlayerAction::Drop {
+    game.server_player_mut().inventory = filled_inventory();
+    game.send_to_server(ClientToServer::Action(PlayerAction::Drop {
             all: false,
             request_id: 11,
         }),
     );
-    game.server.apply_message(
-        0,
-        ClientToServer::Action(PlayerAction::Drop {
+    game.send_to_server(ClientToServer::Action(PlayerAction::Drop {
             all: false,
             request_id: 12,
         }),
     );
     // Nothing on the cursor: the throw cannot even queue, denied immediately.
-    game.server.apply_message(
-        0,
-        ClientToServer::Action(PlayerAction::ThrowCursor {
+    game.send_to_server(ClientToServer::Action(PlayerAction::ThrowCursor {
             amount: petramond::net::protocol::ThrowAmount::One,
             request_id: 13,
         }),
     );
     let mut ev = TickEvents::default();
-    game.server.tick_drops(0, &mut ev);
-    let outcomes = &game.server.sessions()[0].replication().pending_action_outcomes;
+    game.sim_mut().tick_drops(0, &mut ev);
+    let outcomes = &game.session().pending_action_outcomes;
     assert_eq!(
         outcomes.len(),
         3,
@@ -890,9 +704,9 @@ fn each_queued_drop_in_one_tick_window_gets_its_own_outcome() {
 #[test]
 fn multi_deny_rollback_restores_the_oldest_snapshot() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory = filled_inventory();
+    game.server_player_mut().inventory = filled_inventory();
     game.sync_self_view_for_test();
-    let before = game.self_view.inventory.clone();
+    let before = game.replica.self_view.inventory.clone();
 
     // Two predicted drops back to back: the second snapshot already embeds
     // the first prediction's effect.
@@ -909,9 +723,9 @@ fn multi_deny_rollback_restores_the_oldest_snapshot() {
     };
     game.game.apply_tick_update(Box::new(update));
     assert_eq!(
-        game.self_view
+        game.replica.self_view
             .inventory
-            .slot(game.self_view.inventory.active_slot() as usize),
+            .slot(game.replica.self_view.inventory.active_slot() as usize),
         before.slot(before.active_slot() as usize),
         "both denied predictions must be rolled back, not just the newest"
     );
@@ -922,7 +736,7 @@ fn denied_cell_rollback_yields_to_a_same_batch_authoritative_delta() {
     let mut game = game();
     // A loaded replica cell the ghost writes into.
     let pos = IVec3::new(3, 64, 3);
-    game.game.replica.insert_chunk_for_test(
+    game.game.replica.world.insert_chunk_for_test(
         petramond_world::chunk::ChunkPos::new(0, 0),
         petramond_world::chunk::Chunk::new(0, 0),
     );
@@ -934,7 +748,7 @@ fn denied_cell_rollback_yields_to_a_same_batch_authoritative_delta() {
     });
     assert!(game
         .game
-        .replica
+        .replica.world
         .set_block_world(pos.x, pos.y, pos.z, Block::Dirt));
 
     // Same batch: the deny AND an authoritative delta at the cell (another
@@ -955,7 +769,7 @@ fn denied_cell_rollback_yields_to_a_same_batch_authoritative_delta() {
     };
     game.game.apply_tick_update(Box::new(update));
     assert_eq!(
-        Block::from_id(game.game.replica.data().chunk_block(pos.x, pos.y, pos.z)),
+        Block::from_id(game.game.replica.world.chunk_block(pos.x, pos.y, pos.z)),
         Block::Stone,
         "an authoritative same-batch delta wins over the deny rollback"
     );
@@ -967,24 +781,19 @@ fn place_resolves_at_the_click_target_not_the_freshest_look() {
     let a = IVec3::new(8, 63, 8);
     let b = IVec3::new(11, 63, 11);
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .set_block_world(a.x, a.y, a.z, Block::Stone));
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .set_block_world(b.x, b.y, b.z, Block::Stone));
-    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(9.5, 63.0, 9.5);
-    game.server.sessions_mut()[0].player_mut().inventory = filled_inventory(); // dirt
+    game.server_player_mut().pos = WorldPos::new(9.5, 63.0, 9.5);
+    game.server_player_mut().inventory = filled_inventory(); // dirt
 
     // Click aimed at A...
     let mut u = player_update(&game, true);
     u.target = Some(hit(a, IVec3::Y));
-    game.server
-        .apply_message(0, ClientToServer::PlayerUpdate(u));
-    game.server.apply_message(
-        0,
-        ClientToServer::Action(PlayerAction::UseClick {
+    game.send_to_server(ClientToServer::PlayerUpdate(u));
+    game.send_to_server(ClientToServer::Action(PlayerAction::UseClick {
             mob: None,
             target: Some(hit(a, IVec3::Y)),
             request_id: Some(3),
@@ -995,21 +804,20 @@ fn place_resolves_at_the_click_target_not_the_freshest_look() {
     // ...then the crosshair moves to B before the tick resolves the click.
     let mut u2 = player_update(&game, true);
     u2.target = Some(hit(b, IVec3::Y));
-    game.server
-        .apply_message(0, ClientToServer::PlayerUpdate(u2));
+    game.send_to_server(ClientToServer::PlayerUpdate(u2));
 
-    game.server.tick_place(0, &mut TickEvents::default());
+    game.sim_mut().tick_place(0, &mut TickEvents::default());
     assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(a.x, a.y + 1, a.z)),
+        Block::from_id(game.server_world().chunk_block(a.x, a.y + 1, a.z)),
         Block::Dirt,
         "the block lands where the CLICK aimed (the client's ghost)"
     );
     assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(b.x, b.y + 1, b.z)),
+        Block::from_id(game.server_world().chunk_block(b.x, b.y + 1, b.z)),
         Block::Air,
         "the fresher look must not hijack the click"
     );
-    let outcomes = &game.server.sessions()[0].replication().pending_action_outcomes;
+    let outcomes = &game.session().pending_action_outcomes;
     assert!(outcomes.iter().any(|o| o.id == 3 && o.accepted));
 }
 
@@ -1018,21 +826,17 @@ fn no_op_use_click_queues_the_disputed_cells_for_corrective_sync() {
     let mut game = game_on_empty_chunk();
     let t = IVec3::new(8, 64, 8);
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .set_block_world(t.x, t.y, t.z, Block::Stone));
-    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(8.5, 65.5, 10.5);
+    game.server_player_mut().pos = WorldPos::new(8.5, 65.5, 10.5);
 
     // Empty hand, non-interactable stone: the server consumes nothing — the
     // client may have clicked a cell that only exists in ITS replica, so the
     // authoritative state of the disputed cells ships back.
     let mut u = player_update(&game, true);
     u.target = Some(hit(t, IVec3::Y));
-    game.server
-        .apply_message(0, ClientToServer::PlayerUpdate(u));
-    game.server.apply_message(
-        0,
-        ClientToServer::Action(PlayerAction::UseClick {
+    game.send_to_server(ClientToServer::PlayerUpdate(u));
+    game.send_to_server(ClientToServer::Action(PlayerAction::UseClick {
             mob: None,
             target: Some(hit(t, IVec3::Y)),
             request_id: None,
@@ -1040,8 +844,8 @@ fn no_op_use_click_queues_the_disputed_cells_for_corrective_sync() {
             jabbed: false,
         }),
     );
-    game.server.tick_place(0, &mut TickEvents::default());
-    let cells = &game.server.sessions()[0].replication().pending_corrective_cells;
+    game.sim_mut().tick_place(0, &mut TickEvents::default());
+    let cells = &game.session().pending_corrective_cells;
     assert!(cells.contains(&t), "the clicked cell reconciles");
     assert!(
         cells.contains(&(t + IVec3::Y)),
@@ -1050,63 +854,10 @@ fn no_op_use_click_queues_the_disputed_cells_for_corrective_sync() {
 }
 
 #[test]
-fn transform_corrections_ship_only_on_real_divergence() {
-    let mut game = game_on_empty_chunk();
-    let sess = &mut game.server.sessions_mut()[0];
-    let player = sess.player_mut();
-    player.pos = WorldPos::new(8.5, 70.0, 8.5);
-    player.vel = Vec3::new(0.0, -1.4, 0.0);
-    // The server free-ran a little past the client's last claim: small pos
-    // phase drift, one tick of gravity — time-phase, not divergence.
-    let reported = SelfTransform {
-        transform: petramond::net::protocol::Transform {
-            pos: player.pos + Vec3::new(0.4, 0.5, 0.0),
-            vel: Vec3::ZERO,
-            yaw: player.yaw,
-            pitch: player.pitch,
-        },
-        on_ground: player.on_ground,
-    };
-    sess.replication_mut().last_reported_transform = Some(reported);
-    assert!(
-        game.server.build_self_state(0).transform.is_none(),
-        "extrapolation past the claim must not rubber-band the client"
-    );
-
-    // A genuine tick-side teleport still corrects.
-    game.server.sessions_mut()[0].player_mut().pos += Vec3::new(50.0, 0.0, 0.0);
-    assert!(
-        game.server.build_self_state(0).transform.is_some(),
-        "a real teleport ships a SelfTransform"
-    );
-}
-
-#[test]
-fn hotbar_selection_is_client_owned_and_never_yanked_by_a_batch() {
-    let mut game = game();
-    game.server.sessions_mut()[0].player_mut().inventory = filled_inventory();
-
-    // The client scrolls ahead of the server (which still thinks slot 0)...
-    game.game.set_active_hotbar(3);
-    assert_eq!(game.self_view.inventory.active_slot(), 3);
-
-    // ...and a full-inventory batch from the lagging server must keep the
-    // client's newer selection, not echo the stale one back.
-    game.sync_self_view_for_test();
-    assert_eq!(
-        game.self_view.inventory.active_slot(),
-        3,
-        "a server batch must never yank the client-owned hotbar selection"
-    );
-}
-
-#[test]
 fn menu_click_ships_request_id_and_server_accepts() {
     let mut game = game();
-    game.server.sessions_mut()[0].player_mut().inventory = filled_inventory();
-    game.server.apply_message(
-        0,
-        ClientToServer::MenuClick {
+    game.server_player_mut().inventory = filled_inventory();
+    game.send_to_server(ClientToServer::MenuClick {
             slot: MenuSlotWire::from_menu_slot(&MenuSlot::Inventory(0)),
             button: 0,
             shift: false,
@@ -1114,8 +865,8 @@ fn menu_click_ships_request_id_and_server_accepts() {
             request_id: 42,
         },
     );
-    game.server.tick_menu(0, &mut TickEvents::default());
-    let outcomes = &game.server.sessions()[0].replication().pending_action_outcomes;
+    game.sim_mut().tick_menu(0, &mut TickEvents::default());
+    let outcomes = &game.session().pending_action_outcomes;
     assert_eq!(outcomes.len(), 1);
     assert!(outcomes[0].accepted);
     assert_eq!(outcomes[0].id, 42);
@@ -1125,22 +876,22 @@ fn menu_click_ships_request_id_and_server_accepts() {
 fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
     let mut game = game_on_empty_chunk();
     // Mirror the chunk onto the replica so the place ghost can write.
-    game.game.replica.insert_chunk_for_test(
+    game.game.replica.world.insert_chunk_for_test(
         petramond_world::chunk::ChunkPos::new(0, 0),
         petramond_world::chunk::Chunk::new(0, 0),
     );
     let floor = IVec3::new(8, 63, 8);
     assert!(game
         .game
-        .replica
+        .replica.world
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
     // Park the body clear of the place cell so placement_blocked_by_body
     // does not refuse the ghost.
-    game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
-    game.server.sessions_mut()[0].player_mut().inventory = filled_inventory();
+    game.game.local.player.pos = WorldPos::new(100.0, 64.0, 100.0);
+    game.server_player_mut().inventory = filled_inventory();
     game.sync_self_view_for_test();
     let before = game
-        .self_view
+        .replica.self_view
         .inventory
         .selected()
         .expect("holding dirt")
@@ -1155,14 +906,14 @@ fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
     assert_eq!(
         Block::from_id(
             game.game
-                .replica
-                .data().chunk_block(place_pos.x, place_pos.y, place_pos.z)
+                .replica.world
+                .chunk_block(place_pos.x, place_pos.y, place_pos.z)
         ),
         Block::Dirt,
         "replica cell must change immediately"
     );
     assert_eq!(
-        game.self_view
+        game.replica.self_view
             .inventory
             .selected()
             .expect("still holding")
@@ -1204,17 +955,17 @@ fn interactive_block_click_cancels_the_custom_shape_ghost_unless_sneaking() {
         return;
     };
     let mut game = game_on_empty_chunk();
-    game.game.replica.insert_chunk_for_test(
+    game.game.replica.world.insert_chunk_for_test(
         petramond_world::chunk::ChunkPos::new(0, 0),
         petramond_world::chunk::Chunk::new(0, 0),
     );
     let chest = IVec3::new(8, 64, 8);
     assert!(game
         .game
-        .replica
+        .replica.world
         .set_block_world(chest.x, chest.y, chest.z, Block::Chest));
     // Park the body clear of the build cell so occupancy never refuses.
-    game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
+    game.game.local.player.pos = WorldPos::new(100.0, 64.0, 100.0);
     give(&mut game, item, 8);
     game.sync_self_view_for_test();
     // Scripted accepted plan on the build cell — the deterministic answer a
@@ -1234,8 +985,8 @@ fn interactive_block_click_cancels_the_custom_shape_ghost_unless_sneaking() {
     ));
     assert_eq!(
         game.game
-            .replica
-            .data().chunk_block(place_pos.x, place_pos.y, place_pos.z),
+            .replica.world
+            .chunk_block(place_pos.x, place_pos.y, place_pos.z),
         Block::Air.0,
         "an interactive target must never ghost a mod block"
     );
@@ -1249,8 +1000,8 @@ fn interactive_block_click_cancels_the_custom_shape_ghost_unless_sneaking() {
     ));
     assert_ne!(
         game.game
-            .replica
-            .data().chunk_block(place_pos.x, place_pos.y, place_pos.z),
+            .replica.world
+            .chunk_block(place_pos.x, place_pos.y, place_pos.z),
         Block::Air.0,
         "the sneak click ghosts the custom block"
     );
@@ -1259,16 +1010,16 @@ fn interactive_block_click_cancels_the_custom_shape_ghost_unless_sneaking() {
 #[test]
 fn optimistic_torch_place_records_wall_mount_immediately() {
     let mut game = game_on_empty_chunk();
-    game.game.replica.insert_chunk_for_test(
+    game.game.replica.world.insert_chunk_for_test(
         petramond_world::chunk::ChunkPos::new(0, 0),
         petramond_world::chunk::Chunk::new(0, 0),
     );
     let wall = IVec3::new(8, 64, 8);
     assert!(game
         .game
-        .replica
+        .replica.world
         .set_block_world(wall.x, wall.y, wall.z, Block::Stone));
-    game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
+    game.game.local.player.pos = WorldPos::new(100.0, 64.0, 100.0);
     give(&mut game, petramond_world::item::ItemType::Torch, 1);
     game.sync_self_view_for_test();
 
@@ -1282,11 +1033,11 @@ fn optimistic_torch_place_records_wall_mount_immediately() {
 
     let torch = wall - IVec3::X;
     assert_eq!(
-        Block::from_id(game.game.replica.data().chunk_block(torch.x, torch.y, torch.z)),
+        Block::from_id(game.game.replica.world.chunk_block(torch.x, torch.y, torch.z)),
         Block::Torch
     );
     assert_eq!(
-        game.game.replica.data().torch_placement(torch),
+        game.game.replica.world.torch_placement(torch),
         petramond_world::torch::TorchPlacement::West,
         "predicted place must record the wall mount for the same-frame mesh"
     );
@@ -1295,16 +1046,16 @@ fn optimistic_torch_place_records_wall_mount_immediately() {
 #[test]
 fn optimistic_stair_place_records_orientation_immediately() {
     let mut game = game_on_empty_chunk();
-    game.game.replica.insert_chunk_for_test(
+    game.game.replica.world.insert_chunk_for_test(
         petramond_world::chunk::ChunkPos::new(0, 0),
         petramond_world::chunk::Chunk::new(0, 0),
     );
     let floor = IVec3::new(8, 63, 8);
     assert!(game
         .game
-        .replica
+        .replica.world
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
-    game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
+    game.game.local.player.pos = WorldPos::new(100.0, 64.0, 100.0);
     give(&mut game, petramond_world::item::ItemType::OakStairs, 1);
     game.sync_self_view_for_test();
 
@@ -1313,18 +1064,18 @@ fn optimistic_stair_place_records_orientation_immediately() {
     // recorded orientation from the fallback.
     let default_state = game
         .game
-        .replica
+        .replica.world
         .section_at_world_for_test(floor.x, floor.y, floor.z)
         .expect("floor section")
         .stair_state(0, 0, 0);
     let expected_state = |g: &crate::game::Game| {
         petramond_world::block_state::StairState::new(
-            petramond::rules::placement::facing_from_forward(g.player.forward()),
+            petramond::rules::placement::facing_from_forward(g.local.player.forward()),
             petramond_world::block_state::StairHalf::Bottom,
         )
     };
     if expected_state(&game.game) == default_state {
-        game.game.player.yaw += std::f32::consts::PI;
+        game.game.local.player.yaw += std::f32::consts::PI;
     }
     let expected = expected_state(&game.game);
     assert_ne!(expected, default_state, "fixture: non-default orientation");
@@ -1336,12 +1087,12 @@ fn optimistic_stair_place_records_orientation_immediately() {
 
     let cell = floor + IVec3::Y;
     assert_eq!(
-        Block::from_id(game.game.replica.data().chunk_block(cell.x, cell.y, cell.z)),
+        Block::from_id(game.game.replica.world.chunk_block(cell.x, cell.y, cell.z)),
         Block::OakStairs
     );
     assert_eq!(
         game.game
-            .replica
+            .replica.world
             .section_at_world_for_test(cell.x, cell.y, cell.z)
             .expect("stair section")
             .stair_state(8, 0, 8),
@@ -1353,30 +1104,30 @@ fn optimistic_stair_place_records_orientation_immediately() {
 #[test]
 fn optimistic_chest_place_records_front_facing_immediately() {
     let mut game = game_on_empty_chunk();
-    game.game.replica.insert_chunk_for_test(
+    game.game.replica.world.insert_chunk_for_test(
         petramond_world::chunk::ChunkPos::new(0, 0),
         petramond_world::chunk::Chunk::new(0, 0),
     );
     let floor = IVec3::new(8, 63, 8);
     assert!(game
         .game
-        .replica
+        .replica.world
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
-    game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
+    game.game.local.player.pos = WorldPos::new(100.0, 64.0, 100.0);
     give(&mut game, petramond_world::item::ItemType::Chest, 1);
     game.sync_self_view_for_test();
 
     let default_facing = game
         .game
-        .replica
+        .replica.world
         .section_at_world_for_test(floor.x, floor.y, floor.z)
         .expect("floor section")
         .entity_facing(0, 0, 0);
     let facing_of = |g: &crate::game::Game| {
-        petramond::rules::placement::facing_from_forward(g.player.forward())
+        petramond::rules::placement::facing_from_forward(g.local.player.forward())
     };
     if facing_of(&game.game) == default_facing {
-        game.game.player.yaw += std::f32::consts::PI;
+        game.game.local.player.yaw += std::f32::consts::PI;
     }
     let expected = facing_of(&game.game);
     assert_ne!(expected, default_facing, "fixture: non-default facing");
@@ -1389,7 +1140,7 @@ fn optimistic_chest_place_records_front_facing_immediately() {
     let cell = floor + IVec3::Y;
     assert_eq!(
         game.game
-            .replica
+            .replica.world
             .section_at_world_for_test(cell.x, cell.y, cell.z)
             .expect("chest section")
             .entity_facing(8, 0, 8),
@@ -1405,16 +1156,16 @@ fn optimistic_ladder_place_commits_the_facing_row() {
     // panel collision, and climb probe all read that id — and must leave the
     // entity-facing map untouched (a ladder is not a block entity).
     let mut game = game_on_empty_chunk();
-    game.game.replica.insert_chunk_for_test(
+    game.game.replica.world.insert_chunk_for_test(
         petramond_world::chunk::ChunkPos::new(0, 0),
         petramond_world::chunk::Chunk::new(0, 0),
     );
     let wall = IVec3::new(8, 64, 8);
     assert!(game
         .game
-        .replica
+        .replica.world
         .set_block_world(wall.x, wall.y, wall.z, Block::Stone));
-    game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
+    game.game.local.player.pos = WorldPos::new(100.0, 64.0, 100.0);
     give(&mut game, petramond_world::item::ItemType::Ladder, 1);
     game.sync_self_view_for_test();
 
@@ -1427,13 +1178,13 @@ fn optimistic_ladder_place_commits_the_facing_row() {
 
     let cell = wall + IVec3::X;
     assert_eq!(
-        game.game.replica.data().chunk_block(cell.x, cell.y, cell.z),
+        game.game.replica.world.chunk_block(cell.x, cell.y, cell.z),
         Block::LadderEast.id(),
         "the ghost is the facing row, not the held base row"
     );
     assert!(
         game.game
-            .replica
+            .replica.world
             .section_at_world_for_test(cell.x, cell.y, cell.z)
             .expect("ladder section")
             .cell_states()
@@ -1445,20 +1196,20 @@ fn optimistic_ladder_place_commits_the_facing_row() {
 #[test]
 fn slab_stack_click_is_not_predicted() {
     let mut game = game_on_empty_chunk();
-    game.game.replica.insert_chunk_for_test(
+    game.game.replica.world.insert_chunk_for_test(
         petramond_world::chunk::ChunkPos::new(0, 0),
         petramond_world::chunk::Chunk::new(0, 0),
     );
-    game.game.player.pos = WorldPos::new(100.0, 64.0, 100.0);
+    game.game.local.player.pos = WorldPos::new(100.0, 64.0, 100.0);
     // A bottom slab in the cell: clicking its top face stacks INTO that cell
     // server-side, off the ghost convention (`target + normal`), so the
     // request denies by design — the client must not ghost a slab above.
     let cell = IVec3::new(8, 64, 8);
-    let facing = petramond::rules::placement::facing_from_forward(game.game.player.forward());
+    let facing = petramond::rules::placement::facing_from_forward(game.game.local.player.forward());
     let slot = petramond_world::slab::slot_for_rotation(Default::default(), IVec3::Y, facing);
     assert!(game
         .game
-        .replica
+        .replica.world
         .place_slab_layer(cell, Block::OakSlab, slot));
     give(&mut game, petramond_world::item::ItemType::OakSlab, 1);
     game.sync_self_view_for_test();
@@ -1472,7 +1223,7 @@ fn slab_stack_click_is_not_predicted() {
     );
     let above = cell + IVec3::Y;
     assert_eq!(
-        game.game.replica.data().chunk_block(above.x, above.y, above.z),
+        game.game.replica.world.chunk_block(above.x, above.y, above.z),
         Block::Air.id(),
         "no ghost slab in the cell above"
     );
@@ -1481,20 +1232,20 @@ fn slab_stack_click_is_not_predicted() {
 #[test]
 fn optimistic_break_clears_replica_and_queues_world_event() {
     let mut game = game_on_empty_chunk();
-    game.game.replica.insert_chunk_for_test(
+    game.game.replica.world.insert_chunk_for_test(
         petramond_world::chunk::ChunkPos::new(0, 0),
         petramond_world::chunk::Chunk::new(0, 0),
     );
     let pos = IVec3::new(8, 64, 8);
     assert!(game
         .game
-        .replica
+        .replica.world
         .set_block_world(pos.x, pos.y, pos.z, Block::Poppy));
 
     game.game.predict_break_at_for_test(pos, Block::Poppy);
 
     assert_eq!(
-        Block::from_id(game.game.replica.data().chunk_block(pos.x, pos.y, pos.z)),
+        Block::from_id(game.game.replica.world.chunk_block(pos.x, pos.y, pos.z)),
         Block::Air,
         "instant break must clear the replica immediately"
     );
@@ -1512,13 +1263,13 @@ fn optimistic_break_clears_replica_and_queues_world_event() {
 fn denied_place_restores_cell_and_inventory_silently() {
     let mut game = game();
     let pos = IVec3::new(3, 64, 3);
-    game.game.replica.insert_chunk_for_test(
+    game.game.replica.world.insert_chunk_for_test(
         petramond_world::chunk::ChunkPos::new(0, 0),
         petramond_world::chunk::Chunk::new(0, 0),
     );
-    game.server.sessions_mut()[0].player_mut().inventory = filled_inventory();
+    game.server_player_mut().inventory = filled_inventory();
     game.sync_self_view_for_test();
-    let before = game.self_view.inventory.clone();
+    let before = game.replica.self_view.inventory.clone();
 
     let id = game.game.prediction.begin(PredictionSnapshot::World {
         inventory: Some(before.clone()),
@@ -1526,9 +1277,9 @@ fn denied_place_restores_cell_and_inventory_silently() {
     });
     assert!(game
         .game
-        .replica
+        .replica.world
         .set_block_world(pos.x, pos.y, pos.z, Block::Dirt));
-    game.self_view.inventory.decrement_selected();
+    game.replica.self_view.inventory.decrement_selected();
 
     let update = TickUpdate {
         action_outcomes: vec![petramond::net::protocol::ActionOutcome::deny(
@@ -1539,12 +1290,12 @@ fn denied_place_restores_cell_and_inventory_silently() {
     };
     game.game.apply_tick_update(Box::new(update));
     assert_eq!(
-        Block::from_id(game.game.replica.data().chunk_block(pos.x, pos.y, pos.z)),
+        Block::from_id(game.game.replica.world.chunk_block(pos.x, pos.y, pos.z)),
         Block::Air,
         "deny silently restores the cell"
     );
     assert_eq!(
-        game.self_view.inventory.selected().map(|s| s.count),
+        game.replica.self_view.inventory.selected().map(|s| s.count),
         before.selected().map(|s| s.count),
         "deny restores the hotbar"
     );
@@ -1559,188 +1310,28 @@ fn break_finished_deny_queues_corrective_cells() {
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(2, 64, 2);
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
-    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(2.5, 65.0, 4.5);
-    game.server.sessions_mut()[0].input_mut().claim_pos = game.server.sessions()[0].player().pos;
+    game.server_player_mut().pos = WorldPos::new(2.5, 65.0, 4.5);
+    game.session_mut().claim_pos = game.server_player().pos;
 
-    game.server.apply_message(
-        0,
-        ClientToServer::Action(PlayerAction::BreakFinished {
+    game.send_to_server(ClientToServer::Action(PlayerAction::BreakFinished {
             request_id: 9,
             pos,
             tool_item_id: None,
             predicted: true,
         }),
     );
-    game.server.tick_mining(0, &mut TickEvents::default());
-    let cells = &game.server.sessions()[0].replication().pending_corrective_cells;
+    game.sim_mut().tick_mining(0, &mut TickEvents::default());
+    let cells = &game.session().pending_corrective_cells;
     assert!(
         cells.contains(&pos),
         "a denied break finish must queue the claimed cell for corrective sync"
     );
-    assert!(game.server.sessions()[0]
-        .replication().pending_action_outcomes
+    assert!(game.session()
+        .pending_action_outcomes
         .iter()
         .any(|o| o.id == 9 && !o.accepted));
-}
-
-#[test]
-fn far_claim_does_not_grant_reach() {
-    let mut game = game_on_empty_chunk();
-    let far = IVec3::new(14, 64, 14);
-    assert!(game
-        .server
-        .world_mut()
-        .set_block_world(far.x, far.y, far.z, Block::Stone));
-    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(2.5, 65.0, 2.5);
-
-    // A fabricated claim right next to the far block: outside the drift ring
-    // of the server's own integration, so it must not become the reach eye.
-    let mut u = player_update(&game, true);
-    u.transform.pos = WorldPos::new(13.5, 65.0, 13.5);
-    u.transform.vel = Vec3::ZERO;
-    u.target = Some(hit(far, IVec3::Y));
-    game.server
-        .apply_message(0, ClientToServer::PlayerUpdate(u));
-    assert!(
-        game.server.sessions()[0].look().is_none(),
-        "an implausible claim must not validate a far look target"
-    );
-
-    game.server.apply_message(
-        0,
-        ClientToServer::Action(PlayerAction::BreakFinished {
-            request_id: 30,
-            pos: far,
-            tool_item_id: None,
-            predicted: true,
-        }),
-    );
-    game.server.tick_mining(0, &mut TickEvents::default());
-    assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(far.x, far.y, far.z)),
-        Block::Stone,
-        "remote reach must not break the block"
-    );
-    assert!(
-        game.server.sessions()[0]
-            .replication().pending_action_outcomes
-            .iter()
-            .any(|o| o.id == 30 && !o.accepted && o.reason == Some(ActionDenyReason::OutOfReach)),
-        "the far finish denies OutOfReach"
-    );
-}
-
-#[test]
-fn fake_on_ground_claims_do_not_evade_fall_damage() {
-    let mut game = game_on_empty_chunk();
-    assert!(game.server.world_mut().set_block_world(8, 64, 8, Block::Stone));
-    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(8.5, 80.0, 8.5);
-    game.server.sessions_mut()[0].input_mut().claim_pos = game.server.sessions()[0].player().pos;
-    game.server.sessions_mut()[0].sim_mut().fall.reset(80.0);
-
-    // Descend claiming on_ground every tick — the mid-air flag is fabricated
-    // (no support under the feet), so the peak must survive to the landing.
-    for y in [80.0, 76.0, 72.0, 68.0, 65.0] {
-        let mut u = player_update(&game, true);
-        u.transform.pos = WorldPos::new(8.5, y, 8.5);
-        u.transform.vel = Vec3::new(0.0, -20.0, 0.0);
-        u.on_ground = true;
-        game.server
-            .apply_message(0, ClientToServer::PlayerUpdate(u));
-        game.server.tick_movement(0);
-    }
-    assert!(
-        game.server.sessions()[0].sim().pending_fall >= 14.0,
-        "faked grounded claims must not reset the fall (measured {})",
-        game.server.sessions()[0].sim().pending_fall
-    );
-}
-
-#[test]
-fn sprint_descent_down_steps_is_not_one_tall_fall() {
-    use petramond_world::block_state::{StairHalf, StairState};
-    let mut game = game_on_empty_chunk();
-    // A staircase of real stair blocks descending +x (low half downhill), onto
-    // a floor at y = 59 — half-block steps every half block, like any player
-    // staircase.
-    for i in 0..12 {
-        assert!(game.server.world_mut().place_stair(
-            IVec3::new(2 + i, 70 - i, 8),
-            Block::OakStairs,
-            StairState::new(petramond_math::facing::Facing::East, StairHalf::Bottom),
-        ));
-    }
-    for x in 14..16 {
-        assert!(game.server.world_mut().set_block_world(x, 58, 8, Block::Stone));
-    }
-
-    let start = WorldPos::new(2.3, 71.0, 8.5);
-    game.server.sessions_mut()[0].player_mut().pos = start;
-    game.server.sessions_mut()[0].input_mut().claim_pos = start;
-    game.server.sessions_mut()[0].sim_mut().fall.reset(start.y);
-
-    // The client's own 60 fps physics sprints down the staircase. Each step
-    // contact lasts only a frame or two, so the once-per-tick report can
-    // legitimately be an airborne mid-hop transform for the entire descent —
-    // model that worst-case (but honest) send phase by reporting the window's
-    // freshest airborne frame. The whole staircase must still never measure
-    // as one tall fall: the server's own integration touched every step.
-    let mut client = petramond::player::Player::new(start);
-    let input = petramond::player::Input {
-        wishdir: Vec3::new(1.0, 0.0, 0.0),
-        jump: false,
-        sprint: true,
-        sneak: false,
-    };
-    for _ in 0..400 {
-        let mut report = None;
-        for _ in 0..3 {
-            client.update(1.0 / 60.0, game.server.world(), input);
-            if !client.on_ground || report.is_none() {
-                report = Some((client.pos, client.vel, client.on_ground));
-            }
-        }
-        let (pos, vel, on_ground) = report.unwrap();
-        let mut u = player_update(&game, true);
-        u.transform.pos = pos;
-        u.transform.vel = vel;
-        u.on_ground = on_ground;
-        u.wishdir = input.wishdir;
-        u.sprint = true;
-        game.server
-            .apply_message(0, ClientToServer::PlayerUpdate(u));
-        game.server.tick_movement(0);
-        if client.on_ground && client.pos.x > 14.2 {
-            break;
-        }
-    }
-    assert!(
-        client.on_ground && client.pos.x > 14.2,
-        "the client sim must finish the descent (ended at {:?})",
-        client.pos
-    );
-    // Stand on the floor for a few ticks so the server observes the final
-    // grounded transform (the landing that would convert a mis-measured
-    // descent into damage).
-    for _ in 0..3 {
-        let mut u = player_update(&game, true);
-        u.transform.pos = client.pos;
-        u.transform.vel = client.vel;
-        u.on_ground = true;
-        game.server
-            .apply_message(0, ClientToServer::PlayerUpdate(u));
-        game.server.tick_movement(0);
-    }
-
-    let measured = game.server.sessions()[0].sim().pending_fall;
-    assert_eq!(
-        petramond::server::health::fall_damage_health(measured),
-        0,
-        "sprinting down a staircase must not deal fall damage (measured a {measured}-block fall)"
-    );
 }
 
 #[test]
@@ -1748,42 +1339,38 @@ fn unpredicted_break_finish_keeps_the_initiators_break_event() {
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(8, 64, 8);
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
-    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(8.5, 65.0, 10.5);
+    game.server_player_mut().pos = WorldPos::new(8.5, 65.0, 10.5);
 
     let mut u = player_update(&game, true);
     u.break_held = true;
     u.target = Some(hit(pos, IVec3::new(0, 0, 1)));
-    game.server
-        .apply_message(0, ClientToServer::PlayerUpdate(u));
+    game.send_to_server(ClientToServer::PlayerUpdate(u));
     let expected_ticks =
         (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     for _ in 0..expected_ticks - 2 {
-        game.server.tick_mining(0, &mut TickEvents::default());
+        game.sim_mut().tick_mining(0, &mut TickEvents::default());
     }
     // A TRACK-ONLY finish (frozen ledger / replica disagreement): the client
     // never presented, so the accept must not strip its BlockBroken.
-    game.server.apply_message(
-        0,
-        ClientToServer::Action(PlayerAction::BreakFinished {
+    game.send_to_server(ClientToServer::Action(PlayerAction::BreakFinished {
             request_id: 31,
             pos,
             tool_item_id: None,
             predicted: false,
         }),
     );
-    game.server.tick_mining(0, &mut TickEvents::default());
+    game.sim_mut().tick_mining(0, &mut TickEvents::default());
     assert!(
-        game.server.sessions()[0]
-            .replication().pending_action_outcomes
+        game.session()
+            .pending_action_outcomes
             .iter()
             .any(|o| o.id == 31 && o.accepted),
         "the finish itself still accepts"
     );
     assert!(
-        !game.server.sessions()[0].replication().presented_breaks.contains(&pos),
+        !game.session().presented_breaks.contains(&pos),
         "an unpresented break must not be stripped from the initiator's events"
     );
 }
@@ -1791,9 +1378,9 @@ fn unpredicted_break_finish_keeps_the_initiators_break_event() {
 #[test]
 fn multi_deny_rollback_is_emission_order_independent() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory = filled_inventory();
+    game.server_player_mut().inventory = filled_inventory();
     game.sync_self_view_for_test();
-    let before = game.self_view.inventory.clone();
+    let before = game.replica.self_view.inventory.clone();
 
     game.game.drop_selected_item(false); // id 0
     game.game.drop_selected_item(false); // id 1
@@ -1810,57 +1397,10 @@ fn multi_deny_rollback_is_emission_order_independent() {
     };
     game.game.apply_tick_update(Box::new(update));
     assert_eq!(
-        game.self_view
+        game.replica.self_view
             .inventory
-            .slot(game.self_view.inventory.active_slot() as usize),
+            .slot(game.replica.self_view.inventory.active_slot() as usize),
         before.slot(before.active_slot() as usize),
         "rollback must be allocation-ordered, not emission-ordered"
-    );
-}
-
-/// A `SelfTransform` correction never adopts yaw/pitch: the look is
-/// client-owned input (like the hotbar index), so a correction can only carry
-/// the one-RTT-old echo of the client's own look — adopting it reverts every
-/// look change for as long as a correction stream flows (rejected claims over
-/// still-streaming terrain), and the server never sees the player's aim.
-#[test]
-fn corrections_never_adopt_the_look() {
-    let mut game = game();
-    game.game.player.yaw = 1.25;
-    game.game.player.pitch = -0.5;
-    game.game.last_sent_transform = Some(SelfTransform {
-        transform: petramond::net::protocol::Transform {
-            pos: game.game.player.pos,
-            vel: Vec3::ZERO,
-            yaw: 1.25,
-            pitch: -0.5,
-        },
-        on_ground: true,
-    });
-
-    // The in-flight correction carries the PREVIOUS look (the echo) and a
-    // genuinely server-moved position.
-    let corrected_pos = game.game.player.pos + Vec3::new(0.0, -2.0, 0.0);
-    game.game.adopt_authoritative_transform(&SelfTransform {
-        transform: petramond::net::protocol::Transform {
-            pos: corrected_pos,
-            vel: Vec3::ZERO,
-            yaw: 0.0,
-            pitch: 0.0,
-        },
-        on_ground: false,
-    });
-
-    assert_eq!(
-        game.game.player.pos, corrected_pos,
-        "position corrections still adopt"
-    );
-    assert_eq!(
-        game.game.player.yaw, 1.25,
-        "the stale yaw echo must not revert the look"
-    );
-    assert_eq!(
-        game.game.player.pitch, -0.5,
-        "the stale pitch echo must not revert the look"
     );
 }

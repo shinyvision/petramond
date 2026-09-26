@@ -1,5 +1,6 @@
 //! Options root controller: the Sound / Controls / Graphics category buttons
-//! plus Back (to the title or the pause menu — wherever the flow began).
+//! plus Back (to the title or the pause menu — whichever the flow was
+//! pushed over).
 
 use super::{ScreenCtx, ShellCommand};
 use crate::app::AppScreen;
@@ -11,12 +12,12 @@ pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
 
 pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
     if let UiEvent::Click { id, .. } = ev {
-        // Moving within the options flow keeps the menu pointer as it is.
+        // Categories push over the root, so their Back returns here.
         match id.as_str() {
-            "sound" => ctx.request(ShellCommand::SwitchTo(AppScreen::OptionsSound)),
-            "controls" => ctx.request(ShellCommand::SwitchTo(AppScreen::OptionsControls)),
-            "graphics" => ctx.request(ShellCommand::SwitchTo(AppScreen::OptionsGraphics)),
-            "back" => ctx.request(ShellCommand::CloseOptionsRoot),
+            "sound" => ctx.request(ShellCommand::Push(AppScreen::OptionsSound)),
+            "controls" => ctx.request(ShellCommand::Push(AppScreen::OptionsControls)),
+            "graphics" => ctx.request(ShellCommand::Push(AppScreen::OptionsGraphics)),
+            "back" => ctx.request(ShellCommand::Back),
             _ => {}
         }
     }

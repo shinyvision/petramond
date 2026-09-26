@@ -81,7 +81,7 @@ impl Game {
     /// The world tool in hand, wherever the player may hold it: always in
     /// creative, and outside it once its row is no longer creative-only.
     pub fn held_world_tool(&self) -> Option<&'static str> {
-        let stack = self.self_view.inventory.selected()?;
+        let stack = self.replica.self_view.inventory.selected()?;
         let name = stack.item.world_tool()?;
         (self.creative_mode() || !stack.item.creative_only()).then_some(name)
     }
@@ -162,8 +162,8 @@ impl Game {
             self.schematic_preview_input(input);
         } else if let Some(tool) = held.and_then(|name| self.tools.world.get_mut(name)) {
             let mut ctx = ToolContext {
-                cam: &self.cam,
-                world: &self.replica,
+                cam: &self.local.cam,
+                world: &self.replica.world,
                 notice: &mut self.notice,
             };
             tool.input(&mut ctx, input);
@@ -175,6 +175,6 @@ impl Game {
         input.attack_clicked = false;
         input.place_clicked = false;
         input.use_held = false;
-        self.intent_use_held = false;
+        self.local.intent_use_held = false;
     }
 }

@@ -1,6 +1,11 @@
-//! Feeds the first-person animator: the body's motion and the two hands'
+//! The first-person viewmodel's animation: the rigs catalog's viewmodel rig,
+//! its animator, and this frame's posed bones — what the renderer's hand
+//! pass bakes the arms and carried items from, and whose camera bone the
+//! world view wears.
+//!
+//! The driver feeds the animator: the body's motion and the two hands'
 //! frames become the graph's params and events, by name. Beside the shared
-//! body core ([`crate::animation_inputs`]) it publishes `speed forward
+//! body core ([`super::inputs`]) it publishes `speed forward
 //! strafe vertical grounded sneaking sprinting swimming climbing pitch
 //! yaw_rate pitch_rate stride stride_weight hurt target` (`target`: 0 nothing,
 //! 1 a block, 2 a creature), `impact` (the fall speed of the last landing),
@@ -9,12 +14,15 @@
 
 use std::sync::Arc;
 
+use glam::Mat4;
+use petramond::player::rigs::{self, Presenter, Rig};
 use petramond::player::RigId;
 use petramond_anim::{Animator, EventId, Graph, ParamId};
+use petramond_render::HeldItemFrame;
 
-use crate::animation_inputs::{flag, BodyDriver, BodyMotion};
-use crate::views::LocalMotion;
-use crate::{AnimatorInputs, HeldItemFrame};
+use super::claims::AnimatorInputs;
+use super::inputs::{flag, BodyDriver, BodyMotion};
+use super::motion::LocalMotion;
 
 type BodyInput = fn(&LocalMotion) -> f32;
 
@@ -123,3 +131,60 @@ impl Driver {
         self.body.animator.update(dt);
     }
 }
+
+/// The viewmodel rig's animator and this frame's posed bones (model space,
+/// rig pixels) — the pose array the renderer's hand pass consumes.
+pub struct FirstPersonAnimator {
+    row: &'static Rig,
+    bones: Vec<Mat4>,
+    driver: Driver,
+}
+
+impl FirstPersonAnimator {
+    /// The catalog's viewmodel rig and its animator; `None` when either
+    /// failed to load (the renderer then draws no hand either).
+    pub fn shipped() -> Option<Self> {
+        let (id, row) = rigs::presented(Presenter::Viewmodel)?;
+        let graph = row.graph.as_ref()?;
+        if row.model.bones().is_empty() {
+            return None;
+        }
+        Some(Self {
+            row,
+            bones: row.model.resolve_local(&[], &[]),
+            driver: Driver::new(id, Arc::clone(graph)),
+        })
+    }
+
+    /// Back to the rest pose with nothing playing: a stale pose must not
+    /// survive into the next world.
+    pub fn reset(&mut self) {
+        self.driver.reset();
+        self.row.model.resolve_local_into(&[], &[], &mut self.bones);
+    }
+
+    /// Advance the animator one frame, `dt` seconds after the last, and pose
+    /// the rig. `inputs` are the local player's resolved animator claims and
+    /// the graph events fired on it this frame; only this rig's apply here.
+    pub fn advance(
+        &mut self,
+        frames: &[HeldItemFrame; 2],
+        motion: &LocalMotion,
+        inputs: AnimatorInputs<'_>,
+        dt: f32,
+    ) {
+        self.driver.update(frames, motion, inputs, dt);
+        self.driver
+            .animator()
+            .pose()
+            .resolve_into(&self.row.model, &mut self.bones);
+    }
+
+    /// This frame's posed bones.
+    pub fn bones(&self) -> &[Mat4] {
+        &self.bones
+    }
+}
+
+#[cfg(test)]
+mod tests;

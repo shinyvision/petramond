@@ -6,6 +6,6 @@ impl Game {
     /// never meshes).
     #[inline]
     pub fn terrain_render_handoff(&mut self) -> TerrainRenderHandoff<'_> {
-        self.replica.terrain_render_handoff()
+        self.replica.world.terrain_render_handoff()
     }
 }

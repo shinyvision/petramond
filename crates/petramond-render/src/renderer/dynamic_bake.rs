@@ -253,7 +253,10 @@ impl Renderer {
         for g in &mut self.actor.mob_gpu {
             g.visible.clear();
         }
-        for inst in &self.actor.mobs {
+        // Visibility is recorded as INDICES into the published rows, like the
+        // draw sets above: a species' batch names which rows survived rather
+        // than copying them.
+        for (i, inst) in self.actor.mobs.iter().enumerate() {
             // Cull box: the species' rest-pose bounds × scale + slack around the
             // feet (`MobGpu::cull_*`, computed at construction) — a hardcoded pad
             // clipped every species taller than it. A killed mob is flung from its
@@ -272,28 +275,35 @@ impl Renderer {
             if visible_world_aabb(min, max) {
                 self.actor.mob_gpu[inst.kind.0 as usize]
                     .visible
-                    .push(inst.clone());
+                    .push(i as u32);
             }
         }
         self.actor.skin.batch.clear();
         let mut mob_held = Vec::new();
+        let layers = crate::mob_model::MobLayers {
+            arena: &self.actor.mob_arena,
+            names: &self.actor.anim_names,
+        };
+        let mobs = &self.actor.mobs;
         for g in &mut self.actor.mob_gpu {
             g.drawn = pose_mob_instances(
                 g.model,
                 g.scale,
-                &g.visible,
+                g.visible.iter().map(|&i| &mobs[i as usize]),
+                layers,
                 render_origin,
                 &g.rig,
+                &mut g.pose,
                 &mut self.actor.skin.batch,
                 &mut mob_held,
             );
         }
 
         // Player bodies + their held items: the LOCAL third-person body (when
-        // the view is up, driven by the renderer's own local hand state) plus
-        // EVERY remote player (each carrying its own), frustum-culled like
-        // mobs and ALL posed into the skin batch as one contiguous instance
-        // range (every body shares the rig's mesh + skin bind). Held items
+        // the view is up) plus EVERY remote player, each posed by the client's
+        // animation and carrying its own held views, frustum-culled like mobs
+        // and ALL placed into the skin batch as one contiguous instance range
+        // (every body shares the rig's mesh + skin bind). Held items
         // accumulate per render kind into three combined streams — block
         // mini-cubes on the packed opaque stream, extruded sprites and bbmodel
         // items on explicit-UV streams split by atlas — each uploaded and
@@ -301,28 +311,10 @@ impl Renderer {
         self.actor.player_visible.clear();
         {
             let pad = glam::Vec3::new(1.0, 2.2, 1.0);
-            if let Some(p) = self.actor.player_view {
-                if visible_world_aabb(p.pos - pad, p.pos + pad) {
-                    self.actor.player_visible.push(super::VisibleBody {
-                        inst: p,
-                        held: self.hand.held_item,
-                        off: self.hand.off_item,
-                        key: crate::player_model::LOCAL_BODY,
-                        frames: self.hand.frames,
-                        animator: None,
-                    });
-                }
-            }
-            for r in &self.actor.remote_players {
-                if visible_world_aabb(r.body.pos - pad, r.body.pos + pad) {
-                    self.actor.player_visible.push(super::VisibleBody {
-                        inst: r.body,
-                        held: r.held,
-                        off: r.held_off,
-                        key: r.key,
-                        frames: Some(r.frames),
-                        animator: Some(r.animator),
-                    });
+            for body in &self.actor.bodies {
+                let pos = body.body.pos;
+                if visible_world_aabb(pos - pad, pos + pad) {
+                    self.actor.player_visible.push(*body);
                 }
             }
         }
@@ -345,76 +337,15 @@ impl Renderer {
         streams.block_indices.clear();
         let body_rig = petramond::player::rigs::presented(petramond::player::Presenter::Body)
             .map(|(_, rig)| rig);
-        let dt = self.hand.frame_dt;
-        self.actor
-            .body_animators
-            .retain(self.actor.remote_players.iter().map(|r| r.key));
-        let local_inputs = crate::AnimatorInputs {
-            params: &self.hand.local_params,
-            plays: &self.hand.local_plays,
-            events: &self.hand.local_events,
-        };
-        // Every roster body nobody draws this frame still advances, so what
-        // it did off-screen is under way — never a stale edge — when it is
-        // drawn again.
-        for r in &self.actor.remote_players {
-            if self.actor.player_visible.iter().any(|b| b.key == r.key) {
-                continue;
-            }
-            if let Some(animator) = self.actor.body_animators.body(r.key) {
-                let inputs = crate::AnimatorInputs {
-                    params: r.animator.params.of(&self.actor.animator_params),
-                    plays: r.animator.plays.of(&self.actor.animator_plays),
-                    events: r.animator.events.of(&self.actor.animator_events),
-                };
-                animator.advance(Some(&r.body), Some(&r.frames), inputs, dt);
-            }
-        }
-        let local_drawn = self
-            .actor
-            .player_visible
-            .iter()
-            .any(|b| b.key == crate::player_model::LOCAL_BODY);
-        if !local_drawn {
-            if let Some(animator) = self
-                .actor
-                .body_animators
-                .body(crate::player_model::LOCAL_BODY)
-            {
-                animator.advance(
-                    self.actor.player_view.as_ref(),
-                    self.hand.frames.as_ref(),
-                    local_inputs,
-                    dt,
-                );
-            }
-        }
         let bodies_first = self.actor.skin.batch.next_instance();
         for body in &self.actor.player_visible {
             let Some(rig) = body_rig else { break };
-            let (inst, held, off) = (&body.inst, &body.held, &body.off);
-            let inputs = match body.animator {
-                Some(ranges) => crate::AnimatorInputs {
-                    params: ranges.params.of(&self.actor.animator_params),
-                    plays: ranges.plays.of(&self.actor.animator_plays),
-                    events: ranges.events.of(&self.actor.animator_events),
-                },
-                None => local_inputs,
-            };
-            let drive = self.actor.body_animators.body(body.key).map(|animator| {
-                crate::player_model::BodyDrive {
-                    animator,
-                    frames: body.frames.as_ref(),
-                    inputs,
-                    dt,
-                }
-            });
-            let (hand, off_hand) = crate::player_model::pose_player_body(
+            let (inst, held, off) = (&body.body, &body.held, &body.held_off);
+            let (hand, off_hand) = crate::player_model::place_player_body(
                 rig,
                 inst,
+                inst.pose.of(&self.actor.body_poses),
                 render_origin,
-                inst.bones.of(&self.actor.bone_offsets),
-                drive,
                 &mut self.actor.skin.batch,
             );
             // claimed poses ride their own per-hand attach frames (the off
@@ -471,9 +402,6 @@ impl Renderer {
             mut model_verts,
             mut model_indices,
         } = streams;
-        // Edges, consumed by this bake: a redraw before the next
-        // `set_local_animator` must not fire them again.
-        self.hand.local_events.clear();
         // Upload the three combined held-item streams (a stream that stayed
         // empty draws nothing).
         let prebuilt = |_: &mut Vec<_>, i: &mut Vec<u32>| i.len() as u32;

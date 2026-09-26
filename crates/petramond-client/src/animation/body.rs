@@ -2,26 +2,28 @@
 //! each frame by the body's locomotion blend and its two hands' frames, and
 //! evaluated OVER the locomotion pose so actions override and add to the
 //! walk instead of replacing it. Beside the shared body core
-//! ([`crate::animation_inputs`]) a body graph may read `walking sneak run
+//! ([`super::inputs`]) a body graph may read `walking sneak run
 //! backward strafe airborne falling landing swim seated sleeping pitch hurt`
 //! (`pitch` in degrees) and the `hurt` event (the flash rising).
 //!
-//! Every body on the roster advances every frame, drawn or not: a frame that
-//! culls a remote, or the local body while the view is first person, still
-//! runs its inputs, claims, events and montages — only the pose waits — so
-//! nothing it did off-screen replays as a stale edge when it comes back.
+//! Every body on the roster advances every frame, posed or not: a frame whose
+//! view culls a remote, or the local body while the view is first person,
+//! still runs its inputs, claims, events and montages — only the pose waits —
+//! so nothing it did off-screen replays as a stale edge when it comes back.
 
 use std::sync::Arc;
 
 use petramond::player::rigs::{self, Presenter};
 use petramond::player::RigId;
 use petramond_anim::{Graph, LocalPose};
+use petramond_render::HeldItemFrame;
 use rustc_hash::FxHashMap;
 
-use crate::animation_inputs::{flag, BodyDriver, BodyMotion};
-use crate::{AnimatorInputs, HeldItemFrame, PlayerRenderInstance};
+use super::claims::AnimatorInputs;
+use super::inputs::{flag, BodyDriver, BodyMotion};
+use super::motion::BodyState;
 
-type BodyInput = fn(&PlayerRenderInstance) -> f32;
+type BodyInput = fn(&BodyState) -> f32;
 
 const BODY: &[(&str, BodyInput)] = &[
     ("walking", |i| i.walk_weight),
@@ -39,57 +41,56 @@ const BODY: &[(&str, BodyInput)] = &[
     ("hurt", |i| i.hurt),
 ];
 
-impl BodyMotion for PlayerRenderInstance {
+impl BodyMotion for BodyState {
     fn hurt(&self) -> f32 {
         self.hurt
     }
 }
 
 /// The local player's body key; remote bodies key by their player id.
-pub(crate) const LOCAL_BODY: u32 = u32::MAX;
+pub const LOCAL_BODY: u32 = u32::MAX;
 
 pub(crate) struct BodyAnimator {
-    driver: BodyDriver<PlayerRenderInstance>,
+    driver: BodyDriver<BodyState>,
     /// The roster generation that last listed this body.
     listed: u64,
 }
 
 impl BodyAnimator {
-    /// Advance one drawn frame, `dt` seconds after the last, over `ground`
+    /// Advance one posed frame, `dt` seconds after the last, over `ground`
     /// (the body's locomotion pose).
     pub fn update(
         &mut self,
-        inst: &PlayerRenderInstance,
+        state: &BodyState,
         frames: Option<&[HeldItemFrame; 2]>,
         inputs: AnimatorInputs<'_>,
         dt: f32,
         ground: &LocalPose,
     ) {
-        self.drive(Some(inst), frames, inputs);
+        self.drive(Some(state), frames, inputs);
         self.driver.animator.update_over(dt, ground);
     }
 
-    /// Advance one frame that does not draw this body, without posing it.
-    /// `inst` is `None` when there is no body to read (the local body in
-    /// first person).
+    /// Advance one frame that does not pose this body. `state` is `None`
+    /// when there is no body to read (the local body in first person).
     pub fn advance(
         &mut self,
-        inst: Option<&PlayerRenderInstance>,
+        state: Option<&BodyState>,
         frames: Option<&[HeldItemFrame; 2]>,
         inputs: AnimatorInputs<'_>,
         dt: f32,
     ) {
-        self.drive(inst, frames, inputs);
+        self.drive(state, frames, inputs);
         self.driver.animator.advance(dt);
     }
 
     fn drive(
         &mut self,
-        inst: Option<&PlayerRenderInstance>,
+        state: Option<&BodyState>,
         frames: Option<&[HeldItemFrame; 2]>,
         inputs: AnimatorInputs<'_>,
     ) {
-        self.driver.begin(inst);
+        self.driver.begin(state);
         if let Some(frames) = frames {
             self.driver.publish_hands(frames);
         }
@@ -102,7 +103,7 @@ impl BodyAnimator {
 }
 
 /// Every body's animator, kept for as long as the body stays on the roster
-/// (the remote players handed to the frame, and the local body).
+/// (the remote players the frame gathered, and the local body).
 pub(crate) struct BodyAnimators {
     /// The body rig and its graph; `None` without a registered body graph.
     graph: Option<(RigId, Arc<Graph>)>,

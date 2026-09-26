@@ -66,7 +66,7 @@ fn bed_interaction_latches_hand_jab_for_sleep_overlay() {
     assert!(matches!(app.screen, AppScreen::Sleeping));
     let fired = |kind| {
         petramond::player::one_shot::fired(petramond_world::inventory::Hand::Main, kind)
-            .any(|row| app.hud_fx.hand_events().contains(&row))
+            .any(|row| app.sess().hud_fx.hand_events().contains(&row))
     };
     assert!(
         fired(petramond::player::one_shot::OneShot::Interact)
@@ -74,7 +74,7 @@ fn bed_interaction_latches_hand_jab_for_sleep_overlay() {
         "bed interaction plays the interact jab, not the place jab"
     );
     assert!(
-        app.hud_fx.sleep_hand_visible(),
+        app.sess().hud_fx.sleep_hand_visible(),
         "sleep keeps the hand visible briefly so the jab can render"
     );
 }

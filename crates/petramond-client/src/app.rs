@@ -28,7 +28,8 @@ mod presentation_events;
 mod render;
 mod schematic_library;
 mod screen;
-mod session_ui;
+mod screen_flow;
+mod session;
 mod shell;
 mod shell_docs;
 mod shell_state;
@@ -41,27 +42,19 @@ pub use screen::{CursorIcon, CursorPolicy};
 
 use crate::app::gui_router::GuiRouter;
 use crate::app::input::{ControlEvent, Controls};
-use crate::game::presentation::GamePresentationScratch;
-use crate::game::Game;
+use crate::app::session::Session;
 use petramond_input::controls::{BindableAction, Control, Modifiers};
 use petramond_render::camera::Camera;
-use petramond_render::Scene;
 
 pub struct App {
-    game: Option<Game>,
-    /// App-side state scoped to the current game session (HUD notice, the
-    /// creative / schematic forms, LAN status), replaced wholesale when a
-    /// session starts or ends.
-    session_ui: session_ui::SessionUi,
+    /// The live game session and everything scoped to it (see
+    /// [`session::Session`]): starting a session constructs it, ending one
+    /// drops it.
+    session: Option<Session>,
     shell_camera: Camera,
     render_dist: i32,
-    /// Reusable builder for neutral per-frame presentation data read from the game.
-    presentation: GamePresentationScratch,
-    /// Render-side translation of neutral per-frame presentation data into the
-    /// renderer's wire structs.
-    scene: Scene,
-    /// Sound orchestration: the audio engine, the soundtrack, and the
-    /// client-owned cue/cadence bookkeeping between game events and plays.
+    /// Sound orchestration's app-lifetime half: the audio engine and the
+    /// soundtrack. The session's cue/cadence bookkeeping lives in the session.
     sound: client_audio::ClientAudio,
     last: f64,
     /// Raw input resolution: held controls, pointer, modifiers, the action
@@ -76,30 +69,30 @@ pub struct App {
     /// Reused draw list for the active GUI document.
     composed_doc: petramond_ui::DrawList,
     composed_doc_images: Vec<petramond::gui::DocImageSource>,
-    /// Open client-WASM physical-pixel canvas, separate from GUI documents.
-    client_canvas: Option<client_mod_ui::ClientCanvasState>,
     /// Reused renderer handoff for always-on client overlays plus the canvas.
     client_overlay_images: Vec<petramond_render::ClientOverlayImage>,
-    chat: chat::ChatUi,
+    /// The current screen. Changed only through the screen funnel
+    /// (`screen_flow`), which applies its cursor policy and transient resets.
     screen: AppScreen,
+    /// Screens pushed under the current one (the Options flow over the title
+    /// or the pause menu); Back pops to the top of this.
+    screens_under: Vec<AppScreen>,
     /// The Options flow: persistent settings (`client.json`), slider
     /// previews, the armed control remap, the renderer refresh flag.
     options: options_state::OptionsState,
     /// `now_seconds` of the last [`render`](Self::render), so the held-item animation
     /// advances by draw time even when the platform coalesces or skips a redraw.
     last_render: f64,
-    /// Short-lived HUD/hand presentation: hurt shake, sleep-overlay hand,
-    /// heart wiggle, and the local rigs' graph events awaiting the next draw.
-    hud_fx: hud_fx::HudFx,
     /// Returns the allocator's free pages to the OS once terrain settles (see
     /// [`heap_reclaim`]).
     heap_reclaim: heap_reclaim::IdleHeapReclaim,
     /// The title flow's state: world list and selection, the open page's
     /// session, the connect session, the last disconnect reason.
     shell: shell_state::ShellState,
-    /// The last session's section cache, harvested at teardown: the next
-    /// remote join claims it in its Join manifest so a reconnect re-promotes
-    /// cached terrain instead of re-streaming it.
+    /// The last session's section cache, harvested when it ended
+    /// ([`Session::end`]): the next remote join claims it in its Join
+    /// manifest so a reconnect re-promotes cached terrain instead of
+    /// re-streaming it. Deliberately BETWEEN sessions, so it lives here.
     retained_section_cache: Option<crate::game::section_cache::SectionCache>,
     quit_requested: bool,
     renderer_world_clear_pending: bool,
@@ -124,12 +117,9 @@ impl App {
             settings.music_volume,
         );
         let mut app = Self {
-            game: None,
-            session_ui: Default::default(),
+            session: None,
             shell_camera: cam,
             render_dist,
-            presentation: GamePresentationScratch::new(),
-            scene: Scene::new(),
             sound,
             last: now_seconds(),
             controls: Controls::new(),
@@ -138,20 +128,18 @@ impl App {
             crafting_browser: Default::default(),
             composed_doc: petramond_ui::DrawList::default(),
             composed_doc_images: Vec::new(),
-            client_canvas: None,
             client_overlay_images: Vec::new(),
-            chat: chat::ChatUi::default(),
             screen: AppScreen::Title,
+            screens_under: Vec::new(),
             options: options_state::OptionsState::new(settings),
             last_render: now_seconds(),
-            hud_fx: Default::default(),
             heap_reclaim: Default::default(),
             shell: Default::default(),
             retained_section_cache: None,
             quit_requested: false,
             renderer_world_clear_pending: true,
         };
-        app.controls.pointer.release_for_menu();
+        app.set_screen(AppScreen::Title);
         app.shell.refresh_worlds();
         app
     }
@@ -161,8 +149,8 @@ impl App {
     /// down, which saves again and joins — the request here just bounds the
     /// window if teardown is interrupted.
     pub fn save_on_exit(&mut self) {
-        if let Some(game) = self.game.as_mut() {
-            game.save_all();
+        if let Some(session) = self.session.as_mut() {
+            session.game.save_all();
         }
     }
 
@@ -176,8 +164,8 @@ impl App {
     pub fn resize(&mut self, width: u32, height: u32) {
         let aspect = width as f32 / height.max(1) as f32;
         self.shell_camera.aspect = aspect;
-        if let Some(game) = self.game.as_mut() {
-            game.set_aspect(aspect);
+        if let Some(session) = self.session.as_mut() {
+            session.game.set_aspect(aspect);
         }
     }
 
@@ -190,14 +178,11 @@ impl App {
 
         match event {
             ControlEvent::OpenChat { command } => {
-                if self.screen == AppScreen::Game && self.game.is_some() {
-                    self.screen = AppScreen::Chat;
-                    let now = now_seconds();
-                    self.chat.clear_draft(now);
-                    if command {
-                        self.chat.insert_text("/", now);
+                if self.screen == AppScreen::Game && self.session.is_some() {
+                    self.set_screen(AppScreen::Chat);
+                    if let Some(session) = self.session.as_mut().filter(|_| command) {
+                        session.chat.insert_text("/", now_seconds());
                     }
-                    self.controls.pointer.release_for_menu();
                 }
                 true
             }
@@ -211,7 +196,8 @@ impl App {
                 // Not from a shell screen, and not over the sleep/death
                 // overlays — an inventory opened over a running sleep would
                 // strand the overlay's tick-owned state behind another screen.
-                if self.game.is_some() && (self.screen.gameplay_enabled() || self.screen.ui_open())
+                if self.session.is_some()
+                    && (self.screen.gameplay_enabled() || self.screen.ui_open())
                 {
                     self.toggle_inventory();
                 }
@@ -222,7 +208,7 @@ impl App {
             | ControlEvent::RedoEdit
             | ControlEvent::JumpPressed => {
                 if self.screen.gameplay_enabled() {
-                    if let Some(game) = self.game.as_mut() {
+                    if let Some(Session { game, .. }) = self.session.as_mut() {
                         match event {
                             ControlEvent::ToggleCreative => game.toggle_creative_mode(),
                             ControlEvent::UndoEdit => game.undo_edit(),
@@ -238,9 +224,9 @@ impl App {
                 // is held with it (sprinting on Ctrl scrolls slots as ever).
                 let taken = self.screen.gameplay_enabled()
                     && self
-                        .game
+                        .session
                         .as_mut()
-                        .is_some_and(|game| game.adjust_tool(steps));
+                        .is_some_and(|session| session.game.adjust_tool(steps));
                 if !taken {
                     self.controls.input.step_hotbar(self.hotbar_step_for_adjust(steps));
                 }
@@ -248,7 +234,7 @@ impl App {
             }
             ControlEvent::TogglePlayerMode => {
                 if self.screen.gameplay_enabled() {
-                    if let Some(game) = self.game.as_mut() {
+                    if let Some(Session { game, .. }) = self.session.as_mut() {
                         game.toggle_player_mode();
                     }
                 }
@@ -279,7 +265,7 @@ impl App {
             }
             ControlEvent::SelectHotbar(slot) => {
                 if self.screen.gameplay_enabled() {
-                    if let Some(game) = self.game.as_mut() {
+                    if let Some(Session { game, .. }) = self.session.as_mut() {
                         game.set_active_hotbar(slot);
                     }
                 }
@@ -288,8 +274,8 @@ impl App {
             ControlEvent::DropItem => {
                 if self.screen.ui_open() {
                     let (x, y) = self.controls.pointer.cursor();
-                    if let (Some(slot), Some(game)) =
-                        (self.ui.menu_slot_at(x, y), self.game.as_mut())
+                    if let (Some(slot), Some(Session { game, .. })) =
+                        (self.ui.menu_slot_at(x, y), self.session.as_mut())
                     {
                         // Menu shortcuts deliberately use the physical Ctrl
                         // modifier; movement bindings do not redefine GUI
@@ -300,7 +286,7 @@ impl App {
                     // In captured gameplay, holding the SPRINT control
                     // (wherever it is bound) drops the selected whole stack.
                     let whole_stack = self.controls.input.sprint_held();
-                    if let Some(game) = self.game.as_mut() {
+                    if let Some(Session { game, .. }) = self.session.as_mut() {
                         game.drop_selected_item(whole_stack);
                     }
                 }
@@ -314,13 +300,13 @@ impl App {
                 // the press upstream (`handle_raw_key`).
                 if self.screen.ui_open() {
                     let (x, y) = self.controls.pointer.cursor();
-                    if let (Some(slot), Some(game)) =
-                        (self.ui.menu_slot_at(x, y), self.game.as_mut())
+                    if let (Some(slot), Some(Session { game, .. })) =
+                        (self.ui.menu_slot_at(x, y), self.session.as_mut())
                     {
                         game.menu_swap_off_hand(slot);
                     }
                 } else if self.screen.gameplay_enabled() {
-                    if let Some(game) = self.game.as_mut() {
+                    if let Some(Session { game, .. }) = self.session.as_mut() {
                         game.swap_off_hand();
                     }
                 }
@@ -328,7 +314,7 @@ impl App {
             }
             ControlEvent::RotateHeldBlock => {
                 if self.screen.gameplay_enabled() {
-                    if let Some(game) = self.game.as_mut() {
+                    if let Some(Session { game, .. }) = self.session.as_mut() {
                         if !game.rotate_schematic_preview() {
                             game.toggle_held_block_rotation();
                         }
@@ -338,7 +324,7 @@ impl App {
             }
             ControlEvent::TogglePerspective => {
                 if self.screen.gameplay_enabled() {
-                    if let Some(game) = self.game.as_mut() {
+                    if let Some(Session { game, .. }) = self.session.as_mut() {
                         game.toggle_third_person();
                     }
                 }
@@ -363,6 +349,7 @@ impl App {
     /// own step; there is no wheel convention to defer to.
     fn hotbar_step_for_adjust(&self, steps: i32) -> i32 {
         let input = self
+            .options
             .settings
             .bindings
             .binding(if steps >= 0 {
@@ -385,39 +372,21 @@ impl App {
     pub fn set_modifiers(&mut self, modifiers: Modifiers) {
         self.controls.modifiers = modifiers;
         let mut out = Vec::new();
-        self.controls.binding_engine
+        self.controls
+            .binding_engine
             .on_modifiers_changed(modifiers, &mut out);
         self.dispatch_actions(out);
     }
 
-    /// Which GUI document backs the current screen, if any. Document-backed
-    /// screens draw + route input through the petramond-ui runtime; a screen with
-    /// no loaded document draws (and routes) nothing.
+    /// Which GUI document backs the current screen, if any: the screen
+    /// table's document, when it is loaded. Document-backed screens draw +
+    /// route input through the petramond-ui runtime; a screen with no loaded
+    /// document draws (and routes) nothing.
     pub fn doc_ui_kind(&self) -> Option<petramond_world::gui_state::GuiKind> {
-        use petramond_world::gui_state::GuiKind;
-        let kind = match self.screen {
-            AppScreen::Title if std::env::var_os("PETRAMOND_UI_DEMO").is_some() => GuiKind::Demo,
-            AppScreen::Title => GuiKind::Title,
-            AppScreen::WorldSelect => GuiKind::WorldSelect,
-            AppScreen::WorldSettings => GuiKind::WorldSettings,
-            AppScreen::CreateWorld => GuiKind::CreateWorld,
-            AppScreen::DeleteWorld => GuiKind::DeleteWorld,
-            AppScreen::ConnectServer => GuiKind::ConnectServer,
-            AppScreen::ModsMissing => GuiKind::ModsMissing,
-            AppScreen::ConnectionLost => GuiKind::ConnectionLost,
-            AppScreen::Options => GuiKind::Options,
-            AppScreen::OptionsSound => GuiKind::OptionsSound,
-            AppScreen::OptionsControls => GuiKind::OptionsControls,
-            AppScreen::OptionsGraphics => GuiKind::OptionsGraphics,
-            AppScreen::Pause => GuiKind::Pause,
-            AppScreen::Sleeping => GuiKind::Sleep,
-            AppScreen::Dead => GuiKind::Death,
-            AppScreen::Menu(kind) => kind,
-            AppScreen::ClientModGui(kind) => kind,
-            AppScreen::Schematics => GuiKind::Schematics,
-            _ => return None,
-        };
-        ui_runtime::AppUi::doc_backed(kind).then_some(kind)
+        self.screen
+            .spec()
+            .doc
+            .filter(|&kind| ui_runtime::AppUi::doc_backed(kind))
     }
 
     /// The subset of [`doc_ui_kind`](Self::doc_ui_kind) where the whole frame
@@ -425,10 +394,7 @@ impl App {
     /// GUIs, containers) return `None` here — they drive their document UI
     /// AND tick the game.
     pub fn doc_shell_kind(&self) -> Option<petramond_world::gui_state::GuiKind> {
-        if self.screen.ui_open() || self.screen.client_ui_open() || self.screen.overlay_open() {
-            return None;
-        }
-        self.doc_ui_kind()
+        self.doc_kind_for(screen::ScreenRole::Shell)
     }
 
     /// The subset of [`doc_ui_kind`](Self::doc_ui_kind) for gameplay OVERLAY
@@ -437,17 +403,23 @@ impl App {
     /// simulation keeps ticking underneath (the sleep timer and respawn are
     /// tick-owned).
     pub fn doc_overlay_kind(&self) -> Option<petramond_world::gui_state::GuiKind> {
-        if !self.screen.overlay_open() {
-            return None;
-        }
-        self.doc_ui_kind()
+        self.doc_kind_for(screen::ScreenRole::Overlay)
+    }
+
+    fn doc_kind_for(
+        &self,
+        role: screen::ScreenRole,
+    ) -> Option<petramond_world::gui_state::GuiKind> {
+        (self.screen.role() == role)
+            .then(|| self.doc_ui_kind())
+            .flatten()
     }
 
     /// Whether the hotbar HUD draws from its GUI document this frame
-    /// (gameplay screen only; presentation-only, input stays with the game).
+    /// (HUD screens only; presentation-only, input stays with the game).
     pub fn doc_hud_active(&self) -> bool {
-        matches!(self.screen, AppScreen::Game | AppScreen::Chat)
-            && self.game.is_some()
+        self.screen.spec().hud
+            && self.session.is_some()
             && ui_runtime::AppUi::doc_backed(petramond_world::gui_state::GuiKind::Hotbar)
     }
 }

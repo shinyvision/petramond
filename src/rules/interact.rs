@@ -2,10 +2,16 @@
 //! order they are offered a use click in, and what each one's claim means for
 //! presentation.
 //!
-//! The server's dispatch (`server::interact`) pairs every kind with its claim
-//! function and walks them in [`ConsumerKind::CLAIM_ORDER`]; the client's
-//! prediction mirror names the step it predicted by the same kind and reads
-//! its facts here, so neither side keeps a copy of the other's table.
+//! Both mirrors walk the kinds in [`ConsumerKind::CLAIM_ORDER`] through the
+//! ONE walk in [`super::use_click`]: the server pairs every kind with an
+//! executing consumer, the client with a predicting one, and both read the
+//! kind's facts here, so neither side keeps a copy of the other's table.
+
+/// Hold-to-interact repeat cadence: a HELD use button re-runs the interact
+/// dispatch this many ticks apart (250 ms at the 20 TPS tick). The server
+/// paces the repeat by it; the client predicts only the press, so a repeat's
+/// effects reach it through the `used_unpredicted` echo.
+pub const USE_REPEAT_TICKS: u32 = 5;
 
 /// Which registry row a consumer is.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]

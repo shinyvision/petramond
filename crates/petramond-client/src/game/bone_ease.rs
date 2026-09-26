@@ -8,7 +8,9 @@
 //! One per drawn body — the local third-person body and each remote. Pure
 //! presentation, so a body that stops being drawn just drops its easer.
 
-use petramond_render::{BoneOffset, POSE_EASE_RATE};
+use petramond_render::POSE_EASE_RATE;
+
+use crate::animation::BoneOffset;
 
 /// The eased bone offsets of ONE body.
 #[derive(Default)]

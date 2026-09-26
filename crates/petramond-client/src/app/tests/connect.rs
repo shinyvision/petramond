@@ -171,7 +171,7 @@ fn connection_lost_event_tears_down_to_the_disconnected_screen() {
     app.handle_open_screen_events(&events);
 
     assert_eq!(app.screen, AppScreen::ConnectionLost);
-    assert!(app.game.is_none(), "the dead session is dropped, unsaved");
+    assert!(!app.has_session(), "the dead session is dropped, unsaved");
     assert_eq!(
         app.shell.disconnect_message(),
         "The server closed the connection"
@@ -204,7 +204,7 @@ fn pause_menu_shows_lan_controls_for_host() {
     assert!(app.ui.out().rect("disconnect").is_none());
 
     // A bound port flips the button into the status label.
-    app.session_ui.lan_port = Some(7434);
+    app.sess_mut().lan_port = Some(7434);
     app.drive_doc_ui(GuiKind::Pause, SCREEN, 0.1);
     assert_eq!(app.ui.state_mut().get_bool("lan_open"), Some(true));
     assert_eq!(app.ui.state_mut().get_bool("lan_closed"), Some(false));
@@ -243,7 +243,7 @@ fn pause_menu_shows_disconnect_for_remote_and_hides_save_quit() {
     click_doc_id(&mut app, "disconnect");
     app.drive_doc_ui(GuiKind::Pause, SCREEN, 0.1);
     assert_eq!(app.screen, AppScreen::Title);
-    assert!(app.game.is_none());
+    assert!(!app.has_session());
 }
 
 /// Single-player pause freezes the client (no frames reach the sim), but a
@@ -277,7 +277,7 @@ fn multiplayer_pause_menu_does_not_freeze_the_client() {
 
     // The same session once LAN is open (the flag the Open-to-LAN click
     // sets): the pause menu no longer freezes anything.
-    app.session_ui.lan_port = Some(7434);
+    app.sess_mut().lan_port = Some(7434);
     app.update_frame(SCREEN);
     assert!(
         drain(&mut app) > 0,
@@ -298,8 +298,8 @@ fn multiplayer_pause_menu_does_not_freeze_the_client() {
 #[test]
 fn lan_menu_transition_never_stamps_an_unpopulated_shell_frame() {
     let mut app = app();
-    app.session_ui.lan_port = Some(7434);
-    app.server.open_to_lan_for_test();
+    app.sess_mut().lan_port = Some(7434);
+    app.mark_lan_opened();
 
     app.handle_control(Control::CloseScreen, true); // ESC → Pause
     app.handle_control(Control::CloseScreen, false);
@@ -357,12 +357,12 @@ fn end_to_end_connect_through_the_ui_joins_a_lan_server() {
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
     assert!(
-        app.game.as_ref().is_some_and(|g| g.is_remote()),
+        app.session.as_ref().map(|s| &s.game).is_some_and(|g| g.is_remote()),
         "the adopted session is the remote client"
     );
 
     app.disconnect_to_title();
     assert_eq!(app.screen, AppScreen::Title);
-    assert!(app.game.is_none());
+    assert!(!app.has_session());
     host.shutdown_and_join();
 }

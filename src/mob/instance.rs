@@ -410,10 +410,12 @@ impl Instance {
     /// `None` when the species can't be shorn, the coat is still regrowing, or the
     /// mob is dead.
     pub(super) fn shear(&mut self) -> Option<u8> {
-        let spec = def(self.kind).shear?;
-        if self.combat.death.is_dead() || self.is_shorn() {
+        // The shared coat gate — the rule the client's shear prediction runs
+        // against the replicated row.
+        if !crate::rules::item_use::can_shear_coat(self.kind, self.combat.death.is_dead(), self.is_shorn()) {
             return None;
         }
+        let spec = def(self.kind).shear?;
         let count = self
             .rng
             .next_range(spec.min.min(spec.max) as i32, spec.max as i32) as u8;

@@ -73,10 +73,7 @@ impl Furniture {
     /// never mispredicts a placement. One PASS: a sneak click holding a
     /// placeable block defers to the placement consumer (sneak-to-build).
     pub(super) fn try_sit(&self, pos: [i32; 3], player: PlayerId, actor: &PlayerSnapshot) -> bool {
-        if actor.sneak && held_item_places_block(actor.held) {
-            return false;
-        }
-        let Some(piece) = get_block(pos).and_then(|b| self.piece_for(b)) else {
+        let Some(piece) = self.seat_gate(&SideWorld::Server, pos, actor) else {
             return false;
         };
         let Some(group) = block_model_group(pos) else {
@@ -104,20 +101,21 @@ impl Furniture {
         true
     }
 
-    /// CLIENT: gate-only mirror of [`Self::try_sit`] over a replica read.
-    /// Furniture claims every click (seat or absorb), so the mirror is exact
-    /// from the block id alone — no occupancy divergence is possible — apart
-    /// from the same sneak+placeable pass the authoritative gate applies. A
-    /// `None` replica cell never produces a claim.
-    pub(super) fn predict_sit(&self, pos: [i32; 3], actor: &PlayerSnapshot) -> bool {
+    /// The seat consumer's claim GATE, run by both instances over their own
+    /// [`WorldView`]: furniture claims every click (seat or absorb), so the
+    /// gate is the block id alone — no occupancy read, so the client's
+    /// prediction is exact — apart from the sneak+placeable pass. Answers
+    /// the clicked piece; a cell the instance cannot read never claims.
+    pub(super) fn seat_gate(
+        &self,
+        world: &impl WorldView,
+        pos: [i32; 3],
+        actor: &PlayerSnapshot,
+    ) -> Option<&'static Piece> {
         if actor.sneak && held_item_places_block(actor.held) {
-            return false;
+            return None;
         }
-        client_blocks_at(vec![pos])
-            .into_iter()
-            .next()
-            .flatten()
-            .is_some_and(|b| self.piece_for(b).is_some())
+        world.block(pos).and_then(|b| self.piece_for(b))
     }
 }
 

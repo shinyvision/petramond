@@ -15,38 +15,37 @@ use crate::content::Content;
 use crate::farmland::{self, Hydration};
 use crate::keys;
 
-/// `sky` is the weather field heard this tick (`None` = clear sky): rain on
-/// open ground tills straight to wet farmland.
-pub fn on_item_use(
+/// The hoe's claim GATE, run by both instances (see [`crate::claims`]): the
+/// held hoe, eligible soil, and a clearable (or absent) cover above it.
+/// Answers the cover to clear. Unloaded / mid-stream reads mean "not
+/// actionable now" — quiet no-op. The hydration probe is not part of the
+/// claim, only of which farmland appearance lands.
+pub fn gate(
     content: &Content,
-    sky: Option<&FieldParams>,
+    world: &impl WorldView,
     item: ItemId,
-    target: Option<[i32; 3]>,
-) -> Outcome {
+    pos: [i32; 3],
+    block: BlockId,
+) -> Option<BlockId> {
     if item != content.iron_hoe {
-        return Outcome::Continue;
+        return None;
     }
-    let Some(pos) = target else {
-        return Outcome::Continue;
-    };
-    // Unloaded / mid-stream reads mean "not actionable now" — quiet no-op.
-    let Some(block) = get_block(pos) else {
-        return Outcome::Continue;
-    };
     if block != content.grass && block != content.dirt && block != content.grass_fertilized {
         // Mud, sand, slabs, modded soil… all ineligible in 0.1.
-        return Outcome::Continue;
+        return None;
     }
     // Fertilized grass tills like grass — into PLAIN farmland: its fertility
     // was the spreading kind, not the soil upgrade. The player's choice to
     // cut a fertilizing lawn short must never brick the block.
+    let cover = world.block([pos[0], pos[1] + 1, pos[2]])?;
+    (cover == BlockId::AIR || content.is_clearable_cover(cover)).then_some(cover)
+}
+
+/// Till a cell the [`gate`] passed (server). `sky` is the weather field
+/// heard this tick (`None` = clear sky): rain on open ground tills straight
+/// to wet farmland.
+pub fn till(content: &Content, sky: Option<&FieldParams>, pos: [i32; 3], cover: BlockId) -> Outcome {
     let above = [pos[0], pos[1] + 1, pos[2]];
-    let Some(cover) = get_block(above) else {
-        return Outcome::Continue;
-    };
-    if cover != BlockId::AIR && !content.is_clearable_cover(cover) {
-        return Outcome::Continue;
-    }
     // Till: clear replaceable cover (it drops nothing, like being replaced by
     // a placement), then choose the best-known appearance immediately. An
     // Unknown probe starts dry; reconciliation catches up.
@@ -66,22 +65,4 @@ pub fn on_item_use(
     emit_sound(keys::TILL_SOUND, Some(center));
     emitter_burst(keys::TILL_BURST, center, 1.0);
     Outcome::Cancel
-}
-
-/// CLIENT prediction mirror of [`on_item_use`]'s gate: hoe + eligible soil +
-/// a clearable (or absent) cover. The hydration probe is irrelevant to the
-/// claim — only which farmland appearance lands.
-pub fn predict_item_use(content: &Content, item: ItemId, pos: [i32; 3], block: BlockId) -> Outcome {
-    if item != content.iron_hoe {
-        return Outcome::Continue;
-    }
-    if block != content.grass && block != content.dirt && block != content.grass_fertilized {
-        return Outcome::Continue;
-    }
-    match crate::predict::peek([pos[0], pos[1] + 1, pos[2]]) {
-        Some(cover) if cover == BlockId::AIR || content.is_clearable_cover(cover) => {
-            Outcome::Cancel
-        }
-        _ => Outcome::Continue,
-    }
 }

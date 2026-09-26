@@ -15,7 +15,7 @@ fn creative_mode_inventory_and_double_jump_follow_server_authority() {
     for _ in 0..3 {
         game.tick(0.05, &input);
     }
-    assert_eq!(game.server.sessions()[0].player().mode(), PlayerMode::Creative);
+    assert_eq!(game.server_player().mode(), PlayerMode::Creative);
     assert!(game.creative_mode());
     assert!(!game.creative_flying());
     game.jump_pressed(10.0);
@@ -31,7 +31,7 @@ fn creative_mode_inventory_and_double_jump_follow_server_authority() {
         game.tick(0.05, &GameInput::default());
     }
     assert_eq!(
-        game.server.sessions()[0].menu().target().kind(),
+        game.session().menu.target().kind(),
         Some(GuiKind::Creative)
     );
 }
@@ -41,21 +41,19 @@ fn wand_removes_selected_air_and_undo_restores_it_without_breaking_world_blocks(
     use petramond_math::world_pos::WorldPos;
     use petramond_world::item::{ItemStack, ItemType};
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0]
-        .player_mut()
+    game.server_player_mut()
         .set_mode(PlayerMode::Creative);
-    game.player.set_mode(PlayerMode::Creative);
+    game.local.player.set_mode(PlayerMode::Creative);
     let wand = ItemType::by_name("petramond:schematic_wand").unwrap();
-    game.server.sessions_mut()[0]
-        .player_mut()
+    game.server_player_mut()
         .inventory
         .add(ItemStack::new(wand, 1));
     game.sync_self_view_for_test();
     assert!(game.held_world_tool().is_some());
     assert!(game.adjust_tool(1));
-    game.cam.pos = WorldPos::new(8.5, 80.5, 0.5);
-    game.cam.yaw = 0.0;
-    game.cam.pitch = 0.0;
+    game.local.cam.pos = WorldPos::new(8.5, 80.5, 0.5);
+    game.local.cam.yaw = 0.0;
+    game.local.cam.pitch = 0.0;
     game.tools.world
         .selection
         .selection
@@ -112,14 +110,14 @@ fn schematic_preview_and_placement_share_the_rotated_footprint_center_and_height
     };
     use std::sync::Arc;
     let mut game = game_on_empty_chunk();
-    game.player.set_mode(PlayerMode::Creative);
+    game.local.player.set_mode(PlayerMode::Creative);
     game.game
-        .replica
+        .replica.world
         .insert_empty_column_for_test(ChunkPos::new(0, 0));
-    game.game.replica.set_block_world(8, 80, 6, Block::Stone);
-    game.cam.pos = WorldPos::new(8.5, 80.5, 0.5);
-    game.cam.yaw = 0.0;
-    game.cam.pitch = 0.0;
+    game.game.replica.world.set_block_world(8, 80, 6, Block::Stone);
+    game.local.cam.pos = WorldPos::new(8.5, 80.5, 0.5);
+    game.local.cam.yaw = 0.0;
+    game.local.cam.pitch = 0.0;
     let data = CellData::capture(&ResolvedCell {
         block: Block::OakPlanks,
         state: ShapeState::NONE,
@@ -224,14 +222,14 @@ fn schematic_preview_and_placement_share_the_rotated_footprint_center_and_height
             assert!(game.rotate_schematic_preview());
             assert_eq!(game.tools.preview.vertical_offset(), height);
         }
-        game.cam.yaw = std::f32::consts::PI;
+        game.local.cam.yaw = std::f32::consts::PI;
         game.world_tool_input(&mut GameInput::default());
         assert!(
             game.tools.preview.origin().is_none(),
             "losing the target clears the preview position"
         );
         assert_eq!(game.tools.preview.vertical_offset(), height);
-        game.cam.yaw = 0.0;
+        game.local.cam.yaw = 0.0;
     }
     game.cancel_world_tools();
     assert_eq!(game.tools.preview.vertical_offset(), 0);

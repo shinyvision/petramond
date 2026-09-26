@@ -316,10 +316,35 @@ impl ServerGame {
         cell: IVec3,
         boxes: &[Aabb],
     ) -> bool {
-        self.sessions.iter().enumerate().any(|(i, sess)| {
-            (Some(i) == placer || (sess.player.health() > 0 && !sess.player.is_spectator()))
-                && sess.player.body().overlaps_block_boxes(cell, boxes)
-        }) || self.world.mobs().any_overlapping_boxes(cell, boxes)
+        use crate::rules::placement::{placement_blocked_by_bodies, player_occupies, Occupant};
+        // The SHARED body gate the client's place ghost runs against its
+        // predicted body and replicated rows.
+        let players = self
+            .sessions
+            .iter()
+            .enumerate()
+            .filter(|(i, sess)| {
+                player_occupies(
+                    Some(*i) == placer,
+                    sess.player.health() > 0,
+                    sess.player.is_spectator(),
+                )
+            })
+            .map(|(_, sess)| Occupant::Player {
+                feet: sess.player.pos,
+            });
+        let mobs = self
+            .world
+            .mobs()
+            .instances()
+            .iter()
+            .filter(|m| !m.is_dead())
+            .map(|m| Occupant::Mob {
+                pos: m.pos,
+                yaw: m.yaw,
+                kind: m.kind,
+            });
+        placement_blocked_by_bodies(cell, boxes, players.chain(mobs))
     }
 
     /// Test-only wrapper keeping the old bool-shaped call for placement tests

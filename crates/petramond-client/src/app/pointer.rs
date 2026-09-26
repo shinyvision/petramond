@@ -191,7 +191,9 @@ impl App {
     pub fn set_cursor_position(&mut self, x: f32, y: f32) {
         self.controls.pointer.set_cursor_position(x, y);
         if self.screen == super::AppScreen::Chat {
-            self.chat.pointer_move(x, y, super::now_seconds());
+            if let Some(session) = self.session.as_mut() {
+                session.chat.pointer_move(x, y, super::now_seconds());
+            }
             return;
         }
         if self.screen.client_canvas_open() {
@@ -206,12 +208,16 @@ impl App {
 
     pub fn set_pointer_button(&mut self, button: PointerButton, down: bool) {
         if self.screen == super::AppScreen::Chat {
-            if button == PointerButton::Primary {
-                let (x, y) = self.controls.pointer.cursor();
+            let (x, y) = self.controls.pointer.cursor();
+            if let Some(session) = self
+                .session
+                .as_mut()
+                .filter(|_| button == PointerButton::Primary)
+            {
                 if down {
-                    self.chat.pointer_down(x, y, super::now_seconds());
+                    session.chat.pointer_down(x, y, super::now_seconds());
                 } else {
-                    self.chat.pointer_up();
+                    session.chat.pointer_up();
                 }
             }
             return;
@@ -248,9 +254,9 @@ impl App {
                 let slot_drag = self.screen.ui_open()
                     && !self.controls.modifiers.shift
                     && self
-                        .game
+                        .session
                         .as_ref()
-                        .is_some_and(|game| game.cursor_has_stack());
+                        .is_some_and(|session| session.game.cursor_has_stack());
                 petramond_ui::InputEvent::PointerDown {
                     x,
                     y,
@@ -271,7 +277,9 @@ impl App {
             return;
         }
         if self.screen == super::AppScreen::Chat {
-            self.chat.scroll(delta);
+            if let Some(session) = self.session.as_mut() {
+                session.chat.scroll(delta);
+            }
             return;
         }
         if self.screen.client_canvas_open() {
@@ -304,7 +312,9 @@ impl App {
         if self.doc_ui_kind().is_some() {
             self.ui.push_input(petramond_ui::InputEvent::Blur);
         }
-        self.chat.pointer_up();
+        if let Some(session) = self.session.as_mut() {
+            session.chat.pointer_up();
+        }
         self.sound.stop_mining_loop(super::now_seconds());
     }
 

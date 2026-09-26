@@ -30,7 +30,8 @@ use crate::content::Content;
 use crate::keys;
 
 /// What fertilizer would do to `block`, if anything.
-enum Target {
+#[derive(Copy, Clone)]
+pub enum Target {
     /// Consume one unit, then swap: farmland and grass.
     Swap { to: BlockId, feedback_y: f32 },
     /// Swap first (write-gated), then consume: the sapling boost.
@@ -69,55 +70,50 @@ fn target(content: &Content, block: BlockId) -> Option<Target> {
     None
 }
 
-/// The fertilizer `item_use_pre` link: chained in lib.rs between the hoe and
-/// the compost fill, falling through quietly when the held item or the
-/// target is not its business.
-pub fn on_item_use(content: &Content, item: ItemId, target_pos: Option<[i32; 3]>) -> Outcome {
+/// The fertilizer's claim GATE, run by both instances (see
+/// [`crate::claims`]): the direct target table, then the vegetation-to-soil
+/// proxy. Answers the cell to act on and what to do there; `None` = not
+/// this link's business (the click falls through quietly).
+pub fn gate(
+    content: &Content,
+    world: &impl WorldView,
+    item: ItemId,
+    pos: [i32; 3],
+    block: BlockId,
+) -> Option<([i32; 3], Target)> {
     if item != content.fertilizer {
-        return Outcome::Continue;
+        return None;
     }
-    let Some(pos) = target_pos else {
-        return Outcome::Continue;
-    };
-    // Unloaded / mid-stream reads mean "not actionable now" — quiet no-op.
-    let Some(block) = get_block(pos) else {
-        return Outcome::Continue;
-    };
-    let Some(action) = target(content, block) else {
-        // A click on vegetation proxies to the soil beneath it: a crop
-        // fertilizes its (unfertilized) farmland; any other soil-rooted plant
-        // (flowers, short grass, ferns) fertilizes its grass block. Anything
-        // else — fertile soil already, dirt, air — falls through quietly.
-        let below = [pos[0], pos[1] - 1, pos[2]];
-        let Some(soil) = get_block(below) else {
-            return Outcome::Continue;
-        };
-        let action = if content.crop_stage(block).is_some() {
-            if content.is_farmland(soil) {
-                target(content, soil)
-            } else {
-                None
-            }
-        } else if content.spreadable.contains(&block) && soil == content.grass {
-            Some(Target::Swap {
-                to: content.grass_fertilized,
-                feedback_y: 1.0,
-            })
+    if let Some(action) = target(content, block) {
+        return Some((pos, action));
+    }
+    // A click on vegetation proxies to the soil beneath it: a crop
+    // fertilizes its (unfertilized) farmland; any other soil-rooted plant
+    // (flowers, short grass, ferns) fertilizes its grass block. Anything
+    // else — fertile soil already, dirt, air — falls through quietly.
+    let below = [pos[0], pos[1] - 1, pos[2]];
+    let soil = world.block(below)?;
+    let action = if content.crop_stage(block).is_some() {
+        if content.is_farmland(soil) {
+            target(content, soil)
         } else {
             None
-        };
-        let Some(action) = action else {
-            return Outcome::Continue;
-        };
-        return apply(below, item, action);
+        }
+    } else if content.spreadable.contains(&block) && soil == content.grass {
+        Some(Target::Swap {
+            to: content.grass_fertilized,
+            feedback_y: 1.0,
+        })
+    } else {
+        None
     };
-    apply(pos, item, action)
+    action.map(|action| (below, action))
 }
 
 /// The one apply sequence. Both arms gate the feedback + Cancel on the
 /// consume; they differ only in whether the swap precedes it (the sapling's
 /// pinned boost-before-consume order).
-fn apply(pos: [i32; 3], item: ItemId, action: Target) -> Outcome {
+pub fn apply(pos: [i32; 3], item: ItemId, action: Target) -> Outcome {
     match action {
         Target::Swap { to, feedback_y } => {
             if !consume_held(item, 1) {
@@ -150,29 +146,4 @@ fn feedback(pos: [i32; 3], y: f32) {
     ];
     emit_sound(keys::TILL_SOUND, Some(center));
     emitter_burst(keys::FERTILIZE_BURST, center, 1.0);
-}
-
-/// CLIENT prediction mirror of [`on_item_use`]'s gate: the direct target
-/// table, then the vegetation-to-soil proxy — the claim condition only,
-/// never the swap.
-pub fn predict_item_use(content: &Content, item: ItemId, pos: [i32; 3], block: BlockId) -> Outcome {
-    if item != content.fertilizer {
-        return Outcome::Continue;
-    }
-    if target(content, block).is_some() {
-        return Outcome::Cancel;
-    }
-    let Some(soil) = crate::predict::peek([pos[0], pos[1] - 1, pos[2]]) else {
-        return Outcome::Continue;
-    };
-    let claims = if content.crop_stage(block).is_some() {
-        content.is_farmland(soil) && target(content, soil).is_some()
-    } else {
-        content.spreadable.contains(&block) && soil == content.grass
-    };
-    if claims {
-        Outcome::Cancel
-    } else {
-        Outcome::Continue
-    }
 }

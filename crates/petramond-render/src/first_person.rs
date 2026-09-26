@@ -1,5 +1,5 @@
-//! The first-person viewmodel: the rigs catalog's viewmodel rig, posed by its
-//! animator and baked in VIEW space for the hand pass — the arms in the
+//! The first-person viewmodel: the rigs catalog's viewmodel rig, posed by the
+//! client's animation and baked in VIEW space for the hand pass — the arms in the
 //! player's skin, and each hand's held item CARRIED by its fist from the
 //! item's first-person rest seat (`hand::rest_seat`): the fist rests in the
 //! rig row's hold clip for the item's render kind, where the item sits
@@ -11,8 +11,6 @@
 //! inverse and the renderer applies the same inverse to the world camera, so
 //! a clip that kicks the camera moves the world and the arms as one.
 
-use std::sync::Arc;
-
 use glam::{Mat4, Vec3};
 use petramond::player::rigs::{self, Presenter, Rig};
 use petramond_anim::{ClipId, LocalPose, MirrorMap};
@@ -20,10 +18,6 @@ use petramond_world::item::ItemType;
 
 use super::item_model::ItemVertex;
 use super::mob_model::bake_model_cubes;
-use crate::views::LocalMotion;
-use crate::{AnimatorInputs, HeldItemFrame};
-
-mod driver;
 
 /// One rig pixel in view-space blocks.
 pub(crate) const RIG_PX: f32 = 1.0 / 16.0;
@@ -144,53 +138,43 @@ fn to_view() -> Mat4 {
     Mat4::from_scale(Vec3::splat(RIG_PX))
 }
 
-/// The hand pass's first-person state: the rig, its animator, and this
-/// frame's posed bones.
+/// The hand pass's first-person state: the rig and this frame's posed bones,
+/// as the client's animation last handed them over.
 pub(crate) struct FirstPersonHand {
     pub rig: FirstPersonRig,
     pub bones: Vec<Mat4>,
-    driver: driver::Driver,
 }
 
 impl FirstPersonHand {
-    /// The catalog's viewmodel rig and its animator; `None` when either
-    /// failed to load.
+    /// The catalog's viewmodel rig at rest; `None` when the rig or its graph
+    /// failed to load — the client then has no viewmodel animator either,
+    /// and no hand draws.
     pub fn shipped() -> Option<Self> {
-        let (id, row) = rigs::presented(Presenter::Viewmodel)?;
-        let graph = row.graph.as_ref()?;
+        let (_, row) = rigs::presented(Presenter::Viewmodel)?;
+        row.graph.as_ref()?;
         if row.model.bones().is_empty() {
             return None;
         }
         Some(Self {
             rig: FirstPersonRig::new(row),
             bones: row.model.resolve_local(&[], &[]),
-            driver: driver::Driver::new(id, Arc::clone(graph)),
         })
     }
 
+    /// Back to the rest pose.
     pub fn reset(&mut self) {
-        self.driver.reset();
         self.rig
             .row
             .model
             .resolve_local_into(&[], &[], &mut self.bones);
     }
 
-    /// Advance the animator one frame, `dt` seconds after the last, and pose
-    /// the rig. `inputs` are the local player's resolved animator claims and
-    /// the graph events fired on it this frame; only this rig's apply here.
-    pub fn advance(
-        &mut self,
-        frames: &[HeldItemFrame; 2],
-        motion: &LocalMotion,
-        inputs: AnimatorInputs<'_>,
-        dt: f32,
-    ) {
-        self.driver.update(frames, motion, inputs, dt);
-        self.driver
-            .animator()
-            .pose()
-            .resolve_into(&self.rig.row.model, &mut self.bones);
+    /// Take this frame's posed bones. A pose for some other rig (a length
+    /// that does not match, or none at all) leaves the last one standing.
+    pub fn set_bones(&mut self, bones: &[Mat4]) {
+        if bones.len() == self.bones.len() {
+            self.bones.copy_from_slice(bones);
+        }
     }
 
     /// The view-space correction the camera bone asks for; the world and

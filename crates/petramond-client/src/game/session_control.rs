@@ -44,7 +44,7 @@ impl Game {
     /// gates the looping-emitter gather and thins each emitter's active
     /// particle window in the renderer.
     pub fn set_particles_mode(&mut self, mode: petramond::save::client::ParticlesMode) {
-        self.particles.set_count_scale(mode.density());
+        self.fx.particles.set_count_scale(mode.density());
     }
 
     /// Change the client view distance live: the replica re-shapes its
@@ -52,7 +52,7 @@ impl Game {
     /// radius (it clamps to its own maximum).
     pub fn set_view_distance(&mut self, chunks: i32) {
         let chunks = chunks.clamp(4, 64);
-        self.replica.set_render_dist(chunks);
+        self.replica.world.set_render_dist(chunks);
         let msg = ClientToServer::SetViewDistance {
             chunks: chunks as u8,
         };
@@ -64,7 +64,7 @@ impl Game {
     }
 
     pub fn take_chat_lines(&mut self) -> Vec<ChatLine> {
-        std::mem::take(&mut self.pending_chat_lines)
+        std::mem::take(&mut self.replica.chat_lines)
     }
 
     /// Whether this session fronts a REMOTE server (joined over TCP) rather

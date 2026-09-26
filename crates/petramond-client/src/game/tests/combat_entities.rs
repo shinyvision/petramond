@@ -12,6 +12,7 @@ use petramond_world::block::Block;
 fn strike() -> MobAttack {
     MobAttack {
         target: petramond::mob::EntityRef::Player(Default::default()),
+        mob_index: 0,
         mob: Mob::Owl,
         mob_id: 1,
         origin: WorldPos::new(7.0, 64.0, 8.0),
@@ -25,29 +26,29 @@ fn strike() -> MobAttack {
 fn a_mob_strike_damages_and_knocks_back_the_player_through_the_funnel() {
     let mut game = game();
     let mut ev = TickEvents::default();
-    let health0 = game.server.sessions()[0].player().health();
-    game.server.sessions_mut()[0].player_mut().vel = Vec3::ZERO;
-    game.server.sessions_mut()[0].player_mut().on_ground = true;
+    let health0 = game.server_player().health();
+    game.server_player_mut().vel = Vec3::ZERO;
+    game.server_player_mut().on_ground = true;
 
-    game.server.apply_mob_attacks(vec![strike()], &mut ev);
+    game.sim_mut().apply_mob_attacks(vec![strike()], &mut ev);
 
     assert_eq!(
-        game.server.sessions()[0].player().health(),
+        game.server_player().health(),
         health0 - 2,
         "the strike's damage lands in half-heart points"
     );
     assert!(
-        game.server.sessions()[0].player().vel.x > 4.0,
+        game.server_player().vel.x > 4.0,
         "knocked back along the strike direction: {:?}",
-        game.server.sessions()[0].player().vel
+        game.server_player().vel
     );
     assert!(
-        game.server.sessions()[0].player().vel.y > 0.0,
+        game.server_player().vel.y > 0.0,
         "the knockback pops the player upward: {:?}",
-        game.server.sessions()[0].player().vel
+        game.server_player().vel
     );
     assert!(
-        !game.server.sessions()[0].player().on_ground,
+        !game.server_player().on_ground,
         "the pop reads as a launch"
     );
 }
@@ -69,23 +70,25 @@ fn immunity_is_a_composable_pipeline_component() {
     let mut game = game();
     let mut ev = TickEvents::default();
     let pos = WorldPos::new(8.0, 64.0, 8.0);
-    assert!(game.server.world_mut().mobs_mut().spawn(Mob::Sheep, pos, 0.0));
-    let mob = game.server.world().mobs().instances()[0].id();
-    let health = game.server.world().mobs().instances()[0].health();
+    assert!(game.server_world_mut().mobs_mut().spawn(Mob::Sheep, pos, 0.0));
+    let health = game.server_world().mobs().instances()[0].health();
+    let attacker = game.session().id;
 
     // A default-pipeline hit opens the window…
-    assert!(game.server.damage_mob_through_pipeline(
-        mob,
+    assert!(game.sim_mut().damage_mob_through_pipeline(
+        0,
+        0,
         1.0,
-        DamageSource::PlayerAttack(game.server.sessions()[0].id()),
+        DamageSource::PlayerAttack(attacker),
         Some(pos + Vec3::X),
         None,
         &mut ev,
     ));
     // …which blocks a second default hit, but NOT the DoT pipeline: it
     // applies inside the window and grants nothing.
-    assert!(!game.server.damage_mob_through_pipeline(
-        mob,
+    assert!(!game.sim_mut().damage_mob_through_pipeline(
+        0,
+        0,
         1.0,
         DamageSource::Mod("test"),
         None,
@@ -93,8 +96,9 @@ fn immunity_is_a_composable_pipeline_component() {
         &mut ev,
     ));
     for _ in 0..3 {
-        assert!(game.server.damage_mob_through_pipeline(
-            mob,
+        assert!(game.sim_mut().damage_mob_through_pipeline(
+            0,
+            0,
             1.0,
             DamageSource::Mod("test"),
             None,
@@ -103,18 +107,19 @@ fn immunity_is_a_composable_pipeline_component() {
         ));
     }
     assert_eq!(
-        game.server.world().mobs().instances()[0].health(),
+        game.server_world().mobs().instances()[0].health(),
         health - 4.0,
         "one default hit + three DoT ticks all landed"
     );
     // The DoT hits granted no window: once the original expires, the next
     // default hit lands on schedule.
     for _ in 1..petramond_world::damage::MOB_DAMAGE_IFRAME_TICKS {
-        game.server.game_tick_step(&mut ev);
+        game.sim_mut().game_tick_step(&mut ev);
     }
-    game.server.game_tick_step(&mut ev);
-    assert!(game.server.damage_mob_through_pipeline(
-        mob,
+    game.sim_mut().game_tick_step(&mut ev);
+    assert!(game.sim_mut().damage_mob_through_pipeline(
+        0,
+        0,
         1.0,
         DamageSource::Fall,
         None,
@@ -130,37 +135,39 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
     let mut game = game();
     let mut ev = TickEvents::default();
     let pos = WorldPos::new(8.0, 64.0, 8.0);
-    assert!(game.server.world_mut().mobs_mut().spawn(Mob::Sheep, pos, 0.0));
-    let mob = game.server.world().mobs().instances()[0].id();
-    let player_health = game.server.sessions()[0].player().health();
-    let mob_health = game.server.world().mobs().instances()[0].health();
+    assert!(game.server_world_mut().mobs_mut().spawn(Mob::Sheep, pos, 0.0));
+    let player_health = game.server_player().health();
+    let mob_health = game.server_world().mobs().instances()[0].health();
+    let attacker = game.session().id;
 
     assert!(game
-        .server
+        .sim_mut()
         .damage_player(0, 2, DamageSource::Fall, None, &mut ev));
-    assert!(game.server.damage_mob_through_pipeline(
-        mob,
+    assert!(game.sim_mut().damage_mob_through_pipeline(
+        0,
+        0,
         1.0,
-        DamageSource::PlayerAttack(game.server.sessions()[0].id()),
+        DamageSource::PlayerAttack(attacker),
         Some(pos + Vec3::X),
         None,
         &mut ev,
     ));
 
-    game.server.sessions_mut()[0].player_mut().vel = Vec3::ZERO;
-    game.server.apply_mob_attacks(vec![strike()], &mut ev);
+    game.server_player_mut().vel = Vec3::ZERO;
+    game.sim_mut().apply_mob_attacks(vec![strike()], &mut ev);
     assert_eq!(
-        game.server.sessions()[0].player().health(),
+        game.server_player().health(),
         player_health - 2,
         "mob damage is blocked by the window fall damage opened"
     );
     assert_eq!(
-        game.server.sessions()[0].player().vel,
+        game.server_player().vel,
         Vec3::ZERO,
         "an immune player receives no attack knockback"
     );
-    assert!(!game.server.damage_mob_through_pipeline(
-        mob,
+    assert!(!game.sim_mut().damage_mob_through_pipeline(
+        0,
+        0,
         1.0,
         DamageSource::Fall,
         None,
@@ -168,18 +175,19 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
         &mut ev,
     ));
     assert_eq!(
-        game.server.world().mobs().instances()[0].health(),
+        game.server_world().mobs().instances()[0].health(),
         mob_health - 1.0
     );
 
     for _ in 1..MOB_DAMAGE_IFRAME_TICKS {
-        game.server.game_tick_step(&mut ev);
+        game.sim_mut().game_tick_step(&mut ev);
     }
     assert!(!game
-        .server
+        .sim_mut()
         .damage_player(0, 1, DamageSource::Mod("test"), None, &mut ev));
-    assert!(!game.server.damage_mob_through_pipeline(
-        mob,
+    assert!(!game.sim_mut().damage_mob_through_pipeline(
+        0,
+        0,
         1.0,
         DamageSource::Mod("test"),
         None,
@@ -187,12 +195,13 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
         &mut ev,
     ));
 
-    game.server.game_tick_step(&mut ev);
+    game.sim_mut().game_tick_step(&mut ev);
     assert!(!game
-        .server
+        .sim_mut()
         .damage_player(0, 1, DamageSource::Mod("test"), None, &mut ev));
-    assert!(game.server.damage_mob_through_pipeline(
-        mob,
+    assert!(game.sim_mut().damage_mob_through_pipeline(
+        0,
+        0,
         1.0,
         DamageSource::Fall,
         None,
@@ -201,23 +210,23 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
     ));
 
     for _ in (MOB_DAMAGE_IFRAME_TICKS + 1)..PLAYER_DAMAGE_IFRAME_TICKS {
-        game.server.game_tick_step(&mut ev);
+        game.sim_mut().game_tick_step(&mut ev);
     }
     assert!(!game
-        .server
+        .sim_mut()
         .damage_player(0, 1, DamageSource::Mod("test"), None, &mut ev));
 
-    game.server.game_tick_step(&mut ev);
-    assert!(game.server.damage_player(
+    game.sim_mut().game_tick_step(&mut ev);
+    assert!(game.sim_mut().damage_player(
         0,
         1,
         DamageSource::PlayerAttack(Default::default()),
         None,
         &mut ev,
     ));
-    assert_eq!(game.server.sessions()[0].player().health(), player_health - 3);
+    assert_eq!(game.server_player().health(), player_health - 3);
     assert_eq!(
-        game.server.world().mobs().instances()[0].health(),
+        game.server_world().mobs().instances()[0].health(),
         mob_health - 2.0
     );
 }
@@ -226,26 +235,26 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
 fn mob_strikes_route_to_the_targeted_session_only() {
     let mut game = game();
     let other = game
-        .server
+        .sim_mut()
         .add_session_for_test(petramond::player::Player::new(WorldPos::new(
             30.0, 80.0, 0.0,
         )));
-    let other_id = game.server.sessions()[other].id();
+    let other_id = game.session_at(other).id;
     let mut ev = TickEvents::default();
-    let h0 = game.server.sessions()[0].player().health();
-    let h1 = game.server.sessions()[other].player().health();
+    let h0 = game.server_player().health();
+    let h1 = game.session_at(other).player.health();
 
     let mut a = strike();
     a.target = petramond::mob::EntityRef::Player(other_id);
-    game.server.apply_mob_attacks(vec![a], &mut ev);
+    game.sim_mut().apply_mob_attacks(vec![a], &mut ev);
 
     assert_eq!(
-        game.server.sessions()[0].player().health(),
+        game.server_player().health(),
         h0,
         "the untargeted session is untouched"
     );
     assert_eq!(
-        game.server.sessions()[other].player().health(),
+        game.session_at(other).player.health(),
         h1 - 2,
         "the strike lands on the session its target id names"
     );
@@ -257,21 +266,21 @@ fn a_cancelled_player_damage_pre_blocks_both_damage_and_knockback() {
     // loss and no shove. That's why knockback is gated on the funnel verdict.
     let mut game = game();
     let mut ev = TickEvents::default();
-    game.server
-        .bus_mut()
+    game.sim_mut()
+        .bus
         .on_player_damage_pre(0, |_, _| Outcome::Cancel);
-    let health0 = game.server.sessions()[0].player().health();
-    game.server.sessions_mut()[0].player_mut().vel = Vec3::ZERO;
+    let health0 = game.server_player().health();
+    game.server_player_mut().vel = Vec3::ZERO;
 
-    game.server.apply_mob_attacks(vec![strike()], &mut ev);
+    game.sim_mut().apply_mob_attacks(vec![strike()], &mut ev);
 
     assert_eq!(
-        game.server.sessions()[0].player().health(),
+        game.server_player().health(),
         health0,
         "cancel = no damage"
     );
     assert_eq!(
-        game.server.sessions()[0].player().vel,
+        game.server_player().vel,
         Vec3::ZERO,
         "cancel = no knockback either"
     );
@@ -281,15 +290,14 @@ fn a_cancelled_player_damage_pre_blocks_both_damage_and_knockback() {
 fn a_spectator_takes_neither_damage_nor_knockback_from_mob_strikes() {
     let mut game = game();
     let mut ev = TickEvents::default();
-    game.server.sessions_mut()[0]
-        .player_mut()
+    game.server_player_mut()
         .set_mode(petramond::player::PlayerMode::Spectator);
-    let health0 = game.server.sessions()[0].player().health();
+    let health0 = game.server_player().health();
 
-    game.server.apply_mob_attacks(vec![strike()], &mut ev);
+    game.sim_mut().apply_mob_attacks(vec![strike()], &mut ev);
 
-    assert_eq!(game.server.sessions()[0].player().health(), health0);
-    assert_eq!(game.server.sessions()[0].player().vel, Vec3::ZERO);
+    assert_eq!(game.server_player().health(), health0);
+    assert_eq!(game.server_player().vel, Vec3::ZERO);
 }
 
 #[test]
@@ -303,30 +311,31 @@ fn a_mods_damage_player_action_routes_through_the_funnel() {
 
     let mut game = game();
     let mut ev = TickEvents::default();
-    let h0 = game.server.sessions()[0].player().health();
+    let h0 = game.server_player().health();
 
     let seen_mod_source = Arc::new(AtomicBool::new(false));
     {
         let seen = seen_mod_source.clone();
-        game.server.bus_mut().on_player_damage_pre(0, move |_, pre| {
+        game.sim_mut().bus.on_player_damage_pre(0, move |_, pre| {
             if pre.source == DamageSource::Mod("testmod") {
                 seen.store(true, Ordering::Relaxed);
             }
             Outcome::Continue
         });
     }
-    game.server
-        .bus_mut()
+    let player = game.session().id;
+    game.sim_mut()
+        .bus
         .queue_mut()
         .push_action(DeferredAction::DamagePlayer {
-            player: game.server.sessions()[0].id(),
+            player,
             amount: 3,
             source: DamageSource::Mod("testmod"),
             origin: None,
         });
-    game.server.apply_deferred_actions(&mut ev);
+    game.sim_mut().apply_deferred_actions(&mut ev);
     assert_eq!(
-        game.server.sessions()[0].player().health(),
+        game.server_player().health(),
         h0 - 3,
         "the queued damage applied"
     );
@@ -336,25 +345,26 @@ fn a_mods_damage_player_action_routes_through_the_funnel() {
     );
 
     for _ in 0..petramond_world::damage::PLAYER_DAMAGE_IFRAME_TICKS {
-        game.server.tick_damage_immunity();
+        game.sim_mut().tick_damage_immunity();
     }
 
     // A priority -1 canceller runs first and blocks a later handler.
-    game.server
-        .bus_mut()
+    game.sim_mut()
+        .bus
         .on_player_damage_pre(-1, |_, _| Outcome::Cancel);
-    game.server
-        .bus_mut()
+    let player = game.session().id;
+    game.sim_mut()
+        .bus
         .queue_mut()
         .push_action(DeferredAction::DamagePlayer {
-            player: game.server.sessions()[0].id(),
+            player,
             amount: 5,
             source: DamageSource::Mod("testmod"),
             origin: None,
         });
-    game.server.apply_deferred_actions(&mut ev);
+    game.sim_mut().apply_deferred_actions(&mut ev);
     assert_eq!(
-        game.server.sessions()[0].player().health(),
+        game.server_player().health(),
         h0 - 3,
         "a cancelling player_damage_pre blocks a mod's DamagePlayer"
     );
@@ -368,36 +378,36 @@ fn queued_mod_actions_apply_within_a_game_tick() {
 
     let mut game = game_on_empty_chunk();
     let mut ev = TickEvents::default();
-    let h0 = game.server.sessions()[0].player().health();
-    game.server
-        .bus_mut()
+    let h0 = game.server_player().health();
+    let player = game.session().id;
+    game.sim_mut()
+        .bus
         .queue_mut()
         .push_action(DeferredAction::DamagePlayer {
-            player: game.server.sessions()[0].id(),
+            player,
             amount: 2,
             source: DamageSource::Mod("testmod"),
             origin: None,
         });
-    game.server.game_tick_step(&mut ev);
-    assert_eq!(game.server.sessions()[0].player().health(), h0 - 2);
+    game.sim_mut().game_tick_step(&mut ev);
+    assert_eq!(game.server_player().health(), h0 - 2);
 }
 
 #[test]
 fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() {
     let mut game = game_on_empty_chunk();
-    game.cam.pos = WorldPos::new(8.0, 66.0, 8.0);
-    game.cam.pitch = 0.0; // level look, so the eye ray stays at constant y
-    let dir = game.cam.forward();
+    game.local.cam.pos = WorldPos::new(8.0, 66.0, 8.0);
+    game.local.cam.pitch = 0.0; // level look, so the eye ray stays at constant y
+    let dir = game.local.cam.forward();
     // An owl two metres ahead, feet dropped so the eye-level ray crosses its body.
-    let mut feet = game.cam.pos + dir * 2.0;
+    let mut feet = game.local.cam.pos + dir * 2.0;
     feet.y -= 0.35;
-    assert!(game.server.world_mut().mobs_mut().spawn(Mob::Owl, feet, 0.0));
-    let id = game.server.world().mobs().instances()[0].id();
+    assert!(game.server_world_mut().mobs_mut().spawn(Mob::Owl, feet, 0.0));
+    let id = game.server_world().mobs().instances()[0].id();
 
     // Targeting reads the REPLICATED rows: feed the store as a batch would.
     let rows = |game: &super::common::TestGame| -> Vec<petramond::net::protocol::MobStateRow> {
-        game.server
-            .world()
+        game.server_world()
             .mobs()
             .instances()
             .iter()
@@ -426,27 +436,26 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
             .collect()
     };
     let batch = rows(&game);
-    game.entities.mobs_mut().apply_snapshot(&batch);
+    game.replica.entities.mobs_mut().apply_snapshot(&batch);
 
     assert_eq!(
-        game.closest_mob(game.cam.pos, dir, player::REACH)
+        game.replica.closest_mob(game.local.cam.pos, dir, player::REACH)
             .map(|(id, _)| id),
         Some(id),
         "a mob in front within reach is targeted (stable id)"
     );
     assert_eq!(
-        game.closest_mob(game.cam.pos, dir, 1.0).map(|(id, _)| id),
+        game.replica.closest_mob(game.local.cam.pos, dir, 1.0).map(|(id, _)| id),
         None,
         "a nearer block (smaller max_dist) occludes the mob"
     );
     // A corpse can't be targeted: the row replicates `dead` on the next batch.
-    let cam_pos = game.cam.pos;
+    let cam_pos = game.local.cam.pos;
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .mobs_mut()
         .damage_mob(
-            id,
+            0,
             100.0,
             Some(cam_pos),
             true,
@@ -455,9 +464,9 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
         )
         .is_some());
     let batch = rows(&game);
-    game.entities.mobs_mut().apply_snapshot(&batch);
+    game.replica.entities.mobs_mut().apply_snapshot(&batch);
     assert_eq!(
-        game.closest_mob(game.cam.pos, dir, player::REACH),
+        game.replica.closest_mob(game.local.cam.pos, dir, player::REACH),
         None,
         "a dead mob isn't targeted"
     );
@@ -498,17 +507,17 @@ fn closest_mob_targets_the_interpolated_render_pose_not_the_future_row() {
     let feet_y = eye.y - 0.35;
     let previous = eye + dir * 2.0;
     let future = eye + dir * 6.0;
-    game.entities
+    game.replica.entities
         .mobs_mut()
         .apply_snapshot(&[row(42, WorldPos::new(previous.x, feet_y, previous.z))]);
-    game.entities
+    game.replica.entities
         .mobs_mut()
         .apply_snapshot(&[row(42, WorldPos::new(future.x, feet_y, future.z))]);
-    game.entities.clock_mut().start();
-    game.entities.clock_mut().advance(TICK_DT * 0.5);
+    game.replica.entities.clock_mut().start();
+    game.replica.entities.clock_mut().advance(TICK_DT * 0.5);
 
     assert_eq!(
-        game.closest_mob(eye, dir, player::REACH).map(|(id, _)| id),
+        game.replica.closest_mob(eye, dir, player::REACH).map(|(id, _)| id),
         Some(42),
         "the halfway rendered body is still in reach even though curr is not"
     );
@@ -544,7 +553,7 @@ fn a_mob_eases_into_and_out_of_its_gait() {
         }
     }
     let walk = |game: &crate::game::Game| {
-        let entry = game.entities.mobs().iter().next().unwrap();
+        let entry = game.replica.entities.mobs().iter().next().unwrap();
         entry
             .gait_blend
             .iter()
@@ -553,11 +562,11 @@ fn a_mob_eases_into_and_out_of_its_gait() {
     };
 
     let mut game = game();
-    game.entities.mobs_mut().apply_snapshot(&[row(false, 0.0)]);
+    game.replica.entities.mobs_mut().apply_snapshot(&[row(false, 0.0)]);
     // A step begins: the walk comes in from rest, never at full weight.
-    game.entities.mobs_mut().apply_snapshot(&[row(true, 0.4)]);
-    game.entities.mobs_mut().advance_anim_blends(0.05);
-    game.entities.mobs_mut().advance_anim_blends(0.05);
+    game.replica.entities.mobs_mut().apply_snapshot(&[row(true, 0.4)]);
+    game.replica.entities.mobs_mut().advance_anim_blends(0.05);
+    game.replica.entities.mobs_mut().advance_anim_blends(0.05);
     let (weight, _) = walk(&game).expect("the walk is blending in");
     assert!(
         weight > 0.0 && weight < 1.0,
@@ -565,8 +574,8 @@ fn a_mob_eases_into_and_out_of_its_gait() {
     );
     // And ends mid-stride (the sim's clock resets with the gait): the walk
     // fades from the stride it was in, not from the reset clock.
-    game.entities.mobs_mut().apply_snapshot(&[row(false, 0.0)]);
-    game.entities.mobs_mut().advance_anim_blends(0.05);
+    game.replica.entities.mobs_mut().apply_snapshot(&[row(false, 0.0)]);
+    game.replica.entities.mobs_mut().advance_anim_blends(0.05);
     let (fading, phase) = walk(&game).expect("the walk is still fading out");
     assert!(fading > 0.0 && fading < weight + 1e-6);
     assert_eq!(phase, 0.4, "it holds the stride it stopped in");
@@ -576,17 +585,15 @@ fn a_mob_eases_into_and_out_of_its_gait() {
 fn fist_takes_four_hits_to_kill_an_owl() {
     let mut game = game();
     let pos = WorldPos::new(8.0, 64.0, 8.0);
-    assert!(game.server.world_mut().mobs_mut().spawn(Mob::Owl, pos, 0.0));
-    let id = game.server.world().mobs().instances()[0].id();
+    assert!(game.server_world_mut().mobs_mut().spawn(Mob::Owl, pos, 0.0));
     assert_eq!(petramond_world::item::attack_damage(None), (1.0, 1.0));
     let from = pos + Vec3::X;
     for i in 0..3 {
         assert!(
-            game.server
-                .world_mut()
+            game.server_world_mut()
                 .mobs_mut()
                 .damage_mob(
-                    id,
+                    0,
                     1.0,
                     Some(from),
                     true,
@@ -597,15 +604,14 @@ fn fist_takes_four_hits_to_kill_an_owl() {
             "fist hit {i} isn't lethal"
         );
         for _ in 0..petramond_world::damage::MOB_DAMAGE_IFRAME_TICKS {
-            game.server.world_mut().mobs_mut().tick_damage_immunity();
+            game.server_world_mut().mobs_mut().tick_damage_immunity();
         }
     }
     assert!(
-        game.server
-            .world_mut()
+        game.server_world_mut()
             .mobs_mut()
             .damage_mob(
-                id,
+                0,
                 1.0,
                 Some(from),
                 true,
@@ -620,14 +626,10 @@ fn fist_takes_four_hits_to_kill_an_owl() {
 /// Latch an attack click at the mob at `index`, the way an
 /// `Action(AttackClick)` message does — carrying the STABLE id.
 fn click_attack_at(game: &mut super::common::TestGame, index: usize) {
-    let id = game.server.world().mobs().instances()[index].id();
+    let id = game.server_world().mobs().instances()[index].id();
     common::aim_server_at_mob(game, index);
-    game.server.sessions_mut()[0]
-        .input_mut()
-        .latch_attack(petramond::server::player::AttackClick {
-            mob: Some(id),
-            player: None,
-        });
+    game.session_mut().pending_attack = true;
+    game.session_mut().pending_attack_mob = Some(id);
 }
 
 /// A swing FOLLOWS THROUGH before the hand may attack again, and the CLIENT
@@ -677,15 +679,14 @@ fn a_mashed_attack_queues_one_swing_behind_the_follow_through() {
 fn attack_lands_next_tick_then_locks_out_for_the_cooldown() {
     let mut game = game();
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .mobs_mut()
         .spawn(Mob::Owl, WorldPos::new(8.0, 64.0, 8.0), 0.0));
     let mut ev = TickEvents::default();
 
     // A click resolves on the tick (the tick after it was registered).
     click_attack_at(&mut game, 0);
-    game.server.tick_attack(0, &mut ev);
+    game.sim_mut().tick_attack(0, &mut ev);
     assert!(ev.player_at(0).swung_hand, "the click lands on the tick");
 
     // For the rest of the cooldown, a fresh click each tick lands nothing — even
@@ -693,7 +694,7 @@ fn attack_lands_next_tick_then_locks_out_for_the_cooldown() {
     for _ in 0..ATTACK_COOLDOWN_TICKS - 1 {
         ev.player(0).swung_hand = false;
         click_attack_at(&mut game, 0);
-        game.server.tick_attack(0, &mut ev);
+        game.sim_mut().tick_attack(0, &mut ev);
         assert!(
             !ev.player_at(0).swung_hand,
             "locked out during the cooldown"
@@ -703,7 +704,7 @@ fn attack_lands_next_tick_then_locks_out_for_the_cooldown() {
     // The cooldown has now elapsed, so a pending click connects again.
     ev.player(0).swung_hand = false;
     click_attack_at(&mut game, 0);
-    game.server.tick_attack(0, &mut ev);
+    game.sim_mut().tick_attack(0, &mut ev);
     assert!(
         ev.player_at(0).swung_hand,
         "the cooldown elapsed, the next attack lands"
@@ -712,7 +713,7 @@ fn attack_lands_next_tick_then_locks_out_for_the_cooldown() {
     // Only two fist hits (1 dmg each) landed across all those ticks, so the 4-health
     // owl is still alive: the gate makes a spam-click instakill impossible.
     assert!(
-        !game.server.world().mobs().instances()[0].is_dead(),
+        !game.server_world().mobs().instances()[0].is_dead(),
         "rate-limited, so the owl survives the burst"
     );
 }
@@ -726,16 +727,15 @@ fn attack_lands_next_tick_then_locks_out_for_the_cooldown() {
 fn a_claimed_attack_attempt_stands_the_melee_down_but_still_swings() {
     let mut game = game();
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .mobs_mut()
         .spawn(Mob::Owl, WorldPos::new(8.0, 64.0, 8.0), 0.0));
-    let h0 = game.server.world().mobs().instances()[0].health();
+    let h0 = game.server_world().mobs().instances()[0].health();
     let seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counter = std::sync::Arc::clone(&seen);
     let claim = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
     let verdict = std::sync::Arc::clone(&claim);
-    game.server.bus_mut().on_attack_attempt(0, move |_, ev| {
+    game.sim_mut().bus.on_attack_attempt(0, move |_, ev| {
         assert!(
             ev.mob.is_some(),
             "the validated crosshair mob rides the attempt"
@@ -750,24 +750,24 @@ fn a_claimed_attack_attempt_stands_the_melee_down_but_still_swings() {
     let mut ev = TickEvents::default();
 
     click_attack_at(&mut game, 0);
-    game.server.tick_attack(0, &mut ev);
+    game.sim_mut().tick_attack(0, &mut ev);
     assert_eq!(
         seen.load(std::sync::atomic::Ordering::SeqCst),
         1,
         "dispatched once"
     );
     assert_eq!(
-        game.server.world().mobs().instances()[0].health(),
+        game.server_world().mobs().instances()[0].health(),
         h0,
         "a claimed press lands no engine hit"
     );
     assert!(ev.player_at(0).swung_hand, "but the hand swung");
     assert_eq!(
-        game.server.sessions()[0].sim().attack_cooldown, ATTACK_COOLDOWN_TICKS,
+        game.session().attack_cooldown, ATTACK_COOLDOWN_TICKS,
         "and the cooldown armed"
     );
     assert_eq!(
-        game.server.sessions()[0].replication().swing_events.main,
+        game.session().swing_events.main,
         Some(mod_api::SwingKind::Attack),
         "and the Attack edge latched for the swing facts"
     );
@@ -775,13 +775,13 @@ fn a_claimed_attack_attempt_stands_the_melee_down_but_still_swings() {
     // Passing hands the press back to the engine's melee.
     claim.store(false, std::sync::atomic::Ordering::SeqCst);
     for _ in 0..ATTACK_COOLDOWN_TICKS {
-        game.server.tick_attack(0, &mut ev);
+        game.sim_mut().tick_attack(0, &mut ev);
     }
     click_attack_at(&mut game, 0);
-    game.server.tick_attack(0, &mut ev);
+    game.sim_mut().tick_attack(0, &mut ev);
     assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 2);
     assert!(
-        game.server.world().mobs().instances()[0].health() < h0,
+        game.server_world().mobs().instances()[0].health() < h0,
         "a passed press is the engine's hit"
     );
 }
@@ -797,20 +797,19 @@ fn a_mod_hit_landed_for_a_player_shoves_like_the_players_own_melee() {
     let from = WorldPos::new(6.0, 200.0, 8.0);
     for (attack, label) in [(false, "the mod's own damage"), (true, "a player's strike")] {
         assert!(game
-            .server
-            .world_mut()
+            .server_world_mut()
             .mobs_mut()
             .spawn(Mob::Owl, WorldPos::new(8.0, 200.0, 8.0), 0.0));
-        let idx = game.server.world().mobs().instances().len() - 1;
-        let id = game.server.world().mobs().instances()[idx].id();
-        let h0 = game.server.world().mobs().instances()[idx].health();
+        let idx = game.server_world().mobs().instances().len() - 1;
+        let id = game.server_world().mobs().instances()[idx].id();
+        let h0 = game.server_world().mobs().instances()[idx].health();
         let source = if attack {
-            DamageSource::PlayerAttack(game.server.sessions()[0].id())
+            DamageSource::PlayerAttack(game.session().id)
         } else {
             DamageSource::Mod("testmod")
         };
-        game.server
-            .bus_mut()
+        game.sim_mut()
+            .bus
             .queue_mut()
             .push_action(petramond::events::DeferredAction::DamageMob {
                 mob_id: id,
@@ -819,8 +818,8 @@ fn a_mod_hit_landed_for_a_player_shoves_like_the_players_own_melee() {
                 origin: Some(from),
                 feedback: None,
             });
-        game.server.apply_deferred_actions(&mut ev);
-        let mob = &game.server.world().mobs().instances()[idx];
+        game.sim_mut().apply_deferred_actions(&mut ev);
+        let mob = &game.server_world().mobs().instances()[idx];
         assert!(mob.health() < h0, "{label}: the hit lands");
         assert_eq!(
             mob.staggered(),
@@ -836,25 +835,23 @@ fn dead_and_spectator_players_cannot_attack_mobs() {
     for spectator in [false, true] {
         let mut game = game_on_empty_chunk();
         assert!(game
-            .server
-            .world_mut()
+            .server_world_mut()
             .mobs_mut()
             .spawn(Mob::Owl, WorldPos::new(8.0, 200.0, 8.0), 0.0));
         click_attack_at(&mut game, 0);
         if spectator {
-            game.server.sessions_mut()[0]
-                .player_mut()
+            game.server_player_mut()
                 .set_mode(petramond::player::PlayerMode::Spectator);
         } else {
-            game.server.sessions_mut()[0].player_mut().set_health(0);
+            game.server_player_mut().set_health(0);
         }
-        let health = game.server.world().mobs().instances()[0].health();
+        let health = game.server_world().mobs().instances()[0].health();
         let mut ev = TickEvents::default();
 
-        game.server.tick_attack(0, &mut ev);
+        game.sim_mut().tick_attack(0, &mut ev);
 
         assert_eq!(
-            game.server.world().mobs().instances()[0].health(),
+            game.server_world().mobs().instances()[0].health(),
             health,
             "{} actor cannot authorize a mob hit",
             if spectator { "spectator" } else { "dead" }
@@ -870,29 +867,28 @@ fn dead_and_spectator_players_cannot_attack_mobs() {
 fn a_newly_boarded_player_cannot_attack_their_mount_before_mirror_reconciliation() {
     let mut game = game_on_empty_chunk();
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .mobs_mut()
         .spawn(Mob::Owl, WorldPos::new(8.0, 200.0, 8.0), 0.0));
     click_attack_at(&mut game, 0);
-    let mob_id = game.server.world().mobs().instances()[0].id();
-    let player_id = game.server.sessions()[0].id().0;
-    let health = game.server.world().mobs().instances()[0].health();
+    let mob_id = game.server_world().mobs().instances()[0].id();
+    let player_id = game.session().id.0;
+    let health = game.server_world().mobs().instances()[0].health();
 
     // Placement runs before Attack. A successful board therefore updates the
     // authoritative registry while the session mirror remains stale until
     // the later Riding pass.
-    assert!(game.server.world_mut().riding_mut().mount(
+    assert!(game.server_world_mut().riding_mut().mount(
         player_id,
         petramond::mob::riding::MountTarget::Mob(mob_id),
         0
     ));
-    assert!(game.server.sessions()[0].mount().is_none());
+    assert!(game.session().mount.is_none());
     let mut events = TickEvents::default();
 
-    game.server.tick_attack(0, &mut events);
+    game.sim_mut().tick_attack(0, &mut events);
 
-    assert_eq!(game.server.world().mobs().instances()[0].health(), health);
+    assert_eq!(game.server_world().mobs().instances()[0].health(), health);
     assert!(
         events.player_at(0).swung_hand,
         "the rejected own-mount claim degrades to an air punch"
@@ -903,38 +899,30 @@ fn a_newly_boarded_player_cannot_attack_their_mount_before_mirror_reconciliation
 fn a_forged_mob_id_cannot_redirect_an_attack_past_the_nearest_body() {
     let mut game = game_on_empty_chunk();
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .mobs_mut()
         .spawn(Mob::Owl, WorldPos::new(8.0, 200.0, 8.0), 0.0));
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .mobs_mut()
         .spawn(Mob::Owl, WorldPos::new(8.0, 200.0, 9.0), 0.0));
     common::aim_server_at_mob(&mut game, 0);
-    let forged = game.server.world().mobs().instances()[1].id();
+    let forged = game.server_world().mobs().instances()[1].id();
     let health: Vec<_> = game
-        .server
-        .world()
+        .server_world()
         .mobs()
         .instances()
         .iter()
         .map(|mob| mob.health())
         .collect();
-    game.server.sessions_mut()[0]
-        .input_mut()
-        .latch_attack(petramond::server::player::AttackClick {
-            mob: Some(forged),
-            player: None,
-        });
+    game.session_mut().pending_attack = true;
+    game.session_mut().pending_attack_mob = Some(forged);
     let mut ev = TickEvents::default();
 
-    game.server.tick_attack(0, &mut ev);
+    game.sim_mut().tick_attack(0, &mut ev);
 
     let after: Vec<_> = game
-        .server
-        .world()
+        .server_world()
         .mobs()
         .instances()
         .iter()
@@ -948,22 +936,19 @@ fn a_forged_mob_id_cannot_redirect_an_attack_past_the_nearest_body() {
 fn opening_a_screen_drops_a_latched_action_so_it_cant_fire_behind_the_menu() {
     let mut game = game();
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .mobs_mut()
         .spawn(Mob::Owl, WorldPos::new(8.0, 64.0, 8.0), 0.0));
-    let mob_id = game.server.world().mobs().instances()[0].id();
+    let mob_id = game.server_world().mobs().instances()[0].id();
 
     // A click message latches while playing...
-    game.server.apply_message(
-        0,
-        ClientToServer::Action(PlayerAction::AttackClick {
+    game.send_to_server(ClientToServer::Action(PlayerAction::AttackClick {
             mob: Some(mob_id),
             player: None,
         }),
     );
     assert!(
-        game.server.sessions()[0].input().attack().is_some(),
+        game.session().pending_attack,
         "the click latched while playing"
     );
 
@@ -971,14 +956,17 @@ fn opening_a_screen_drops_a_latched_action_so_it_cant_fire_behind_the_menu() {
     // PlayerUpdate reports gameplay=false). The latched press is dropped, so
     // the tick that still runs behind the menu lands no attack.
     let update = common::player_update(&game, false);
-    game.server
-        .apply_message(0, ClientToServer::PlayerUpdate(update));
+    game.send_to_server(ClientToServer::PlayerUpdate(update));
     assert!(
-        game.server.sessions()[0].input().attack().is_none(),
-        "opening a screen drops the latched press and its mob target with it"
+        !game.session().pending_attack,
+        "opening a screen drops the latched press"
+    );
+    assert!(
+        game.session().pending_attack_mob.is_none(),
+        "the click's mob target is dropped with it"
     );
     let mut ev = TickEvents::default();
-    game.server.tick_attack(0, &mut ev);
+    game.sim_mut().tick_attack(0, &mut ev);
     assert!(
         !ev.player_at(0).swung_hand,
         "no attack fires behind the open menu"
@@ -989,14 +977,12 @@ fn opening_a_screen_drops_a_latched_action_so_it_cant_fire_behind_the_menu() {
 fn a_killed_mob_ragdolls_then_despawns() {
     let mut game = game_on_empty_chunk();
     let pos = WorldPos::new(8.0, 64.0, 8.0);
-    assert!(game.server.world_mut().mobs_mut().spawn(Mob::Owl, pos, 0.0));
-    let id = game.server.world().mobs().instances()[0].id();
+    assert!(game.server_world_mut().mobs_mut().spawn(Mob::Owl, pos, 0.0));
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .mobs_mut()
         .damage_mob(
-            id,
+            0,
             100.0,
             Some(pos + Vec3::X),
             true,
@@ -1005,15 +991,15 @@ fn a_killed_mob_ragdolls_then_despawns() {
         )
         .is_some());
     assert_eq!(
-        game.server.world().mobs().len(),
+        game.server_world().mobs().len(),
         1,
         "the corpse is present while ragdolling"
     );
-    let player_pos = game.server.sessions()[0].player().body_center();
-    let player_body = game.server.sessions()[0].player().body();
+    let player_pos = game.server_player().body_center();
+    let player_body = game.server_player().body();
     // 1.5 s ragdoll lifetime at 20 TPS = 30 ticks; run extra for margin.
     for _ in 0..50 {
-        game.server.world_mut().tick_mobs(
+        game.server_world_mut().tick_mobs(
             TICK_DT,
             &[petramond::mob::PlayerAnchor {
                 pos: player_pos,
@@ -1023,7 +1009,7 @@ fn a_killed_mob_ragdolls_then_despawns() {
         );
     }
     assert_eq!(
-        game.server.world().mobs().len(),
+        game.server_world().mobs().len(),
         0,
         "the corpse despawns once the ragdoll finishes"
     );
@@ -1032,24 +1018,23 @@ fn a_killed_mob_ragdolls_then_despawns() {
 #[test]
 fn mobs_take_player_rule_fall_damage_when_they_land() {
     let mut game = game();
-    game.server.world_mut().clear_world();
+    game.server_world_mut().clear_world();
     let mut chunk = petramond_world::chunk::Chunk::new(0, 0);
     for z in 0..petramond_world::chunk::CHUNK_SZ {
         for x in 0..petramond_world::chunk::CHUNK_SX {
             chunk.set_block(x, 63, z, Block::Grass);
         }
     }
-    game.server
-        .world_mut()
+    game.server_world_mut()
         .insert_chunk_for_test(petramond_world::chunk::ChunkPos::new(0, 0), chunk);
 
     let spawn = WorldPos::new(8.5, 70.0, 8.5);
-    assert!(game.server.world_mut().mobs_mut().spawn(Mob::Owl, spawn, 0.0));
-    let health0 = game.server.world().mobs().instances()[0].health();
-    let player = game.server.sessions()[0].player().body_center();
-    let body = game.server.sessions()[0].player().body();
+    assert!(game.server_world_mut().mobs_mut().spawn(Mob::Owl, spawn, 0.0));
+    let health0 = game.server_world().mobs().instances()[0].health();
+    let player = game.server_player().body_center();
+    let body = game.server_player().body();
     let anchors = [petramond::mob::PlayerAnchor {
-        id: game.server.sessions()[0].id(),
+        id: game.session().id,
         pos: player,
         body: Some(body),
         ..Default::default()
@@ -1058,9 +1043,9 @@ fn mobs_take_player_rule_fall_damage_when_they_land() {
     let mut feed = TickEvents::default();
     let mut landed = false;
     for _ in 0..80 {
-        let mob_events = game.server.world_mut().tick_mobs(TICK_DT, &anchors);
+        let mob_events = game.server_world_mut().tick_mobs(TICK_DT, &anchors);
         landed |= !mob_events.falls.is_empty();
-        game.server
+        game.sim_mut()
             .apply_mob_fall_damage(mob_events.falls, &mut feed);
         if landed {
             break;
@@ -1068,7 +1053,7 @@ fn mobs_take_player_rule_fall_damage_when_they_land() {
     }
 
     assert!(landed, "the mob landed and reported a fall");
-    let mob = &game.server.world().mobs().instances()[0];
+    let mob = &game.server_world().mobs().instances()[0];
     let expected = petramond::server::health::fall_damage_health((spawn.y - 64.0) as f32) as f32;
     assert_eq!(expected, 3.0, "fixture is a six-block fall");
     assert_eq!(mob.health(), health0 - expected);
@@ -1083,612 +1068,23 @@ fn killing_owls_drops_loot_into_the_world() {
     // something — this proves the death→loot path is wired, without pinning the
     // (freely-editable) table contents.
     for _ in 0..40 {
-        let id = game
-            .server
-            .world_mut()
-            .mobs_mut()
-            .spawn_lit(Mob::Owl, pos, 0.0, 63, petramond_world::light::BlockLight6::DARK)
-            .expect("spawned");
-        if let Some(death) = game.server.world_mut().mobs_mut().damage_mob(
-            id,
+        assert!(game.server_world_mut().mobs_mut().spawn(Mob::Owl, pos, 0.0));
+        let idx = game.server_world().mobs().len() - 1;
+        if let Some(death) = game.server_world_mut().mobs_mut().damage_mob(
+            idx,
             100.0,
             Some(pos + Vec3::X),
             true,
             None,
             &MobDamageFeedback::default(),
         ) {
-            game.server.spawn_mob_loot(death);
+            game.sim_mut().spawn_mob_loot(death);
         }
     }
     assert!(
-        !game.server.world().item_entities().is_empty(),
+        !game.server_world().item_entities().is_empty(),
         "killing owls drops loot via the loot table"
     );
 }
 
-#[test]
-fn a_mob_pushes_the_player_per_frame() {
-    // The player is shoved out of an overlapping mob every frame (not on the tick),
-    // so the drift is smooth. An owl just east of the player pushes it west.
-    // The push acts on the CLIENT's predicted player against the REPLICATED
-    // mob rows (the shove reaches the server in the next PlayerUpdate).
-    let mut game = game();
-    game.player.pos = WorldPos::new(8.0, 64.0, 8.0);
-    game.entities
-        .mobs_mut()
-        .apply_snapshot(&[petramond::net::protocol::MobStateRow {
-            id: 1,
-            kind_id: Mob::Owl.0,
-            pos: WorldPos::new(8.2, 64.0, 8.0),
-            yaw: 0.0,
-            tilt: petramond_math::math::Tilt::LEVEL,
-            anim_time: 0.0,
-            moving: false,
-            idle_anim: None,
-            head_yaw: 0.0,
-            head_pitch: 0.0,
-            hurt_timer: 0.0,
-            dead: false,
-            shorn: false,
-            emitters: Vec::new(),
-            conditions: Vec::new(),
-            anims: Vec::new(),
-            ragdoll: None,
-            dig: None,
-            held: [None; 2],
-            draw: Default::default(),
-        }]);
-    let x0 = game.player.pos.x;
-    for _ in 0..30 {
-        game.apply_entity_push(1.0 / 60.0);
-    }
-    assert!(
-        game.player.pos.x < x0 - 0.05,
-        "the owl pushed the player -X, away from it: {x0} -> {}",
-        game.player.pos.x
-    );
-}
-
-#[test]
-fn a_remote_player_pushes_the_local_player_per_frame() {
-    // Remote players jostle like mobs: an overlapping remote body shoves the
-    // LOCAL predicted player out, per frame, through the same separation rule.
-    // The remote's own half runs on its own client — each client only ever
-    // shoves itself. Hidden bodies (spectators/the dead) and sleepers don't
-    // push: nothing should nudge the player off a bedside vigil, and nothing
-    // is there to touch when the body isn't rendered.
-    use petramond::net::protocol::PlayerStateRow;
-    use petramond::player::PlayerId;
-
-    fn remote_row(pos: WorldPos, visible: bool, sleeping: bool) -> PlayerStateRow {
-        PlayerStateRow {
-            conditions: Vec::new(),
-            id: PlayerId(1),
-            transform: petramond::net::protocol::Transform {
-                pos,
-                vel: Vec3::ZERO,
-                yaw: 0.0,
-                pitch: 0.0,
-            },
-            on_ground: true,
-            sneaking: false,
-            sleeping,
-            sleep_yaw: None,
-            alive: visible,
-            visible,
-            held_item: None,
-            held_data: None,
-            off_hand_item: None,
-            off_hand_data: None,
-            mining: None,
-            eating: false,
-            eating_off_hand: false,
-            held_pose_main: None,
-            held_pose_off: None,
-            held_display: [None; 2],
-            bone_poses: Vec::new(),
-            animator: Default::default(),
-            hurt_recent: false,
-            snap: false,
-            mount: None,
-        }
-    }
-
-    let mut game = game();
-    let own_id = game.game.entities.self_id();
-    let start = WorldPos::new(8.0, 64.0, 8.0);
-    let overlap = WorldPos::new(8.2, 64.0, 8.0); // just east, footprints overlapping
-
-    let run = |game: &mut common::TestGame, row: PlayerStateRow| {
-        game.player.pos = start;
-        game.game.entities.players_mut().apply_snapshot(&[row], &[], own_id);
-        for _ in 0..30 {
-            game.apply_entity_push(1.0 / 60.0);
-        }
-        game.player.pos.x - start.x
-    };
-
-    let moved = run(&mut game, remote_row(overlap, true, false));
-    assert!(
-        moved < -0.05,
-        "the remote body pushed the player -X, away from it: {moved}"
-    );
-
-    let hidden = run(&mut game, remote_row(overlap, false, false));
-    assert_eq!(hidden, 0.0, "a hidden (spectator/dead) remote doesn't push");
-
-    let asleep = run(&mut game, remote_row(overlap, true, true));
-    assert_eq!(asleep, 0.0, "a sleeping remote doesn't push");
-}
-
-#[test]
-fn cannot_place_a_solid_block_inside_a_mob() {
-    let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory = filled_inventory(); // a stack of Dirt
-    game.server.sessions_mut()[0].player_mut().inventory.set_active(0);
-    // Park the player far off so only the mob can block placement here.
-    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(100.0, 64.0, 100.0);
-
-    // An owl standing in cell (8, 200, 8), high up and clear of the player.
-    assert!(game
-        .server
-        .world_mut()
-        .mobs_mut()
-        .spawn(Mob::Owl, WorldPos::new(8.5, 200.0, 8.5), 0.0));
-
-    // Aiming a Dirt block into the owl's cell does nothing: no block lands and the
-    // held stack isn't consumed.
-    let before = game.server.sessions()[0]
-        .player()
-        .inventory
-        .selected()
-        .unwrap()
-        .count;
-    game.server.sessions_mut()[0].input_mut().look = Some(hit(IVec3::new(8, 199, 8), IVec3::Y)); // p = (8, 200, 8)
-    assert!(
-        !game.server.try_place_for_test(),
-        "a solid block can't be placed inside the owl"
-    );
-    assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(8, 200, 8)),
-        Block::Air,
-        "nothing was placed"
-    );
-    assert_eq!(
-        game.server.sessions()[0]
-            .player()
-            .inventory
-            .selected()
-            .unwrap()
-            .count,
-        before,
-        "the held item wasn't consumed"
-    );
-
-    // A cell clear of the owl (and the player) places as usual.
-    game.server.sessions_mut()[0].input_mut().look = Some(hit(IVec3::new(0, 199, 0), IVec3::Y)); // p = (0, 200, 0)
-    assert!(
-        game.server.try_place_for_test(),
-        "an empty cell places normally"
-    );
-    assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(0, 200, 0)),
-        Block::Dirt
-    );
-}
-
-#[test]
-fn cannot_place_a_solid_block_inside_another_player() {
-    let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory = filled_inventory(); // a stack of Dirt
-    game.server.sessions_mut()[0].player_mut().inventory.set_active(0);
-    // Park the placer far off so only the other session can block placement here.
-    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(100.0, 64.0, 100.0);
-
-    let other = game
-        .server
-        .add_session_for_test(petramond::player::Player::new(WorldPos::new(
-            8.5, 200.0, 8.5,
-        )));
-
-    let before = game.server.sessions()[0]
-        .player()
-        .inventory
-        .selected()
-        .unwrap()
-        .count;
-    game.server.sessions_mut()[0].input_mut().look = Some(hit(IVec3::new(8, 199, 8), IVec3::Y)); // p = (8, 200, 8)
-    assert!(
-        !game.server.try_place_for_test(),
-        "a solid block can't be placed inside another live player"
-    );
-    assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(8, 200, 8)),
-        Block::Air,
-        "nothing was placed"
-    );
-    assert_eq!(
-        game.server.sessions()[0]
-            .player()
-            .inventory
-            .selected()
-            .unwrap()
-            .count,
-        before,
-        "the held item wasn't consumed"
-    );
-
-    game.server.sessions_mut()[other]
-        .player_mut()
-        .set_mode(petramond::player::PlayerMode::Spectator);
-    game.server.sessions_mut()[0].input_mut().look = Some(hit(IVec3::new(8, 199, 8), IVec3::Y));
-    assert!(
-        game.server.try_place_for_test(),
-        "a spectator has no placement-blocking body"
-    );
-    assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(8, 200, 8)),
-        Block::Dirt
-    );
-    assert_eq!(
-        game.server.sessions()[0]
-            .player()
-            .inventory
-            .selected()
-            .unwrap()
-            .count,
-        before - 1,
-        "successful placement consumes one item"
-    );
-}
-
-/// Latch a PvP attack click at `target`, the way an `Action(AttackClick)`
-/// message does (mob and player are mutually exclusive on a click).
-fn click_attack_player(game: &mut super::common::TestGame, target: petramond::player::PlayerId) {
-    game.server.apply_message(
-        0,
-        ClientToServer::Action(PlayerAction::AttackClick {
-            mob: None,
-            player: Some(target.0),
-        }),
-    );
-}
-
-/// Two sessions in reach; a fist guarantees the deterministic (1.0, 1.0)
-/// damage roll.
-fn pvp_pair(game: &mut super::common::TestGame) -> usize {
-    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(0.5, 64.0, 0.5);
-    game.server.sessions_mut()[0].player_mut().inventory = petramond_world::inventory::Inventory::new();
-    let t = game
-        .server
-        .add_session_for_test(petramond::player::Player::new(WorldPos::new(
-            2.5, 64.0, 0.5,
-        )));
-    game.server.sessions_mut()[t].player_mut().vel = Vec3::ZERO;
-    t
-}
-
-#[test]
-fn a_pvp_attack_damages_the_target_through_the_funnel_with_knockback_and_cooldown() {
-    let mut game = game();
-    let t = pvp_pair(&mut game);
-    let target_id = game.server.sessions()[t].id();
-    let h0 = game.server.sessions()[t].player().health();
-    let attacker_h0 = game.server.sessions()[0].player().health();
-
-    click_attack_player(&mut game, target_id);
-    let mut ev = TickEvents::default();
-    game.server.tick_attack(0, &mut ev);
-
-    assert!(ev.player_at(0).swung_hand, "the hit swings the hand");
-    assert_eq!(
-        game.server.sessions()[0].sim().attack_cooldown, ATTACK_COOLDOWN_TICKS,
-        "the swing arms the cooldown, exactly like a mob hit"
-    );
-    assert_eq!(
-        game.server.sessions()[t].player().health(),
-        h0 - 1,
-        "a fist hit costs the target one half-heart"
-    );
-    assert!(
-        ev.player_at(t).player_damaged,
-        "the victim's damaged one-shot fires (hurt sound/shake/hurt_recent)"
-    );
-    assert_eq!(
-        game.server.sessions()[0].player().health(),
-        attacker_h0,
-        "only the target is damaged"
-    );
-    let vel = game.server.sessions()[t].player().vel;
-    assert!(
-        vel.x > 0.0,
-        "knocked horizontally away from the attacker: {vel:?}"
-    );
-    assert!(vel.y > 0.0, "with the mob-strike upward pop: {vel:?}");
-}
-
-#[test]
-fn a_pvp_attack_out_of_reach_lands_no_damage() {
-    let mut game = game();
-    let t = pvp_pair(&mut game);
-    game.server.sessions_mut()[t].player_mut().pos = WorldPos::new(20.5, 64.0, 0.5); // beyond REACH + 1
-    let h0 = game.server.sessions()[t].player().health();
-    let target_id = game.server.sessions()[t].id();
-
-    click_attack_player(&mut game, target_id);
-    let mut ev = TickEvents::default();
-    game.server.tick_attack(0, &mut ev);
-
-    assert_eq!(game.server.sessions()[t].player().health(), h0, "no damage");
-    assert_eq!(
-        game.server.sessions()[t].player().vel,
-        Vec3::ZERO,
-        "no knockback"
-    );
-}
-
-#[test]
-fn spectators_neither_attack_nor_take_pvp_hits() {
-    let mut game = game();
-    let t = pvp_pair(&mut game);
-    let target_id = game.server.sessions()[t].id();
-
-    // A spectator TARGET can't be hit.
-    game.server.sessions_mut()[t]
-        .player_mut()
-        .set_mode(petramond::player::PlayerMode::Spectator);
-    let h0 = game.server.sessions()[t].player().health();
-    click_attack_player(&mut game, target_id);
-    let mut ev = TickEvents::default();
-    game.server.tick_attack(0, &mut ev);
-    assert_eq!(game.server.sessions()[t].player().health(), h0);
-    assert_eq!(game.server.sessions()[t].player().vel, Vec3::ZERO);
-
-    // A spectator ATTACKER can't hit.
-    game.server.sessions_mut()[t]
-        .player_mut()
-        .set_mode(petramond::player::PlayerMode::Survival);
-    game.server.sessions_mut()[0]
-        .player_mut()
-        .set_mode(petramond::player::PlayerMode::Spectator);
-    game.server.sessions_mut()[0].sim_mut().attack_cooldown = 0;
-    let h0 = game.server.sessions()[t].player().health();
-    click_attack_player(&mut game, target_id);
-    let mut ev = TickEvents::default();
-    game.server.tick_attack(0, &mut ev);
-    assert_eq!(game.server.sessions()[t].player().health(), h0);
-}
-
-#[test]
-fn a_cancelled_player_damage_pre_suppresses_pvp_damage_and_knockback() {
-    use std::sync::{Arc, Mutex};
-
-    let mut game = game();
-    let t = pvp_pair(&mut game);
-    let target_id = game.server.sessions()[t].id();
-    let attacker_id = game.server.sessions()[0].id();
-    let seen = Arc::new(Mutex::new(None));
-    {
-        let seen = seen.clone();
-        game.server.bus_mut().on_player_damage_pre(0, move |_, pre| {
-            *seen.lock().unwrap() = Some(pre.source);
-            Outcome::Cancel
-        });
-    }
-    let h0 = game.server.sessions()[t].player().health();
-
-    click_attack_player(&mut game, target_id);
-    let mut ev = TickEvents::default();
-    game.server.tick_attack(0, &mut ev);
-
-    assert_eq!(
-        game.server.sessions()[t].player().health(),
-        h0,
-        "cancel = no damage"
-    );
-    assert_eq!(
-        game.server.sessions()[t].player().vel,
-        Vec3::ZERO,
-        "cancel = no knockback either"
-    );
-    assert_eq!(
-        *seen.lock().unwrap(),
-        Some(DamageSource::PlayerAttack(attacker_id)),
-        "the funnel saw the PvP source with the attacker's id"
-    );
-}
-
-/// The knockback is tick-side VELOCITY-only (position follows client-side),
-/// so the victim's transform-drift check must catch a vel change and ship the
-/// `SelfState::transform` echo — otherwise the victim's own physics never
-/// learns the new velocity.
-#[test]
-fn pvp_knockback_ships_the_victims_vel_echo() {
-    let mut game = game();
-    let t = pvp_pair(&mut game);
-    let target_id = game.server.sessions()[t].id();
-    // What the victim's client last claimed: its exact pre-hit transform.
-    let reported = {
-        let p = game.server.sessions()[t].player();
-        petramond::net::protocol::SelfTransform {
-            transform: petramond::net::protocol::Transform {
-                pos: p.pos,
-                vel: p.vel,
-                yaw: p.yaw,
-                pitch: p.pitch,
-            },
-            on_ground: p.on_ground,
-        }
-    };
-    game.server.sessions_mut()[t].replication_mut().last_reported_transform = Some(reported);
-
-    click_attack_player(&mut game, target_id);
-    let mut ev = TickEvents::default();
-    game.server.tick_attack(0, &mut ev);
-
-    let state = game.server.build_self_state(t);
-    let echo = state
-        .transform
-        .expect("a vel-only knockback still ships the transform correction");
-    assert_eq!(
-        echo.transform.pos, reported.transform.pos,
-        "the tick moved no position"
-    );
-    assert_ne!(
-        echo.transform.vel, reported.transform.vel,
-        "the echo carries the knocked velocity"
-    );
-    assert_eq!(
-        echo.transform.vel, game.server.sessions()[t].player().vel,
-        "the echoed velocity is the session's post-knockback one"
-    );
-}
-
-/// Client-side PvP targeting: a visible, alive remote body under the
-/// crosshair is targeted (nearest wins vs mobs; at most one target kind is
-/// set); dead/invisible remotes are ignored.
-#[test]
-fn refresh_target_picks_remote_players_competing_with_mobs() {
-    use petramond::net::protocol::PlayerStateRow;
-    use petramond::player::PlayerId;
-
-    fn remote_row(id: u8, pos: WorldPos, visible: bool) -> PlayerStateRow {
-        PlayerStateRow {
-            conditions: Vec::new(),
-            id: PlayerId(id),
-            transform: petramond::net::protocol::Transform {
-                pos,
-                vel: Vec3::ZERO,
-                yaw: 0.0,
-                pitch: 0.0,
-            },
-            on_ground: true,
-            sneaking: false,
-            sleeping: false,
-            sleep_yaw: None,
-            alive: visible,
-            visible,
-            held_item: None,
-            held_data: None,
-            off_hand_item: None,
-            off_hand_data: None,
-            mining: None,
-            eating: false,
-            eating_off_hand: false,
-            held_pose_main: None,
-            held_pose_off: None,
-            held_display: [None; 2],
-            bone_poses: Vec::new(),
-            animator: Default::default(),
-            hurt_recent: false,
-            snap: false,
-            mount: None,
-        }
-    }
-
-    let mut game = game_on_empty_chunk();
-    game.cam.pos = WorldPos::new(8.0, 66.0, 8.0);
-    game.cam.pitch = 0.0;
-    let dir = game.cam.forward();
-    let own_id = game.game.entities.self_id();
-
-    // A remote body two metres ahead, feet dropped so the level ray crosses it.
-    let mut feet = game.cam.pos + dir * 2.0;
-    feet.y -= 1.0;
-    game.game
-        .entities
-        .players_mut()
-        .apply_snapshot(&[remote_row(1, feet, true)], &[], own_id);
-    game.refresh_target();
-    assert_eq!(game.targeted_player, Some(1), "the remote body is targeted");
-    assert!(game.targeted_mob.is_none(), "at most one target kind");
-    assert!(
-        game.look.is_none(),
-        "an entity target clears the block look"
-    );
-
-    // A mob NEARER than the remote wins the distance competition.
-    let mut mob_feet = game.cam.pos + dir * 1.2;
-    mob_feet.y -= 0.35;
-    game.game
-        .entities
-        .mobs_mut()
-        .apply_snapshot(&[petramond::net::protocol::MobStateRow {
-            id: 42,
-            kind_id: Mob::Owl.0,
-            pos: mob_feet,
-            yaw: 0.0,
-            tilt: petramond_math::math::Tilt::LEVEL,
-            anim_time: 0.0,
-            moving: false,
-            idle_anim: None,
-            head_yaw: 0.0,
-            head_pitch: 0.0,
-            hurt_timer: 0.0,
-            dead: false,
-            shorn: false,
-            emitters: Vec::new(),
-            conditions: Vec::new(),
-            anims: Vec::new(),
-            ragdoll: None,
-            dig: None,
-            held: [None; 2],
-            draw: Default::default(),
-        }]);
-    game.refresh_target();
-    assert_eq!(game.targeted_mob, Some(42), "the nearer mob wins");
-    assert!(game.targeted_player.is_none());
-
-    // A hidden (dead/spectator) remote is never targeted.
-    game.game.entities.mobs_mut().apply_snapshot(&[]);
-    game.game
-        .entities
-        .players_mut()
-        .apply_snapshot(&[remote_row(1, feet, false)], &[], own_id);
-    game.refresh_target();
-    assert!(
-        game.targeted_player.is_none(),
-        "hidden bodies are untargetable"
-    );
-}
-
-/// A frame hitch (opening the inventory, the ESC pause transition) pumps
-/// SEVERAL fixed ticks at once, and a fast fall legitimately covers more
-/// than two blocks across them. The pump's teleport detector must scale its
-/// discontinuity bound with the ticks it actually ran — a fixed bound reset
-/// the fall tracker mid-fall, so flashing a menu while falling landed
-/// without damage.
-#[test]
-fn multi_tick_pumps_never_eat_fall_damage() {
-    let mut game = game();
-    common::flat_floor_loaded_air(game.server.world_mut(), Block::Stone);
-    let sess = &mut game.server.sessions_mut()[0];
-    let player = sess.player_mut();
-    player.pos = WorldPos::new(8.5, 79.0, 8.5);
-    player.vel = Vec3::ZERO;
-    player.on_ground = false;
-    let start = player.health();
-    sess.sim_mut().fall.reset(79.0);
-
-    // Every "frame" runs three fixed ticks — the hitchy cadence a menu
-    // open produces. The fall is pure server F2 integration (no claims).
-    for _ in 0..300 {
-        game.pump_server(3.0 * TICK_DT);
-        if game.server.sessions()[0].player().on_ground {
-            break;
-        }
-    }
-    assert!(
-        game.server.sessions()[0].player().on_ground,
-        "the drop lands on the floor"
-    );
-    // One more hitchy frame so the landing tick's pending fall drains even
-    // if it straddled the pump boundary.
-    game.pump_server(3.0 * TICK_DT);
-
-    let lost = start - game.server.sessions()[0].player().health();
-    assert!(
-        lost >= 8,
-        "a ~15-block fall through multi-tick pumps lands its damage (lost {lost} half-hearts)"
-    );
-}
+mod physics_and_pvp;

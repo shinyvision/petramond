@@ -27,8 +27,12 @@ pub(super) struct MobGpu {
     pub(super) cull_r: f32,
     pub(super) cull_y0: f32,
     pub(super) cull_y1: f32,
-    /// Frustum-visible subset of this species' instances this frame.
-    pub(super) visible: Vec<MobRenderInstance>,
+    /// Frustum-visible subset of this species' instances this frame, as
+    /// indices into `ActorPass::mobs`.
+    pub(super) visible: Vec<u32>,
+    /// The species' resolved animation clips and layer scratch, kept across
+    /// frames.
+    pub(super) pose: crate::mob_model::MobPoseCache<'static>,
 }
 
 /// GPU resources for player bodies — the local third-person body AND every
@@ -41,19 +45,6 @@ pub(super) struct PlayerGpu {
     pub(super) mesh: SkinnedModel,
     /// This frame's bodies in the skin batch.
     pub(super) drawn: std::ops::Range<u32>,
-}
-
-/// One body the frame draws, with what drives its animator.
-#[derive(Clone, Copy)]
-pub(super) struct VisibleBody {
-    pub(super) inst: PlayerRenderInstance,
-    pub(super) held: HeldItemView,
-    pub(super) off: HeldItemView,
-    pub(super) key: u32,
-    pub(super) frames: Option<[HeldItemFrame; 2]>,
-    /// The body's claims in the frame's arenas; `None` is the local body,
-    /// whose claims the hand pass holds.
-    pub(super) animator: Option<crate::AnimatorRanges>,
 }
 
 /// The actor pass: every animated body (mobs, the local third-person player,
@@ -69,26 +60,20 @@ pub(super) struct ActorPass {
     /// Mobs to draw in the world this frame (the scene adapter fills this by
     /// interpolating the sim's live mob instances).
     pub(super) mobs: Vec<MobRenderInstance>,
+    /// The arena `mobs`' ranges address, and the session's animation-name
+    /// table their layers' ids index.
+    pub(super) mob_arena: crate::MobArena,
+    pub(super) anim_names: crate::AnimNames,
     /// Player-body resources (local third-person + remote players, one
     /// instanced draw in the mob pass).
     pub(super) player_gpu: PlayerGpu,
-    /// The LOCAL third-person body to draw this frame (`None` in first person).
-    pub(super) player_view: Option<PlayerRenderInstance>,
-    /// The remote players' bodies + held-item views for this frame.
-    pub(super) remote_players: Vec<RemotePlayerRender>,
-    /// This frame's bone offsets for every drawn body, back to back — each
-    /// body addresses its own slice by `PlayerRenderInstance::bones`.
-    pub(super) bone_offsets: Vec<crate::BoneOffset>,
-    /// This frame's animator claims and fired events for every remote body,
-    /// back to back — each addresses its own by `RemotePlayerRender::animator`.
-    pub(super) animator_params: Vec<crate::views::AnimatorParamRow>,
-    pub(super) animator_plays: Vec<petramond::player::AnimatorPlay>,
-    pub(super) animator_events: Vec<(petramond::player::RigId, u16)>,
-    /// Frustum-visible bodies this frame (local first, then remotes), each
-    /// paired with the held-item view that animates its hand.
-    pub(super) player_visible: Vec<VisibleBody>,
-    /// Every roster body's animator.
-    pub(super) body_animators: crate::player_model::BodyAnimators,
+    /// The posed player bodies to draw this frame (the local third-person
+    /// body first when drawn, then remotes) with their held-item views, and
+    /// the pose arena their `PlayerRenderInstance::pose` ranges index into.
+    pub(super) bodies: Vec<PlayerBodyRender>,
+    pub(super) body_poses: Vec<glam::Mat4>,
+    /// Frustum-visible bodies this frame.
+    pub(super) player_visible: Vec<PlayerBodyRender>,
     /// Held EXTRUDED-SPRITE items across all bodies (explicit-UV stream, 2D
     /// atlas), attached to each posed right hand.
     pub(super) item_draw: DynamicDraw,
@@ -114,15 +99,11 @@ impl ActorPass {
         }
         self.skin.batch.clear();
         self.mobs.clear();
+        self.mob_arena.clear();
         self.player_gpu.drawn = 0..0;
-        self.player_view = None;
-        self.remote_players.clear();
-        self.bone_offsets.clear();
-        self.animator_params.clear();
-        self.animator_plays.clear();
-        self.animator_events.clear();
+        self.bodies.clear();
+        self.body_poses.clear();
         self.player_visible.clear();
-        self.body_animators.clear();
         self.item_draw.index_count = 0;
         self.model_item_draw.index_count = 0;
         self.block_item_draw.index_count = 0;

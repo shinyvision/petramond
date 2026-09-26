@@ -149,7 +149,7 @@ impl Game {
     ) -> Vec<petramond_render::GhostPiece> {
         self.sync_ghost_index();
         let reach = (view_chunks.max(1) * 16) as f32;
-        let camera = self.cam.pos;
+        let camera = self.local.cam.pos;
         let sweep = now - self.tools.ghosts.last_sweep >= SWEEP_SECONDS;
         if sweep {
             self.tools.ghosts.last_sweep = now;
@@ -234,7 +234,7 @@ impl Game {
         let origin = IVec3::from_array(index.placement.origin);
         let shows = |index: &Index, cell: &Cell| {
             index.record(cell).is_some_and(|(record, _)| {
-                construction::status(self.replica.data(), origin + cell.local, record)
+                construction::status(self.replica.world.data(), origin + cell.local, record)
                     != Status::Satisfied
             })
         };

@@ -15,7 +15,7 @@ fn app_starts_on_title_without_loading_a_game() {
     let app = App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
 
     assert_eq!(app.screen, crate::app::AppScreen::Title);
-    assert!(app.game.is_none(), "title screen does not preload a world");
+    assert!(!app.has_session(), "title screen does not preload a world");
     assert_eq!(
         app.cursor_policy(),
         CursorPolicy {
@@ -246,7 +246,7 @@ fn play_after_rename_opens_the_original_save_directory() {
     assert_eq!(app.shell.worlds()[idx].name, "Renamed Display Name");
     app.shell.select_world(Some(idx));
     app.play_selected_world();
-    assert!(app.game.is_some(), "world opened");
+    assert!(app.has_session(), "world opened");
     app.save_on_exit();
     drop(app); // joins the save I/O thread; everything queued hits disk
 
@@ -356,7 +356,7 @@ fn create_world_writes_buffered_settings_at_create() {
 
     click_doc_id(&mut app, "create");
     app.drive_doc_ui(GuiKind::CreateWorld, screen, 0.5);
-    assert!(app.game.is_some(), "Create started the world");
+    assert!(app.has_session(), "Create started the world");
     let settings = petramond::save::read_world_settings(&dir_name);
     assert!(
         settings.disabled_mods.contains("testpack"),
@@ -495,7 +495,7 @@ fn save_and_quit_returns_to_title_and_drops_game() {
     app.save_and_quit_to_title();
 
     assert_eq!(app.screen, crate::app::AppScreen::Title);
-    assert!(app.game.is_none());
+    assert!(!app.has_session());
 }
 
 #[test]
@@ -529,21 +529,14 @@ fn chat_opens_from_t_sends_entered_message_via_server_echo() {
     assert!(app.handle_text_key(TextKey::Enter));
     assert_eq!(app.screen, crate::app::AppScreen::Game);
 
-    let msgs = app
-        .game
-        .as_mut()
-        .expect("test app has a game")
+    let msgs = app.game_mut()
         .take_outbox_for_test();
     assert!(msgs
         .iter()
         .any(|msg| matches!(msg, ClientToServer::ChatSend { text } if text == "hello")));
 
-    for msg in msgs {
-        app.server.apply_message(0, msg);
-    }
-    let mut inbox = Vec::new();
-    let out = app.server.pump(0.0, &mut inbox);
-    let chat = out.msgs.iter().find_map(|msg| match msg {
+    let replies = app.send_and_pump(msgs);
+    let chat = replies.iter().find_map(|msg| match msg {
         ServerToClient::ChatLine(line) => Some(line),
         _ => None,
     });
@@ -562,10 +555,7 @@ fn slash_opens_chat_with_a_command_prefix() {
     assert!(app.handle_text_input("time set night"));
     assert!(app.handle_text_key(TextKey::Enter));
 
-    let msgs = app
-        .game
-        .as_mut()
-        .expect("test app has a game")
+    let msgs = app.game_mut()
         .take_outbox_for_test();
     assert!(msgs
         .iter()
@@ -602,10 +592,7 @@ fn chat_input_uses_shared_text_editor_selection_and_clipboard() {
     app.handle_text_shortcut(TextShortcut::Paste);
     assert!(app.handle_text_key(TextKey::Enter));
 
-    let msgs = app
-        .game
-        .as_mut()
-        .expect("test app has a game")
+    let msgs = app.game_mut()
         .take_outbox_for_test();
     assert!(msgs
         .iter()
@@ -905,9 +892,7 @@ fn canvas_wheel_scroll_reaches_the_client_mod() {
     app.update_frame((1280, 720));
     assert!(app.screen.client_canvas_open());
     let view = |app: &crate::app::App| {
-        app.game
-            .as_ref()
-            .unwrap()
+        app.game()
             .client_mod_canvas_view("minimap:full_map")
             .expect("the world map publishes a retained scene")
             .offset

@@ -6,12 +6,12 @@
 
 use petramond_world::selection::SelectionShape;
 use petramond_render::camera::Camera;
-use petramond_render::BoneOffset;
 use petramond_world::block::Block;
 use petramond_world::block_state::HeldBlockState;
 use petramond_world::item::ItemType;
 
 use super::{Game, GameEnvironment};
+use crate::animation::BoneOffset;
 
 pub struct ClientFrame<'a> {
     pub camera: &'a Camera,
@@ -67,7 +67,7 @@ pub fn render_held_pose(pose: mod_api::HeldPose) -> petramond_render::HeldPose {
     }
 }
 
-/// Carry resolved bone poses across the SIM → RENDERER boundary the way
+/// Carry resolved bone poses across the SIM → ANIMATION boundary the way
 /// [`render_held_pose`] carries a held pose.
 ///
 /// Both sides address a bone by its index in the player rig — the mod ABI's
@@ -75,8 +75,8 @@ pub fn render_held_pose(pose: mod_api::HeldPose) -> petramond_render::HeldPose {
 /// this build's rig has no bone for is DROPPED, not an error: an offset aimed
 /// at a bone that is not there is a disabled pack, and the frame still draws.
 ///
-/// Appends into `out` rather than returning, because every drawn body's
-/// offsets share ONE per-frame arena (see `petramond_render::BoneRange`).
+/// Appends into `out` rather than returning, so each body reuses its own
+/// target buffer frame after frame.
 pub fn render_bone_offsets(poses: &[petramond::player::BonePose], out: &mut Vec<BoneOffset>) {
     let bones = petramond::player::model::player_model().bones().len();
     out.extend(
@@ -93,17 +93,23 @@ pub fn render_bone_offsets(poses: &[petramond::player::BonePose], out: &mut Vec<
 }
 
 impl Game {
+    /// The block the local player is mining, re-read from the REPLICA at the
+    /// replicated target cell — it feeds the dig-sound pick. The one field of
+    /// [`client_frame`](Self::client_frame) the update loop needs, without
+    /// assembling the rest.
+    pub fn mining_block(&self) -> Option<Block> {
+        self.replica.self_view
+            .mining
+            .map(|(p, _)| Block::from_id(self.replica.world.data().chunk_block(p.x, p.y, p.z)))
+    }
+
     /// Coherent neutral app-facing state for update/render after the game
     /// tick. Held-item/mining/eating state reads the REPLICATED self view,
     /// never the server session.
     pub fn client_frame(&self, now: f64) -> ClientFrame<'_> {
-        let view = &self.self_view;
+        let view = &self.replica.self_view;
         let mining = view.mining.is_some();
-        // The mined block is re-read from the REPLICA at the replicated
-        // target cell — it feeds the dig-sound pick.
-        let mining_block = view
-            .mining
-            .map(|(p, _)| Block::from_id(self.replica.data().chunk_block(p.x, p.y, p.z)));
+        let mining_block = self.mining_block();
         // The one in-progress eat belongs to a HAND: its progress animates the
         // hand that is carrying the food, and only that one.
         let eating = self.eating_progress();
@@ -122,10 +128,10 @@ impl Game {
         let animator = self.client_mods.local_animator(&view.animator);
         ClientFrame {
             // The third-person boom camera when active; the first-person eye
-            // otherwise. Sim consumers keep reading `self.cam` directly.
+            // otherwise. Sim consumers keep reading `self.local.cam` directly.
             camera: self.render_camera(),
             environment: self.environment(now),
-            selection: self.look.map(|h| h.outline),
+            selection: self.local.look.map(|h| h.outline),
             held_item: ClientHeldItem {
                 item: view.inventory.selected().map(|s| s.item),
                 display: display_main,

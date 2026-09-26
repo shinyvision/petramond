@@ -13,8 +13,7 @@
 
 use super::{
     BlockEntityInstance, EntityShadow, ItemEntityInstance, MobRenderInstance,
-    ParticleEmitterInstance, ParticleInstance, PlayerRenderInstance, RemotePlayerRender, Renderer,
-    SolidParticleInstance,
+    ParticleEmitterInstance, ParticleInstance, PlayerBodyRender, Renderer, SolidParticleInstance,
 };
 use crate::views::{
     BlockEntityPresentation, DroppedItemPresentation, GamePresentation, MobPresentation,
@@ -51,20 +50,15 @@ pub struct Scene {
     shadows: Vec<EntityShadow>,
     /// Baked (interpolated) mob instances for this frame.
     mobs: Vec<MobRenderInstance>,
-    /// The third-person player body for this frame (`None` in first person).
-    /// Player state is per-frame already, so it passes through uninterpolated.
-    player: Option<PlayerRenderInstance>,
-    /// Every other connected player's body + held item (already interpolated
-    /// by the presentation layer — a pass-through here, like the local body).
-    remote_players: Vec<RemotePlayerRender>,
-    /// This frame's bone offsets for every drawn body, back to back — the
-    /// backing each body's `PlayerRenderInstance::bones` range indexes into.
-    bone_offsets: Vec<crate::BoneOffset>,
-    /// This frame's animator claims and fired events for every remote body,
-    /// back to back — each `RemotePlayerRender::animator` range indexes in.
-    animator_params: Vec<crate::views::AnimatorParamRow>,
-    animator_plays: Vec<petramond::player::AnimatorPlay>,
-    animator_events: Vec<(petramond::player::RigId, u16)>,
+    /// The arena the mob rows' ranges address (the gather's, copied once), and
+    /// the session's animation-name table their layer ids index.
+    mob_arena: crate::MobArena,
+    anim_names: crate::AnimNames,
+    /// Every posed player body in view (already posed by the client's
+    /// animation — a pass-through here), and the pose arena their
+    /// `PlayerRenderInstance::pose` ranges index into.
+    bodies: Vec<PlayerBodyRender>,
+    body_poses: Vec<glam::Mat4>,
     /// Two-channel light for the first-person hand / held item, sampled at the
     /// camera each frame so it brightens AND takes the colour of nearby block
     /// light (which keeps it lit at night).
@@ -86,23 +80,19 @@ impl Scene {
         self.block_entities.clear();
         self.block_draws.clear();
         self.mobs.clear();
+        self.mob_arena.clear();
+        self.anim_names = crate::AnimNames::default();
         self.shadows.clear();
-        self.player = None;
-        self.remote_players.clear();
-        self.bone_offsets.clear();
-        self.animator_params.clear();
-        self.animator_plays.clear();
-        self.animator_events.clear();
+        self.bodies.clear();
+        self.body_poses.clear();
         self.held_item_skylight = 0;
         self.held_item_blocklight = petramond_world::light::BlockLight6::DARK;
     }
 
     /// Translate the current presentation snapshot into this scene's reused buffers.
     /// Dropped items' cached skylight is kept fresh by the sim's per-tick light refresh,
-    /// so baking just reads it here. `player_hurt` is the App's hurt-flash envelope
-    /// (`0..1`, the same one driving the screen vignette) applied to the third-person
-    /// body so taking damage flashes it red like a hurt mob.
-    pub fn bake(&mut self, presentation: &GamePresentation<'_>, player_hurt: f32) {
+    /// so baking just reads it here.
+    pub fn bake(&mut self, presentation: &GamePresentation<'_>) {
         // Items and mobs both simulate on the fixed game tick; `alpha` blends the
         // previous and current tick poses so they move smoothly at any frame rate.
         let alpha = presentation.tick_alpha;
@@ -124,42 +114,16 @@ impl Scene {
             .extend_from_slice(presentation.particle_emitters);
         self.bake_block_entities(presentation.block_entities);
         bake_mobs(presentation.mobs, alpha, &mut self.mobs);
+        // The rows' ranges index the gather's arena as it stands, so it rides
+        // along verbatim.
+        self.mob_arena.copy_from(presentation.mob_arena);
+        self.anim_names.adopt(presentation.anim_names);
         self.shadows.clear();
         self.shadows.extend_from_slice(presentation.shadows);
-        self.player = presentation.player.map(|p| PlayerRenderInstance {
-            emitter_tint: p.emitter_tint,
-            emitter_self_lit: p.emitter_self_lit,
-            pos: p.pos,
-            body_yaw: p.body_yaw,
-            head_yaw: p.head_yaw,
-            head_pitch: p.head_pitch,
-            anim_time: p.anim_time,
-            walk_weight: p.walk_weight,
-            sneak_weight: p.sneak_weight,
-            locomotion: p.locomotion,
-            sleeping: p.sleeping,
-            seated: p.seated,
-            seat_tilt: p.seat_tilt,
-            hurt: player_hurt,
-            skylight: p.skylight,
-            blocklight: p.blocklight,
-            bones: p.bones,
-        });
-        self.remote_players.clear();
-        self.remote_players
-            .extend_from_slice(presentation.remote_players);
-        self.bone_offsets.clear();
-        self.bone_offsets
-            .extend_from_slice(presentation.bone_offsets);
-        self.animator_params.clear();
-        self.animator_params
-            .extend_from_slice(presentation.animator_params);
-        self.animator_plays.clear();
-        self.animator_plays
-            .extend_from_slice(presentation.animator_plays);
-        self.animator_events.clear();
-        self.animator_events
-            .extend_from_slice(presentation.animator_events);
+        self.bodies.clear();
+        self.bodies.extend_from_slice(presentation.bodies);
+        self.body_poses.clear();
+        self.body_poses.extend_from_slice(presentation.body_poses);
         (self.held_item_skylight, self.held_item_blocklight) = presentation.held_item_light;
     }
 
@@ -184,35 +148,42 @@ impl Scene {
     }
 
     /// Hand the baked instances + held-item light to the renderer for this
-    /// frame. The per-body arenas are SWAPPED in rather than copied: the
-    /// renderer's last-frame buffers come back here for the next bake to
-    /// refill.
+    /// frame. The row lists and per-body arenas are SWAPPED in rather than
+    /// copied: the renderer's last-frame buffers come back here, and the row
+    /// lists are emptied so a second upload without a bake hands over nothing
+    /// rather than last frame's rows.
     pub fn upload(&mut self, renderer: &mut Renderer) {
         renderer.set_held_item_light(self.held_item_skylight, self.held_item_blocklight);
-        renderer.set_item_entities(&self.item_entities);
-        renderer.set_block_entities(&self.block_entities);
-        renderer.set_block_draws(&self.block_draws);
-        renderer.set_mobs(&self.mobs);
-        renderer.set_shadows(&self.shadows);
-        renderer.set_player(self.player);
-        renderer.set_remote_players(&self.remote_players);
-        renderer.swap_bone_offsets(&mut self.bone_offsets);
-        renderer.swap_animator_arenas(
-            &mut self.animator_params,
-            &mut self.animator_plays,
-            &mut self.animator_events,
-        );
-        renderer.set_particles(&self.particles);
-        renderer.set_model_particles(&self.model_particles);
-        renderer.set_solid_particles(&self.solid_particles);
-        renderer.set_particle_emitters(&self.particle_emitters);
+        renderer.swap_item_entities(&mut self.item_entities);
+        renderer.swap_block_entities(&mut self.block_entities);
+        renderer.swap_block_draws(&mut self.block_draws);
+        renderer.swap_mobs(&mut self.mobs, &mut self.mob_arena, &self.anim_names);
+        renderer.swap_shadows(&mut self.shadows);
+        renderer.swap_particles(&mut self.particles);
+        renderer.swap_model_particles(&mut self.model_particles);
+        renderer.swap_solid_particles(&mut self.solid_particles);
+        renderer.swap_particle_emitters(&mut self.particle_emitters);
+        self.item_entities.clear();
+        self.block_entities.clear();
+        self.block_draws.clear();
+        self.mobs.clear();
+        self.mob_arena.clear();
+        self.shadows.clear();
+        self.particles.clear();
+        self.model_particles.clear();
+        self.solid_particles.clear();
+        self.particle_emitters.clear();
+        renderer.swap_player_bodies(&mut self.bodies, &mut self.body_poses);
+        self.bodies.clear();
+        self.body_poses.clear();
     }
 }
 
 /// Map each mob presentation row to one interpolated [`MobRenderInstance`] (cleared +
 /// refilled, capacity reused). The simulation advances mobs on the fixed game tick;
 /// `alpha` (`0..1`, the fraction into the next tick) blends the previous and current
-/// tick poses so motion stays smooth at any frame rate.
+/// tick poses so motion stays smooth at any frame rate. The arena ranges pass
+/// through unchanged: the scene carries the gather's arena verbatim.
 fn bake_mobs(mobs: &[MobPresentation], alpha: f32, out: &mut Vec<MobRenderInstance>) {
     out.clear();
     out.extend(mobs.iter().map(|m| MobRenderInstance {
@@ -224,7 +195,7 @@ fn bake_mobs(mobs: &[MobPresentation], alpha: f32, out: &mut Vec<MobRenderInstan
         moving: m.moving,
         idle_anim: m.idle_anim,
         gait_weight: m.gait_weight,
-        gait_fades: m.gait_fades.clone(),
+        gait_fades: m.gait_fades,
         head_yaw: lerp_angle(m.prev_head_yaw, m.head_yaw, alpha),
         head_pitch: m.prev_head_pitch + (m.head_pitch - m.prev_head_pitch) * alpha,
         skylight: m.skylight,
@@ -233,8 +204,8 @@ fn bake_mobs(mobs: &[MobPresentation], alpha: f32, out: &mut Vec<MobRenderInstan
         shorn: m.shorn,
         emitter_tint: m.emitter_tint,
         emitter_self_lit: m.emitter_self_lit,
-        anims: m.anims.clone(),
-        ragdoll: m.ragdoll_pose.clone(),
+        anims: m.anims,
+        ragdoll: m.ragdoll_pose,
         held: if m.dead { [None; 2] } else { m.held },
     }));
 }

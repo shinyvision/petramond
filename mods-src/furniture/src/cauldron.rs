@@ -363,16 +363,11 @@ impl Furniture {
     }
 
     pub(super) fn try_use_cauldron(&self, pos: [i32; 3], actor: &PlayerSnapshot) -> bool {
-        let Some(cauldron) = &self.cauldron else {
+        let Some((cauldron, block, dye, swap)) = self.cauldron_gate(&SideWorld::Server, pos, actor)
+        else {
             return false;
         };
-        let Some(block) = get_block(pos) else {
-            return false;
-        };
-        let dye = (block == cauldron.dye)
-            .then(|| section_kv_get(pos, DYE_KEY).and_then(parse_dye))
-            .flatten();
-        match self.cauldron_action(cauldron, block, actor, dye) {
+        match swap {
             CauldronSwap::None => false,
             CauldronSwap::Absorb => true, // keep the pour ray off the full pot
             CauldronSwap::Bucket(swap) => {
@@ -512,33 +507,38 @@ impl Furniture {
         None
     }
 
-    /// CLIENT: gate-only mirror of [`Self::try_use_cauldron`] over replica
-    /// reads — the SAME [`Self::cauldron_action`] classification, so the two
-    /// sides cannot drift. Fill state is block identity, the held item rides
-    /// the snapshot, and the dye color is read from the replica's cell KV
-    /// (`client_cell_kv_at` — the same replicated bytes the server holds),
-    /// so the mirror is EXACT — including the stale-pot refusal. A `None`
-    /// replica cell never produces a claim.
-    pub(super) fn predict_use_cauldron(&self, pos: [i32; 3], actor: &PlayerSnapshot) -> bool {
-        let Some(cauldron) = &self.cauldron else {
-            return false;
-        };
-        let Some(block) = client_blocks_at(vec![pos]).into_iter().next().flatten() else {
-            return false;
-        };
+    /// The cauldron consumer's claim GATE, run by both instances over their
+    /// own [`WorldView`]: the cell's block and, for a dye pot, its color KV
+    /// (the same replicated bytes on both sides), classified by
+    /// [`Self::cauldron_action`]. `None` = no cauldron rows, or a cell the
+    /// instance cannot read — never a claim.
+    fn cauldron_gate(
+        &self,
+        world: &impl WorldView,
+        pos: [i32; 3],
+        actor: &PlayerSnapshot,
+    ) -> Option<(&Cauldron, BlockId, Option<[u8; 3]>, CauldronSwap)> {
+        let cauldron = self.cauldron.as_ref()?;
+        let block = world.block(pos)?;
         let dye = (block == cauldron.dye)
-            .then(|| {
-                client_cell_kv_at(DYE_KEY, vec![pos])
-                    .into_iter()
-                    .next()
-                    .flatten()
-                    .and_then(parse_dye)
-            })
+            .then(|| world.cell_kv(pos, DYE_KEY).and_then(parse_dye))
             .flatten();
-        !matches!(
-            self.cauldron_action(cauldron, block, actor, dye),
-            CauldronSwap::None
-        )
+        let swap = self.cauldron_action(cauldron, block, actor, dye);
+        Some((cauldron, block, dye, swap))
+    }
+
+    /// Whether the cauldron consumer claims this click — the gate alone. The
+    /// client instance's whole prediction, and EXACT: fill state is block
+    /// identity, the held item rides the snapshot, and the dye color is
+    /// replicated — including the stale-pot refusal.
+    pub(super) fn cauldron_claims(
+        &self,
+        world: &impl WorldView,
+        pos: [i32; 3],
+        actor: &PlayerSnapshot,
+    ) -> bool {
+        self.cauldron_gate(world, pos, actor)
+            .is_some_and(|(.., swap)| !matches!(swap, CauldronSwap::None))
     }
 }
 

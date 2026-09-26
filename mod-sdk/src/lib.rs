@@ -54,6 +54,7 @@ mod sounds;
 mod structures;
 mod tags;
 mod world;
+mod world_view;
 mod worldgen;
 
 #[doc(hidden)]
@@ -93,6 +94,7 @@ pub use sounds::*;
 pub use structures::*;
 pub use tags::*;
 pub use world::*;
+pub use world_view::*;
 pub use worldgen::*;
 
 /// A mod's logic. One instance lives for the whole session (state persists

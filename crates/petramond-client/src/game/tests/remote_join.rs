@@ -62,20 +62,20 @@ fn new_remote_seeds_the_client_from_join_data() {
 
     // The locally-predicted player mirrors the restore (the wire twin of
     // `PlayerData::restore`).
-    assert_eq!(game.player.pos, WorldPos::new(4.5, 90.0, -7.5));
-    assert_eq!(game.player.yaw, 1.5);
-    assert_eq!(game.player.health(), 13);
+    assert_eq!(game.local.player.pos, WorldPos::new(4.5, 90.0, -7.5));
+    assert_eq!(game.local.player.yaw, 1.5);
+    assert_eq!(game.local.player.health(), 13);
     assert_eq!(
-        game.player.bed_spawn.map(|b| b.bed),
+        game.local.player.bed_spawn.map(|b| b.bed),
         Some(IVec3::new(1, 70, 2))
     );
     assert_eq!(
-        game.player.inventory.selected().map(|s| (s.item, s.count)),
+        game.local.player.inventory.selected().map(|s| (s.item, s.count)),
         Some((ItemType::Dirt, 12)),
         "the restored active slot selects the restored stack"
     );
     assert_eq!(
-        game.player
+        game.local.player
             .effects()
             .iter()
             .map(|e| (e.effect, e.remaining))
@@ -84,9 +84,9 @@ fn new_remote_seeds_the_client_from_join_data() {
         "effects resolve by registry name"
     );
     // The HUD read model seeded from the same restore, before any batch.
-    assert_eq!(game.self_view.health, 13);
+    assert_eq!(game.replica.self_view.health, 13);
     assert_eq!(
-        game.self_view.inventory.selected().map(|s| s.item),
+        game.replica.self_view.inventory.selected().map(|s| s.item),
         Some(ItemType::Dirt)
     );
     assert_eq!(game.current_tick(), 0, "no tick replicated yet");

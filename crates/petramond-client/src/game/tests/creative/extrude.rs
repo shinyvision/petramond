@@ -9,20 +9,19 @@ use petramond_world::item::{ItemStack, ItemType};
 
 fn wand() -> TestGame {
     let mut game = game_on_empty_chunk();
-    game.player.set_mode(PlayerMode::Creative);
-    game.server.sessions_mut()[0]
-        .player_mut()
+    game.local.player.set_mode(PlayerMode::Creative);
+    game.server_player_mut()
         .set_mode(PlayerMode::Creative);
-    game.server.sessions_mut()[0].player_mut().inventory.add(ItemStack::new(
+    game.server_player_mut().inventory.add(ItemStack::new(
         ItemType::by_name("petramond:schematic_wand").unwrap(),
         1,
     ));
     game.sync_self_view_for_test();
     game.adjust_tool(-1);
     assert!(game.tools.world.selection.mode() == SelectionMode::Extrude);
-    game.cam.pos = WorldPos::new(8.5, 80.5, 0.0);
-    game.cam.yaw = 0.0;
-    game.cam.pitch = 0.0;
+    game.local.cam.pos = WorldPos::new(8.5, 80.5, 0.0);
+    game.local.cam.yaw = 0.0;
+    game.local.cam.pitch = 0.0;
     game.tools.world
         .selection
         .selection
@@ -52,7 +51,7 @@ fn drag(game: &mut TestGame, delta: (f32, f32), held: bool) {
     };
     game.apply_camera_input(&input);
     game.world_tool_input(&mut input);
-    assert_eq!((game.cam.yaw, game.cam.pitch), (0.0, 0.0));
+    assert_eq!((game.local.cam.yaw, game.local.cam.pitch), (0.0, 0.0));
     assert!(!input.break_held);
 }
 
@@ -118,7 +117,7 @@ fn creative_face_drag_cancels_on_escape_undo_mode_change_or_lost_gameplay() {
                 ..Default::default()
             }),
             _ => {
-                game.self_view.inventory.set_active(1);
+                game.replica.self_view.inventory.set_active(1);
                 game.world_tool_input(&mut GameInput {
                     gameplay_enabled: true,
                     ..Default::default()
@@ -136,8 +135,8 @@ fn creative_face_drag_cancels_on_escape_undo_mode_change_or_lost_gameplay() {
 #[test]
 fn creative_face_drag_from_oblique_view_uses_the_projected_axis() {
     let mut game = wand();
-    game.cam.pos = WorldPos::new(0.5, 80.5, 2.0);
-    game.cam.yaw = std::f32::consts::FRAC_PI_4;
+    game.local.cam.pos = WorldPos::new(0.5, 80.5, 2.0);
+    game.local.cam.yaw = std::f32::consts::FRAC_PI_4;
     press(&mut game);
     let axis = game.tool_overlay().and_then(|o| o.face).unwrap().axis;
     let before = game.tools.world.selection.selection.regions()[0];

@@ -1,7 +1,7 @@
 //! Third-person view state: the collision-clamped boom camera and the player
 //! body's presentation pose (body yaw vs head yaw, walk-cycle phase).
 //!
-//! All of it is per-frame presentation layered over the unchanged sim: `Game.cam`
+//! All of it is per-frame presentation layered over the unchanged sim: `LocalPlayer::cam`
 //! stays the authoritative first-person EYE (every raycast, streaming, audio and
 //! reach consumer keeps reading it), and the boom camera exists only as the
 //! render/frame camera returned by [`Game::render_camera`]. The body pose is the
@@ -38,32 +38,32 @@ pub(super) struct ThirdPerson {
 
 impl Game {
     pub fn toggle_third_person(&mut self) {
-        self.third_person.enabled = !self.third_person.enabled;
-        if self.third_person.enabled {
+        self.local.third_person.enabled = !self.local.third_person.enabled;
+        if self.local.third_person.enabled {
             // Entering third person: face the body where the player looks and
             // restart the walk cycle, so the model never pops in mid-turn.
-            self.third_person.pose.reset_facing(self.player.yaw);
+            self.local.third_person.pose.reset_facing(self.local.player.yaw);
             // Place the boom camera NOW: the toggle can land between the game
             // tick and the render, and a frame rendered with the body visible
             // but the camera still at the eye looks out from inside the head.
             self.update_third_person(0.0);
         } else {
-            self.third_person.cam = None;
+            self.local.third_person.cam = None;
         }
     }
 
     #[inline]
     pub fn third_person_enabled(&self) -> bool {
-        self.third_person.enabled
+        self.local.third_person.enabled
     }
 
     /// The camera the frame renders with: the boom camera in third person, the
-    /// first-person eye otherwise. Sim consumers keep reading `self.cam`.
+    /// first-person eye otherwise. Sim consumers keep reading `self.local.cam`.
     #[inline]
     pub(super) fn render_camera(&self) -> &Camera {
-        match &self.third_person.cam {
-            Some(cam) if self.third_person.enabled => cam,
-            _ => &self.cam,
+        match &self.local.third_person.cam {
+            Some(cam) if self.local.third_person.enabled => cam,
+            _ => &self.local.cam,
         }
     }
 
@@ -71,7 +71,7 @@ impl Game {
     /// sync: advance the walk phase, follow the body yaw, and place the boom
     /// camera clamped against block collision.
     pub(super) fn update_third_person(&mut self, dt: f32) {
-        if !self.third_person.enabled {
+        if !self.local.third_person.enabled {
             return;
         }
 
@@ -80,15 +80,15 @@ impl Game {
         // behind the pillow-height eye would end up under the bed. The asleep
         // flag reads the replicated self view; `sleep_head_yaw` derives from
         // the session's bed cell against the REPLICA's model group.
-        if self.self_view.sleeping.is_some() {
-            let head_yaw = self.sleep_head_yaw().unwrap_or(self.player.yaw);
-            self.third_person.pose.lie(head_yaw);
-            let mut cam = self.cam.clone();
+        if self.replica.self_view.sleeping.is_some() {
+            let head_yaw = self.replica.sleep_head_yaw().unwrap_or(self.local.player.yaw);
+            self.local.third_person.pose.lie(head_yaw);
+            let mut cam = self.local.cam.clone();
             cam.yaw = head_yaw;
             cam.pitch = SLEEP_CAM_PITCH;
-            let target = self.player.pos + Vec3::new(0.0, 0.5, 0.0);
+            let target = self.local.player.pos + Vec3::new(0.0, 0.5, 0.0);
             let back = -cam.forward();
-            let world = &self.replica;
+            let world = &self.replica.world;
             let dist = petramond_world::collision::clamp_padded_segment(
                 target.to_array(),
                 [back.x, back.y, back.z],
@@ -97,28 +97,28 @@ impl Game {
                 |x, y, z| world.data().collision_boxes_at(x, y, z),
             );
             cam.pos = target + back * dist;
-            self.third_person.cam = Some(cam);
+            self.local.third_person.cam = Some(cam);
             return;
         }
 
-        self.third_person.pose.advance(
+        self.local.third_person.pose.advance(
             dt,
             super::body_pose::MotionFrame {
-                position: self.player.pos,
-                velocity: self.player.vel,
-                yaw: self.player.yaw,
-                grounded: self.player.on_ground,
-                medium: super::body_pose::movement_medium(&self.replica, self.player.pos),
-                enabled: !self.player.is_spectator() && self.entities.own_mount().is_none(),
-                sneaking: self.predicted_input.sneak,
+                position: self.local.player.pos,
+                velocity: self.local.player.vel,
+                yaw: self.local.player.yaw,
+                grounded: self.local.player.on_ground,
+                medium: super::body_pose::movement_medium(&self.replica.world, self.local.player.pos),
+                enabled: !self.local.player.is_spectator() && self.replica.entities.own_mount().is_none(),
+                sneaking: self.local.predicted_input.sneak,
             },
         );
 
         // Boom camera: retreat from the eye opposite the look direction, stopped
         // early by any block collision box so the camera never enters geometry.
-        let mut cam = self.cam.clone();
+        let mut cam = self.local.cam.clone();
         let back = -cam.forward();
-        let world = &self.replica;
+        let world = &self.replica.world;
         let dist = petramond_world::collision::clamp_padded_segment(
             [cam.pos.x, cam.pos.y, cam.pos.z],
             [back.x, back.y, back.z],
@@ -127,6 +127,6 @@ impl Game {
             |x, y, z| world.data().collision_boxes_at(x, y, z),
         );
         cam.pos += back * dist;
-        self.third_person.cam = Some(cam);
+        self.local.third_person.cam = Some(cam);
     }
 }

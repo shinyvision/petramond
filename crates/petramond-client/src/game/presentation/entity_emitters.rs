@@ -1,7 +1,8 @@
 //! Particle emitters attached to bodies. Every body — mob or player — presents
-//! from ONE list of emitter bundle ids ([`body_emitters`]): its attached bundles
+//! from ONE list of emitter bundle ids ([`BodyEmitters`]): its attached bundles
 //! plus its active condition stages' emitters. Its particles, body tint and
-//! body self-lighting all read that list.
+//! body self-lighting all read that list, which is re-derived only when the
+//! body's replicated inputs change — never per frame.
 
 use super::*;
 use petramond_world::particle_emitters::{self as emitters, EmitterBundle};
@@ -15,17 +16,70 @@ pub(super) struct EmitterBody {
     blocklight: petramond_world::light::BlockLight6,
 }
 
-/// The emitter ids a body wears: its `attached` bundles and each active
-/// condition stage's emitter, sorted, each id once.
-pub(super) fn body_emitters(attached: &[u8], conditions: &[(u8, u8)]) -> Vec<u8> {
-    let stages = conditions.iter().filter_map(|&(condition, stage)| {
-        let def = petramond_world::condition::defs().get(condition as usize)?;
-        Some(emitters::by_key(def.stages.get(stage as usize)?.emitter?)?.id)
-    });
-    let mut ids: Vec<u8> = attached.iter().copied().chain(stages).collect();
-    ids.sort_unstable();
-    ids.dedup();
-    ids
+/// A body's emitter ids — its `attached` bundles and each active condition
+/// stage's emitter, sorted, each id once — with the body tint and
+/// self-lighting they compose. Kept on the replicated entry (and on the
+/// gather for the local body) and refreshed from the row's inputs, so a
+/// steady body re-derives nothing and allocates nothing.
+#[derive(Clone, Debug)]
+pub struct BodyEmitters {
+    attached: Vec<u8>,
+    conditions: Vec<(u8, u8)>,
+    ids: Vec<u8>,
+    tint: [f32; 3],
+    self_lit: f32,
+}
+
+impl Default for BodyEmitters {
+    /// A body wearing nothing: no ids, white tint, no self-light.
+    fn default() -> Self {
+        Self {
+            attached: Vec::new(),
+            conditions: Vec::new(),
+            ids: Vec::new(),
+            tint: [1.0; 3],
+            self_lit: 0.0,
+        }
+    }
+}
+
+impl BodyEmitters {
+    /// Re-derive from a row's `attached` bundles and `conditions`, only when
+    /// either differs from what this set was derived from.
+    pub fn refresh(&mut self, attached: &[u8], conditions: &[(u8, u8)]) {
+        if self.attached == attached && self.conditions == conditions {
+            return;
+        }
+        self.attached.clear();
+        self.attached.extend_from_slice(attached);
+        self.conditions.clear();
+        self.conditions.extend_from_slice(conditions);
+        let stages = conditions.iter().filter_map(|&(condition, stage)| {
+            let def = petramond_world::condition::defs().get(condition as usize)?;
+            Some(emitters::by_key(def.stages.get(stage as usize)?.emitter?)?.id)
+        });
+        self.ids.clear();
+        self.ids.extend(attached.iter().copied().chain(stages));
+        self.ids.sort_unstable();
+        self.ids.dedup();
+        self.tint = emitter_tint(self.ids.iter().copied());
+        self.self_lit = emitter_self_lit(self.ids.iter().copied());
+    }
+
+    /// The emitter bundle ids, sorted, each once.
+    pub fn ids(&self) -> &[u8] {
+        &self.ids
+    }
+
+    /// The multiply body tint of these emitters (white when none declares one).
+    pub fn tint(&self) -> [f32; 3] {
+        self.tint
+    }
+
+    /// How much of its light the body provides itself: the strongest wins.
+    pub fn self_lit(&self) -> f32 {
+        self.self_lit
+    }
 }
 
 fn bundles(ids: impl IntoIterator<Item = u8>) -> impl Iterator<Item = &'static EmitterBundle> {
@@ -33,14 +87,14 @@ fn bundles(ids: impl IntoIterator<Item = u8>) -> impl Iterator<Item = &'static E
 }
 
 /// The multiply body tint of a body's emitters (white when none declares one).
-pub(super) fn emitter_tint(ids: impl IntoIterator<Item = u8>) -> [f32; 3] {
+fn emitter_tint(ids: impl IntoIterator<Item = u8>) -> [f32; 3] {
     bundles(ids)
         .filter_map(|bundle| bundle.tint)
         .fold([1.0; 3], |t, b| [t[0] * b[0], t[1] * b[1], t[2] * b[2]])
 }
 
 /// How much of its light a body provides itself: the strongest emitter wins.
-pub(super) fn emitter_self_lit(ids: impl IntoIterator<Item = u8>) -> f32 {
+fn emitter_self_lit(ids: impl IntoIterator<Item = u8>) -> f32 {
     bundles(ids)
         .map(|bundle| bundle.body_self_lit)
         .fold(0.0, f32::max)
@@ -106,9 +160,13 @@ fn append(
 }
 
 impl GamePresentationScratch {
-    pub(super) fn collect_mob_emitters(&mut self, tick_alpha: f32, view: &ViewVolume) {
-        for m in &self.mobs {
-            if m.emitters.is_empty() {
+    /// Every mob's attached emitters, at the body as presented. The ids come
+    /// from each entry's cached [`BodyEmitters`]; the light is the row's
+    /// already-gathered presentation light (the rows share the store's order).
+    pub(super) fn collect_mob_emitters(&mut self, game: &Game, tick_alpha: f32, view: &ViewVolume) {
+        for (entry, m) in game.replica.entities.mobs().iter().zip(&self.mobs) {
+            let ids = entry.emitters().ids();
+            if ids.is_empty() {
                 continue;
             }
             let size = petramond::mob::def(m.kind).size;
@@ -124,12 +182,7 @@ impl GamePresentationScratch {
                 skylight: m.skylight,
                 blocklight: m.blocklight,
             };
-            append_emitters(
-                &mut self.particle_emitters,
-                m.emitters.iter().copied(),
-                &body,
-                view,
-            );
+            append_emitters(&mut self.particle_emitters, ids.iter().copied(), &body, view);
         }
     }
 
@@ -139,34 +192,44 @@ impl GamePresentationScratch {
     pub(super) fn collect_local_player_emitters(
         &mut self,
         game: &Game,
-        body: Option<&PlayerPresentation>,
+        body: Option<&BodyInput>,
         view: &ViewVolume,
     ) {
-        if game.player.is_spectator() || game.self_view.health <= 0 {
+        if game.local.player.is_spectator() || game.replica.self_view.health <= 0 {
             return;
         }
         let body = match body {
-            Some(body) => {
-                EmitterBody::player(body.pos, body.body_yaw, body.skylight, body.blocklight, 0)
-            }
+            Some(body) => EmitterBody::player(
+                body.pos,
+                body.state.body_yaw,
+                body.skylight,
+                body.blocklight,
+                0,
+            ),
             None => {
                 let (skylight, blocklight) = game.held_item_light();
-                let feet = game.player.pos + Vec3::new(0.0, game.camera_rig.step_y_offset(), 0.0);
+                let feet = game.local.player.pos + Vec3::new(0.0, game.local.camera_rig.step_y_offset(), 0.0);
                 EmitterBody::player(feet, local_body_yaw(game), skylight, blocklight, 0)
             }
         };
-        self.append_player_emitters(&game.self_view.conditions, &body, view);
+        append_emitters(
+            &mut self.particle_emitters,
+            self.local_emitters.ids().iter().copied(),
+            &body,
+            view,
+        );
     }
 
+    /// A player body's emitters (from its cached [`BodyEmitters`]).
     pub(super) fn append_player_emitters(
         &mut self,
-        conditions: &[(u8, u8)],
+        emitters: &BodyEmitters,
         body: &EmitterBody,
         view: &ViewVolume,
     ) {
         append_emitters(
             &mut self.particle_emitters,
-            body_emitters(&[], conditions),
+            emitters.ids().iter().copied(),
             body,
             view,
         );

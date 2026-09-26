@@ -4,6 +4,7 @@
 //! GUI-document runtime. The title flow's own state and world I/O live in
 //! `super::shell_state`.
 
+use super::session::Session;
 use super::{now_seconds, App, AppScreen};
 use petramond_input::controls::{text_shortcut_from_key_code, TextKey, TextShortcut};
 use petramond_render::camera::Camera;
@@ -12,26 +13,27 @@ impl App {
     /// Forward a text-editing key to the document UI. Returns whether it was
     /// consumed (false when no document screen is active).
     pub fn handle_text_key(&mut self, key: TextKey) -> bool {
-        if self.screen == super::AppScreen::Chat {
+        if self.screen == AppScreen::Chat {
             let now = now_seconds();
             match key {
                 TextKey::Enter => {
-                    if let Some(text) = self.chat.submit_or_close(now) {
-                        if let Some(game) = self.game.as_mut() {
+                    if let Some(Session { game, chat, .. }) = self.session.as_mut() {
+                        if let Some(text) = chat.submit_or_close(now) {
                             game.send_chat(text);
                         }
                     }
-                    self.screen = super::AppScreen::Game;
-                    self.controls.pointer.grab_for_gameplay();
+                    self.set_screen(AppScreen::Game);
                 }
                 _ => {
-                    self.chat.edit_key(
-                        nav_key_from_text_key(key),
-                        self.controls.modifiers.shift,
-                        self.controls.modifiers.ctrl,
-                        None,
-                        now,
-                    );
+                    if let Some(session) = self.session.as_mut() {
+                        session.chat.edit_key(
+                            nav_key_from_text_key(key),
+                            self.controls.modifiers.shift,
+                            self.controls.modifiers.ctrl,
+                            None,
+                            now,
+                        );
+                    }
                 }
             }
             return true;
@@ -58,11 +60,13 @@ impl App {
     }
 
     pub fn handle_text_shortcut(&mut self, shortcut: TextShortcut) -> bool {
-        if self.screen == super::AppScreen::Chat {
+        if self.screen == AppScreen::Chat {
             let key = nav_key_from_shortcut(shortcut);
             let now = now_seconds();
             let clipboard = self.ui.clipboard_mut();
-            self.chat.edit_key(key, false, false, Some(clipboard), now);
+            if let Some(session) = self.session.as_mut() {
+                session.chat.edit_key(key, false, false, Some(clipboard), now);
+            }
             return true;
         }
         if self.doc_ui_kind().is_none() {
@@ -77,8 +81,10 @@ impl App {
     }
 
     pub fn handle_text_input(&mut self, text: &str) -> bool {
-        if self.screen == super::AppScreen::Chat {
-            self.chat.insert_text(text, now_seconds());
+        if self.screen == AppScreen::Chat {
+            if let Some(session) = self.session.as_mut() {
+                session.chat.insert_text(text, now_seconds());
+            }
             return true;
         }
         if self.doc_ui_kind().is_none() {
@@ -95,60 +101,51 @@ impl App {
     }
 
     pub(super) fn open_pause(&mut self) {
-        let Some(game) = self.game.as_mut() else {
+        let Some(session) = self.session.as_mut() else {
             return;
         };
         // Pause is a protocol message: the server
         // thread keeps streaming/autosaving but skips the fixed ticks. The
         // screen switch below is what stops App::update calling Game::tick
         // (it still pumps the network — see update.rs).
-        game.set_paused(true);
-        self.screen = AppScreen::Pause;
-        self.controls.pointer.release_for_menu();
+        session.game.set_paused(true);
+        self.set_screen(AppScreen::Pause);
         self.sound.stop_mining_loop(now_seconds());
     }
 
     pub(super) fn resume_game(&mut self) {
-        // Pause-close cleanup: a stale LAN error must not greet the next open.
-        self.session_ui.lan_error = None;
-        let Some(game) = self.game.as_mut() else {
-            self.screen = AppScreen::Title;
-            self.controls.pointer.release_for_menu();
+        let Some(session) = self.session.as_mut() else {
+            self.set_screen(AppScreen::Title);
             return;
         };
-        game.set_paused(false);
-        self.screen = AppScreen::Game;
-        self.controls.pointer.grab_for_gameplay();
+        session.game.set_paused(false);
+        self.set_screen(AppScreen::Game);
     }
 
     /// The pause menu's Open to LAN: bind the default port into the running
     /// HOST server. Success shows the port label; failure shows inline.
     pub(super) fn open_lan(&mut self) {
-        let Some(game) = self.game.as_mut() else {
+        let Some(session) = self.session.as_mut() else {
             return;
         };
         let port = petramond::net::DEFAULT_PORT;
-        match game.open_to_lan(port) {
+        match session.game.open_to_lan(port) {
             Ok(bound) => {
-                self.session_ui.lan_port = Some(bound);
-                self.session_ui.lan_error = None;
+                session.lan_port = Some(bound);
+                session.lan_error = None;
             }
-            Err(e) => self.session_ui.lan_error = Some(format!("Couldn't open port {port}: {e}")),
+            Err(e) => session.lan_error = Some(format!("Couldn't open port {port}: {e}")),
         }
     }
 
+    /// Save and Quit (a HOST session): ending the session joins the server
+    /// thread, which saves everything before exiting.
     pub(super) fn save_and_quit_to_title(&mut self) {
         debug_assert!(
-            self.game.as_ref().is_none_or(|g| !g.is_remote()),
+            self.session.as_ref().is_none_or(|s| !s.game.is_remote()),
             "save-and-quit is a HOST action; remote sessions disconnect"
         );
-        if let Some(mut game) = self.game.take() {
-            self.retained_section_cache = Some(game.take_section_cache());
-            // Joins the server thread; it saves everything before exiting.
-            game.shutdown();
-        }
-        self.screen = AppScreen::Title;
-        self.teardown_game_scene();
+        self.end_session(AppScreen::Title);
     }
 
     /// Leave a REMOTE session (the pause menu's Disconnect): dropping the
@@ -157,57 +154,37 @@ impl App {
     /// to save locally.
     pub(super) fn disconnect_to_title(&mut self) {
         debug_assert!(
-            self.game.as_ref().is_some_and(|g| g.is_remote()),
+            self.session.as_ref().is_some_and(|s| s.game.is_remote()),
             "Disconnect is a remote-session action"
         );
-        if let Some(mut game) = self.game.take() {
-            self.retained_section_cache = Some(game.take_section_cache());
-            game.shutdown();
-        }
-        self.screen = AppScreen::Title;
-        self.teardown_game_scene();
+        self.end_session(AppScreen::Title);
     }
 
     /// The involuntary exit: the server became unreachable (host thread
     /// crash, remote server close / connection loss). NO save — a crashed
-    /// host has no server thread left to ask, and a remote server saves
-    /// autonomously. Lands on the Disconnected screen with the reason.
+    /// host has no server thread left to ask (its shutdown is a no-op join),
+    /// and a remote server saves autonomously. Lands on the Disconnected
+    /// screen with the reason.
     pub(super) fn enter_connection_lost(&mut self, reason: String) {
-        if let Some(mut game) = self.game.take() {
-            // The cache survives the session precisely for this path: a
-            // reconnect's Join manifest claims it, skipping the re-stream.
-            self.retained_section_cache = Some(game.take_section_cache());
-            // For a crashed host thread this is a no-op join; for a remote
-            // loss it drops the dead connection. Neither path saves.
-            game.shutdown();
-        }
         self.shell.set_disconnect_message(reason);
-        self.screen = AppScreen::ConnectionLost;
-        self.teardown_game_scene();
+        self.end_session(AppScreen::ConnectionLost);
     }
 
-    /// Shared post-session teardown (every quit/disconnect path): cursor,
-    /// audio, scene, hand state, session UI (LAN status included), world-list
-    /// refresh. The caller sets the target screen.
-    fn teardown_game_scene(&mut self) {
-        self.rebuild_action_table();
-        self.controls.pointer.release_for_menu();
-        // Mod-driven presentation state is session-scoped: the title screen
-        // (or the next world) must never inherit this session's rain bed or
-        // precipitation volumes.
+    /// End the live session — the one teardown every quit, disconnect and
+    /// connection-loss path shares — and land on `next`. Dropping the
+    /// [`Session`] takes every session-scoped value with it; what remains
+    /// here is the app-lifetime side reacting: the section cache parked for
+    /// a reconnect, the engine's voices, the action table, the renderer's
+    /// world, the world list.
+    fn end_session(&mut self, next: AppScreen) {
+        if let Some(session) = self.session.take() {
+            self.retained_section_cache = Some(session.end());
+        }
         self.sound.end_session(now_seconds());
-        self.presentation.ambient.clear();
-        // Baked custom-shape item geometry is keyed by session-local block ids;
-        // flush it so the next world's mods rebake instead of inheriting stale
-        // shapes.
-        petramond_world::block::item_shape_bake::clear();
-        self.scene.clear();
-        self.client_canvas = None;
-        self.client_overlay_images.clear();
-        self.hud_fx.reset_session();
-        self.session_ui = Default::default();
+        self.rebuild_action_table();
         self.renderer_world_clear_pending = true;
         self.shell.refresh_worlds();
+        self.set_screen(next);
     }
 
     pub(super) fn play_selected_world(&mut self) {
@@ -242,28 +219,22 @@ impl App {
     /// Install a freshly-built game session and enter gameplay — the shared
     /// tail of `start_game` (which builds the session, spawning the server
     /// thread) and the test fixtures (which build a loopback-piped session).
+    /// Sessions are adopted from the title flow, after the previous one
+    /// ended.
     pub fn adopt_game(&mut self, game: crate::game::Game) {
-        self.game = Some(game);
-        self.session_ui = Default::default();
-        self.apply_particles();
-        self.rebuild_action_table();
-        self.screen = AppScreen::Game;
-        self.controls.pointer.grab_for_gameplay();
-        self.gui_router.reset_click_streak();
-        self.hud_fx.reset_session();
-        self.renderer_world_clear_pending = false;
+        debug_assert!(
+            self.session.is_none(),
+            "a session is adopted only once the previous one has ended"
+        );
         // A world saved while dead (quit from the death screen, or a crash)
         // reopens ON the death screen — a 0-health player must never resume
         // walking around.
-        let dead = self
-            .game
-            .as_ref()
-            .and_then(|g| g.player_health())
-            .is_some_and(|h| h.current == 0);
-        if dead {
-            self.screen = AppScreen::Dead;
-            self.controls.pointer.release_for_menu();
-        }
+        let dead = game.player_health().is_some_and(|h| h.current == 0);
+        self.session = Some(Session::new(game));
+        self.apply_particles();
+        self.rebuild_action_table();
+        self.renderer_world_clear_pending = false;
+        self.set_screen(if dead { AppScreen::Dead } else { AppScreen::Game });
     }
 }
 

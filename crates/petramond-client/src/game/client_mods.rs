@@ -16,9 +16,9 @@ impl Game {
     ) {
         let frame = mod_api::ClientFrameData {
             dt: dt.max(0.0),
-            player_pos: self.player.pos.to_array(),
-            yaw: self.player.yaw,
-            pitch: self.player.pitch,
+            player_pos: self.local.player.pos.to_array(),
+            yaw: self.local.player.yaw,
+            pitch: self.local.player.pitch,
             screen: [screen.0, screen.1],
             open_gui: open_gui.map(str::to_owned),
             open_canvas: open_canvas.map(str::to_owned),
@@ -33,12 +33,12 @@ impl Game {
         // latch — see `LocalHand::take_swing_events`), the mining level read live —
         // the exact shape of the server's roster build.
         let swing = mod_api::HandSwing {
-            mining: self.self_view.mining.is_some(),
+            mining: self.replica.self_view.mining.is_some(),
             ..self.hand.take_swing_events()
         };
-        let actor = self.client_actor_snapshot(self.predicted_input.sneak, swing);
+        let actor = self.client_actor_snapshot(self.local.predicted_input.sneak, swing);
         self.client_mods
-            .frame(&self.replica, &actor, &self.self_view.inventory, frame);
+            .frame(&self.replica.world, &actor, &self.replica.self_view.inventory, frame);
     }
 
     /// Deliver the mod cues this batch carried for us (`EmitEventTo`) into
@@ -56,12 +56,12 @@ impl Game {
         if events.is_empty() {
             return;
         }
-        let actor = self.client_actor_snapshot(self.predicted_input.sneak, Default::default());
+        let actor = self.client_actor_snapshot(self.local.predicted_input.sneak, Default::default());
         for ev in events {
             self.client_mods.mod_event(
-                &self.replica,
+                &self.replica.world,
                 &actor,
-                &self.self_view.inventory,
+                &self.replica.self_view.inventory,
                 &ev.key,
                 &ev.data,
             );
@@ -72,13 +72,13 @@ impl Game {
     /// dirtied (server deltas ingested this frame) via their `client_wasm`, so
     /// the client's physics/prediction reads the same collision the server does.
     pub fn bake_client_custom_shapes(&mut self) {
-        self.client_mods.bake_custom_shapes(&mut self.replica);
+        self.client_mods.bake_custom_shapes(&mut self.replica.world);
     }
 
     /// Dispatch a mod-registered bound action edge (`mod_id:action`) to its
     /// owning client mod.
     pub fn client_mod_action(&mut self, full_id: &str, pressed: bool) -> bool {
-        self.client_mods.action(&self.replica, full_id, pressed)
+        self.client_mods.action(&self.replica.world, full_id, pressed)
     }
 
     /// The session's mod-registered remappable key actions, for the app's
@@ -101,21 +101,21 @@ impl Game {
     }
 
     pub fn release_client_mod_keys(&mut self) {
-        self.client_mods.release_all_keys(&self.replica);
+        self.client_mods.release_all_keys(&self.replica.world);
     }
 
     pub fn client_mod_ui_event(&mut self, kind_key: &str, event: mod_api::ClientUiEvent) {
-        self.client_mods.ui_event(&self.replica, kind_key, event);
+        self.client_mods.ui_event(&self.replica.world, kind_key, event);
     }
 
     pub fn client_mod_canvas_event(&mut self, canvas_key: &str, event: mod_api::ClientCanvasEvent) {
         self.client_mods
-            .canvas_event(&self.replica, canvas_key, event);
+            .canvas_event(&self.replica.world, canvas_key, event);
     }
 
     pub fn client_mod_canvas_scroll(&mut self, canvas_key: &str, x: f32, y: f32, delta: f32) {
         self.client_mods
-            .canvas_scroll(&self.replica, canvas_key, x, y, delta);
+            .canvas_scroll(&self.replica.world, canvas_key, x, y, delta);
     }
 
     pub fn client_mod_overlays(&self) -> &[petramond::modding::ClientOverlayRegistration] {

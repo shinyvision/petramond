@@ -6,9 +6,7 @@ use petramond_anim::library::ClipLibrary;
 use petramond_anim::test_rig::{clip, rig};
 use petramond_anim::{Animator, Graph};
 
-use super::ClaimDriver;
-use crate::views::AnimatorParamRow;
-use crate::AnimatorInputs;
+use super::{AnimatorInputs, AnimatorParamRow, ClaimDriver};
 
 const RIG: RigId = RigId(3);
 const OTHER_RIG: RigId = RigId(4);

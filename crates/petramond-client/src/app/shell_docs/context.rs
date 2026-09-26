@@ -33,12 +33,13 @@ pub(in crate::app) struct SessionFacts<'a> {
 
 /// An app-level request a controller cannot carry out on the state it holds.
 pub(in crate::app) enum ShellCommand {
-    /// Switch screens and hand the pointer to the menu (release any grab,
-    /// recenter the cursor).
+    /// Switch screens (through the screen funnel, which applies the new
+    /// screen's cursor policy), replacing any stacked screens.
     Goto(AppScreen),
-    /// Switch screens leaving the pointer as it is (moving within a flow
-    /// whose pointer is already the menu's).
-    SwitchTo(AppScreen),
+    /// Open a screen over the current one; Back returns to it.
+    Push(AppScreen),
+    /// The screen's own Back: to the screen underneath, or its parent.
+    Back,
     Quit,
     PlaySelectedWorld,
     /// Open (or create) the world saved under `dir_name`.
@@ -51,11 +52,6 @@ pub(in crate::app) enum ShellCommand {
     BeginConnect,
     /// The connect worker's handshake succeeded: enter the remote session.
     AdoptRemote(Box<HandshakeJoin>, ServerHandle),
-    OpenOptions {
-        from_pause: bool,
-    },
-    CloseOptionsRoot,
-    CloseOptionsCategory,
     ResumeGame,
     OpenLan,
     DisconnectToTitle,
@@ -102,7 +98,7 @@ impl<'a> ScreenCtx<'a> {
         self.commands.push(command);
     }
 
-    /// Queue a screen switch that hands the pointer to the menu.
+    /// Queue a screen switch.
     pub(in crate::app) fn goto(&mut self, screen: AppScreen) {
         self.request(ShellCommand::Goto(screen));
     }

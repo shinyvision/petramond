@@ -16,7 +16,7 @@ use super::common;
 /// replication batch (the trailing `Tick` message of the pump's output).
 fn pump_one_tick(game: &mut super::common::TestGame) -> Box<petramond::net::protocol::TickUpdate> {
     let mut inbox = Vec::new();
-    let out = game.server.pump(TICK_DT, &mut inbox);
+    let out = game.sim_mut().pump(TICK_DT, &mut inbox);
     out.msgs
         .into_iter()
         .find_map(|msg| match msg {

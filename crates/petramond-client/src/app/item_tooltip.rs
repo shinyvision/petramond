@@ -166,7 +166,6 @@ fn hovered_stack(game: &Game, role: &str, index: usize) -> Option<ItemStack> {
         Role::CraftResult => menu.craft_output,
         Role::Container => menu
             .container
-            .as_ref()
             .and_then(|container| container.slots.get(index).copied().flatten()),
         Role::Generic | Role::Other => None,
     }

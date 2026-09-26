@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
 mod actor_pass;
-use actor_pass::{ActorPass, MobGpu, PlayerGpu, VisibleBody};
+use actor_pass::{ActorPass, MobGpu, PlayerGpu};
 use skinned_draw::{SkinFrame, SkinnedModel};
 mod client_overlay;
 mod column_store;
@@ -71,9 +71,9 @@ use super::selection::outline_vertices;
 use super::ui::{build_ui, UiBuild, UiVertex};
 use super::uniforms::Uniforms;
 use super::{
-    BlockEntityInstance, BreakOverlayView, EntityShadow, HeldItemFrame, HeldItemView,
-    ItemEntityInstance, MobRenderInstance, ParticleEmitterInstance, ParticleInstance,
-    PlayerRenderInstance, RemotePlayerRender, SolidParticleInstance, UiFrame,
+    BlockEntityInstance, BreakOverlayView, EntityShadow, HeldItemView, ItemEntityInstance,
+    LocalFrame, MobRenderInstance, ParticleEmitterInstance, ParticleInstance, PlayerBodyRender,
+    SolidParticleInstance, UiFrame,
 };
 use petramond::gui::{UiSnapshot, UiViewport};
 use petramond_world::bbmodel::Model;

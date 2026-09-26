@@ -138,7 +138,7 @@ impl Game {
         self.tools.preview
             .held
             .as_ref()
-            .is_some_and(|held| self.player.is_creative() || held.positioning.is_some())
+            .is_some_and(|held| self.local.player.is_creative() || held.positioning.is_some())
     }
 
     pub fn rotate_schematic_preview(&mut self) -> bool {
@@ -173,11 +173,11 @@ impl Game {
     pub(super) fn schematic_preview_input(&mut self, input: &GameInput) {
         self.prepare_preview_scene();
         let hit = raycast::filtered(
-            self.cam.pos,
-            self.cam.forward(),
+            self.local.cam.pos,
+            self.local.cam.forward(),
             PLACEMENT_REACH,
             RayFilter::Selectable,
-            self.replica.data(),
+            self.replica.world.data(),
         )
         .map(|(h, _)| h);
         self.tools.preview.aim(hit);

@@ -19,6 +19,8 @@
 //! the CPU: the first-person rig (one rig, drawn through the hand pass's own
 //! MVP) uses it, and it is the reference the skinned mesh is pinned against.
 
+use std::sync::Arc;
+
 use glam::{Mat4, Vec3};
 
 use super::item_model::ItemVertex;
@@ -134,6 +136,70 @@ impl MobRig {
     }
 }
 
+/// The frame's mob arena rows and the session's animation-name table, as the
+/// pose reads them: every [`MobRenderInstance`] addresses its fading gaits,
+/// named layers and ragdoll bones by range into `arena`.
+#[derive(Copy, Clone)]
+pub(crate) struct MobLayers<'a> {
+    pub arena: &'a crate::MobArena,
+    pub names: &'a crate::AnimNames,
+}
+
+/// One species' animation ids resolved to its model's clips. An id resolves
+/// by name once; after that a lookup is an index plus a pointer compare
+/// against the table's name (a new session's table names ids afresh, which
+/// the compare catches), so no frame hashes or compares a clip name.
+pub(crate) struct AnimClips<'m> {
+    slots: Vec<Option<(Arc<str>, Option<&'m Animation>)>>,
+}
+
+impl Default for AnimClips<'_> {
+    fn default() -> Self {
+        Self { slots: Vec::new() }
+    }
+}
+
+impl<'m> AnimClips<'m> {
+    /// `id`'s clip in `model`, or `None` when the model has no such clip (or
+    /// the id is not in `names`).
+    pub(crate) fn resolve(
+        &mut self,
+        model: &'m Model,
+        names: &crate::AnimNames,
+        id: crate::AnimId,
+    ) -> Option<&'m Animation> {
+        let name = names.get(id)?;
+        let i = id.0 as usize;
+        if self.slots.len() <= i {
+            self.slots.resize(i + 1, None);
+        }
+        match &self.slots[i] {
+            Some((cached, clip)) if Arc::ptr_eq(cached, name) => *clip,
+            _ => {
+                let clip = model.animation(name);
+                self.slots[i] = Some((Arc::clone(name), clip));
+                clip
+            }
+        }
+    }
+}
+
+/// What posing one species keeps between frames: its resolved clips, and the
+/// per-instance layer list's storage.
+pub(crate) struct MobPoseCache<'m> {
+    clips: AnimClips<'m>,
+    layers: Vec<(&'m Animation, f32, f32)>,
+}
+
+impl Default for MobPoseCache<'_> {
+    fn default() -> Self {
+        Self {
+            clips: AnimClips::default(),
+            layers: Vec::new(),
+        }
+    }
+}
+
 /// Pose every instance of ONE species (`model` at `scale`) into `batch` —
 /// one palette run and one instance row each, contiguous — and answer the
 /// instance range the species draws. Each instance selects its own animation
@@ -141,12 +207,14 @@ impl MobRig {
 /// pose — and (when the model has a `head` bone and the active animation isn't
 /// already moving it) the AI head-look is applied to the head. The caller
 /// groups instances by species and frustum-culls them first.
-pub(crate) fn pose_mob_instances(
-    model: &Model,
+pub(crate) fn pose_mob_instances<'i, 'm>(
+    model: &'m Model,
     scale: f32,
-    instances: &[MobRenderInstance],
+    instances: impl IntoIterator<Item = &'i MobRenderInstance>,
+    frame: MobLayers<'_>,
     render_origin: glam::IVec3,
     rig: &MobRig,
+    cache: &mut MobPoseCache<'m>,
     batch: &mut SkinBatch,
     held: &mut Vec<MobHeld>,
 ) -> std::ops::Range<u32> {
@@ -154,14 +222,19 @@ pub(crate) fn pose_mob_instances(
     let slots = bone_slots(model);
     let head_bone = model.head_bone();
     let walk = model.animation(clips::WALK);
+    let hurt_clip = model.animation(clips::HURT);
     // Animation layers for the instance being posed (base + active named
-    // anims), reused across instances.
-    let mut layers: Vec<(&Animation, f32, f32)> = Vec::new();
+    // anims), reused across instances and frames.
+    let MobPoseCache {
+        clips: anim_clips,
+        layers,
+    } = cache;
     for inst in instances {
         // Pose each bone. A dying mob uses a physics delta over the authored rest pose,
         // so static Blockbench group rotations are still present as it goes limp. A live
         // mob uses its animation (walk, a playing idle_*, else rest) plus AI head-look.
-        let pose: Vec<Mat4> = if let Some(bones) = &inst.ragdoll {
+        let pose: Vec<Mat4> = if let Some(bones) = inst.ragdoll {
+            let bones = bones.of(&frame.arena.ragdoll);
             let rest = model.rest_pose();
             model
                 .bones
@@ -193,19 +266,27 @@ pub(crate) fn pose_mob_instances(
             };
             layers.clear();
             layers.extend(base.map(|a| (a, inst.anim_time, inst.gait_weight)));
-            layers.extend(inst.gait_fades.iter().filter_map(|(clip, phase, weight)| {
-                let anim = match clip {
-                    crate::GaitClip::Walk => walk,
-                    crate::GaitClip::Idle(i) => model.idle_animation(*i as usize),
-                };
-                anim.map(|a| (a, *phase, *weight))
-            }));
+            layers.extend(
+                inst.gait_fades
+                    .of(&frame.arena.gait_fades)
+                    .iter()
+                    .filter_map(|fade| {
+                        let anim = match fade.clip {
+                            crate::GaitClip::Walk => walk,
+                            crate::GaitClip::Idle(i) => model.idle_animation(i as usize),
+                        };
+                        anim.map(|a| (a, fade.phase, fade.weight))
+                    }),
+            );
             layers.extend(
                 inst.anims
+                    .of(&frame.arena.anims)
                     .iter()
-                    .filter(|(_, _, weight)| *weight > 0.001)
-                    .filter_map(|(name, phase, weight)| {
-                        model.animation(name).map(|a| (a, *phase, *weight))
+                    .filter(|layer| layer.weight > 0.001)
+                    .filter_map(|layer| {
+                        anim_clips
+                            .resolve(model, frame.names, layer.anim)
+                            .map(|a| (a, layer.phase, layer.weight))
                     }),
             );
             // Clips that move the head own it by their WEIGHT: a walk easing
@@ -219,7 +300,7 @@ pub(crate) fn pose_mob_instances(
                 (hb, 1.0 - owned.min(1.0))
             });
             if inst.hurt > 0.001 {
-                if let Some(hurt) = model.animation(clips::HURT) {
+                if let Some(hurt) = hurt_clip {
                     layers.push((
                         hurt,
                         (1.0 - inst.hurt.clamp(0.0, 1.0)) * hurt.length,
@@ -230,7 +311,7 @@ pub(crate) fn pose_mob_instances(
             let mut pose = if layers.is_empty() {
                 model.rest_pose()
             } else {
-                model.pose_layers(&layers)
+                model.pose_layers(layers)
             };
             // Hurt is additive to the gaze; authored actions still own the head.
             if let Some((hb, free)) = looking_head.filter(|(_, free)| *free > 0.001) {

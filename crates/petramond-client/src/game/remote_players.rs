@@ -9,7 +9,7 @@
 //! `snap` rows skip interpolation (tick-side teleports). On top of the rows each remote owns
 //! the SAME drivers the local player uses — the shared [`BodyPose`] (walk
 //! cycle + body-yaw follow), an eased held view per hand, and the two hand
-//! FRAMES its renderer-owned body animator reads — advanced once per frame
+//! FRAMES its body animator (`crate::animation`) reads — advanced once per frame
 //! in `Game::tick_receive`, so a remote's mining loop, fired gestures, and
 //! chew read identically to the local body's.
 //!
@@ -20,7 +20,8 @@
 //!   client runs its own linear flash envelope, mirroring the local body's
 //!   hurt-flash (the app's hurt-shake envelope, 0.25 s).
 
-use std::collections::BTreeMap;
+use super::presentation::BodyEmitters;
+use super::replicated::{Adopt, AssignFrom, EntityStore, Replica};
 
 use petramond::net::protocol::{PlayerActionKind, PlayerLane, PlayerStateRow};
 use petramond::player::{AnimatorClock, AnimatorPlay, PlayerId, RigId};
@@ -57,6 +58,9 @@ pub struct RemotePlayer {
     hurt_t: f32,
     /// Client-side eat-progress ramp (see [`EAT_RAMP_SECS`]).
     eat_t: f32,
+    /// `curr`'s condition emitters and the tint and self-light they compose,
+    /// re-derived only when its conditions change.
+    emitters: BodyEmitters,
     /// The main hand's eased held view this frame — what presentation
     /// attaches to the posed hand.
     pub view: HeldItemView,
@@ -67,9 +71,9 @@ pub struct RemotePlayer {
     /// presentation gather copies it into this frame's arena.
     pub bones: super::bone_ease::BoneEase,
     /// Scratch for this body's resolved offset target, reused across frames.
-    target: Vec<petramond_render::BoneOffset>,
+    target: Vec<crate::animation::BoneOffset>,
     /// This frame's two hand frames (`[main, off]`), which the body's
-    /// renderer-owned animator reads.
+    /// animator reads.
     pub frames: [HeldItemFrame; 2],
     /// This frame's claimed plays (see [`present_plays`]), sorted like the
     /// rows by rig and slot.
@@ -135,33 +139,23 @@ fn present_plays(
     }
 }
 
-impl RemotePlayer {
-    /// Adopt the next row; `snap` (the row's own, or a forced resync) skips
-    /// interpolation across the jump.
-    fn advance(&mut self, row: &PlayerStateRow, snap: bool) {
-        if snap || row.snap {
-            self.prev = row.clone();
-            self.curr = row.clone();
-            self.pose.reset_facing(row.transform.yaw);
-        } else {
-            self.prev = std::mem::replace(&mut self.curr, row.clone());
-        }
-        if row.hurt_recent {
-            self.hurt_t = HURT_FLASH_SECS;
-        }
-    }
+impl Replica<PlayerStateRow> for RemotePlayer {
+    type Ctx = ();
 
-    fn new(row: PlayerStateRow) -> Self {
+    fn spawn(row: &PlayerStateRow, _: &mut ()) -> Self {
         let mut pose = BodyPose::default();
         pose.reset_facing(row.transform.yaw);
+        let mut emitters = BodyEmitters::default();
+        emitters.refresh(&[], &row.conditions);
         Self {
             prev: row.clone(),
-            curr: row,
+            curr: row.clone(),
             pose,
             ease: Default::default(),
             pending: Vec::new(),
-            hurt_t: 0.0,
+            hurt_t: if row.hurt_recent { HURT_FLASH_SECS } else { 0.0 },
             eat_t: 0.0,
+            emitters,
             view: HeldItemView::default(),
             off_view: HeldItemView::default(),
             bones: Default::default(),
@@ -171,6 +165,43 @@ impl RemotePlayer {
             last_plays: Vec::new(),
             events: Vec::new(),
         }
+    }
+
+    fn advance(&mut self, row: &PlayerStateRow, _: &mut ()) {
+        self.adopt(row, false);
+    }
+
+    /// A resync snaps: no frame interpolates across the dropped gap.
+    fn reseed(&mut self, row: &PlayerStateRow, _: &mut ()) {
+        self.adopt(row, true);
+    }
+
+    fn hold(&mut self) {
+        self.prev.assign_from(&self.curr);
+    }
+}
+
+impl RemotePlayer {
+    /// Adopt the next row in place (the retired prev row takes its
+    /// contents); `snap` (the row's own, or a forced resync) seeds both
+    /// slots so nothing interpolates across the jump.
+    fn adopt(&mut self, row: &PlayerStateRow, snap: bool) {
+        std::mem::swap(&mut self.prev, &mut self.curr);
+        self.curr.assign_from(row);
+        if snap || row.snap {
+            self.prev.assign_from(row);
+            self.pose.reset_facing(row.transform.yaw);
+        }
+        if row.hurt_recent {
+            self.hurt_t = HURT_FLASH_SECS;
+        }
+        self.emitters.refresh(&[], &row.conditions);
+    }
+
+    /// This body's condition emitters, as derived when its row last changed
+    /// them.
+    pub fn emitters(&self) -> &BodyEmitters {
+        &self.emitters
     }
 
     /// The hurt-flash intensity `[0, 1]` for this frame (linear decay).
@@ -197,45 +228,35 @@ impl RemotePlayer {
     }
 }
 
-/// The client's remote-player set. `BTreeMap` so presentation iterates in a
-/// deterministic (id) order, like the other replicated stores.
+/// The client's remote-player set, iterated in a deterministic (id) order
+/// like the other replicated stores.
 #[derive(Default)]
 pub struct RemotePlayers {
-    map: BTreeMap<PlayerId, RemotePlayer>,
+    map: EntityStore<PlayerId, RemotePlayer>,
 }
 
 impl RemotePlayers {
-    /// Apply one lane (see [`super::replicated::apply_lane`]): an update
-    /// shifts curr→prev and adopts the new row (`snap` rows adopt into BOTH
+    /// Apply one lane (see [`EntityStore::apply`]): an update shifts
+    /// curr→prev and adopts the new row in place (`snap` rows adopt into BOTH
     /// so no frame interpolates across the teleport, and the pose re-faces
     /// the landing yaw), a spawn starts with prev == curr, a despawn drops
     /// the remote. `resync` snaps every row (a folded backlog). The
     /// recipient's OWN id is skipped entirely — the local body renders from
     /// the existing predicted-player path.
-    pub fn apply(
-        &mut self,
-        players: &PlayerLane,
-        actions: &[(PlayerId, PlayerActionKind)],
-        self_id: PlayerId,
-        resync: bool,
-    ) {
-        let spawn = |row: &PlayerStateRow| {
-            let mut entry = RemotePlayer::new(row.clone());
-            if row.hurt_recent {
-                entry.hurt_t = HURT_FLASH_SECS;
-            }
-            entry
+    pub fn apply(&mut self, players: &PlayerLane, self_id: PlayerId, resync: bool) {
+        let adopt = if resync {
+            Adopt::Reseed
+        } else {
+            Adopt::Advance
         };
-        super::replicated::apply_lane(
-            &mut self.map,
-            players,
-            |row| row.id != self_id,
-            spawn,
-            |entry, row| entry.advance(row, resync),
-            |entry| entry.prev.clone_from(&entry.curr),
-        );
-        // `Died`/`Respawned` need no edge: the `visible` flag and `snap`
-        // carry their presentation.
+        self.map
+            .apply(players, adopt, &mut (), |row| row.id != self_id);
+    }
+
+    /// Latch a batch's player actions onto the remotes they name, for their
+    /// next frame. `Died`/`Respawned` need no edge: the `visible` flag and
+    /// `snap` carry their presentation.
+    pub fn queue_actions(&mut self, actions: &[(PlayerId, PlayerActionKind)]) {
         for (id, kind) in actions {
             if let PlayerActionKind::Animator { rig, event } = *kind {
                 if let Some(p) = self.map.get_mut(id) {
@@ -246,7 +267,7 @@ impl RemotePlayers {
     }
 
     /// [`apply`](Self::apply) a full row snapshot (see
-    /// [`super::replicated::snapshot_lane`]).
+    /// [`super::replicated::snapshot_lane`]) and its actions.
     #[cfg(test)]
     pub fn apply_snapshot(
         &mut self,
@@ -254,8 +275,9 @@ impl RemotePlayers {
         actions: &[(PlayerId, PlayerActionKind)],
         self_id: PlayerId,
     ) {
-        let lane = super::replicated::snapshot_lane(self.map.keys().copied(), players);
-        self.apply(&lane, actions, self_id, false);
+        let lane = super::replicated::snapshot_lane(self.map.keys(), players);
+        self.apply(&lane, self_id, false);
+        self.queue_actions(actions);
     }
 
     /// One frame of presentation state for every remote: the shared body pose
@@ -269,7 +291,7 @@ impl RemotePlayers {
         medium: impl Fn(petramond_math::world_pos::WorldPos) -> MovementMedium,
     ) {
         let ease = 1.0 - (-petramond_render::POSE_EASE_RATE * dt).exp();
-        for p in self.map.values_mut() {
+        for p in self.map.iter_mut() {
             if p.curr.sleeping {
                 // Lying body: head toward the pillow, walk cycle rested —
                 // mirrors the local sleep branch.
@@ -364,13 +386,13 @@ impl RemotePlayers {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &RemotePlayer> {
-        self.map.values()
+        self.map.iter()
     }
 
     /// [`iter`](Self::iter) with each remote's id — for consumers that key
     /// per-player state on it (the footstep cadence).
     pub fn iter_with_ids(&self) -> impl Iterator<Item = (PlayerId, &RemotePlayer)> {
-        self.map.iter().map(|(id, p)| (*id, p))
+        self.map.iter_with_ids()
     }
 
     /// How many remotes exist / are asleep, for the sleep overlay's
@@ -384,7 +406,7 @@ impl RemotePlayers {
     }
 
     pub fn sleeping_count(&self) -> usize {
-        self.map.values().filter(|p| p.curr.sleeping).count()
+        self.map.iter().filter(|p| p.curr.sleeping).count()
     }
 }
 

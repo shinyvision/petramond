@@ -33,6 +33,7 @@ mod world_settings;
 
 pub(in crate::app) use context::{ScreenCtx, SessionFacts, ShellCommand};
 
+use super::session::Session;
 use super::App;
 use petramond_ui::{UiEvent, UiState, UiValue};
 use petramond_world::gui_state::GuiKind;
@@ -100,7 +101,7 @@ fn populate_options_chrome(ctx: &ScreenCtx, state: &mut UiState) {
 /// takes. Returns true when the event was consumed.
 fn options_category_back(ctx: &mut ScreenCtx, ev: &UiEvent) -> bool {
     if matches!(ev, UiEvent::Click { id, .. } if id.as_str() == "back") {
-        ctx.request(ShellCommand::CloseOptionsCategory);
+        ctx.request(ShellCommand::Back);
         return true;
     }
     false
@@ -243,17 +244,16 @@ impl App {
     pub(super) fn drive_doc_ui(&mut self, kind: GuiKind, screen: (u32, u32), now: f64) {
         self.ui.ensure_active(kind);
         let ctl = controller_for(kind);
+        let live = self.session.as_ref();
         let session = SessionFacts {
-            in_game: self.game.is_some(),
-            is_remote: self.game.as_ref().is_some_and(|g| g.is_remote()),
-            lan_port: self.session_ui.lan_port,
-            lan_error: self.session_ui.lan_error.as_deref(),
-            sleep_counts: self
-                .game
-                .as_ref()
-                .map(|g| g.sleeping_player_counts())
+            in_game: live.is_some(),
+            is_remote: live.is_some_and(|s| s.game.is_remote()),
+            lan_port: live.and_then(|s| s.lan_port),
+            lan_error: live.and_then(|s| s.lan_error.as_deref()),
+            sleep_counts: live
+                .map(|s| s.game.sleeping_player_counts())
                 .unwrap_or((0, 1)),
-            sleep_progress: self.game.as_ref().and_then(|g| g.sleep_progress01()),
+            sleep_progress: live.and_then(|s| s.game.sleep_progress01()),
         };
         let mut ctx = ScreenCtx::new(
             &mut self.shell,
@@ -287,11 +287,9 @@ impl App {
     /// Carry out one app-level request a shell screen queued.
     pub(super) fn run_shell_command(&mut self, command: ShellCommand) {
         match command {
-            ShellCommand::Goto(screen) => {
-                self.screen = screen;
-                self.controls.pointer.release_for_menu();
-            }
-            ShellCommand::SwitchTo(screen) => self.screen = screen,
+            ShellCommand::Goto(screen) => self.set_screen(screen),
+            ShellCommand::Push(screen) => self.push_screen(screen),
+            ShellCommand::Back => self.go_back(),
             ShellCommand::Quit => self.quit_requested = true,
             ShellCommand::PlaySelectedWorld => self.play_selected_world(),
             ShellCommand::StartGame { dir_name, seed } => self.start_game(&dir_name, seed),
@@ -299,17 +297,14 @@ impl App {
             ShellCommand::ReopenConnectServer => self.reopen_connect_server(),
             ShellCommand::BeginConnect => self.begin_connect(),
             ShellCommand::AdoptRemote(join, handle) => self.start_remote_game(*join, handle),
-            ShellCommand::OpenOptions { from_pause } => self.open_options(from_pause),
-            ShellCommand::CloseOptionsRoot => self.close_options_root(),
-            ShellCommand::CloseOptionsCategory => self.close_options_category(),
             ShellCommand::ResumeGame => self.resume_game(),
             ShellCommand::OpenLan => self.open_lan(),
             ShellCommand::DisconnectToTitle => self.disconnect_to_title(),
             ShellCommand::SaveAndQuitToTitle => self.save_and_quit_to_title(),
             ShellCommand::CancelSleep => self.cancel_sleep(),
             ShellCommand::Respawn => {
-                if let Some(game) = self.game.as_mut() {
-                    game.request_respawn();
+                if let Some(session) = self.session.as_mut() {
+                    session.game.request_respawn();
                 }
             }
             ShellCommand::ApplyVolumes => self.apply_volumes(),
@@ -331,29 +326,27 @@ impl App {
         }
         self.ui.ensure_active(kind);
         let crafting_station = petramond_world::crafting::CraftingStation::of_kind(kind);
-        if let (Some(station), Some(game)) = (crafting_station, self.game.as_ref()) {
+        if let (Some(station), Some(session)) = (crafting_station, self.session.as_ref()) {
             let hovered = self
                 .ui
                 .hover_item(crate::app::crafting_browser::RECIPE_LIST_ID);
             let mut state = std::mem::take(self.ui.state_mut());
             self.crafting_browser
-                .populate(game, station, hovered, &mut state);
+                .populate(&session.game, station, hovered, &mut state);
             *self.ui.state_mut() = state;
         }
-        if let Some(game) = self.game.as_ref() {
-            let menu = game.menu_read_model();
-            let gui_state = menu.gui_state;
+        if let Some(session) = self.session.as_ref() {
             let state = self.ui.state_mut();
             // Every gauge — an engine machine's or a pack's — arrives as an
             // ordinary named GUI-state value; nothing here knows a furnace.
-            if let Some(map) = gui_state {
+            if let Some(map) = session.game.menu_read_model().gui_state {
                 for (key, value) in map.iter() {
                     let v = crate::app::gui_value::from_world(value);
                     state.set(key.clone(), v);
                 }
             }
         }
-        if let Some(game) = self.game.as_ref() {
+        if let Some(Session { game, .. }) = self.session.as_ref() {
             let hover_slot = self.ui.out().hover_slot.clone();
             let images =
                 crate::app::item_tooltip::populate(game, hover_slot.as_ref(), self.ui.state_mut());
@@ -371,9 +364,10 @@ impl App {
                 self.sound.play(Sound::UiClick);
             }
             let handled_crafting = if crafting_station.is_some() {
-                self.game
-                    .as_mut()
-                    .is_some_and(|game| self.crafting_browser.handle(game, &ev, modifier_shift))
+                self.session.as_mut().is_some_and(|session| {
+                    self.crafting_browser
+                        .handle(&mut session.game, &ev, modifier_shift)
+                })
             } else {
                 false
             };
@@ -381,8 +375,8 @@ impl App {
                 continue;
             }
             if let Some(id) = menu_widget_activation(&ev) {
-                if let Some(game) = self.game.as_mut() {
-                    game.menu_click(
+                if let Some(session) = self.session.as_mut() {
+                    session.game.menu_click(
                         petramond_world::gui_state::MenuSlot::Widget(
                             petramond_world::gui_state::intern_str(id),
                         ),

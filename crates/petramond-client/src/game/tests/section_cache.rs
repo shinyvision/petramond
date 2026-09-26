@@ -27,10 +27,10 @@ const FAR: WorldPos = WorldPos::new(328.5, 80.0, 328.5);
 const HOME_COLUMN: ChunkPos = ChunkPos { cx: 0, cz: 0 };
 
 fn place_player(game: &mut TestGame, feet: WorldPos) {
-    game.player.pos = feet;
-    game.player.vel = Vec3::ZERO;
-    game.server.sessions_mut()[0].player_mut().pos = feet;
-    game.server.sessions_mut()[0].player_mut().vel = Vec3::ZERO;
+    game.local.player.pos = feet;
+    game.local.player.vel = Vec3::ZERO;
+    game.server_player_mut().pos = feet;
+    game.server_player_mut().vel = Vec3::ZERO;
 }
 
 fn frame(game: &mut TestGame) -> Vec<ServerToClient> {
@@ -91,7 +91,7 @@ fn settle(game: &mut TestGame, what: &str) -> Vec<ServerToClient> {
             .any(|m| matches!(kind(m), "SectionData" | "SectionCached"));
         quiet = if sections { 0 } else { quiet + 1 };
         recorded.extend(msgs);
-        if quiet >= 30 && game.replica.data().chunk_loaded(0, 0) && !home_column_payloads(game).is_empty()
+        if quiet >= 30 && game.replica.world.chunk_loaded(0, 0) && !home_column_payloads(game).is_empty()
         {
             return recorded;
         }
@@ -109,7 +109,7 @@ fn home_column_payloads(game: &TestGame) -> Vec<(SectionPos, SectionPayload)> {
     (-4..16)
         .filter_map(|cy| {
             let sp = SectionPos::new(HOME_COLUMN.cx, cy, HOME_COLUMN.cz);
-            game.replica.section_payload(sp).map(|p| (sp, p))
+            game.replica.world.section_payload(sp).map(|p| (sp, p))
         })
         .collect()
 }
@@ -117,7 +117,7 @@ fn home_column_payloads(game: &TestGame) -> Vec<(SectionPos, SectionPayload)> {
 fn leave(game: &mut TestGame) -> Vec<ServerToClient> {
     place_player(game, FAR);
     frames_until(game, "the home column unloaded", |g| {
-        !g.replica.data().chunk_loaded(0, 0)
+        !g.replica.world.chunk_loaded(0, 0)
     })
 }
 
@@ -151,7 +151,7 @@ fn unmoved_sections_repromote_from_the_cache_byte_identically() {
     );
     for sp in &vouched {
         assert!(
-            game.section_cache.contains(*sp),
+            game.replica.section_cache.contains(*sp),
             "vouched section {sp:?} parked client-side"
         );
     }
@@ -182,12 +182,11 @@ fn unmoved_sections_repromote_from_the_cache_byte_identically() {
         // the two payloads compare directly; the harness is synchronous, so
         // nothing mutates between the two reads.
         let client = game
-            .replica
+            .replica.world
             .section_payload(*sp)
             .expect("re-promoted section is live client-side");
         let server = game
-            .server
-            .world()
+            .server_world()
             .section_payload(*sp)
             .expect("re-entered section is loaded server-side");
         assert_eq!(
@@ -217,8 +216,8 @@ fn a_moved_belief_hash_resends_the_full_payload() {
     // Stand in for "the content changed while the client was away": force the
     // belief to a hash current content can never equal (a real edit moves the
     // CURRENT hash instead — the same inequality drives the same branch).
-    game.server.sessions_mut()[0]
-        .transport_mut().terrain
+    game.session_mut()
+        .terrain
         .seed_client_cache(&[SectionCacheClaim {
             pos: sp,
             hash: hash.wrapping_add(1),
@@ -231,7 +230,7 @@ fn a_moved_belief_hash_resends_the_full_payload() {
     // the recording window before the payload ever shipped.
     place_player(&mut game, HOME);
     let msgs = frames_until(&mut game, "the mismatched section streamed back in", |g| {
-        g.replica.section_payload(sp).is_some()
+        g.replica.world.section_payload(sp).is_some()
     });
     let (cached, full) = (
         msgs.iter()
@@ -247,7 +246,7 @@ fn a_moved_belief_hash_resends_the_full_payload() {
         "a belief that disagrees with current content ships the full payload"
     );
     assert!(
-        !game.section_cache.contains(sp),
+        !game.replica.section_cache.contains(sp),
         "the full payload superseded (discarded) the stale parked copy"
     );
 }
@@ -286,7 +285,7 @@ fn a_pending_prediction_declines_parking_and_heals_by_cache_miss() {
     );
     for sp in &vouched {
         assert!(
-            !game.section_cache.contains(*sp),
+            !game.replica.section_cache.contains(*sp),
             "a section with pending predictions never parks ({sp:?})"
         );
     }

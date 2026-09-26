@@ -1,6 +1,7 @@
 use crate::net::protocol::ServerToClient;
 use crate::server::chat::ChatTargets;
 
+mod events;
 mod interest;
 
 fn chat_texts(msgs: &[ServerToClient]) -> Vec<String> {

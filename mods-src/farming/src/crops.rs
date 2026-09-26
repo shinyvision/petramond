@@ -64,55 +64,83 @@ pub struct Growth {
     pending: HashMap<[i32; 3], u64>,
 }
 
-/// Placement gate (`block_place_pre`): a stage-0 crop may only be placed on
-/// farmland — dry or wet. Anything else (including a half-streamed cell that
-/// reads `None`) refuses WITHOUT consuming the seed; for the carrot the
-/// refusal is what lets the contextual placeable-food rule fall back to
-/// eating. Non-zero stages have no placing item, but refuse them defensively.
+/// What the planting rule says about placing `block` at `pos`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Planting {
+    /// Not a cultivated crop row — not this rule's business.
+    NotACrop,
+    /// Refused: a non-zero stage (no item places one — refused
+    /// defensively), or soil that is not farmland.
+    Refused,
+    /// Farmland underneath: the crop may go in.
+    Allowed,
+    /// The soil cell cannot be inspected (unloaded / not stream-final).
+    SoilUnknown,
+}
+
+/// The planting GATE, run by both instances: a stage-0 crop may only be
+/// placed on farmland — dry or wet. The instances differ only in what they
+/// do with a cell they cannot read (see [`on_place_pre`] and
+/// [`predict_place_pre`]).
+pub fn planting(content: &Content, world: &impl WorldView, pos: [i32; 3], block: BlockId) -> Planting {
+    let Some((_, stage)) = content.crop_stage(block) else {
+        return Planting::NotACrop;
+    };
+    if stage != 0 {
+        return Planting::Refused;
+    }
+    match world.block([pos[0], pos[1] - 1, pos[2]]) {
+        Some(b) if content.is_farmland(b) => Planting::Allowed,
+        Some(_) => Planting::Refused,
+        None => Planting::SoilUnknown,
+    }
+}
+
+/// Placement gate (`block_place_pre`, server): the [`planting`] rule, plus
+/// the light veto. Anything refused — including a half-streamed soil cell —
+/// refuses WITHOUT consuming the seed; for the carrot the refusal is what
+/// lets the contextual placeable-food rule fall back to eating.
 pub fn on_place_pre(content: &Content, pos: [i32; 3], block: BlockId) -> Outcome {
-    let Some((_, stage)) = content.crop_stage(block) else {
-        return Outcome::Continue;
-    };
-    if stage != 0 {
-        return Outcome::Cancel;
-    }
-    // Planting in darkness quietly does nothing (a cancelled placement never
-    // consumes the seed).
-    if too_dark(pos) {
-        return Outcome::Cancel;
-    }
-    let below = get_block([pos[0], pos[1] - 1, pos[2]]);
-    match below {
-        Some(b) if content.is_farmland(b) => Outcome::Continue,
-        _ => Outcome::Cancel,
+    match planting(content, &SideWorld::Server, pos, block) {
+        Planting::NotACrop => Outcome::Continue,
+        // Planting in darkness quietly does nothing (a cancelled placement
+        // never consumes the seed).
+        Planting::Allowed if !too_dark(pos) => Outcome::Continue,
+        Planting::Allowed | Planting::Refused | Planting::SoilUnknown => Outcome::Cancel,
     }
 }
 
-/// CLIENT prediction mirror of [`on_place_pre`]'s gate (minus the light
-/// veto — no client light read; a dark-cave planting over-jabs).
+/// CLIENT prediction of [`on_place_pre`]: the same [`planting`] rule over
+/// the replica. Known divergences, chosen over silent wrongness: no client
+/// light read (a dark-cave planting over-jabs), and an uninspectable soil
+/// cell never predicts a veto — the optimistic jab.
 pub fn predict_place_pre(content: &Content, pos: [i32; 3], block: BlockId) -> Outcome {
-    let Some((_, stage)) = content.crop_stage(block) else {
-        return Outcome::Continue;
-    };
-    if stage != 0 {
-        return Outcome::Cancel;
-    }
-    match crate::predict::peek([pos[0], pos[1] - 1, pos[2]]) {
-        Some(b) if content.is_farmland(b) => Outcome::Continue,
-        Some(_) => Outcome::Cancel,
-        // Frozen state (unloaded / not stream-final): never predict a veto
-        // on state we cannot inspect — fall back to the optimistic jab.
-        None => Outcome::Continue,
+    match planting(content, &SideWorld::Replica, pos, block) {
+        Planting::Refused => Outcome::Cancel,
+        Planting::NotACrop | Planting::Allowed | Planting::SoilUnknown => Outcome::Continue,
     }
 }
 
-/// CLIENT prediction mirror of [`on_interact`]'s claim gate: only a MATURE
-/// crop claims (the harvest); an immature one — or a sneak click holding a
-/// placeable block (deferred to placement) — is inspected and passed.
-pub fn predict_interact(content: &Content, block: BlockId, actor: &PlayerSnapshot) -> Outcome {
+/// The harvest's claim GATE, run by both instances (see [`crate::claims`]):
+/// only a MATURE cultivated crop claims. Two deliberate PASSES (act-based
+/// consumption — this consumer claims only what it harvests):
+///
+/// - An IMMATURE crop is only INSPECTED — checking maturity is free — so
+///   its click falls through (fertilizer use, eating the held carrot,
+///   placement against the face) and, if nothing acts, to no jab at all.
+/// - A SNEAK click while holding a placeable block defers to the placement
+///   consumer: sneak-to-build works against a ripe field. Sneaking with an
+///   empty hand (or a non-block item) harvests like any other click.
+///
+/// Wild crops are not ours to handle here — they never right-click harvest.
+pub fn harvest_gate<'c>(
+    content: &'c Content,
+    block: BlockId,
+    actor: &PlayerSnapshot,
+) -> Option<&'c CropDef> {
     match content.crop_stage(block) {
-        Some((_, 3)) if !(actor.sneak && held_item_places_block(actor.held)) => Outcome::Cancel,
-        _ => Outcome::Continue,
+        Some((def, 3)) if !(actor.sneak && held_item_places_block(actor.held)) => Some(def),
+        _ => None,
     }
 }
 
@@ -132,37 +160,11 @@ pub fn on_placed(content: &Content, growth: &mut Growth, pos: [i32; 3], block: B
     }
 }
 
-/// Right-click interaction. A MATURE cultivated crop harvests: produce pops
-/// as nearby item entities, the crop resets to its stage-0 block in the same
-/// tick (the retained plant is one replanted seed/root), and the next growth
-/// attempt is armed. Two deliberate PASSES (act-based consumption — this
-/// consumer claims only what it harvests):
-///
-/// - An IMMATURE crop is only INSPECTED — checking maturity is free — so
-///   its click falls through (fertilizer use, eating the held carrot,
-///   placement against the face) and, if nothing acts, to no jab at all.
-/// - A SNEAK click while holding a placeable block defers to the placement
-///   consumer: sneak-to-build works against a ripe field. Sneaking with an
-///   empty hand (or a non-block item) harvests like any other click.
-///
-/// Wild crops are not ours to handle here — they never right-click harvest.
-pub fn on_interact(
-    content: &Content,
-    growth: &mut Growth,
-    pos: [i32; 3],
-    block: BlockId,
-    held: Option<ItemId>,
-    sneaking: bool,
-) -> Outcome {
-    let Some((def, stage)) = content.crop_stage(block) else {
-        return Outcome::Continue;
-    };
-    if stage < 3 {
-        return Outcome::Continue;
-    }
-    if sneaking && held_item_places_block(held) {
-        return Outcome::Continue;
-    }
+/// Harvest a gated (mature) crop (server): produce pops as nearby item
+/// entities, the crop resets to its stage-0 block in the same tick (the
+/// retained plant is one replanted seed/root), and the next growth attempt
+/// is armed.
+pub fn harvest(content: &Content, growth: &mut Growth, pos: [i32; 3], def: &CropDef) -> Outcome {
     let center = [
         pos[0] as f64 + 0.5,
         pos[1] as f64 + 0.4,

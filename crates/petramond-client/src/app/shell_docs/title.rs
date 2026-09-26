@@ -12,7 +12,7 @@ pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
         UiEvent::Click { id, .. } => match id.as_str() {
             "start" => start(ctx),
             "connect" => ctx.request(ShellCommand::OpenConnectServer),
-            "options" => ctx.request(ShellCommand::OpenOptions { from_pause: false }),
+            "options" => ctx.request(ShellCommand::Push(AppScreen::Options)),
             "quit" => ctx.request(ShellCommand::Quit),
             _ => {}
         },

@@ -680,7 +680,7 @@ fn craftable_recipes_sort_first_and_the_filter_hides_the_rest() {
     assert_eq!(rows.len(), 1, "the filter hides uncraftable recipes");
     assert_eq!(app.ui.state_mut().get_bool("craft_filter_on"), Some(true));
     assert!(
-        app.server.sessions()[0].player().craft_craftable_only,
+        app.server_craft_craftable_only(),
         "the toggle reaches the server player, whose save carries it"
     );
 }
@@ -768,7 +768,7 @@ fn hovering_an_unaffordable_grid_cell_publishes_its_tooltip() {
     );
 
     // The tooltip's own hooks are overlay-tier; the grid cell's is not.
-    let hooks = app.ui.doc_hooks();
+    let hooks = app.doc_hooks_for_test();
     let tip: Vec<_> = hooks
         .iter()
         .filter(|hook| {

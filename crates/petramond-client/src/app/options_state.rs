@@ -1,6 +1,8 @@
 //! The Options flow's state: the persistent per-machine settings
-//! (`client.json`), where the flow was entered from, slider previews, the
-//! armed control remap, and whether the renderer owes a settings refresh.
+//! (`client.json`), slider previews, the armed control remap, and whether
+//! the renderer owes a settings refresh. Where the flow returns to is the
+//! screen stack's business (the flow is pushed over the title or the pause
+//! menu).
 //! Screen controllers edit this directly; side effects outside it (the audio
 //! mixer, the live game, the render distance of the next session) are the
 //! App's, requested through shell commands.
@@ -13,9 +15,6 @@ pub(super) struct OptionsState {
     /// Persistent per-machine settings (`client.json`): volumes, particles,
     /// key bindings. Every committed Options change stores the file.
     pub(super) settings: ClientSettings,
-    /// Whether the open Options flow was entered from the pause menu (Back
-    /// returns there) rather than the title screen.
-    from_pause: bool,
     /// Renderer-owned option values (fog/render distance, particle density)
     /// changed and must be pushed on the next render.
     renderer_dirty: bool,
@@ -38,7 +37,6 @@ impl OptionsState {
     pub(super) fn new(settings: ClientSettings) -> Self {
         Self {
             settings,
-            from_pause: false,
             renderer_dirty: true,
             anti_aliasing_preview: None,
             view_distance_preview: None,
@@ -67,15 +65,6 @@ impl OptionsState {
         if let Err(e) = petramond::save::client::store(&on_disk) {
             log::warn!("could not write client.json: {e}");
         }
-    }
-
-    /// Enter the Options flow, remembering where Back returns to.
-    pub(super) fn enter(&mut self, from_pause: bool) {
-        self.from_pause = from_pause;
-    }
-
-    pub(super) fn from_pause(&self) -> bool {
-        self.from_pause
     }
 
     /// The renderer owes a settings refresh.

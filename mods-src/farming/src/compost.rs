@@ -21,23 +21,21 @@ use mod_sdk::*;
 use crate::content::Content;
 use crate::keys;
 
-/// One compostable unit advances a non-full barrel one fill stage. The held
-/// item is checked before any host crossing (the tilling.rs order): every
-/// other right-click costs nothing here.
-pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) -> Outcome {
+/// The fill's claim GATE, run by both instances (see [`crate::claims`]): a
+/// compostable held item on a non-full barrel. Answers the barrel's current
+/// stage.
+pub fn fill_gate(content: &Content, item: ItemId, block: BlockId) -> Option<u8> {
     if !content.compostable.contains(&item) {
-        return Outcome::Continue;
+        return None;
     }
-    let Some(pos) = target else {
-        return Outcome::Continue;
-    };
-    // Unloaded / mid-stream reads mean "not actionable now" — quiet no-op.
-    let Some(block) = get_block(pos) else {
-        return Outcome::Continue;
-    };
-    let Some(stage @ 0..=2) = content.compost_stage(block) else {
-        return Outcome::Continue;
-    };
+    match content.compost_stage(block) {
+        Some(stage @ 0..=2) => Some(stage),
+        _ => None,
+    }
+}
+
+/// One compostable unit advances a gated barrel one fill stage (server).
+pub fn fill(content: &Content, item: ItemId, pos: [i32; 3], stage: u8) -> Outcome {
     if !consume_held(item, 1) {
         return Outcome::Continue;
     }
@@ -48,37 +46,21 @@ pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) ->
     Outcome::Cancel
 }
 
-/// Any right click on a FULL barrel pops one fertilizer and resets it.
-/// Non-full barrels don't consume the click — the fill path (or ordinary
-/// placement against the barrel) still sees it.
-pub fn on_interact(content: &Content, pos: [i32; 3], block: BlockId) -> Outcome {
-    if content.compost_stage(block) != Some(3) {
-        return Outcome::Continue;
-    }
+/// The collect's claim GATE, run by both instances: any right click on a
+/// FULL barrel. Non-full barrels don't consume the click — the fill path
+/// (or ordinary placement against the barrel) still sees it.
+pub fn collect_gate(content: &Content, block: BlockId) -> bool {
+    content.compost_stage(block) == Some(3)
+}
+
+/// Pop one fertilizer from a gated (full) barrel and reset it (server).
+pub fn collect(content: &Content, pos: [i32; 3]) -> Outcome {
     let center = barrel_top(pos);
     spawn_item(keys::FERTILIZER, 1, center);
     swap_block(pos, content.compost[0]);
     emit_sound(keys::HARVEST_SOUND, Some(center));
     emitter_burst(keys::COMPOST_FILL, center, 1.0);
     Outcome::Cancel
-}
-
-/// CLIENT prediction mirror of [`on_item_use`]'s gate.
-pub fn predict_item_use(content: &Content, item: ItemId, block: BlockId) -> Outcome {
-    if content.compostable.contains(&item) && matches!(content.compost_stage(block), Some(0..=2)) {
-        Outcome::Cancel
-    } else {
-        Outcome::Continue
-    }
-}
-
-/// CLIENT prediction mirror of [`on_interact`]'s gate.
-pub fn predict_interact(content: &Content, block: BlockId) -> Outcome {
-    if content.compost_stage(block) == Some(3) {
-        Outcome::Cancel
-    } else {
-        Outcome::Continue
-    }
 }
 
 fn barrel_top(pos: [i32; 3]) -> [f64; 3] {

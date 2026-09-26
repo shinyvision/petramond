@@ -234,7 +234,7 @@ impl SceneCapture {
             &petramond_render::camera::ViewVolume::unbounded(),
             &mut rows,
         );
-        self.renderer.set_block_draws(&rows);
+        self.renderer.swap_block_draws(&mut rows);
     }
 
     /// Publish this capture's camera + environment into the renderer uniforms,
@@ -296,16 +296,29 @@ impl SceneCapture {
     /// Hand the renderer mob rows to draw, the way the game's presentation
     /// does — so a tool can photograph a mob model at an exact pose (a
     /// vehicle on its track, a tilted body) without a live simulation. The
+    /// rows' ranges address `arena`, and their layer ids index `names`. The
     /// rows persist across captures until replaced.
-    pub fn set_mobs(&mut self, mobs: &[petramond_render::MobRenderInstance]) {
-        self.renderer.set_mobs(mobs);
+    pub fn set_mobs(
+        &mut self,
+        mobs: &[petramond_render::MobRenderInstance],
+        arena: &petramond_render::MobArena,
+        names: &petramond_render::AnimNames,
+    ) {
+        self.renderer
+            .swap_mobs(&mut mobs.to_vec(), &mut arena.clone(), names);
     }
 
-    /// Hand the renderer the LOCAL third-person body to draw (`None` for
-    /// none), as the game's presentation does — so a tool can photograph a
-    /// seated rider on a mount at an exact pose.
-    pub fn set_player(&mut self, player: Option<petramond_render::PlayerRenderInstance>) {
-        self.renderer.set_player(player);
+    /// Hand the renderer posed player bodies to draw, as the game's
+    /// presentation does — so a tool can photograph a seated rider on a mount
+    /// at an exact pose. Each body's `pose` range addresses `poses`; the
+    /// bodies persist across captures until replaced.
+    pub fn set_player_bodies(
+        &mut self,
+        bodies: &[petramond_render::PlayerBodyRender],
+        poses: &[glam::Mat4],
+    ) {
+        self.renderer
+            .swap_player_bodies(&mut bodies.to_vec(), &mut poses.to_vec());
     }
 
     /// The renderer behind the camera, for reading its per-frame profile.

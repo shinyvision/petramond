@@ -11,10 +11,11 @@ use crate::events::{BlockPlacePre, ItemUseEvent, ItemUsePre, Outcome, PostEvent}
 use crate::mob::ShearDrop;
 use crate::net::protocol::TargetRef;
 use crate::player::Player;
+use crate::rules::item_use::{self as rules, EngineItemUse};
 use crate::rules::placement::facing_from_forward;
-use petramond_math::math::Vec3;
+use petramond_math::math::{IVec3, Vec3};
 use petramond_world::block::Block;
-use petramond_world::item::{ItemStack, ItemType, ItemUse};
+use petramond_world::item::{ItemStack, ItemType};
 
 /// The in-progress eat: which hand and food item are being eaten and for how
 /// many ticks the button has been held on it. Session-owned (one per player);
@@ -76,12 +77,14 @@ impl ServerGame {
     pub fn try_start_eating(&mut self, s: usize, events: &mut TickEvents) -> bool {
         let sess = &self.sessions[s];
         let hand = sess.player.acting_hand;
-        let Some(item) = sess.player.held().map(|st| st.item) else {
-            return false;
-        };
-        if item.food().is_none() || sess.player.is_spectator() {
+        // The shared eat gate (food in the acting hand, a body in play) — the
+        // rule the client's jab prediction runs against its replica.
+        if !rules::eat_claims(&sess.player) {
             return false;
         }
+        let Some(item) = rules::held_item(&sess.player) else {
+            return false;
+        };
         let slot = sess.player.inventory.active_slot();
         if sess.sim.eating.is_some_and(|e| {
             e.hand == hand
@@ -216,17 +219,19 @@ impl ServerGame {
             });
             return true;
         }
-        // Dispatch on the item's data-declared use (`"use"` in items.json) —
-        // handler params (the bucket counterpart) ride the row, so a pack
-        // bucket transitions within its own item pair. `Shear` acts at the
-        // earlier shear stage of `tick_place`; mod items react to use through
-        // the `item_use_pre` event handled above.
-        let used = match item.item_use() {
-            Some(ItemUse::BucketFill { fills }) => self.try_fill_bucket(s, fills),
-            Some(ItemUse::BucketPour { becomes, fluid }) => {
-                self.try_pour_bucket(s, becomes, fluid, events)
-            }
-            _ => false,
+        // The item's data-declared use (`"use"` in items.json), resolved by
+        // the SHARED rule the client predicts with — handler params (the
+        // bucket counterpart) ride the row, so a pack bucket transitions
+        // within its own item pair. `Shear` acts at the earlier shear stage;
+        // mod items react to use through the `item_use_pre` event above.
+        let used = match rules::resolve_engine_item_use(&self.sessions[s].player, self.world.data()) {
+            Some(EngineItemUse::Fill { source, becomes }) => self.fill_bucket(s, source, becomes),
+            Some(EngineItemUse::Pour {
+                cell,
+                fluid,
+                becomes,
+            }) => self.pour_bucket(s, cell, fluid, becomes, events),
+            None => false,
         };
         if used {
             self.mods.emit(PostEvent::ItemUsed {
@@ -244,13 +249,7 @@ impl ServerGame {
     /// the `UseClick` claimed; the authoritative view-ray validator resolves
     /// it before mutation. A forged or vanished target is a no-op.
     pub fn try_shear_mob(&mut self, s: usize, target: Option<u64>) -> bool {
-        if self.sessions[s]
-            .player
-            .held()
-            .map(|st| st.item)
-            .and_then(ItemType::item_use)
-            != Some(ItemUse::Shear)
-        {
+        if !rules::holds_shears(&self.sessions[s].player) {
             return false;
         }
         let Some(mob_id) =
@@ -277,34 +276,12 @@ impl ServerGame {
         true
     }
 
-    /// Scoop a fluid source into the held empty bucket; on success the held
-    /// item becomes the result `fills` declares for the SCOOPED fluid. The
-    /// rule: the ray hits a source of a fluid the bucket takes, within reach →
-    /// that cell is scooped; otherwise nothing. The fill ray stops only at such
-    /// sources and at solids — flowing fluid (and fluid the bucket does not
-    /// take) is transparent to it, like it is to normal selection, so a spread
-    /// sheet or thin film, which can render exactly like still water, never
-    /// shadows the source the player is actually aiming at, and aiming at
-    /// pure flow does nothing.
-    fn try_fill_bucket(&mut self, s: usize, fills: &[(Block, ItemType)]) -> bool {
-        let (eye, dir) = {
-            let p = &self.sessions[s].player;
-            (p.eye(), p.forward())
-        };
-        let takes = |fluid: Block| fills.iter().any(|&(b, _)| b == fluid);
-        let Some((h, _)) = raycast::fluid_sources(eye, dir, self.world.data(), takes) else {
-            return false;
-        };
-        let scooped = Block::from_id(self.world.data().chunk_block(h.block.x, h.block.y, h.block.z));
-        // Only a STILL SOURCE the bucket takes fills: flowing cells are
-        // transparent to the ray and a solid hit is simply nothing to scoop
-        // (the 2026-07-02 rule).
-        let Some(&(_, becomes)) = fills.iter().find(|&&(b, _)| b == scooped) else {
-            return false;
-        };
-        if !self.world.data().is_fluid_source_world(h.block, scooped) {
-            return false;
-        }
+    /// Scoop the fluid source the shared fill rule resolved
+    /// ([`rules::bucket_fill_target`]: a still source of a fluid the bucket
+    /// takes, reached through flow) into the held empty bucket; on success
+    /// the held item becomes `becomes`, the result the row declares for the
+    /// scooped fluid.
+    fn fill_bucket(&mut self, s: usize, source: IVec3, becomes: ItemType) -> bool {
         // The held-item swap must succeed BEFORE the world changes: with a full
         // inventory (nowhere for the filled bucket out of a stack) the scoop is
         // refused and the source stays.
@@ -317,44 +294,26 @@ impl ServerGame {
             return false;
         }
         self.world
-            .set_block_world(h.block.x, h.block.y, h.block.z, Block::Air);
+            .set_block_world(source.x, source.y, source.z, Block::Air);
         true
     }
 
-    /// Empty the held bucket into the clicked cell as `fluid`; on success the
-    /// held item becomes `becomes`, the row-declared empty counterpart. The
-    /// pour ray stops at the first cell of ANY fluid, so aiming anywhere at a
-    /// fluid body pours INTO its surface cell: flowing water firms into a
-    /// source, pouring onto an existing source of the same fluid still empties
-    /// the bucket (a no-op world write) — on fluid the action is always
-    /// predictable — and pouring the OTHER fluid swaps the surface cell, where
-    /// the fluid sim's contact rule then acts. On land it follows block
-    /// placement: a replaceable target (grass, a fern) is filled in place,
-    /// anything else pours against the clicked face.
-    fn try_pour_bucket(
+    /// Empty the held bucket as `fluid` into `p`, the cell the shared pour rule
+    /// resolved ([`rules::bucket_pour_cell`]: the first cell of ANY fluid is
+    /// poured into — flowing water firms into a source, the other fluid swaps
+    /// the surface cell for the fluid sim's contact rule — and on land a
+    /// replaceable target fills in place, anything else pours against the
+    /// clicked face). On success the held item becomes `becomes`, the
+    /// row-declared empty counterpart.
+    fn pour_bucket(
         &mut self,
         s: usize,
-        becomes: ItemType,
+        p: IVec3,
         fluid: Block,
+        becomes: ItemType,
         events: &mut TickEvents,
     ) -> bool {
-        let (eye, dir) = {
-            let p = &self.sessions[s].player;
-            (p.eye(), p.forward())
-        };
-        let Some((h, _)) = raycast::including_any_fluid(eye, dir, self.world.data()) else {
-            return false;
-        };
-        // Fluids are themselves replaceable, so a fluid hit pours in place.
-        let looked_at = Block::from_id(self.world.data().chunk_block(h.block.x, h.block.y, h.block.z));
-        let p = if crate::world::placement::replaces_in_place(looked_at) {
-            h.block
-        } else {
-            if h.normal == petramond_math::math::IVec3::ZERO {
-                return false;
-            }
-            h.block + h.normal
-        };
+        let dir = self.sessions[s].player.forward();
         // Pouring places a water block, so it announces the same `block_place_pre`
         // a held block would; cancel = the pour is refused, the bucket kept full.
         {
@@ -379,8 +338,7 @@ impl ServerGame {
                 return false;
             }
         }
-        let target = Block::from_id(self.world.data().chunk_block(p.x, p.y, p.z));
-        if !target.is_replaceable() {
+        if !rules::pour_lands(self.world.data(), p) {
             return false;
         }
         if !self.world.set_block_world(p.x, p.y, p.z, fluid) {

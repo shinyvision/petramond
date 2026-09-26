@@ -51,7 +51,7 @@ fn fire_body_light_composes_and_survives_the_ragdoll_transition() {
     for dead in [false, true] {
         row.dead = dead;
         row.ragdoll = dead.then(|| vec![([0.0; 3], [0.0, 0.0, 0.0, 1.0])]);
-        game.entities.mobs_mut().apply_snapshot(&[row.clone()]);
+        game.replica.entities.mobs_mut().apply_snapshot(&[row.clone()]);
         let presentation = scratch.snapshot(&game, 0.0, &view);
         assert!(presentation.particle_emitters.is_empty());
         assert_eq!(presentation.mobs[0].emitter_self_lit, expected);
@@ -59,7 +59,7 @@ fn fire_body_light_composes_and_survives_the_ragdoll_transition() {
         row.emitters.reverse();
     }
     row.emitters.clear();
-    game.entities.mobs_mut().apply_snapshot(&[row]);
+    game.replica.entities.mobs_mut().apply_snapshot(&[row]);
     assert_eq!(
         scratch.snapshot(&game, 0.0, &view).mobs[0].emitter_self_lit,
         0.0
@@ -132,47 +132,47 @@ fn burst_before_a_boundary_does_not_shift_the_committed_pair() {
     };
 
     game.game.apply_tick_update(Box::new(update(1, 1.0)));
-    let mob = game.game.entities.mobs().get(7).expect("bootstrapped");
+    let mob = game.game.replica.entities.mobs().get(7).expect("bootstrapped");
     assert_eq!(
         (mob.prev.pos.x, mob.curr.pos.x),
         (1.0, 1.0),
         "the first batch seeds both pair slots"
     );
 
-    game.game.entities.clock_mut().advance(TICK_DT * 0.4);
+    game.game.replica.entities.clock_mut().advance(TICK_DT * 0.4);
     game.game.apply_tick_update(Box::new(update(2, 2.0)));
     game.game.apply_tick_update(Box::new(update(3, 3.0)));
-    assert_eq!(game.game.entities.staged().len(), 2, "the burst queues FIFO");
-    let mob = game.game.entities.mobs().get(7).expect("still committed");
+    assert_eq!(game.game.replica.entities.staged().len(), 2, "the burst queues FIFO");
+    let mob = game.game.replica.entities.mobs().get(7).expect("still committed");
     assert_eq!(
         (mob.prev.pos.x, mob.curr.pos.x),
         (1.0, 1.0),
         "arrivals alone never turn the live interpolation window"
     );
 
-    game.game.entities.clock_mut().advance(TICK_DT * 0.59);
+    game.game.replica.entities.clock_mut().advance(TICK_DT * 0.59);
     game.game.advance_interp_window();
     assert_eq!(
-        game.game.entities.mobs().get(7).unwrap().curr.pos.x,
+        game.game.replica.entities.mobs().get(7).unwrap().curr.pos.x,
         1.0,
         "the pair stays fixed immediately before the boundary"
     );
 
-    game.game.entities.clock_mut().advance(TICK_DT * 0.02);
+    game.game.replica.entities.clock_mut().advance(TICK_DT * 0.02);
     game.game.advance_interp_window();
-    let mob = game.game.entities.mobs().get(7).unwrap();
+    let mob = game.game.replica.entities.mobs().get(7).unwrap();
     assert_eq!((mob.prev.pos.x, mob.curr.pos.x), (1.0, 2.0));
     assert_eq!(
-        game.game.entities.staged().len(),
+        game.game.replica.entities.staged().len(),
         1,
         "one crossed boundary consumes exactly one queued batch"
     );
 
-    game.game.entities.clock_mut().advance(TICK_DT);
+    game.game.replica.entities.clock_mut().advance(TICK_DT);
     game.game.advance_interp_window();
-    let mob = game.game.entities.mobs().get(7).unwrap();
+    let mob = game.game.replica.entities.mobs().get(7).unwrap();
     assert_eq!((mob.prev.pos.x, mob.curr.pos.x), (2.0, 3.0));
-    assert!(game.game.entities.staged().is_empty());
+    assert!(game.game.replica.entities.staged().is_empty());
 }
 
 /// If the bounded FIFO overflows, the newest state becomes a declared resync
@@ -268,49 +268,44 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
     }
 
     assert_eq!(
-        game.game.entities.staged().len(),
+        game.game.replica.entities.staged().len(),
         1,
         "overflow collapses the pending backlog to its newest snapshot"
     );
+    let collapsed = game.game.replica.entities.staged().front().unwrap();
+    let actions: Vec<_> = collapsed
+        .windows()
+        .flat_map(|window| window.actions.iter().copied())
+        .collect();
     assert_eq!(
-        &*game.game.entities.staged().front().unwrap().actions,
-        expected_actions.as_slice(),
+        actions, expected_actions,
         "actions from every collapsed batch survive in arrival order"
     );
     let resync_tick = burst_len as u64 + 1;
     let resync_x = resync_tick as f64;
+    let newest = collapsed.windows().last().unwrap();
     assert_eq!(
-        game.game
-            .entities
-            .staged()
-            .front()
-            .unwrap()
-            .mobs
-            .iter()
-            .next()
-            .unwrap()
-            .pos
-            .x,
+        newest.mobs.iter().next().unwrap().pos.x,
         resync_x,
         "the retained state is the newest arrival"
     );
     assert_eq!(
-        game.game.entities.mobs().get(7).unwrap().curr.pos.x,
+        game.game.replica.entities.mobs().get(7).unwrap().curr.pos.x,
         1.0,
         "overflow itself does not mutate the live pair"
     );
 
-    game.game.entities.clock_mut().advance(TICK_DT * 0.99);
+    game.game.replica.entities.clock_mut().advance(TICK_DT * 0.99);
     game.game.advance_interp_window();
-    assert_eq!(game.game.entities.mobs().get(7).unwrap().curr.pos.x, 1.0);
-    game.game.entities.clock_mut().advance(TICK_DT * 0.02);
+    assert_eq!(game.game.replica.entities.mobs().get(7).unwrap().curr.pos.x, 1.0);
+    game.game.replica.entities.clock_mut().advance(TICK_DT * 0.02);
     game.game.advance_interp_window();
 
-    let mob = game.game.entities.mobs().get(7).unwrap();
+    let mob = game.game.replica.entities.mobs().get(7).unwrap();
     assert_eq!((mob.prev.pos.x, mob.curr.pos.x), (resync_x, resync_x));
-    let item = game.game.entities.items().iter().next().unwrap();
+    let item = game.game.replica.entities.items().iter().next().unwrap();
     assert_eq!((item.prev.pos.x, item.curr.pos.x), (resync_x, resync_x));
-    let remote = game.game.entities.players().iter().next().unwrap();
+    let remote = game.game.replica.entities.players().iter().next().unwrap();
     assert_eq!(
         (remote.prev.transform.pos.x, remote.curr.transform.pos.x),
         (resync_x, resync_x),
@@ -322,15 +317,15 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
         .apply_tick_update(Box::new(update(next_tick, None)));
     game.game
         .apply_tick_update(Box::new(update(next_tick + 1, None)));
-    game.game.entities.clock_mut().advance(TICK_DT * 2.0);
+    game.game.replica.entities.clock_mut().advance(TICK_DT * 2.0);
     game.game.advance_interp_window();
-    let mob = game.game.entities.mobs().get(7).unwrap();
+    let mob = game.game.replica.entities.mobs().get(7).unwrap();
     assert_eq!(
         (mob.prev.pos.x, mob.curr.pos.x),
         (next_tick as f64, (next_tick + 1) as f64),
         "two crossed boundaries catch up two consecutive queued snapshots"
     );
-    assert!(game.game.entities.staged().is_empty());
+    assert!(game.game.replica.entities.staged().is_empty());
 }
 
 /// The riding rubber-band regression (2026-07-15): batch arrivals reach the
@@ -352,7 +347,7 @@ fn staged_window_renders_uniform_motion_across_frame_aliased_batches() {
     let speed = 0.2f32;
     let mut applied = 0u64;
     let sample = |game: &super::common::TestGame| {
-        game.game.entities.mobs().get(7).map(|entry| {
+        game.game.replica.entities.mobs().get(7).map(|entry| {
             entry
                 .prev
                 .pos
@@ -369,7 +364,7 @@ fn staged_window_renders_uniform_motion_across_frame_aliased_batches() {
     for f in 1..=120u64 {
         let now = f as f32 * frame;
         // Send half: render time advances, the window turns, the slave samples.
-        game.game.entities.clock_mut().advance(frame);
+        game.game.replica.entities.clock_mut().advance(frame);
         game.game.advance_interp_window();
         camera.extend(sample(&game));
         // Receive half: due batches drain, the window turns again,
@@ -411,15 +406,14 @@ fn staged_window_renders_uniform_motion_across_frame_aliased_batches() {
 #[test]
 fn pumped_mob_batches_become_interpolated_presentation_rows() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(8.5, 64.0, 8.5);
+    game.server_player_mut().pos = WorldPos::new(8.5, 64.0, 8.5);
     // An owl in free fall right above the player: gravity guarantees its
     // position differs between consecutive ticks.
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .spawn_mob(Mob::Owl, WorldPos::new(8.5, 70.0, 8.5), 0.0)
         .is_some());
-    let id = game.server.world().mobs().instances()[0].id();
+    let id = game.server_world().mobs().instances()[0].id();
 
     let batch1 = pump_one_tick(&mut game);
     let row1 = batch1
@@ -463,29 +457,30 @@ fn pumped_mob_batches_become_interpolated_presentation_rows() {
 #[test]
 fn a_despawned_mob_drops_from_the_store_on_the_next_batch() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(8.5, 64.0, 8.5);
+    game.server_player_mut().pos = WorldPos::new(8.5, 64.0, 8.5);
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .spawn_mob(Mob::Owl, WorldPos::new(8.5, 70.0, 8.5), 0.0)
         .is_some());
-    let id = game.server.world().mobs().instances()[0].id();
+    let id = game.server_world().mobs().instances()[0].id();
 
     let batch = pump_one_tick(&mut game);
     game.apply_tick_update(batch);
     game.commit_replication_window_for_test();
-    assert!(game.entities.mobs().iter().any(|e| e.curr.id == id));
+    assert!(game.replica.entities.mobs().iter().any(|e| e.curr.id == id));
 
-    assert!(
-        game.server.world_mut().mobs_mut().remove(id),
-        "still alive server-side"
-    );
+    let index = game
+        .server_world()
+        .mobs()
+        .index_of_id(id)
+        .expect("still alive server-side");
+    assert!(game.server_world_mut().mobs_mut().remove(index));
     let batch = pump_one_tick(&mut game);
     game.apply_tick_update(batch);
     game.commit_replication_window_for_test();
 
     assert!(
-        !game.entities.mobs().iter().any(|e| e.curr.id == id),
+        !game.replica.entities.mobs().iter().any(|e| e.curr.id == id),
         "a removed mob despawns from the store"
     );
     let mut scratch = GamePresentationScratch::new();
@@ -513,8 +508,8 @@ fn dropped_items_replicate_with_stable_ids_into_presentation() {
         1,
     );
     drop.vel = Vec3::ZERO;
-    game.server.world_mut().spawn_item(drop);
-    let id = game.server.world().item_entities()[0].id;
+    game.server_world_mut().spawn_item(drop);
+    let id = game.server_world().item_entities()[0].id;
     assert_ne!(id, 0, "entering the active set assigns a stable id");
 
     let batch1 = pump_one_tick(&mut game);
@@ -580,9 +575,9 @@ fn a_mob_draw_set_follows_the_interpolated_body_and_clears() {
     };
     let mut row = mob_row(7, WorldPos::new(4.25, 65.0, 4.0), 0.0);
     row.draw = worn.clone();
-    game.entities.mobs_mut().apply_snapshot(&[row.clone()]);
+    game.replica.entities.mobs_mut().apply_snapshot(&[row.clone()]);
     row.pos = WorldPos::new(5.25, 65.0, 4.0);
-    game.entities.mobs_mut().apply_snapshot(&[row.clone()]);
+    game.replica.entities.mobs_mut().apply_snapshot(&[row.clone()]);
 
     let presentation = scratch.snapshot(&game, 0.5, &view);
     let [draw] = presentation.block_draws else {
@@ -590,7 +585,7 @@ fn a_mob_draw_set_follows_the_interpolated_body_and_clears() {
     };
     let feet = draw.frame.to_world(Vec3::ZERO);
     let (body, _) = game
-        .entities
+        .replica.entities
         .mobs()
         .iter()
         .next()
@@ -599,6 +594,6 @@ fn a_mob_draw_set_follows_the_interpolated_body_and_clears() {
     assert!((feet.x - body.x).abs() < 1e-4, "{} vs {}", feet.x, body.x);
 
     row.draw = Default::default();
-    game.entities.mobs_mut().apply_snapshot(&[row]);
+    game.replica.entities.mobs_mut().apply_snapshot(&[row]);
     assert!(scratch.snapshot(&game, 0.5, &view).block_draws.is_empty());
 }

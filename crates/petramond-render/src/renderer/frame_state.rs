@@ -235,50 +235,17 @@ impl Renderer {
         self.hand.break_overlays.extend_from_slice(v);
     }
 
-    /// Store both hands' frames, `dt` seconds after the last: each hand's
-    /// eased held view for the seats and attaches, and the frames themselves
-    /// for every animator the local player drives. An empty off-hand frame
-    /// (`item == None`) draws nothing in the left hand.
-    pub fn set_hands(&mut self, main: HeldItemFrame, off: HeldItemFrame, dt: f32) {
+    /// Store the local player's frame, as the client's animation built it:
+    /// each hand's eased held view for the seats and attaches (an empty
+    /// off-hand view draws nothing in the left hand), and the viewmodel's
+    /// posed bones, whose camera bone [`update_uniforms`](Self::update_uniforms)
+    /// applies to the world view.
+    pub fn set_local_frame(&mut self, frame: LocalFrame<'_>) {
         let hand = &mut self.hand;
-        hand.held_item = hand.held_ease[0].update(&main, dt);
-        hand.off_item = hand.held_ease[1].update(&off, dt);
-        hand.frames = Some([main, off]);
-        hand.frame_dt = dt;
-    }
-
-    /// Store the local player's resolved animator claims and the graph
-    /// events fired on it this frame, for both of its rigs. Call before
-    /// [`set_first_person_motion`](Self::set_first_person_motion).
-    pub fn set_local_animator(
-        &mut self,
-        claims: &petramond::player::AnimatorClaims,
-        events: &[(petramond::player::RigId, u16)],
-    ) {
-        let hand = &mut self.hand;
-        hand.local_params.clear();
-        hand.names.rows(&claims.params, &mut hand.local_params);
-        hand.local_plays.clear();
-        hand.local_plays.extend_from_slice(&claims.plays);
-        hand.local_events.clear();
-        hand.local_events.extend_from_slice(events);
-    }
-
-    /// Advance the first-person rig's animator for this frame. Call after
-    /// [`set_hands`](Self::set_hands) and before
-    /// [`update_uniforms`](Self::update_uniforms), which applies the rig's
-    /// camera bone to the world view.
-    pub fn set_first_person_motion(&mut self, motion: crate::views::LocalMotion) {
-        let hand = &mut self.hand;
-        let (Some(first_person), Some(frames)) = (hand.first_person.as_mut(), hand.frames) else {
-            return;
-        };
-        let inputs = crate::AnimatorInputs {
-            params: &hand.local_params,
-            plays: &hand.local_plays,
-            events: &hand.local_events,
-        };
-        first_person.advance(&frames, &motion, inputs, hand.frame_dt);
+        [hand.held_item, hand.off_item] = frame.held;
+        if let Some(first_person) = &mut hand.first_person {
+            first_person.set_bones(frame.first_person);
+        }
     }
 
     pub fn set_hand_visible(&mut self, visible: bool) {
@@ -307,105 +274,85 @@ impl Renderer {
         self.hand.held_item_blocklight = blocklight;
     }
 
+    // The per-frame row lists below are handed over by SWAP, not copied: the
+    // caller's buffer becomes this frame's rows and last frame's come back
+    // for the caller to clear and refill, so a row is written once by the
+    // scene bake and never copied again on its way to the GPU.
+
     /// This frame's mod draw sets. They ride the ITEM-ENTITY opaque stream:
     /// same block atlas, same double-sided CPU-lit pipeline, and no chunk
     /// re-mesh — which is the whole reason a mod may submit a new set every
     /// tick.
-    pub fn set_block_draws(&mut self, v: &[crate::BlockDrawInstance]) {
-        self.item_entity.block_draws.clear();
-        self.item_entity.block_draws.extend_from_slice(v);
+    pub fn swap_block_draws(&mut self, v: &mut Vec<crate::BlockDrawInstance>) {
+        std::mem::swap(&mut self.item_entity.block_draws, v);
     }
 
-    /// Store the dropped item-entities to draw this frame. Reuses the existing
-    /// `Vec` capacity (clear + extend) to avoid per-frame reallocation.
-    pub fn set_item_entities(&mut self, v: &[ItemEntityInstance]) {
-        self.item_entity.instances.clear();
-        self.item_entity.instances.extend_from_slice(v);
+    /// Take the dropped item-entities to draw this frame.
+    pub fn swap_item_entities(&mut self, v: &mut Vec<ItemEntityInstance>) {
+        std::mem::swap(&mut self.item_entity.instances, v);
     }
 
-    /// Store the animated blocks to draw this frame. Reuses the existing
-    /// `Vec` capacity (clear + extend) to avoid per-frame reallocation.
-    pub(crate) fn set_block_entities(&mut self, v: &[BlockEntityInstance]) {
-        self.block_entity.instances.clear();
-        self.block_entity.instances.extend_from_slice(v);
+    /// Take the animated blocks to draw this frame.
+    pub(crate) fn swap_block_entities(&mut self, v: &mut Vec<BlockEntityInstance>) {
+        std::mem::swap(&mut self.block_entity.instances, v);
     }
 
-    /// Store the mobs to draw this frame (already interpolated by the scene adapter).
-    /// Reuses the existing `Vec` capacity.
-    pub fn set_mobs(&mut self, v: &[MobRenderInstance]) {
-        self.actor.mobs.clear();
-        self.actor.mobs.extend_from_slice(v);
-    }
-
-    /// Store the LOCAL third-person player body to draw this frame (`None` in
-    /// first person — the body, and its held item, then draw nothing). Its
-    /// held item animates from the renderer's own first-person `held_item`
-    /// view, exactly as before remote players existed.
-    pub fn set_player(&mut self, v: Option<PlayerRenderInstance>) {
-        self.actor.player_view = v;
-    }
-
-    /// Store the REMOTE players' bodies + held-item views for this frame
-    /// (already interpolated/posed by the game). Reuses capacity.
-    pub fn set_remote_players(&mut self, v: &[super::RemotePlayerRender]) {
-        self.actor.remote_players.clear();
-        self.actor.remote_players.extend_from_slice(v);
-    }
-
-    /// Take this frame's animator arenas — the backing every remote body's
-    /// `RemotePlayerRender::animator` ranges index into — by swapping them
-    /// with last frame's, which go back to the caller to refill.
-    pub fn swap_animator_arenas(
+    /// Take the mobs to draw this frame (already interpolated by the scene
+    /// adapter) with the arena their ranges address, and adopt the session's
+    /// animation-name table their layer ids index — a pointer compare unless
+    /// the table grew.
+    pub fn swap_mobs(
         &mut self,
-        params: &mut Vec<crate::views::AnimatorParamRow>,
-        plays: &mut Vec<petramond::player::AnimatorPlay>,
-        events: &mut Vec<(petramond::player::RigId, u16)>,
+        mobs: &mut Vec<MobRenderInstance>,
+        arena: &mut crate::MobArena,
+        names: &crate::AnimNames,
     ) {
-        std::mem::swap(&mut self.actor.animator_params, params);
-        std::mem::swap(&mut self.actor.animator_plays, plays);
-        std::mem::swap(&mut self.actor.animator_events, events);
+        std::mem::swap(&mut self.actor.mobs, mobs);
+        std::mem::swap(&mut self.actor.mob_arena, arena);
+        self.actor.anim_names.adopt(names);
     }
 
-    /// Take this frame's bone-offset arena — the backing every drawn body's
-    /// `PlayerRenderInstance::bones` range indexes into — by swapping it with
-    /// last frame's, which goes back to the caller to refill.
-    pub fn swap_bone_offsets(&mut self, v: &mut Vec<crate::BoneOffset>) {
-        std::mem::swap(&mut self.actor.bone_offsets, v);
+    /// Take the player bodies to draw this frame — the local third-person
+    /// body and every remote, each already posed by the client's animation —
+    /// with the pose arena their `PlayerRenderInstance::pose` ranges index
+    /// into.
+    pub fn swap_player_bodies(
+        &mut self,
+        bodies: &mut Vec<PlayerBodyRender>,
+        poses: &mut Vec<glam::Mat4>,
+    ) {
+        std::mem::swap(&mut self.actor.bodies, bodies);
+        std::mem::swap(&mut self.actor.body_poses, poses);
     }
 
-    /// Store the block-atlas particle cubes to draw this frame. Reuses capacity.
-    pub fn set_particles(&mut self, v: &[ParticleInstance]) {
-        self.particle.instances.clear();
-        self.particle.instances.extend_from_slice(v);
+    /// Take the block-atlas particle cubes to draw this frame.
+    pub fn swap_particles(&mut self, v: &mut Vec<ParticleInstance>) {
+        std::mem::swap(&mut self.particle.instances, v);
     }
 
-    /// Store the model-atlas particle cubes (bbmodel-block flecks) for this frame; they
+    /// Take the model-atlas particle cubes (bbmodel-block flecks) for this frame; they
     /// bake into the same particle vbuf after the block cubes and draw with the model
-    /// atlas bound. Reuses capacity.
-    pub fn set_model_particles(&mut self, v: &[ParticleInstance]) {
-        self.particle.model_instances.clear();
-        self.particle.model_instances.extend_from_slice(v);
+    /// atlas bound.
+    pub fn swap_model_particles(&mut self, v: &mut Vec<ParticleInstance>) {
+        std::mem::swap(&mut self.particle.model_instances, v);
     }
 
-    /// Store loaded block-row particle emitters for this frame. The renderer derives
+    /// Take the visible particle emitters for this frame. The renderer derives
     /// transient translucent cubes from these in `bake_world_instances`.
-    pub fn set_particle_emitters(&mut self, v: &[ParticleEmitterInstance]) {
-        self.particle.emitters.clear();
-        self.particle.emitters.extend_from_slice(v);
+    pub fn swap_particle_emitters(&mut self, v: &mut Vec<ParticleEmitterInstance>) {
+        std::mem::swap(&mut self.particle.emitters, v);
     }
 
-    /// Store the solid-color simulated particles (emitter-burst droplets) for
+    /// Take the solid-color simulated particles (emitter-burst droplets) for
     /// this frame; they join the emitter cubes' alpha-blended bake.
-    pub fn set_solid_particles(&mut self, v: &[SolidParticleInstance]) {
-        self.particle.solid_instances.clear();
-        self.particle.solid_instances.extend_from_slice(v);
+    pub fn swap_solid_particles(&mut self, v: &mut Vec<SolidParticleInstance>) {
+        std::mem::swap(&mut self.particle.solid_instances, v);
     }
 
-    /// Store this frame's entity blob-shadow rows (ground-resolved by the
-    /// gather). Reuses capacity.
-    pub fn set_shadows(&mut self, v: &[EntityShadow]) {
-        self.shadow.instances.clear();
-        self.shadow.instances.extend_from_slice(v);
+    /// Take this frame's entity blob-shadow rows (ground-resolved by the
+    /// gather).
+    pub fn swap_shadows(&mut self, v: &mut Vec<EntityShadow>) {
+        std::mem::swap(&mut self.shadow.instances, v);
     }
 
     pub fn clear_world_state(&mut self) {

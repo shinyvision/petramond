@@ -23,12 +23,12 @@ fn aim_down_at(game: &mut super::common::TestGame, cell: IVec3) {
             cell.z as f32 + 0.5,
         ),
     );
-    game.server.sessions_mut()[0].player_mut().pitch = -std::f32::consts::FRAC_PI_2;
+    game.server_player_mut().pitch = -std::f32::consts::FRAC_PI_2;
 }
 
 /// Place the player so their EYE sits exactly at `eye`.
 fn set_player_eye(game: &mut super::common::TestGame, eye: Vec3) {
-    game.server.sessions_mut()[0].player_mut().pos = WorldPos::new(
+    game.server_player_mut().pos = WorldPos::new(
         f64::from(eye.x),
         f64::from(eye.y - petramond::player::EYE),
         f64::from(eye.z),
@@ -36,20 +36,20 @@ fn set_player_eye(game: &mut super::common::TestGame, eye: Vec3) {
 }
 
 fn right_click(game: &mut super::common::TestGame) -> TickEvents {
-    game.server.queue_place_click_for_test(0);
+    game.sim_mut().queue_place_click_for_test(0);
     let mut events = TickEvents::default();
-    game.server.tick_place(0, &mut events);
+    game.sim_mut().tick_place(0, &mut events);
     events
 }
 
 /// Latch a use click targeting the mob at `index`, as an
 /// `Action(UseClick { mob })` message does — carrying the STABLE id.
 fn right_click_at_mob(game: &mut super::common::TestGame, index: usize) -> TickEvents {
-    let id = game.server.world().mobs().instances()[index].id();
+    let id = game.server_world().mobs().instances()[index].id();
     super::common::aim_server_at_mob(game, index);
-    game.server.queue_mob_use_click_for_test(0, id);
+    game.sim_mut().queue_mob_use_click_for_test(0, id);
     let mut events = TickEvents::default();
-    game.server.tick_place(0, &mut events);
+    game.sim_mut().tick_place(0, &mut events);
     events
 }
 
@@ -60,7 +60,7 @@ fn right_click_at_mob(game: &mut super::common::TestGame, index: usize) -> TickE
 fn stone_shelf(game: &mut super::common::TestGame, y: i32) {
     for x in 2..=14 {
         for z in 2..=14 {
-            game.server.world_mut().set_block_world(x, y, z, Block::Stone);
+            game.server_world_mut().set_block_world(x, y, z, Block::Stone);
         }
     }
 }
@@ -71,22 +71,21 @@ const SHELF_CENTER: IVec3 = IVec3::new(8, 78, 8);
 /// Run enough fixed world ticks for at least one water flow step.
 fn run_water_ticks(game: &mut super::common::TestGame, n: u32) {
     for _ in 0..n {
-        game.server.world_mut().game_tick(&game.server.recipes());
+        game.server_world_tick();
     }
 }
 
 #[test]
 fn filling_the_bucket_scoops_the_source_and_swaps_the_held_item() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory = holding(ItemType::WoodenBucket);
+    game.server_player_mut().inventory = holding(ItemType::WoodenBucket);
 
     // A still source right under the eye. The normal look ray sees through
     // water (nothing solid below in the empty chunk), so this exercises the
     // bucket's own water-stopping ray.
     let p = IVec3::new(0, 78, 0);
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .set_block_world(p.x, p.y, p.z, Block::Water));
     aim_down_at(&mut game, p);
 
@@ -98,13 +97,12 @@ fn filling_the_bucket_scoops_the_source_and_swaps_the_held_item() {
     );
     assert!(events.player_at(0).placed_block.is_none());
     assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(p.x, p.y, p.z)),
+        Block::from_id(game.server_world().chunk_block(p.x, p.y, p.z)),
         Block::Air,
         "the source should be scooped out of the world"
     );
     assert_eq!(
-        game.server.sessions()[0]
-            .player()
+        game.server_player()
             .inventory
             .selected()
             .unwrap()
@@ -116,7 +114,7 @@ fn filling_the_bucket_scoops_the_source_and_swaps_the_held_item() {
 #[test]
 fn filling_while_aiming_at_flowing_water_does_nothing() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory = holding(ItemType::WoodenBucket);
+    game.server_player_mut().inventory = holding(ItemType::WoodenBucket);
 
     // A source spread into a flowing ring on a stone shelf. Flowing water is
     // TRANSPARENT to the fill ray: aiming straight down at a ring cell reads
@@ -124,17 +122,16 @@ fn filling_while_aiming_at_flowing_water_does_nothing() {
     // acts on flow, and never searches the body for a source.
     stone_shelf(&mut game, 77);
     let src = SHELF_CENTER;
-    game.server
-        .world_mut()
+    game.server_world_mut()
         .set_block_world(src.x, src.y, src.z, Block::Water);
     run_water_ticks(&mut game, 30);
     let flow = src + IVec3::X;
     assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(flow.x, flow.y, flow.z)),
+        Block::from_id(game.server_world().chunk_block(flow.x, flow.y, flow.z)),
         Block::Water,
         "the source should have spread onto the shelf"
     );
-    assert!(!game.server.world().is_water_source_world(flow));
+    assert!(!game.server_world().is_water_source_world(flow));
 
     aim_down_at(&mut game, flow);
     let events = right_click(&mut game);
@@ -144,12 +141,11 @@ fn filling_while_aiming_at_flowing_water_does_nothing() {
         "flowing water must not fill the bucket"
     );
     assert!(
-        game.server.world().is_water_source_world(src),
+        game.server_world().is_water_source_world(src),
         "the source elsewhere in the body must be untouched"
     );
     assert_eq!(
-        game.server.sessions()[0]
-            .player()
+        game.server_player()
             .inventory
             .selected()
             .unwrap()
@@ -161,7 +157,7 @@ fn filling_while_aiming_at_flowing_water_does_nothing() {
 #[test]
 fn fill_ray_reads_through_flowing_water_to_the_source_behind_it() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory = holding(ItemType::WoodenBucket);
+    game.server_player_mut().inventory = holding(ItemType::WoodenBucket);
 
     // The bug this pins: a spread sheet or thin film renders exactly like still
     // water, so if it STOPPED the fill ray it would invisibly shadow the source
@@ -169,12 +165,11 @@ fn fill_ray_reads_through_flowing_water_to_the_source_behind_it() {
     // at a shallow angle — the ray must pass the ring cells and scoop the source.
     stone_shelf(&mut game, 77);
     let src = SHELF_CENTER;
-    game.server
-        .world_mut()
+    game.server_world_mut()
         .set_block_world(src.x, src.y, src.z, Block::Water);
     run_water_ticks(&mut game, 30);
-    assert!(!game.server.world().is_water_source_world(src + IVec3::X));
-    assert!(!game.server.world().is_water_source_world(src + IVec3::X * 2));
+    assert!(!game.server_world().is_water_source_world(src + IVec3::X));
+    assert!(!game.server_world().is_water_source_world(src + IVec3::X * 2));
 
     set_player_eye(
         &mut game,
@@ -182,9 +177,9 @@ fn fill_ray_reads_through_flowing_water_to_the_source_behind_it() {
     );
     let target =
         petramond_math::world_pos::WorldPos::new(src.x as f64 + 0.5, 78.4, src.z as f64 + 0.5);
-    let dir = target - game.server.sessions()[0].player().eye();
-    game.server.sessions_mut()[0].player_mut().yaw = dir.x.atan2(dir.z);
-    game.server.sessions_mut()[0].player_mut().pitch = (dir.y / dir.length()).asin();
+    let dir = target - game.server_player().eye();
+    game.server_player_mut().yaw = dir.x.atan2(dir.z);
+    game.server_player_mut().pitch = (dir.y / dir.length()).asin();
 
     let events = right_click(&mut game);
 
@@ -193,12 +188,11 @@ fn fill_ray_reads_through_flowing_water_to_the_source_behind_it() {
         "the source behind the flow must be scooped"
     );
     assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(src.x, src.y, src.z)),
+        Block::from_id(game.server_world().chunk_block(src.x, src.y, src.z)),
         Block::Air
     );
     assert_eq!(
-        game.server.sessions()[0]
-            .player()
+        game.server_player()
             .inventory
             .selected()
             .unwrap()
@@ -210,28 +204,26 @@ fn fill_ray_reads_through_flowing_water_to_the_source_behind_it() {
 #[test]
 fn filling_needs_a_source_within_reach() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory = holding(ItemType::WoodenBucket);
+    game.server_player_mut().inventory = holding(ItemType::WoodenBucket);
 
     // Water well below REACH (eye ~9 blocks above the surface).
     let p = IVec3::new(0, 70, 0);
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .set_block_world(p.x, p.y, p.z, Block::Water));
     set_player_eye(&mut game, Vec3::new(0.5, 80.0, 0.5));
-    game.server.sessions_mut()[0].player_mut().pitch = -std::f32::consts::FRAC_PI_2;
+    game.server_player_mut().pitch = -std::f32::consts::FRAC_PI_2;
 
     let events = right_click(&mut game);
 
     assert!(!events.player_at(0).used_item);
     assert_eq!(
-        Block::from_id(game.server.world().data().chunk_block(p.x, p.y, p.z)),
+        Block::from_id(game.server_world().chunk_block(p.x, p.y, p.z)),
         Block::Water,
         "out-of-reach water must stay"
     );
     assert_eq!(
-        game.server.sessions()[0]
-            .player()
+        game.server_player()
             .inventory
             .selected()
             .unwrap()
@@ -243,11 +235,10 @@ fn filling_needs_a_source_within_reach() {
 #[test]
 fn pouring_places_a_source_against_the_clicked_face_and_empties_the_bucket() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory = holding(ItemType::WaterBucket);
+    game.server_player_mut().inventory = holding(ItemType::WaterBucket);
 
     let floor = IVec3::new(3, 64, 3);
-    game.server
-        .world_mut()
+    game.server_world_mut()
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone);
     aim_down_at(&mut game, floor);
 
@@ -260,12 +251,11 @@ fn pouring_places_a_source_against_the_clicked_face_and_empties_the_bucket() {
     );
     assert!(events.player_at(0).placed_block.is_none());
     assert!(
-        game.server.world().is_water_source_world(cell),
+        game.server_world().is_water_source_world(cell),
         "the clicked face's cell should hold a still source"
     );
     assert_eq!(
-        game.server.sessions()[0]
-            .player()
+        game.server_player()
             .inventory
             .selected()
             .unwrap()
@@ -278,16 +268,15 @@ fn pouring_places_a_source_against_the_clicked_face_and_empties_the_bucket() {
 #[test]
 fn pouring_onto_flowing_water_firms_it_into_a_source() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory = holding(ItemType::WaterBucket);
+    game.server_player_mut().inventory = holding(ItemType::WaterBucket);
 
     stone_shelf(&mut game, 77);
     let src = SHELF_CENTER;
-    game.server
-        .world_mut()
+    game.server_world_mut()
         .set_block_world(src.x, src.y, src.z, Block::Water);
     run_water_ticks(&mut game, 30);
     let flow = src + IVec3::X;
-    assert!(!game.server.world().is_water_source_world(flow));
+    assert!(!game.server_world().is_water_source_world(flow));
 
     // The pour ray stops at the water surface: the flowing cell itself is what
     // receives the source — not the shelf beneath it.
@@ -299,12 +288,11 @@ fn pouring_onto_flowing_water_firms_it_into_a_source() {
         "pouring into water must work"
     );
     assert!(
-        game.server.world().is_water_source_world(flow),
+        game.server_world().is_water_source_world(flow),
         "the flowing cell firms into a still source"
     );
     assert_eq!(
-        game.server.sessions()[0]
-            .player()
+        game.server_player()
             .inventory
             .selected()
             .unwrap()
@@ -316,23 +304,21 @@ fn pouring_onto_flowing_water_firms_it_into_a_source() {
 #[test]
 fn pouring_onto_a_source_still_empties_the_bucket() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory = holding(ItemType::WaterBucket);
+    game.server_player_mut().inventory = holding(ItemType::WaterBucket);
 
     // Pouring into already-still water changes nothing in the world, but the
     // action stays predictable: on water, the bucket always empties.
     let p = IVec3::new(0, 78, 0);
-    game.server
-        .world_mut()
+    game.server_world_mut()
         .set_block_world(p.x, p.y, p.z, Block::Water);
     aim_down_at(&mut game, p);
 
     let events = right_click(&mut game);
 
     assert!(events.player_at(0).used_item);
-    assert!(game.server.world().is_water_source_world(p));
+    assert!(game.server_world().is_water_source_world(p));
     assert_eq!(
-        game.server.sessions()[0]
-            .player()
+        game.server_player()
             .inventory
             .selected()
             .unwrap()
@@ -344,18 +330,17 @@ fn pouring_onto_a_source_still_empties_the_bucket() {
 #[test]
 fn pouring_with_nothing_in_reach_keeps_the_water() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory = holding(ItemType::WaterBucket);
+    game.server_player_mut().inventory = holding(ItemType::WaterBucket);
 
     // Nothing but air below the eye: the pour ray finds no cell to fill.
     set_player_eye(&mut game, Vec3::new(0.5, 80.0, 0.5));
-    game.server.sessions_mut()[0].player_mut().pitch = -std::f32::consts::FRAC_PI_2;
+    game.server_player_mut().pitch = -std::f32::consts::FRAC_PI_2;
 
     let events = right_click(&mut game);
 
     assert!(!events.player_at(0).used_item);
     assert_eq!(
-        game.server.sessions()[0]
-            .player()
+        game.server_player()
             .inventory
             .selected()
             .unwrap()
@@ -368,8 +353,8 @@ fn pouring_with_nothing_in_reach_keeps_the_water() {
 #[test]
 fn shearing_the_targeted_sheep_drops_wool_and_strips_the_coat() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory = holding(ItemType::Shears);
-    assert!(game.server.world_mut().mobs_mut().spawn(
+    game.server_player_mut().inventory = holding(ItemType::Shears);
+    assert!(game.server_world_mut().mobs_mut().spawn(
         petramond::mob::Mob::Sheep,
         WorldPos::new(8.0, 64.0, 8.0),
         0.0
@@ -381,15 +366,14 @@ fn shearing_the_targeted_sheep_drops_wool_and_strips_the_coat() {
         "shearing reports an item use"
     );
     assert!(
-        game.server.world().mobs().instances()[0].is_shorn(),
+        game.server_world().mobs().instances()[0].is_shorn(),
         "the sheep is shorn"
     );
     let spec = petramond::mob::def(petramond::mob::Mob::Sheep)
         .shear
         .expect("sheep are shearable");
     let wool: Vec<_> = game
-        .server
-        .world()
+        .server_world()
         .item_entities()
         .iter()
         .filter(|d| d.stack.item == ItemType::Wool)
@@ -412,8 +396,8 @@ fn shearing_the_targeted_sheep_drops_wool_and_strips_the_coat() {
 #[test]
 fn shearing_needs_the_shears_in_hand() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory = holding(ItemType::Dirt);
-    assert!(game.server.world_mut().mobs_mut().spawn(
+    game.server_player_mut().inventory = holding(ItemType::Dirt);
+    assert!(game.server_world_mut().mobs_mut().spawn(
         petramond::mob::Mob::Sheep,
         WorldPos::new(8.0, 64.0, 8.0),
         0.0
@@ -422,7 +406,7 @@ fn shearing_needs_the_shears_in_hand() {
 
     assert!(!events.player_at(0).used_item);
     assert!(
-        !game.server.world().mobs().instances()[0].is_shorn(),
+        !game.server_world().mobs().instances()[0].is_shorn(),
         "a bare right-click leaves the coat alone"
     );
 }
@@ -433,11 +417,11 @@ fn shearing_needs_the_shears_in_hand() {
 fn walled_pool(game: &mut super::common::TestGame, fluid: Block) {
     for x in 4..=12 {
         for z in 4..=12 {
-            game.server.world_mut().set_block_world(x, 64, z, Block::Stone);
+            game.server_world_mut().set_block_world(x, 64, z, Block::Stone);
             let wall = x == 4 || x == 12 || z == 4 || z == 12;
             for y in 65..=66 {
                 let b = if wall { Block::Stone } else { fluid };
-                assert!(game.server.world_mut().set_block_world(x, y, z, b));
+                assert!(game.server_world_mut().set_block_world(x, y, z, b));
             }
         }
     }
@@ -447,20 +431,19 @@ fn walled_pool(game: &mut super::common::TestGame, fluid: Block) {
 const POOL_TOP: IVec3 = IVec3::new(8, 66, 8);
 
 fn block_at(game: &super::common::TestGame, p: IVec3) -> Block {
-    Block::from_id(game.server.world().data().chunk_block(p.x, p.y, p.z))
+    Block::from_id(game.server_world().chunk_block(p.x, p.y, p.z))
 }
 
 #[test]
 fn filling_the_empty_bucket_from_a_lava_source_yields_the_lava_bucket() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory = holding(ItemType::WoodenBucket);
+    game.server_player_mut().inventory = holding(ItemType::WoodenBucket);
 
     // The empty bucket takes either fluid; the result item follows the
     // fluid actually scooped.
     let p = IVec3::new(0, 78, 0);
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .set_block_world(p.x, p.y, p.z, Block::Lava));
     aim_down_at(&mut game, p);
 
@@ -472,8 +455,7 @@ fn filling_the_empty_bucket_from_a_lava_source_yields_the_lava_bucket() {
     );
     assert_eq!(block_at(&game, p), Block::Air, "the lava source is scooped");
     assert_eq!(
-        game.server.sessions()[0]
-            .player()
+        game.server_player()
             .inventory
             .selected()
             .unwrap()
@@ -485,7 +467,7 @@ fn filling_the_empty_bucket_from_a_lava_source_yields_the_lava_bucket() {
 #[test]
 fn pouring_lava_at_a_pond_surface_acts_at_the_surface() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory =
+    game.server_player_mut().inventory =
         holding(ItemType::by_name("petramond:lava_bucket").unwrap());
     walled_pool(&mut game, Block::Water);
     let below = POOL_TOP - IVec3::Y;
@@ -505,12 +487,11 @@ fn pouring_lava_at_a_pond_surface_acts_at_the_surface() {
         "lava lands in the surface cell"
     );
     assert!(
-        game.server.world().is_water_source_world(below),
+        game.server_world().is_water_source_world(below),
         "the cell beneath stays water"
     );
     assert_eq!(
-        game.server.sessions()[0]
-            .player()
+        game.server_player()
             .inventory
             .selected()
             .unwrap()
@@ -526,7 +507,7 @@ fn pouring_lava_at_a_pond_surface_acts_at_the_surface() {
         "the poured lava cools at the surface"
     );
     assert!(
-        game.server.world().is_water_source_world(below),
+        game.server_world().is_water_source_world(below),
         "the pond floor is still water"
     );
 }
@@ -534,7 +515,7 @@ fn pouring_lava_at_a_pond_surface_acts_at_the_surface() {
 #[test]
 fn pouring_water_at_a_lava_sea_surface_cools_the_surface_not_the_floor() {
     let mut game = game_on_empty_chunk();
-    game.server.sessions_mut()[0].player_mut().inventory = holding(ItemType::WaterBucket);
+    game.server_player_mut().inventory = holding(ItemType::WaterBucket);
     walled_pool(&mut game, Block::Lava);
     let below = POOL_TOP - IVec3::Y;
     aim_down_at(&mut game, POOL_TOP);
@@ -543,7 +524,7 @@ fn pouring_water_at_a_lava_sea_surface_cools_the_surface_not_the_floor() {
 
     assert!(events.player_at(0).used_item, "pouring onto lava must work");
     assert!(
-        game.server.world().is_water_source_world(POOL_TOP),
+        game.server_world().is_water_source_world(POOL_TOP),
         "water lands in the surface cell"
     );
     assert_eq!(
@@ -554,7 +535,7 @@ fn pouring_water_at_a_lava_sea_surface_cools_the_surface_not_the_floor() {
 
     run_water_ticks(&mut game, 1);
     assert!(
-        game.server.world().is_water_source_world(POOL_TOP),
+        game.server_world().is_water_source_world(POOL_TOP),
         "the water survives the contact"
     );
     assert_eq!(
@@ -572,5 +553,70 @@ fn pouring_water_at_a_lava_sea_surface_cools_the_surface_not_the_floor() {
         block_at(&game, far),
         Block::Lava,
         "lava out of contact stays lava"
+    );
+}
+
+/// One bucket click evaluated on BOTH mirrors from the same geometry: the
+/// cells `stage` writes land in the server world and the client replica
+/// alike, the server eye and the client camera sit at the same spot looking
+/// straight down at `aim`, and the client's predicted verdict (the shared
+/// consumer walk against the replica) must name a claim exactly when the
+/// server's authoritative click reports an item use.
+fn bucket_click_parity(item: ItemType, aim: IVec3, stage: &[(IVec3, Block)]) -> bool {
+    let mut game = game_on_empty_chunk();
+    game.game.replica.world.insert_chunk_for_test(
+        petramond_world::chunk::ChunkPos::new(0, 0),
+        petramond_world::chunk::Chunk::new(0, 0),
+    );
+    for &(p, b) in stage {
+        assert!(game.server_world_mut().set_block_world(p.x, p.y, p.z, b));
+        assert!(game.game.replica.world.set_block_world(p.x, p.y, p.z, b));
+    }
+    game.server_player_mut().inventory = holding(item);
+    game.sync_self_view_for_test();
+    aim_down_at(&mut game, aim);
+    game.game.local.cam.pos = WorldPos::new(
+        f64::from(aim.x) + 0.5,
+        f64::from(aim.y) + 3.0,
+        f64::from(aim.z) + 0.5,
+    );
+    game.game.local.cam.pitch = -std::f32::consts::FRAC_PI_2;
+
+    let predicted = game
+        .game
+        .predict_click_verdict_at_for_test(aim, IVec3::Y, false);
+    let events = right_click(&mut game);
+    assert_eq!(
+        predicted.consumed,
+        events.player_at(0).used_item,
+        "{item:?} at {aim:?}: the prediction and the authority disagree"
+    );
+    assert!(!predicted.places, "a bucket click is never a place ghost");
+    predicted.consumed
+}
+
+#[test]
+fn bucket_prediction_matches_the_authoritative_fill() {
+    let src = IVec3::new(4, 70, 4);
+    assert!(
+        bucket_click_parity(ItemType::WoodenBucket, src, &[(src, Block::Water)]),
+        "a source under the eye fills on both mirrors"
+    );
+    assert!(
+        !bucket_click_parity(ItemType::WoodenBucket, src, &[(src, Block::Stone)]),
+        "stone is nothing to scoop on either mirror"
+    );
+}
+
+#[test]
+fn bucket_prediction_matches_the_authoritative_pour() {
+    let floor = IVec3::new(4, 70, 4);
+    assert!(
+        bucket_click_parity(ItemType::WaterBucket, floor, &[(floor, Block::Stone)]),
+        "a pour against the floor lands on both mirrors"
+    );
+    assert!(
+        !bucket_click_parity(ItemType::WaterBucket, IVec3::new(4, 20, 4), &[]),
+        "a pour with nothing in reach lands on neither"
     );
 }

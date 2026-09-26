@@ -1,6 +1,9 @@
 use super::client_audio::WorldAudioFrame;
-use super::{now_seconds, ui_snapshot, App};
+use super::screen::HandPolicy;
+use super::session::Session;
+use super::{now_seconds, ui_snapshot, App, AppScreen};
 use petramond_audio::SpatialListener;
+use crate::animation::LocalInput;
 use petramond_render::{DocumentUiFrame, HeldItemFrame, Renderer, UiFrame};
 
 impl App {
@@ -31,9 +34,14 @@ impl App {
         if doc_kind.is_none() && self.doc_hud_active() {
             let kind = petramond_world::gui_state::GuiKind::Hotbar;
             self.ui.ensure_active(kind);
-            if let Some(game) = self.game.as_mut() {
+            if let Some(Session {
+                game,
+                hotbar_notice,
+                ..
+            }) = self.session.as_mut()
+            {
                 let active = game.menu_read_model().inventory.active_slot();
-                self.session_ui.hotbar_notice.populate(
+                hotbar_notice.populate(
                     game.held_tool_setting().map(|label| (active, label)),
                     &mut game.notice,
                     now,
@@ -53,15 +61,12 @@ impl App {
         }
         let document_viewport = self.ui.frame_stamp().map(|(_, viewport)| viewport);
         if doc_kind.is_some() {
-            if matches!(
-                self.screen,
-                crate::app::AppScreen::Game | crate::app::AppScreen::Chat
-            ) && self.game.is_some()
-            {
-                self.chat.draw(
+            let hud = self.screen.spec().hud;
+            if let Some(session) = self.session.as_mut().filter(|_| hud) {
+                session.chat.draw(
                     self.ui.draw_mut(),
                     screen_size,
-                    self.screen == crate::app::AppScreen::Chat,
+                    self.screen == AppScreen::Chat,
                     now,
                 );
             }
@@ -70,19 +75,18 @@ impl App {
         }
         self.compose_document_ui(doc_kind.is_some());
         self.compose_client_overlays(screen_size);
-        let doc_slots = doc_kind.map(|_| self.ui.doc_slots());
-        let doc_hooks = doc_kind.map(|_| self.ui.doc_hooks());
+        // The solved frame's slot cells and hooks, derived once per solve
+        // into reused buffers.
+        self.ui.refresh_doc_geometry();
         let menu_drag_preview = self
             .screen
             .ui_open()
             .then(|| self.ui.menu_drag_preview())
             .flatten();
+        let (doc_slots, doc_hooks) = self.ui.doc_geometry();
 
-        let Some(game) = self.game.as_mut() else {
-            // No session, no health bar: a fresh world must never wiggle off a
-            // comparison against the previous session's last health.
-            self.hud_fx.forget_health();
-            self.sound.clear_world();
+        let Some(session) = self.session.as_mut() else {
+            // No session: the shell sky and whatever document is up.
             // The mood eases back to the untouched image once no session
             // exists (its owner died with the world).
             renderer.set_mood([0.0, 0.0], dt);
@@ -104,8 +108,8 @@ impl App {
                 kind,
                 draw: &self.composed_doc,
                 images: &self.composed_doc_images,
-                slots: doc_slots.as_deref().map(Vec::as_slice).unwrap_or(&[]),
-                hooks: doc_hooks.as_deref().map(Vec::as_slice).unwrap_or(&[]),
+                slots: doc_slots,
+                hooks: doc_hooks,
             });
             if !renderer.prepare_ui_frame(UiFrame {
                 viewport,
@@ -119,35 +123,42 @@ impl App {
             renderer.render();
             return true;
         };
+        let Session {
+            game,
+            sounds,
+            hud_fx,
+            presentation,
+            scene,
+            ..
+        } = session;
 
         renderer.set_crosshair_visible(self.screen.gameplay_enabled());
-        self.hud_fx.advance(dt);
-        let hand_visible = match self.screen {
-            crate::app::AppScreen::Pause | crate::app::AppScreen::Dead => false,
-            crate::app::AppScreen::Sleeping => {
-                self.hud_fx.sleep_hand_visible() && !game.third_person_enabled()
-            }
+        hud_fx.advance(dt);
+        let hand_visible = match self.screen.spec().hand {
+            HandPolicy::Hidden => false,
+            HandPolicy::SleepFade => hud_fx.sleep_hand_visible() && !game.third_person_enabled(),
             // Third person shows the whole body instead of the floating hand.
-            _ => !game.third_person_enabled(),
+            HandPolicy::Shown => !game.third_person_enabled(),
         };
         renderer.set_hand_visible(hand_visible);
 
         // The hurt shake: a short decaying jitter on the camera look and the
         // hand's screen position. Presentation-only — the sim camera state is
         // untouched; a clone carries the offset into the uniforms.
-        let shake = self.hud_fx.shake(now);
+        let shake = hud_fx.shake(now);
         renderer.set_hand_shake(shake.hand);
 
-        let motion = game.local_motion(self.hud_fx.hurt_remaining());
+        let motion = game.local_motion(hud_fx.hurt_remaining());
         let listener;
         {
             if let Some(schematic) = game.tools.library.pending_save() {
                 match game.schematic_scene(&schematic, 0) {
-                    Ok(scene) => {
+                    Ok(schematic_scene) => {
                         let jobs = game.jobs().clone();
                         let thumbnailer = renderer.schematic_thumbnailer();
-                        game.tools.library
-                            .start_save(&jobs, schematic, move || thumbnailer.render(&scene));
+                        game.tools.library.start_save(&jobs, schematic, move || {
+                            thumbnailer.render(&schematic_scene)
+                        });
                     }
                     Err(error) => {
                         game.tools.library.abandon_save();
@@ -182,47 +193,52 @@ impl App {
                 cam.yaw += shake.yaw;
                 cam.pitch += shake.pitch;
             }
-            renderer.set_selection(
-                self.screen
-                    .gameplay_enabled()
-                    .then_some(frame.selection)
-                    .flatten(),
-            );
-            let hand_events = self.hud_fx.take_hand_events();
-            renderer.set_hands(
-                HeldItemFrame {
-                    item: frame.held_item.item,
-                    display: frame.held_item.display,
-                    variant: frame.held_item.variant,
-                    block_state: frame.held_item.block_state,
-                    mining: frame.held_item.mining,
-                    eating: frame.held_item.eating,
-                    pose_target: frame
-                        .held_item
-                        .pose_target
-                        .map(crate::game::render_held_pose),
-                },
-                // The OFF hand: its own item + eat channel. Mining is a
-                // main-hand level by definition.
-                HeldItemFrame {
-                    item: frame.off_hand_item.item,
-                    display: frame.off_hand_item.display,
-                    variant: frame.off_hand_item.variant,
-                    block_state: frame.off_hand_item.block_state,
-                    mining: false,
-                    eating: frame.off_hand_item.eating,
-                    pose_target: frame
-                        .off_hand_item
-                        .pose_target
-                        .map(crate::game::render_held_pose),
+            renderer.set_selection(gameplay.then_some(frame.selection).flatten());
+            // The local animation opens the frame: both hands' eased poses and
+            // the first-person animator (whose camera bone the uniforms wear)
+            // advance once, in order, from the hands' frames, the body's
+            // resolved claims and the latched rig events.
+            let local = presentation.animation.begin_frame(
+                LocalInput {
+                    hands: [
+                        HeldItemFrame {
+                            item: frame.held_item.item,
+                            display: frame.held_item.display,
+                            variant: frame.held_item.variant,
+                            block_state: frame.held_item.block_state,
+                            mining: frame.held_item.mining,
+                            eating: frame.held_item.eating,
+                            pose_target: frame
+                                .held_item
+                                .pose_target
+                                .map(crate::game::render_held_pose),
+                        },
+                        // The OFF hand: its own item + eat channel. Mining is
+                        // a main-hand level by definition.
+                        HeldItemFrame {
+                            item: frame.off_hand_item.item,
+                            display: frame.off_hand_item.display,
+                            variant: frame.off_hand_item.variant,
+                            block_state: frame.off_hand_item.block_state,
+                            mining: false,
+                            eating: frame.off_hand_item.eating,
+                            pose_target: frame
+                                .off_hand_item
+                                .pose_target
+                                .map(crate::game::render_held_pose),
+                        },
+                    ],
+                    claims: &frame.animator,
+                    events: hud_fx.hand_events(),
+                    motion,
+                    // The hurt vignette envelope doubles as the body's red
+                    // hurt flash.
+                    hurt_flash: shake.flash,
                 },
                 dt,
             );
-            // The first-person animator runs once both hands' frames and the
-            // body's animator claims are in, and before the uniforms, which
-            // wear its camera bone.
-            renderer.set_local_animator(&frame.animator, &hand_events);
-            renderer.set_first_person_motion(motion);
+            renderer.set_local_frame(local);
+            hud_fx.clear_hand_events();
             renderer.update_uniforms(
                 &cam,
                 frame.environment.fog,
@@ -240,20 +256,19 @@ impl App {
             // above (shake included) and unchanged until this frame draws — so
             // gathers cull against exactly what will be rasterized.
             let view = renderer.view_volume();
-            let presentation = self
-                .presentation
-                .snapshot(game, (now % 3600.0) as f32, &view);
-            renderer.set_break_overlays(presentation.break_overlays);
+            let snapshot = presentation.snapshot(game, (now % 3600.0) as f32, &view);
+            renderer.set_break_overlays(snapshot.break_overlays);
             // Positional audio against the same snapshot the renderer draws:
             // mob sounds pin to the interpolated bodies, and the footstep and
             // idle cadences follow the live world clock, not gameplay input
             // (menus and multiplayer pause can keep that clock moving).
             self.sound.render_world(
+                sounds,
                 WorldAudioFrame {
                     listener,
-                    mobs: presentation.mobs,
-                    tick_alpha: presentation.tick_alpha,
-                    footsteps: presentation.footsteps,
+                    mobs: snapshot.mobs,
+                    tick_alpha: snapshot.tick_alpha,
+                    footsteps: snapshot.footsteps,
                     current_tick,
                 },
                 // Client-mod looping ambience (rain beds, wind): sync desired
@@ -262,15 +277,18 @@ impl App {
                 dt,
             );
             renderer.set_mood(game.client_mod_mood(), dt);
-            // The hurt vignette envelope doubles as the body's red hurt flash.
-            self.scene.bake(&presentation, shake.flash);
+            scene.bake(&snapshot);
         }
-        self.scene.upload(renderer);
+        scene.upload(renderer);
         let drag_preview = menu_drag_preview
             .as_ref()
             .map(|(slots, button)| (slots.as_slice(), *button));
-        let mut ui =
-            ui_snapshot::build(Some(game), self.screen, self.controls.pointer.cursor(), drag_preview);
+        let mut ui = ui_snapshot::build(
+            Some(&*game),
+            self.screen,
+            self.controls.pointer.cursor(),
+            drag_preview,
+        );
         ui.craft_recipes
             .extend(self.crafting_browser.views().cloned());
         ui.craft_tip = self.crafting_browser.tip_view().cloned();
@@ -278,14 +296,14 @@ impl App {
             ui.kind = kind;
         }
         ui.hurt_flash = shake.flash;
-        ui.heart_wiggle = self.hud_fx.heart_wiggle(ui.health, now);
+        ui.heart_wiggle = hud_fx.heart_wiggle(ui.health, now);
         let document = doc_kind.map(|kind| DocumentUiFrame {
             viewport: document_viewport.expect("document frame was validated above"),
             kind,
             draw: &self.composed_doc,
             images: &self.composed_doc_images,
-            slots: doc_slots.as_deref().map(Vec::as_slice).unwrap_or(&[]),
-            hooks: doc_hooks.as_deref().map(Vec::as_slice).unwrap_or(&[]),
+            slots: doc_slots,
+            hooks: doc_hooks,
         });
         if !renderer.prepare_ui_frame(UiFrame {
             viewport,

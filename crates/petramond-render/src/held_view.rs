@@ -1,8 +1,9 @@
 //! The eased held-item state: a hand's per-frame [`HeldItemFrame`] intent
 //! becomes the flat [`HeldItemView`] the seats and attaches read — the item,
 //! its authored hold, and the claimed held pose CHASED at the pose rate so a
-//! replicated publisher's 20 Hz stair-steps read as a glide. The renderer
-//! owns one per local hand; every remote player owns two (`game/remote_players.rs`).
+//! replicated publisher's 20 Hz stair-steps read as a glide. The client's
+//! animation owns one per local hand; every remote player owns two
+//! (`game/remote_players.rs`).
 
 use petramond_world::item::ItemType;
 

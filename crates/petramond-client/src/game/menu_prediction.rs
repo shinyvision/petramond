@@ -32,7 +32,7 @@ impl Game {
         }
         let (can, request_id) = self.begin_inventory_prediction();
         if can {
-            *self.self_view.inventory.cursor_mut() =
+            *self.replica.self_view.inventory.cursor_mut() =
                 item.map(|i| ItemStack::new(i, i.max_stack_size()));
         }
         self.net.queue(ClientToServer::CreativeCursor {
@@ -53,8 +53,8 @@ impl Game {
         let can_predict = self.prediction.can_predict();
         let snapshot = if can_predict {
             crate::game::prediction::PredictionSnapshot::Menu {
-                inventory: self.self_view.inventory.clone(),
-                menu: self.menu_view.clone(),
+                inventory: self.replica.self_view.inventory.clone(),
+                menu: self.replica.menu_view.clone(),
             }
         } else {
             crate::game::prediction::PredictionSnapshot::None
@@ -72,7 +72,7 @@ impl Game {
     }
 
     fn predict_menu_drag(&mut self, kind: GuiKind, slots: &[MenuSlot], button: PointerButton) {
-        let Some(held) = self.self_view.inventory.cursor().copied() else {
+        let Some(held) = self.replica.self_view.inventory.cursor().copied() else {
             return;
         };
         let specs = petramond::menu::slot_specs_for_kind(kind);
@@ -95,13 +95,13 @@ impl Game {
     ) -> u8 {
         match slot {
             MenuSlot::Inventory(i) => self
-                .self_view
+                .replica.self_view
                 .inventory
                 .raw_slots()
                 .get(i)
                 .map(|cell| slot_capacity(cell, held))
                 .unwrap_or(0),
-            MenuSlot::OffHand => slot_capacity(&self.self_view.inventory.off_hand().copied(), held),
+            MenuSlot::OffHand => slot_capacity(&self.replica.self_view.inventory.off_hand().copied(), held),
             // The same question the server's `drag_capacity` asks, through the
             // same helper: a slot one side counts and the other refuses does
             // not just snap that leg back — the split is by the NUMBER of
@@ -111,10 +111,10 @@ impl Game {
                     specs,
                     i,
                     Some(held.item),
-                    self.menu_view.gui_state.as_deref(),
+                    self.replica.menu_view.gui_state.as_deref(),
                 ) =>
             {
-                self.menu_view
+                self.replica.menu_view
                     .container
                     .as_ref()
                     .and_then(|container| container.slots.get(i))
@@ -131,8 +131,8 @@ impl Game {
         slot: MenuSlot,
         wanted: u8,
     ) {
-        let inventory = &mut self.self_view.inventory;
-        let menu = &mut self.menu_view;
+        let inventory = &mut self.replica.self_view.inventory;
+        let menu = &mut self.replica.menu_view;
         match slot {
             MenuSlot::Inventory(i) => {
                 inventory.place_cursor_count_in_slot(i, wanted);
@@ -182,7 +182,7 @@ impl Game {
         gather: bool,
     ) -> bool {
         use petramond_world::gui_state::MenuSlot;
-        let v = &self.menu_view;
+        let v = &self.replica.menu_view;
         match slot {
             MenuSlot::Inventory(_) => {
                 // Shift-move and gather both target the open container, so
@@ -201,7 +201,7 @@ impl Game {
                     && !gather
                     && v.container.is_some()
                     && v.container_kind.is_some()
-                    && !self.mask_decides(i, self.self_view.inventory.cursor().map(|c| c.item))
+                    && !self.mask_decides(i, self.replica.self_view.inventory.cursor().map(|c| c.item))
             }
             _ => false,
         }
@@ -220,7 +220,7 @@ impl Game {
     /// round trip later. `held` is whatever stack the gesture would deposit:
     /// the cursor for clicks/drags, the off-hand for the F swap.
     fn mask_decides(&self, i: usize, held: Option<petramond_world::item::ItemType>) -> bool {
-        let Some(kind) = self.menu_view.container_kind else {
+        let Some(kind) = self.replica.menu_view.container_kind else {
             return false;
         };
         let Some(held) = held else {
@@ -233,7 +233,7 @@ impl Game {
         if spec.accepts_bind.is_none() {
             return false;
         }
-        let mask = spec.accepts_mask(self.menu_view.gui_state.as_deref());
+        let mask = spec.accepts_mask(self.replica.menu_view.gui_state.as_deref());
         spec.admits(held, petramond_world::container::FULL_MASK) && !spec.admits(held, mask)
     }
 
@@ -252,7 +252,7 @@ impl Game {
         use petramond_world::gui_state::MenuSlot;
         use petramond_world::gui_state::PointerButton;
         let secondary = button == PointerButton::Secondary;
-        let inv = &mut self.self_view.inventory;
+        let inv = &mut self.replica.self_view.inventory;
         match slot {
             MenuSlot::Inventory(i) => {
                 if shift {
@@ -282,19 +282,19 @@ impl Game {
                 }
             }
             MenuSlot::Container(i) => {
-                let Some(kind) = self.menu_view.container_kind else {
+                let Some(kind) = self.replica.menu_view.container_kind else {
                     return;
                 };
                 let specs = petramond::menu::slot_specs_for_kind(kind);
                 if let Some(cell) = self
-                    .menu_view
+                    .replica.menu_view
                     .container
                     .as_mut()
                     .and_then(|container| container.slots.get_mut(i))
                 {
                     inv.click_container_cell(
                         specs.get(i),
-                        self.menu_view.gui_state.as_deref(),
+                        self.replica.menu_view.gui_state.as_deref(),
                         cell,
                         secondary,
                     );
@@ -363,11 +363,11 @@ impl Game {
         if can {
             match slot {
                 petramond_world::gui_state::MenuSlot::Inventory(i) => {
-                    self.self_view.inventory.take_slot_for_drop(i, all);
+                    self.replica.self_view.inventory.take_slot_for_drop(i, all);
                 }
                 petramond_world::gui_state::MenuSlot::OffHand => {
                     petramond_world::inventory::take_slot_stack(
-                        self.self_view.inventory.off_hand_mut(),
+                        self.replica.self_view.inventory.off_hand_mut(),
                         all,
                     );
                 }
@@ -394,15 +394,15 @@ impl Game {
         use petramond_world::gui_state::MenuSlot;
         // The server refuses a spectator's swap; don't burn a request on a
         // known deny.
-        if self.player.is_spectator() {
+        if self.local.player.is_spectator() {
             return;
         }
-        let off_item = self.self_view.inventory.off_hand().map(|s| s.item);
+        let off_item = self.replica.self_view.inventory.off_hand().map(|s| s.item);
         let (can, request_id) = match slot {
             MenuSlot::Inventory(_) => self.begin_inventory_prediction(),
             MenuSlot::Container(i)
-                if self.menu_view.container.is_some()
-                    && self.menu_view.container_kind.is_some()
+                if self.replica.menu_view.container.is_some()
+                    && self.replica.menu_view.container_kind.is_some()
                     && !self.mask_decides(i, off_item) =>
             {
                 self.begin_menu_prediction()
@@ -413,20 +413,20 @@ impl Game {
         if can {
             match slot {
                 MenuSlot::Inventory(i) => {
-                    self.self_view.inventory.swap_off_hand_with_slot(i);
+                    self.replica.self_view.inventory.swap_off_hand_with_slot(i);
                 }
                 MenuSlot::Container(i) => {
-                    let kind = self.menu_view.container_kind.expect("gated above");
+                    let kind = self.replica.menu_view.container_kind.expect("gated above");
                     let specs = petramond::menu::slot_specs_for_kind(kind);
                     if let Some(cell) = self
-                        .menu_view
+                        .replica.menu_view
                         .container
                         .as_mut()
                         .and_then(|container| container.slots.get_mut(i))
                     {
-                        self.self_view.inventory.swap_off_hand_with_cell(
+                        self.replica.self_view.inventory.swap_off_hand_with_cell(
                             specs.get(i),
-                            self.menu_view.gui_state.as_deref(),
+                            self.replica.menu_view.gui_state.as_deref(),
                             cell,
                         );
                     }
@@ -443,11 +443,11 @@ impl Game {
     fn menu_slot_has_stack(&self, slot: petramond_world::gui_state::MenuSlot) -> bool {
         use petramond_world::gui_state::MenuSlot;
         match slot {
-            MenuSlot::Inventory(i) => self.self_view.inventory.slot(i).is_some(),
-            MenuSlot::OffHand => self.self_view.inventory.off_hand().is_some(),
-            MenuSlot::CraftResult => self.menu_view.craft_output.is_some(),
+            MenuSlot::Inventory(i) => self.replica.self_view.inventory.slot(i).is_some(),
+            MenuSlot::OffHand => self.replica.self_view.inventory.off_hand().is_some(),
+            MenuSlot::CraftResult => self.replica.menu_view.craft_output.is_some(),
             MenuSlot::Container(i) => self
-                .menu_view
+                .replica.menu_view
                 .container
                 .as_ref()
                 .and_then(|container| container.slots.get(i).copied().flatten())

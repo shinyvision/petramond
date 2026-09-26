@@ -6,6 +6,7 @@
 #[global_allocator]
 static TEST_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+pub mod animation;
 pub mod app;
 pub mod game;
 pub mod keymap;

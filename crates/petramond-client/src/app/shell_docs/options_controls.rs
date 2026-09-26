@@ -99,7 +99,8 @@ pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
 }
 
 pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
-    // Back also disarms any pending remap (`close_options_category`).
+    // Back also disarms any pending remap: leaving a category through the
+    // screen funnel cancels it (`App::back_to`).
     if super::options_category_back(ctx, &ev) {
         return;
     }

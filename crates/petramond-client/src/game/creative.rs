@@ -52,11 +52,11 @@ impl BreakRepeat {
 
 impl Game {
     pub fn creative_flying(&self) -> bool {
-        self.player.is_flying()
+        self.local.player.is_flying()
     }
 
     pub fn creative_mode(&self) -> bool {
-        self.player.is_creative()
+        self.local.player.is_creative()
     }
 
     pub fn toggle_creative_mode(&mut self) {
@@ -64,7 +64,7 @@ impl Game {
     }
 
     pub fn jump_pressed(&mut self, now: f64) {
-        if self.player.is_creative() && self.flight_toggle.press(now) {
+        if self.local.player.is_creative() && self.local.flight_toggle.press(now) {
             self.net.queue(ClientToServer::Action(PlayerAction::ToggleFlight));
         }
     }
@@ -74,7 +74,7 @@ impl Game {
     pub fn undo_edit(&mut self) {
         if let Some(tool) = self.editing_tool() {
             tool.undo();
-        } else if self.player.is_creative() {
+        } else if self.local.player.is_creative() {
             self.send_creative(CreativeAction::Undo);
         }
     }
@@ -82,7 +82,7 @@ impl Game {
     pub fn redo_edit(&mut self) {
         if let Some(tool) = self.editing_tool() {
             tool.redo();
-        } else if self.player.is_creative() {
+        } else if self.local.player.is_creative() {
             self.send_creative(CreativeAction::Redo);
         }
     }

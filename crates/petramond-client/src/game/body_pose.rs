@@ -76,11 +76,11 @@ pub struct BodyPose {
     /// toward `moving` so starts and stops transition instead of snapping.
     pub walk_weight: f32,
     /// Sneak-stance blend weight (`0` upright … `1` fully crouched), eased
-    /// toward the sneak intent. The renderer cross-fades the sneak animation
+    /// toward the sneak intent. The body pose cross-fades the sneak animation
     /// in by this: its FRAME 0 is the standing-still stance, and while moving
     /// the same clip's cycle replaces the walk cycle.
     pub sneak_weight: f32,
-    pub locomotion: petramond_render::views::LocomotionBlend,
+    pub locomotion: crate::animation::LocomotionBlend,
     was_grounded: Option<bool>,
     previous_position: Option<petramond_math::world_pos::WorldPos>,
     fall_speed: f32,

@@ -184,8 +184,9 @@ impl ConnectSession {
 pub(super) fn connect_event_command(event: ConnectEvent) -> ShellCommand {
     match event {
         ConnectEvent::Joined(join, handle) => ShellCommand::AdoptRemote(join, handle),
-        // The connect screen already handed the pointer to the menu.
-        ConnectEvent::Missing => ShellCommand::SwitchTo(AppScreen::ModsMissing),
+        // A refusal lists the mods this client lacks; its Back reopens the
+        // connect screen with the attempt intact.
+        ConnectEvent::Missing => ShellCommand::Goto(AppScreen::ModsMissing),
     }
 }
 
@@ -206,16 +207,14 @@ impl App {
     /// from client.json (`last_server` + the resolved player name).
     pub(super) fn open_connect_server(&mut self) {
         self.shell.connect.open_fresh(&mut self.ui);
-        self.screen = AppScreen::ConnectServer;
-        self.controls.pointer.release_for_menu();
+        self.set_screen(AppScreen::ConnectServer);
     }
 
     /// Back from the ModsMissing screen: same screen, the refused attempt's
     /// address and name intact.
     pub(super) fn reopen_connect_server(&mut self) {
         self.shell.connect.reopen(&mut self.ui);
-        self.screen = AppScreen::ConnectServer;
-        self.controls.pointer.release_for_menu();
+        self.set_screen(AppScreen::ConnectServer);
     }
 
     /// The Connect button/Enter: validate the fields, persist them, and spawn

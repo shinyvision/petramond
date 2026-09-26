@@ -1,5 +1,5 @@
 //! End-to-end contract tests for the client's replica world:
-//! the in-process pipe streams the server world into `Game.replica`
+//! the in-process pipe streams the server world into the replica world
 //! (columns before sections), per-tick deltas keep it converged (door toggles
 //! included), the open-chest set replicates, and terrain leaving the keep
 //! shape unloads from the replica.
@@ -18,25 +18,24 @@ use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 /// replicates.
 fn floored_game_at(feet: WorldPos) -> super::common::TestGame {
     let mut game = game();
-    game.server.world_mut().clear_world();
+    game.server_world_mut().clear_world();
     let mut chunk = Chunk::new(0, 0);
     for z in 0..CHUNK_SZ {
         for x in 0..CHUNK_SX {
             chunk.set_block(x, 64, z, Block::Stone);
         }
     }
-    game.server
-        .world_mut()
+    game.server_world_mut()
         .insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
     place_player(&mut game, feet);
     game
 }
 
 fn place_player(game: &mut super::common::TestGame, feet: WorldPos) {
-    game.player.pos = feet;
-    game.player.vel = Vec3::ZERO;
-    game.server.sessions_mut()[0].player_mut().pos = feet;
-    game.server.sessions_mut()[0].player_mut().vel = Vec3::ZERO;
+    game.local.player.pos = feet;
+    game.local.player.vel = Vec3::ZERO;
+    game.server_player_mut().pos = feet;
+    game.server_player_mut().vel = Vec3::ZERO;
 }
 
 /// One frame that executes exactly one fixed tick (dt = TICK_DT).
@@ -52,7 +51,7 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
     // once the server's light bake lands (the light-final ship gate); with the
     // inline test pool that completes inside the pump.
     let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
-    while game.replica.data().chunk_block(8, 64, 8) != Block::Stone.id() {
+    while game.replica.world.chunk_block(8, 64, 8) != Block::Stone.id() {
         assert!(
             std::time::Instant::now() < deadline,
             "the server floor replicated"
@@ -60,25 +59,25 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
         frame(&mut game);
     }
     assert!(
-        game.replica.data().loaded_section_count() > 0,
+        game.replica.world.loaded_section_count() > 0,
         "replica sections appear from the pipe"
     );
     assert!(
-        game.replica
+        game.replica.world
             .section_at_world_for_test(8, 64, 8)
             .is_some_and(|s| s.has_baked_light() && !s.light_dirty),
         "the install seeded the server's baked light — the replica never bakes"
     );
     assert!(
-        game.replica.data().chunk_loaded(0, 0),
+        game.replica.world.chunk_loaded(0, 0),
         "the column data replicated (heightmap/biome/summaries)"
     );
 
     // A post-join server edit reaches the replica through the delta pipe.
-    assert!(game.server.world_mut().set_block_world(8, 66, 8, Block::Dirt));
+    assert!(game.server_world_mut().set_block_world(8, 66, 8, Block::Dirt));
     frame(&mut game);
     assert_eq!(
-        game.replica.data().chunk_block(8, 66, 8),
+        game.replica.world.chunk_block(8, 66, 8),
         Block::Dirt.id(),
         "a block placed server-side shows up in the replica after the pump"
     );
@@ -88,21 +87,20 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
     // swing angle read it.
     let door = IVec3::new(5, 65, 5);
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .place_door(door, Block::OakDoor, Facing::East));
     frame(&mut game);
     assert_eq!(
-        game.replica
+        game.replica.world
             .door_state_at(door.x, door.y, door.z)
             .map(|s| s.open),
         Some(false),
         "the placed door replicated closed"
     );
-    assert_eq!(game.server.world_mut().toggle_door(door), Some(door));
+    assert_eq!(game.server_world_mut().toggle_door(door), Some(door));
     frame(&mut game);
     assert_eq!(
-        game.replica
+        game.replica.world
             .door_state_at(door.x, door.y, door.z)
             .map(|s| s.open),
         Some(true),
@@ -116,11 +114,11 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
         frame(&mut game);
     }
     assert!(
-        !game.replica.data().chunk_loaded(0, 0),
+        !game.replica.world.chunk_loaded(0, 0),
         "the left-behind column unloaded from the replica"
     );
     assert!(
-        game.replica.section_at_world_for_test(8, 64, 8).is_none(),
+        game.replica.world.section_at_world_for_test(8, 64, 8).is_none(),
         "its sections dropped with it"
     );
 }
@@ -135,12 +133,12 @@ fn server_rebakes_replicate_as_light_data() {
 
     // Wait for the lit floor section to ship.
     let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
-    while game.replica.data().chunk_block(8, 64, 8) != Block::Stone.id() {
+    while game.replica.world.chunk_block(8, 64, 8) != Block::Stone.id() {
         assert!(std::time::Instant::now() < deadline, "the floor replicated");
         frame(&mut game);
     }
     let block_at = |g: &super::common::TestGame| {
-        g.replica
+        g.replica.world
             .section_at_world_for_test(torch.x, torch.y, torch.z)
             .map(|s| s.blocklight_at(6, 1, 6))
             .unwrap_or(petramond_world::light::LightRgb::ZERO)
@@ -154,11 +152,9 @@ fn server_rebakes_replicate_as_light_data() {
     // delta immediately (block visible) and receives the light as LightData.
     // (Emitters come from the torch placement map — mirror the place funnel.)
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .set_block_world(torch.x, torch.y, torch.z, Block::Torch));
-    game.server
-        .world_mut()
+    game.server_world_mut()
         .insert_torch(torch, petramond_world::torch::TorchPlacement::Floor);
     let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     while block_at(&game).is_dark() {
@@ -169,7 +165,7 @@ fn server_rebakes_replicate_as_light_data() {
         frame(&mut game);
     }
     assert!(
-        game.replica
+        game.replica.world
             .section_at_world_for_test(torch.x, torch.y, torch.z)
             .is_some_and(|s| !s.light_dirty),
         "the replica never holds dirty light — it waits for the server"
@@ -181,23 +177,22 @@ fn open_chest_state_replicates_and_drives_the_lid_target() {
     let mut game = floored_game_at(WorldPos::new(8.5, 65.0, 8.5));
     let pos = IVec3::new(3, 65, 3);
     assert!(game
-        .server
-        .world_mut()
+        .server_world_mut()
         .set_block_world(pos.x, pos.y, pos.z, Block::Chest));
-    game.server.world_mut().insert_chest(pos, Facing::West);
+    game.server_world_mut().insert_chest(pos, Facing::West);
 
-    game.server
+    game.sim_mut()
         .open_chest_screen_for(0, pos, &mut Default::default());
     frame(&mut game);
     assert!(
-        game.block_animations.open_chests().contains(&pos),
+        game.fx.open_chests().contains(&pos),
         "an open chest screen replicates into the batch's open set"
     );
 
     game.close_open_menu();
     frame(&mut game);
     assert!(
-        game.block_animations.open_chests().is_empty(),
+        game.fx.open_chests().is_empty(),
         "closing the screen empties the replicated set on the next batch"
     );
 }
