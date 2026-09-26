@@ -185,22 +185,6 @@ pub fn generate(content: &Content, ctx: &GenCtx) -> Result<Vec<GenWrite>, Deferr
     Ok(out.into_writes())
 }
 
-/// Integer square root, for the falloff. `f64::sqrt` would be fine here, but
-/// every other shape decision in this pack is integer arithmetic and mixing
-/// the two invites a rounding difference between two derivations of one cell.
-pub(crate) fn isqrt(n: i32) -> i32 {
-    if n <= 0 {
-        return 0;
-    }
-    let mut x = n;
-    let mut y = (x + 1) / 2;
-    while y < x {
-        x = y;
-        y = (x + n / x) / 2;
-    }
-    x
-}
-
 /// Which species owns a spot. Derived positionally on a COARSE grid so a cavern
 /// reads as stands of one colour rather than confetti — the single decision
 /// that most affects how the place feels.

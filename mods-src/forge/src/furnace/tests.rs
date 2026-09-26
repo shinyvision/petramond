@@ -1,3 +1,5 @@
+use machine_core::Burner;
+
 use super::*;
 
 /// A crucible that fills up and then goes cold must still be relightable.
@@ -11,7 +13,6 @@ fn a_full_cold_crucible_still_wants_fuel() {
     let full = State {
         units: CRUCIBLE_MAX,
         metal: "petramond:raw_iron".into(),
-        burn_remaining: 0,
         ..State::default()
     };
     assert!(
@@ -39,7 +40,7 @@ fn the_fire_is_the_only_thing_the_mask_stages() {
         "a cold forge shows no fire"
     );
     let lit = State {
-        burn_remaining: 40,
+        fire: burning(40),
         ..State::default()
     };
     assert_eq!(spec.parts_mask(&lit), PART_COALS);
@@ -102,6 +103,14 @@ fn the_pour_row_outlives_the_phase_exactly_as_long_as_the_stream_does() {
     );
 }
 
+/// A fire with `ticks` left of its current fuel item.
+fn burning(ticks: u32) -> Burner {
+    Burner {
+        remaining: ticks,
+        max: ticks,
+    }
+}
+
 fn stack(item: &str) -> Option<ItemStackData> {
     Some(ItemStackData {
         item: item.into(),
@@ -122,7 +131,7 @@ fn one_melt_tick(state: &mut State, item: &str) {
         ],
     );
     let mut slots = vec![stack(item), None, None];
-    ForgingFurnaceSpec::default().melt(state, &mut slots, &casting);
+    ForgingFurnaceSpec::default().melt(state, &mut slots, &casting, &mut Caches::default());
 }
 
 /// THE TABLE IS STILL THE WHITELIST. The panel's metal slot now names the
@@ -134,7 +143,7 @@ fn one_melt_tick(state: &mut State, item: &str) {
 #[test]
 fn only_a_declared_metal_reaches_the_crucible() {
     let lit = || State {
-        burn_remaining: 200,
+        fire: burning(200),
         ..State::default()
     };
 
@@ -155,7 +164,7 @@ fn only_a_declared_metal_reaches_the_crucible() {
 #[test]
 fn a_loaded_crucible_takes_its_own_metal_and_nothing_else() {
     let holding_iron = || State {
-        burn_remaining: 200,
+        fire: burning(200),
         units: 1,
         metal: "petramond:raw_iron".into(),
         ..State::default()
@@ -183,7 +192,7 @@ fn a_loaded_crucible_takes_its_own_metal_and_nothing_else() {
 #[test]
 fn a_cast_head_remelts_into_its_own_metal_only() {
     let mut same = State {
-        burn_remaining: 200,
+        fire: burning(200),
         units: 1,
         metal: "petramond:raw_iron".into(),
         ..State::default()
@@ -192,7 +201,7 @@ fn a_cast_head_remelts_into_its_own_metal_only() {
     assert_eq!(same.melt_progress, 1, "a head melts back into its metal");
 
     let mut foreign = State {
-        burn_remaining: 200,
+        fire: burning(200),
         units: 1,
         metal: "petramond:raw_copper".into(),
         ..State::default()

@@ -19,9 +19,11 @@ impl Feature {
         let Some(f) = feature else {
             return vec![0];
         };
-        let mut w = ByteWriter::with_capacity(
-            13 + 13 * f.writes.len() + 12 * (f.reserves.len() + f.suppressed.len()),
-        );
+        let mut w = ByteWriter::with_capacity(Self::encoded_len(
+            f.writes.len(),
+            f.reserves.len(),
+            f.suppressed.len(),
+        ));
         w.raw(&[1]);
         w.u32(f.writes.len() as u32);
         for &(p, kind) in &f.writes {
@@ -41,6 +43,12 @@ impl Feature {
             w.i32x3(p);
         }
         w.finish()
+    }
+
+    /// The exact [`encode`](Self::encode)d size of a feature with these list
+    /// lengths: a tag and three counts, 13 bytes per write, 12 per cell.
+    pub fn encoded_len(writes: usize, reserves: usize, suppressed: usize) -> usize {
+        13 + 13 * writes + 12 * (reserves + suppressed)
     }
 
     /// Outer `None` = malformed (recompute); inner `None` = no cascade.

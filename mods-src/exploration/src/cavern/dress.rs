@@ -15,7 +15,7 @@ use mod_sdk::*;
 
 use super::claims::Emitter;
 use super::{
-    is_open, isqrt, neighbour_rock, pick_species, CEILING_MARGIN, SALT_CEILING, SALT_GROUND,
+    is_open, neighbour_rock, pick_species, CEILING_MARGIN, SALT_CEILING, SALT_GROUND,
     SALT_PATCH, SALT_VINE_BLOOM, VINE_MAX_LEN,
 };
 use crate::content::{Content, Species};
@@ -57,6 +57,16 @@ const PATCH_RIM_PER_MILLE: i32 = 40;
 /// Per-mille density with no colony overhead — the odd straggler, so the floor
 /// between patches is not sterile.
 pub(super) const STRAY_PER_MILLE: i32 = 3;
+/// The flora colonies, over the constants above.
+const PATCHES: ColonyField = ColonyField {
+    salt: SALT_PATCH,
+    lattice: PATCH_LATTICE,
+    one_in: PATCH_ONE_IN,
+    radius: PATCH_R,
+    core: PATCH_CORE_PER_MILLE,
+    rim: PATCH_RIM_PER_MILLE,
+    stray: STRAY_PER_MILLE,
+};
 /// Share of a colony that is its MINORITY kind, per mille of the patch's own
 /// cells. A pure stand reads stamped; a few of the other kind reads seeded.
 const PATCH_ADMIX_PER_MILLE: i32 = 120;
@@ -399,41 +409,12 @@ pub(super) fn vine_at(content: &Content, seed: u32, cell: [i32; 3]) -> BlockId {
 /// patch is one colour — the thing that makes it read as a single organism's
 /// spread rather than confetti.
 pub(super) fn patch_at(seed: u32, wx: i32, wz: i32) -> (i32, bool, i32) {
-    let (mut best, mut flower, mut salt) = (STRAY_PER_MILLE, false, 0);
-    let cell = |v: i32| v.div_euclid(PATCH_LATTICE);
-    // A colony reaches at most PATCH_R.1 blocks, so only the lattice cells
-    // within that of this column can own us.
-    for lz in cell(wz - PATCH_R.1)..=cell(wz + PATCH_R.1) {
-        for lx in cell(wx - PATCH_R.1)..=cell(wx + PATCH_R.1) {
-            let mut rng = GenRng::positional(seed, SALT_PATCH, lx, 0, lz);
-            if rng.next_i32(0, PATCH_ONE_IN - 1) != 0 {
-                continue;
-            }
-            let cx = lx * PATCH_LATTICE + rng.next_i32(0, PATCH_LATTICE - 1);
-            let cz = lz * PATCH_LATTICE + rng.next_i32(0, PATCH_LATTICE - 1);
-            let r = rng.next_i32(PATCH_R.0, PATCH_R.1);
-            let is_flower = rng.next_i32(0, 1) == 1;
-            let sp = rng.next_i32(0, 1 << 20);
-            let (dx, dz) = (wx - cx, wz - cz);
-            let d2 = dx * dx + dz * dz;
-            if d2 > r * r {
-                continue;
-            }
-            // Linear in DISTANCE, not in distance squared: squared falls off
-            // far too slowly near the centre and gives a flat-topped disc.
-            let d = isqrt(d2);
-            let dens =
-                PATCH_CORE_PER_MILLE + (PATCH_RIM_PER_MILLE - PATCH_CORE_PER_MILLE) * d / r.max(1);
-            // Overlapping colonies do not stack — the densest simply owns the
-            // cell, so two patches meeting read as two patches, not a bloom.
-            if dens > best {
-                best = dens;
-                flower = is_flower;
-                salt = sp;
-            }
-        }
-    }
-    (best, flower, salt)
+    let (density, owner) = PATCHES.densest(seed, wx, wz, |rng| {
+        let is_flower = rng.next_i32(0, 1) == 1;
+        (is_flower, rng.next_i32(0, 1 << 20))
+    });
+    let (flower, salt) = owner.map_or((false, 0), |colony| colony.traits);
+    (density, flower, salt)
 }
 
 /// The species a COLONY wears. Falls back to the ambient stand colour for a

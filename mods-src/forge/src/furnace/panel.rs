@@ -12,12 +12,7 @@ impl ForgingFurnaceSpec {
         pourable: bool,
         melting: Option<&str>,
     ) {
-        let burn01 = if state.burn_max == 0 {
-            0.0
-        } else {
-            state.burn_remaining as f32 / state.burn_max as f32
-        };
-        ctx.publish(keys::BURN01, GuiValue::F32(burn01));
+        ctx.publish(keys::BURN01, GuiValue::F32(state.fire.gauge01()));
         let melt = c.metal(melting.unwrap_or(&state.metal)).melt_ticks.max(1);
         ctx.publish(
             keys::MELT01,

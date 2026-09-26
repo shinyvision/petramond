@@ -18,7 +18,6 @@ use super::tuning::{
     waits::{DIG_REST, DOOR_AGAIN, DOOR_REST},
 };
 use super::{Body, Ctx, Step, Task, Then};
-use crate::design::paged;
 use crate::geometry::{feet_of, manhattan, offset, SIDES};
 use crate::jobs::Job;
 use crate::project::Project;

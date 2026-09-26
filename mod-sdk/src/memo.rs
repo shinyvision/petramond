@@ -13,7 +13,7 @@
 use crate::__rt::host_fn;
 use crate::MemoClaim;
 mod blob;
-pub use blob::{memo_blob_claim, memo_blob_put};
+pub use blob::{memo_blob_claim, memo_blob_put, MEMO_BLOB_MAX_BYTES};
 
 host_fn! {
     /// Read one memo entry; `None` = never stored or since evicted.

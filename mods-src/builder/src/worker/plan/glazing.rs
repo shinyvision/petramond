@@ -39,7 +39,7 @@ pub(super) fn ways_through(job: &Job, ceiling: Option<i32>) -> HashSet<usize> {
                 .flat_map(move |side| [0, -1].map(|dy| offset(pos, [side[0], dy, side[2]])))
         })
         .collect();
-    let standing = crate::design::paged(asks, |cells| footholds(crate::content::GOLEM, cells));
+    let standing = paged(asks, |cells| footholds(crate::content::GOLEM, cells));
     panels
         .into_iter()
         .zip(standing.chunks(8))

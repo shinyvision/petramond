@@ -6,6 +6,7 @@
 //! discipline (bump [`STATE_VERSION`], extend BOTH halves) which has nothing
 //! to do with how the furnace melts or pours.
 
+use machine_core::Burner;
 use mod_sdk::*;
 
 use crate::liquid::Liquid;
@@ -42,8 +43,7 @@ impl Phase {
 /// mid-pour reloads mid-pour and a crucible left to harden is still hard.
 #[derive(Clone, Default, PartialEq)]
 pub(super) struct State {
-    pub(super) burn_remaining: u32,
-    pub(super) burn_max: u32,
+    pub(super) fire: Burner,
     pub(super) melt_progress: u32,
     /// Ticks the fire has been out. Past `HARDEN_TICKS` the crucible has set.
     pub(super) idle_ticks: u32,
@@ -79,8 +79,7 @@ impl State {
             return State::default();
         }
         State {
-            burn_remaining: r.u32().unwrap_or(0),
-            burn_max: r.u32().unwrap_or(0),
+            fire: Burner::decode(&mut r),
             melt_progress: r.u32().unwrap_or(0),
             idle_ticks: r.u32().unwrap_or(0),
             units: r.u32().unwrap_or(0) as u8,
@@ -98,8 +97,7 @@ impl State {
     pub(super) fn encode(&self) -> Vec<u8> {
         let mut w = ByteWriter::with_capacity(52);
         w.u32(STATE_VERSION);
-        w.u32(self.burn_remaining);
-        w.u32(self.burn_max);
+        self.fire.encode(&mut w);
         w.u32(self.melt_progress);
         w.u32(self.idle_ticks);
         w.u32(self.units as u32);
@@ -149,8 +147,10 @@ mod tests {
     #[test]
     fn state_survives_the_kv_round_trip() {
         let mut state = State {
-            burn_remaining: 733,
-            burn_max: 1600,
+            fire: Burner {
+                remaining: 733,
+                max: 1600,
+            },
             melt_progress: 41,
             idle_ticks: 9,
             units: 6,

@@ -12,7 +12,7 @@ use super::{
     PROBE_PER_CANDIDATE, SALT_GIANT,
 };
 use crate::content::Content;
-use crate::probe::{self, Deferred, Memo, Settled};
+use crate::probe::{self, Deferred, Settled};
 use crate::shroom::{Giant, Part};
 
 type Root = [i32; 3];
@@ -315,7 +315,7 @@ fn viable_roots(seed: u32, ours: u8, candidates: &[Candidate]) -> Option<Vec<(us
             .iter()
             .map(|&i| memo_key(ours, candidates[i].lat))
             .collect();
-        for (&i, shared) in missing.iter().zip(probe::lookup_many(Memo::HOST, keys)) {
+        for (&i, shared) in missing.iter().zip(probe::lookup_many(memo_get_many, keys)) {
             match shared.as_deref().and_then(decode_root) {
                 Some(root) => resolved.push((i, root)),
                 None => unresolved.push(i),

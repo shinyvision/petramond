@@ -205,18 +205,16 @@ impl MachineSpec for ForgingFurnaceSpec {
         // they started with so a slot change cannot turn the cast into a plate.
         let mould = slots[SLOT_MOULD].as_ref().map(|s| s.item.clone());
 
-        if state.burn_remaining > 0 {
-            state.burn_remaining -= 1;
-        }
+        state.fire.tick();
         // The crucible only sets while the fire is OUT; relighting melts it
         // back down, so a forgotten crucible is a delay, never a loss.
-        if state.burn_remaining > 0 {
+        if state.fire.lit() {
             state.idle_ticks = 0;
         } else {
             state.idle_ticks = state.idle_ticks.saturating_add(1);
         }
 
-        if self.melt(&mut state, &mut slots, casting) {
+        if self.melt(&mut state, &mut slots, casting, caches) {
             emit_sound(SOUND_FIRE, Some(at(ctx.pos)));
         }
         if let Some(auto) = self.fittings.active(bits, 1) {
@@ -262,7 +260,7 @@ impl MachineSpec for ForgingFurnaceSpec {
         // tick instead of staying wrong forever.
         let want_row = if pouring_visually(&state) {
             ctx.variant_or_base(ROW_POUR)
-        } else if state.burn_remaining > 0 {
+        } else if state.fire.lit() {
             ctx.variant_or_base(ROW_LIT)
         } else {
             ctx.block
@@ -365,6 +363,7 @@ impl ForgingFurnaceSpec {
         state: &mut State,
         slots: &mut [Option<ItemStackData>],
         casting: &Casting,
+        caches: &mut Caches,
     ) -> bool {
         let input = slots[SLOT_METAL]
             .as_ref()
@@ -384,12 +383,9 @@ impl ForgingFurnaceSpec {
         // crucible: at 8 units nothing can melt, so nothing can relight, so it
         // hardens ten seconds later and stays hardened forever with the metal
         // trapped inside it.
-        let mut caught = false;
-        if wants_heat(state, can_melt) && state.burn_remaining == 0 {
-            self.relight(state, slots);
-            caught = state.burn_remaining > 0;
-        }
-        if !can_melt || state.burn_remaining == 0 {
+        let wants = wants_heat(state, can_melt);
+        let caught = state.fire.relight(wants, &mut slots[SLOT_FUEL], caches);
+        if !can_melt || !state.fire.lit() {
             state.melt_progress = 0;
             return caught;
         }
@@ -402,22 +398,6 @@ impl ForgingFurnaceSpec {
             consume_one(&mut slots[SLOT_METAL]);
         }
         caught
-    }
-
-    fn relight(&self, state: &mut State, slots: &mut [Option<ItemStackData>]) {
-        let Some(fuel) = slots[SLOT_FUEL].clone() else {
-            return;
-        };
-        // Fuel burn ticks come off the item row; `Caches` would need threading
-        // through, and this runs at most once per fuel item.
-        let burn = item_info(&fuel.item)
-            .map(|i| i.fuel_burn_ticks)
-            .unwrap_or(0);
-        if burn > 0 {
-            state.burn_remaining = burn;
-            state.burn_max = burn;
-            consume_one(&mut slots[SLOT_FUEL]);
-        }
     }
 
     /// Advance a pour that the lever started. Heat is NOT required: the metal
@@ -573,7 +553,7 @@ impl ForgingFurnaceSpec {
     /// the metal accumulates, the tap drains) and the row's particle emitter
     /// carries the motion, at frame rate, for free.
     fn parts_mask(&self, state: &State) -> u32 {
-        let mask = if state.burn_remaining > 0 {
+        let mask = if state.fire.lit() {
             PART_COALS
         } else {
             0

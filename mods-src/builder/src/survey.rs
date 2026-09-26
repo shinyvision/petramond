@@ -8,7 +8,7 @@ use crate::fx::HashMap;
 
 use crate::host::prelude::*;
 
-use crate::design::{paged, Design, Plan};
+use crate::design::{Design, Plan};
 
 /// An item and its exact instance data: the identity a bill counts by.
 pub type ItemKey = (String, Vec<(String, Vec<u8>)>);

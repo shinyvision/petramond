@@ -11,8 +11,6 @@ use crate::fx::{HashMap, HashSet};
 use crate::host::prelude::*;
 use crate::keys::{AIR, FRAGILE_TAG, LEAVES_TAG};
 
-pub use mod_sdk::paged;
-
 /// What one distinct record asks of construction.
 #[derive(Clone, Debug)]
 pub enum Plan {

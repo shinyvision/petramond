@@ -14,7 +14,6 @@ use super::tuning::price::{
     SAFE_FALL,
 };
 use super::{Body, Ctx};
-use crate::design::paged;
 use crate::geometry::{offset, SIDES};
 use crate::jobs::Job;
 use crate::project::Project;

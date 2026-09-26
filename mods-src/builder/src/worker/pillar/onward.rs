@@ -36,7 +36,7 @@ fn walkway_ends(job: &Job, stance: [i32; 3], span: i32) -> Vec<[i32; 3]> {
                 }
             }
         }
-        let standing = crate::design::paged(next.clone(), |cells| footholds(GOLEM, cells));
+        let standing = paged(next.clone(), |cells| footholds(GOLEM, cells));
         frontier.clear();
         for (cell, ok) in next.into_iter().zip(standing) {
             if ok {

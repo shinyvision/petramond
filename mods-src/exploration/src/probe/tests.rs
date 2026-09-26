@@ -10,6 +10,8 @@ thread_local! {
     /// The fake memo's store and the claim it answers with.
     static STORE: RefCell<HashMap<Vec<u8>, Vec<u8>>> = RefCell::new(HashMap::new());
     static CLAIM: RefCell<Option<MemoClaim>> = const { RefCell::new(None) };
+    /// When set, the fake memo refuses every publication.
+    static REFUSE: Cell<bool> = const { Cell::new(false) };
 }
 
 fn reset() {
@@ -17,6 +19,7 @@ fn reset() {
     SHORT.with(|s| s.set(false));
     STORE.with(|s| s.borrow_mut().clear());
     CLAIM.with(|c| *c.borrow_mut() = None);
+    REFUSE.with(|r| r.set(false));
 }
 
 fn calls() -> Vec<usize> {
@@ -63,6 +66,9 @@ fn fake_claim(key: &[u8]) -> MemoClaim {
 }
 
 fn fake_put(key: &[u8], value: Vec<u8>) -> bool {
+    if REFUSE.with(|r| r.get()) {
+        return false;
+    }
     STORE.with(|s| s.borrow_mut().insert(key.to_vec(), value));
     true
 }
@@ -80,7 +86,6 @@ fn fake_get_many(keys: Vec<Vec<u8>>) -> Vec<Option<Vec<u8>>> {
 const FAKE_MEMO: Memo = Memo {
     claim: fake_claim,
     put: fake_put,
-    get_many: fake_get_many,
 };
 
 #[test]
@@ -194,13 +199,36 @@ fn settle_derives_once_publishes_and_defers_behind_a_lease() {
 }
 
 #[test]
+fn a_refused_publication_still_answers_and_is_derived_again_later() {
+    reset();
+    REFUSE.with(|r| r.set(true));
+    let derived = Cell::new(0);
+    let run = || {
+        settle(
+            FAKE_MEMO,
+            b"big",
+            |b| b.first().copied(),
+            |v| vec![*v],
+            || {
+                derived.set(derived.get() + 1);
+                9u8
+            },
+        )
+    };
+    assert_eq!(run(), Ok(9), "the lease holder keeps its own answer");
+    assert!(STORE.with(|s| s.borrow().is_empty()), "nothing was stored");
+    assert_eq!(run(), Ok(9));
+    assert_eq!(derived.get(), 2, "an unpublished fact serves no one else");
+}
+
+#[test]
 fn lookup_many_is_parallel_to_its_keys_even_when_the_host_answers_short() {
     reset();
     fake_put(b"a", vec![1]);
     let keys: Vec<Vec<u8>> = (0..SIM_BATCH_MAX + 2)
         .map(|i| if i == 0 { b"a".to_vec() } else { vec![b'x', (i % 251) as u8] })
         .collect();
-    let got = lookup_many(FAKE_MEMO, keys);
+    let got = lookup_many(fake_get_many, keys);
     assert_eq!(got.len(), SIM_BATCH_MAX + 2);
     assert_eq!(got[0], Some(vec![1]));
     assert!(got[1..].iter().all(Option::is_none));

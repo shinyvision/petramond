@@ -5,8 +5,8 @@
 use mod_sdk::*;
 
 use machine_core::{
-    consume_one, merge_output, output_accepts, write_changed_slots, Caches, Machine, MachineSpec,
-    Presentation, StepCtx,
+    consume_one, merge_output, output_accepts, write_changed_slots, Burner, Caches, Machine,
+    MachineSpec, Presentation, StepCtx,
 };
 
 use crate::keys;
@@ -21,13 +21,13 @@ const SLOT_OUTPUT: usize = 2;
 const COOK_TICKS: u32 = 600;
 const COOK_REGRESS: u32 = 2;
 
-/// Per-oven burn/cook state, persisted in section cell KV at the anchor
-/// (3×u32 LE) so a lit oven reloads mid-bake exactly like the engine furnace.
+/// Per-oven cook state and fire, persisted in section cell KV at the anchor
+/// (3×u32 LE: cook progress, then the [`Burner`]) so a lit oven reloads
+/// mid-bake exactly like the engine furnace.
 #[derive(Clone, Copy, Default, PartialEq)]
 struct OvenState {
     cook_progress: u32,
-    burn_remaining: u32,
-    burn_max: u32,
+    fire: Burner,
 }
 
 impl OvenState {
@@ -35,16 +35,14 @@ impl OvenState {
         let mut r = ByteReader::new(bytes);
         OvenState {
             cook_progress: r.u32().unwrap_or(0),
-            burn_remaining: r.u32().unwrap_or(0),
-            burn_max: r.u32().unwrap_or(0),
+            fire: Burner::decode(&mut r),
         }
     }
 
     fn encode(self) -> Vec<u8> {
         let mut w = ByteWriter::with_capacity(12);
         w.u32(self.cook_progress);
-        w.u32(self.burn_remaining);
-        w.u32(self.burn_max);
+        self.fire.encode(&mut w);
         w.finish()
     }
 }
@@ -85,10 +83,8 @@ impl MachineSpec for OvenSpec {
         let before_state = state;
         let before_slots = slots.clone();
 
-        let was_lit = state.burn_remaining > 0;
-        if state.burn_remaining > 0 {
-            state.burn_remaining -= 1;
-        }
+        let was_lit = state.fire.lit();
+        state.fire.tick();
 
         // What the input would cook into (the oven's OWN class), if the
         // output has room for it.
@@ -101,20 +97,10 @@ impl MachineSpec for OvenSpec {
             .as_ref()
             .is_some_and(|r| output_accepts(caches, &slots[SLOT_OUTPUT], r));
 
-        // Relight from the fuel slot only when the flame is out AND there is
-        // cookable work — idle fuel is never consumed (the furnace contract).
-        if state.burn_remaining == 0 && can_cook {
-            if let Some(fuel) = slots[SLOT_FUEL].clone() {
-                let burn = caches.fuel_ticks_for(&fuel.item);
-                if burn > 0 {
-                    state.burn_remaining = burn;
-                    state.burn_max = burn;
-                    consume_one(&mut slots[SLOT_FUEL]);
-                }
-            }
-        }
+        // The oven wants heat only for cookable work.
+        state.fire.relight(can_cook, &mut slots[SLOT_FUEL], caches);
 
-        if state.burn_remaining > 0 && can_cook {
+        if state.fire.lit() && can_cook {
             state.cook_progress += 1;
             if state.cook_progress >= COOK_TICKS {
                 state.cook_progress = 0;
@@ -137,7 +123,7 @@ impl MachineSpec for OvenSpec {
         // only (the swap is engine-idempotent, but there is no reason to cross
         // the ABI 20×/s per oven). The fire cube, glow, and fire particles are
         // all data on the lit row.
-        let now_lit = state.burn_remaining > 0;
+        let now_lit = state.fire.lit();
         if was_lit != now_lit {
             if let Some(lit) = ctx.variant(0) {
                 swap_block(ctx.pos, if now_lit { lit } else { ctx.block });
@@ -160,12 +146,7 @@ impl MachineSpec for OvenSpec {
                 keys::COOK01,
                 GuiValue::F32(state.cook_progress as f32 / COOK_TICKS as f32),
             );
-            let burn01 = if state.burn_max == 0 {
-                0.0
-            } else {
-                state.burn_remaining as f32 / state.burn_max as f32
-            };
-            ctx.publish(keys::BURN01, GuiValue::F32(burn01));
+            ctx.publish(keys::BURN01, GuiValue::F32(state.fire.gauge01()));
         }
     }
 }

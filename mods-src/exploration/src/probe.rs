@@ -39,32 +39,18 @@ use mod_sdk::*;
 /// A positional host query, reply parallel to the request.
 pub(crate) type Query<T> = fn(Vec<[i32; 3]>) -> Vec<T>;
 
-/// Run one batched host query, split into ABI-sized pieces.
+/// Run one batched host query, split into ABI-sized pieces by
+/// [`paged`], or `None` when the host answered short. A refused or truncated
+/// reply is not a positional answer, so nothing may decide from it.
 ///
 /// Every real section fits in a single crossing — the split exists so a
 /// pathological one degrades into a second call instead of having the host
 /// REJECT the batch, which would stop the pack generating anything at all, or
 /// having a cap TRUNCATE it, which drops candidates by list position and lets a
 /// cell that is about to lose to a giant displace a legitimate floor.
-pub(crate) fn batched<T>(positions: Vec<[i32; 3]>, call: Query<T>) -> Vec<T> {
-    if positions.is_empty() {
-        return Vec::new();
-    }
-    if positions.len() <= SIM_BATCH_MAX {
-        return call(positions);
-    }
-    let mut out = Vec::with_capacity(positions.len());
-    for chunk in positions.chunks(SIM_BATCH_MAX) {
-        out.extend(call(chunk.to_vec()));
-    }
-    out
-}
-
-/// [`batched`], or `None` when the host answered short. A refused or
-/// truncated reply is not a positional answer, so nothing may decide from it.
 pub(crate) fn ask<T>(positions: Vec<[i32; 3]>, call: Query<T>) -> Option<Vec<T>> {
     let want = positions.len();
-    let reply = batched(positions, call);
+    let reply = paged(positions, call);
     (reply.len() == want).then_some(reply)
 }
 
@@ -205,22 +191,38 @@ pub(crate) fn in_reach(
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Deferred;
 
-/// The shared memo's calls, held as values so the settle protocol runs over
+/// The shared memo's lease protocol, held as values so [`settle`] runs over
 /// a fake store in tests.
 #[derive(Copy, Clone)]
 pub(crate) struct Memo {
     pub(crate) claim: fn(&[u8]) -> MemoClaim,
     pub(crate) put: fn(&[u8], Vec<u8>) -> bool,
-    pub(crate) get_many: fn(Vec<Vec<u8>>) -> Vec<Option<Vec<u8>>>,
 }
 
 impl Memo {
-    /// The host's memo.
+    /// The host's memo, through its paged blob layer: a settled fact is
+    /// bounded by [`MEMO_BLOB_MAX_BYTES`] rather than one entry's
+    /// [`MEMO_MAX_VALUE_BYTES`], so a large derivation still publishes.
     pub(crate) const HOST: Memo = Memo {
-        claim: memo_claim,
-        put: memo_put,
-        get_many: memo_get_many,
+        claim: memo_blob_claim,
+        put: publish_logged,
     };
+}
+
+/// [`memo_blob_put`], reporting a refusal. A lease holder that cannot publish
+/// leaves every other claimant deferred until the lease expires and then
+/// re-deriving the fact itself: the pack keeps generating, only slower, so
+/// the refusal is worth a line in the log rather than silence.
+fn publish_logged(key: &[u8], value: Vec<u8>) -> bool {
+    let len = value.len();
+    let stored = memo_blob_put(key, value);
+    if !stored {
+        log(&format!(
+            "memo refused a {len}-byte fact (limit {MEMO_BLOB_MAX_BYTES}); \
+             other workers re-derive it"
+        ));
+    }
+    stored
 }
 
 /// Settle one fact through the memo's lease protocol: a published value is
@@ -241,21 +243,26 @@ pub(crate) fn settle<V>(
     };
     Ok(published.unwrap_or_else(|| {
         let value = derive();
+        // A refused publication is reported by the store; the derived value
+        // is still the answer here, it just serves no one else.
         (memo.put)(key, encode(&value));
         value
     }))
 }
 
-/// Look many keys up in the memo, split at the ABI cap; the reply is parallel
-/// to `keys`, and a key the host did not answer reads as missing.
-pub(crate) fn lookup_many(memo: Memo, keys: Vec<Vec<u8>>) -> Vec<Option<Vec<u8>>> {
-    let mut out = Vec::with_capacity(keys.len());
-    for chunk in keys.chunks(SIM_BATCH_MAX) {
-        let mut reply = (memo.get_many)(chunk.to_vec());
-        reply.resize(chunk.len(), None);
-        out.extend(reply);
-    }
-    out
+/// Plain memo entries for many keys, split at the ABI cap by [`paged`]; the
+/// reply is parallel to `keys`, and a key the host did not answer reads as
+/// missing. `get_many` is [`memo_get_many`] in play.
+pub(crate) fn lookup_many(
+    get_many: fn(Vec<Vec<u8>>) -> Vec<Option<Vec<u8>>>,
+    keys: Vec<Vec<u8>>,
+) -> Vec<Option<Vec<u8>>> {
+    paged(keys, |page| {
+        let want = page.len();
+        let mut reply = get_many(page);
+        reply.resize(want, None);
+        reply
+    })
 }
 
 /// A bounded per-worker cache of settled facts, evicting oldest first.

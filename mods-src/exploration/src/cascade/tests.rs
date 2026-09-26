@@ -481,6 +481,7 @@ fn a_settled_cell_round_trips_through_the_memo() {
         wet: Vec::new(),
     };
     let bytes = Feature::encode(Some(&feature));
+    assert_eq!(bytes.len(), Feature::encoded_len(3, 1, 2), "the size formula drifted");
     let back = Feature::decode(&bytes)
         .expect("well-formed")
         .expect("a cascade");
@@ -492,5 +493,26 @@ fn a_settled_cell_round_trips_through_the_memo() {
     assert!(
         Feature::decode(&bytes[..bytes.len() - 1]).is_none(),
         "a truncated value decoded"
+    );
+}
+
+/// A settled feature must always PUBLISH: a lease holder whose value the memo
+/// refuses leaves every other worker deferred and then re-flooding the cell.
+/// One trace's refined probe is capped at [`BAND_PROBE_MAX`] cells, and every
+/// cell a feature names comes from that band (a write, the wet set, the cell
+/// over water, a giant anchor overlapping it), so twice the cap per list is a
+/// generous ceiling — above one plain memo entry, which is why cascades
+/// publish through the paged blob, and inside the blob's limit.
+#[test]
+fn the_worst_case_feature_fits_the_memo_blob() {
+    let ceiling = 2 * BAND_PROBE_MAX;
+    let worst = Feature::encoded_len(ceiling, ceiling, ceiling);
+    assert!(
+        worst <= mod_sdk::MEMO_BLOB_MAX_BYTES,
+        "a {worst}-byte feature exceeds the blob limit"
+    );
+    assert!(
+        Feature::encoded_len(BAND_PROBE_MAX, 0, 0) > mod_sdk::MEMO_MAX_VALUE_BYTES,
+        "a long basin outgrows one memo entry; the blob is load-bearing"
     );
 }

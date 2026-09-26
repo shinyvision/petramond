@@ -467,7 +467,7 @@ fn exposed(ctx: &mut Ctx, cells: Vec<[i32; 3]>) -> HashSet<[i32; 3]> {
     beside.dedup();
     let open: HashSet<[i32; 3]> = beside
         .iter()
-        .zip(crate::design::paged(beside.clone(), get_blocks))
+        .zip(paged(beside.clone(), get_blocks))
         .filter(|(_, b)| b.is_some_and(|b| open_block(ctx, b)))
         .map(|(c, _)| *c)
         .collect();

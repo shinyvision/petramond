@@ -4,7 +4,9 @@
 //! [`crate::registry`].)
 
 use mod_api::{BlockId, WorldgenStage};
+mod colony;
 mod terrain;
+pub use colony::{isqrt, Colony, ColonyField};
 pub use terrain::TerrainCache;
 
 host_fn! {

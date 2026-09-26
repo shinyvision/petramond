@@ -8,27 +8,15 @@ use mod_sdk::*;
 pub struct Fluids(Vec<u64>);
 
 impl Fluids {
-    /// Every registered block whose row declares a fluid. Block ids are
-    /// dense, so the registry is read a page at a time up to its first
-    /// unregistered id.
+    /// Every registered block whose row declares a fluid.
     pub fn resolve() -> Self {
-        const PAGE: u16 = 256;
         let mut fluids = Self::default();
-        let mut first = 0u16;
-        loop {
-            let infos = block_infos((first..first.saturating_add(PAGE)).map(BlockId).collect());
-            for (id, info) in (first..).zip(infos) {
-                match info {
-                    None => return fluids,
-                    Some(info) if info.fluid.is_some() => fluids.insert(BlockId(id)),
-                    Some(_) => {}
-                }
+        for (id, info) in registered_blocks() {
+            if info.fluid.is_some() {
+                fluids.insert(id);
             }
-            first = match first.checked_add(PAGE) {
-                Some(next) => next,
-                None => return fluids,
-            };
         }
+        fluids
     }
 
     #[inline]

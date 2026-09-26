@@ -4,6 +4,9 @@ use crate::{ByteReader, ByteWriter, MemoClaim, MEMO_MAX_VALUE_BYTES};
 
 const PAGE_BYTES: usize = MEMO_MAX_VALUE_BYTES;
 const MAX_PAGES: usize = 64;
+/// The largest value [`memo_blob_put`] publishes; anything larger is refused
+/// (`false`) and stays uncached.
+pub const MEMO_BLOB_MAX_BYTES: usize = MAX_PAGES * PAGE_BYTES;
 
 trait Access {
     fn claim(&mut self, key: &[u8]) -> MemoClaim;
@@ -29,7 +32,8 @@ pub fn memo_blob_claim(key: &[u8]) -> MemoClaim {
     claim(&mut Host, key)
 }
 
-/// Publish up to 64 memo pages. The value remains discardable, like [`super::memo_put`].
+/// Publish a value of up to [`MEMO_BLOB_MAX_BYTES`] as memo pages. The value
+/// remains discardable, like [`super::memo_put`].
 pub fn memo_blob_put(key: &[u8], value: Vec<u8>) -> bool {
     put(&mut Host, key, value)
 }
@@ -92,7 +96,7 @@ fn put(a: &mut impl Access, key: &[u8], value: Vec<u8>) -> bool {
         inline.extend(value);
         return a.put(key, inline);
     }
-    if value.len() > MAX_PAGES * PAGE_BYTES {
+    if value.len() > MEMO_BLOB_MAX_BYTES {
         return false;
     }
     for (i, page) in value.chunks(PAGE_BYTES).enumerate() {

@@ -8,7 +8,8 @@
 //! state keys plus one `step`. Everything else (init, placement tracking, the
 //! viewer set, and the whole batched tick preamble) is this crate's and is
 //! never re-implemented per pack. The kitchen's oven and miller and the
-//! forge's forging furnace are all specs over the same driver.
+//! forge's forging furnace are all specs over the same driver, and every
+//! fuelled one keeps its fire in a [`Burner`].
 //!
 //! # Cost shape (the thing this crate exists to own)
 //!
@@ -29,6 +30,9 @@ use std::collections::{HashMap, HashSet};
 
 use mod_sdk::*;
 
+mod burner;
+pub use burner::Burner;
+
 /// Bytes one anchor occupies in a persisted shard (three LE `i32`).
 const ANCHOR_BYTES: usize = 12;
 
@@ -43,26 +47,6 @@ const ANCHORS_PER_SHARD: usize = 4096;
 /// the compiler rather than in the sentence above, so raising it cannot
 /// silently start producing writes the host rejects.
 const _: () = assert!(ANCHORS_PER_SHARD * ANCHOR_BYTES <= KV_MAX_VALUE_BYTES);
-
-/// Split `items` into host-cap-sized pages and concatenate the replies.
-///
-/// Every batched call this crate makes goes through here, because an over-cap
-/// batch is a `HostRet::Error` — which the SDK turns into a guest panic and the
-/// host into a DISABLED MOD. "You built too many machines" must never be a way
-/// to lose your pack.
-fn paged<T, R>(items: Vec<T>, mut call: impl FnMut(Vec<T>) -> Vec<R>) -> Vec<R> {
-    if items.len() <= SIM_BATCH_MAX {
-        return call(items);
-    }
-    let mut out = Vec::with_capacity(items.len());
-    let mut rest = items;
-    while !rest.is_empty() {
-        let tail = rest.split_off(rest.len().min(SIM_BATCH_MAX));
-        out.extend(call(rest));
-        rest = tail;
-    }
-    out
-}
 
 /// One machine KIND's identity plus its per-tick step. Everything a placed
 /// machine shares — the persisted anchor registry, container-session
@@ -355,15 +339,11 @@ impl Presentation {
             parts,
             state,
         } = self;
-        if !state.is_empty() {
-            paged(state, |page| section_kv_set_many(state_key, page));
-        }
-        if !parts.is_empty() {
-            paged(parts, set_model_parts_many);
-        }
-        if !draws.is_empty() {
-            paged(draws, set_block_draws);
-        }
+        // Every batch goes through `paged`: "you built too many machines"
+        // must never be a way to lose the pack. An empty one costs nothing.
+        paged(state, |page| section_kv_set_many(state_key, page));
+        paged(parts, set_model_parts_many);
+        paged(draws, set_block_draws);
     }
 }
 
@@ -732,35 +712,6 @@ mod tests {
         let out = out.unwrap();
         assert_eq!(out.count, 5);
         assert_eq!(out.data.len(), 1, "the stored stack's data survives");
-    }
-
-    /// EVERY batched host call this crate makes is split at the host's cap,
-    /// because an over-cap batch is not a slow call — it is an ERROR, which
-    /// the SDK turns into a panic and the host into a disabled mod. So the
-    /// failure mode of building 4097 machines was losing the pack.
-    #[test]
-    fn batches_are_split_at_the_host_cap_and_keep_their_order() {
-        let items: Vec<usize> = (0..SIM_BATCH_MAX * 2 + 7).collect();
-        let mut widest = 0;
-        let out = paged(items.clone(), |page| {
-            widest = widest.max(page.len());
-            page.iter().map(|i| i * 2).collect()
-        });
-        assert!(
-            widest <= SIM_BATCH_MAX,
-            "a page went over the cap: {widest}"
-        );
-        assert_eq!(out.len(), items.len(), "every element is answered");
-        assert_eq!(out[0], 0);
-        assert_eq!(out[items.len() - 1], (items.len() - 1) * 2, "order held");
-
-        // Under the cap it must stay ONE call — the common world.
-        let mut calls = 0;
-        paged(vec![1, 2, 3], |page| {
-            calls += 1;
-            page
-        });
-        assert_eq!(calls, 1);
     }
 
     /// The persisted anchor list outgrew ONE world-KV value long before a big

@@ -88,9 +88,10 @@ const ZOMBIE_CROWD_LIMIT: usize = 4;
 /// is intentionally below ordinary torch light, while still accepting caves
 /// with little or no sky/block light.
 const SPAWN_LIGHT_THRESHOLD: f32 = 24.0;
+/// How far around EVERY connected player zombies are checked for sunburn.
+const SUNBURN_RADIUS: f32 = 160.0;
 /// Sunburn ignition requires strong direct sky light — the shared cross-mod
 /// direct-sky threshold (rain lands exactly where the naked sun reaches).
-const SUNBURN_RADIUS: f32 = 160.0;
 const SUNBURN_SKY_THRESHOLD: f32 = weather_core::DIRECT_SKY_MIN as f32;
 /// The brightest raw sky light a cell can hold (6-bit channel).
 const MAX_SKY_LIGHT: f32 = 63.0;
@@ -176,16 +177,10 @@ impl Mod for Monsters {
             return;
         };
         let field = self.weather_field();
-        // A tick system acts for nobody: the sun burns what stands near ANY
-        // connected player, each mob once however many players are near it.
-        let mut near: Vec<MobSnapshot> = Vec::new();
-        for player in players() {
-            for mob in mobs_in_radius(player.state.pos, SUNBURN_RADIUS) {
-                if !near.iter().any(|seen| seen.id == mob.id) {
-                    near.push(mob);
-                }
-            }
-        }
+        // Every player's range, each zombie once: a tick system has no single
+        // "the player", and overlapping ranges must not burn a zombie twice.
+        let anchors: Vec<[f64; 3]> = players().iter().map(|p| p.state.pos).collect();
+        let near = mobs_near_any(&anchors, SUNBURN_RADIUS);
         self.tick_fire(daylight, field.as_ref(), &near);
     }
 

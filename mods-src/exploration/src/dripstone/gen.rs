@@ -70,6 +70,16 @@ const FORMATION_R: (i32, i32) = (7, 13);
 const CORE_PER_MILLE: i32 = 420;
 const RIM_PER_MILLE: i32 = 110;
 const STRAY_PER_MILLE: i32 = 30;
+/// The formation field over the constants above: every lattice cell seeds one.
+const FORMATIONS: ColonyField = ColonyField {
+    salt: SALT_FORMATION,
+    lattice: FORMATION_LATTICE,
+    one_in: 1,
+    radius: FORMATION_R,
+    core: CORE_PER_MILLE,
+    rim: RIM_PER_MILLE,
+    stray: STRAY_PER_MILLE,
+};
 const CLUSTER_ONE_IN: i32 = 4;
 const CONE_ONE_IN: i32 = 30;
 /// Of the cones, how many are wide, and how many try for a column.
@@ -529,31 +539,11 @@ fn run_len(rng: &mut GenRng) -> i32 {
 }
 
 /// The root density (per mille) at a column and whether it lies in a
-/// formation's inner half — the `patch_at` colony rule with a linear
-/// falloff, so spikes crowd into formations with sparse strays between.
+/// formation's inner half — a [`ColonyField`] with a linear falloff, so
+/// spikes crowd into formations with sparse strays between.
 fn formation_at(seed: u32, wx: i32, wz: i32) -> (i32, bool) {
-    let (mut best, mut core) = (STRAY_PER_MILLE, false);
-    let cell = |v: i32| v.div_euclid(FORMATION_LATTICE);
-    for lz in cell(wz - FORMATION_R.1)..=cell(wz + FORMATION_R.1) {
-        for lx in cell(wx - FORMATION_R.1)..=cell(wx + FORMATION_R.1) {
-            let mut rng = GenRng::positional(seed, SALT_FORMATION, lx, 0, lz);
-            let cx = lx * FORMATION_LATTICE + rng.next_i32(0, FORMATION_LATTICE - 1);
-            let cz = lz * FORMATION_LATTICE + rng.next_i32(0, FORMATION_LATTICE - 1);
-            let r = rng.next_i32(FORMATION_R.0, FORMATION_R.1);
-            let (dx, dz) = (wx - cx, wz - cz);
-            let d2 = dx * dx + dz * dz;
-            if d2 > r * r {
-                continue;
-            }
-            let d = crate::cavern::isqrt(d2);
-            let dens = CORE_PER_MILLE + (RIM_PER_MILLE - CORE_PER_MILLE) * d / r.max(1);
-            if dens > best {
-                best = dens;
-                core = 2 * d <= r;
-            }
-        }
-    }
-    (best, core)
+    let (density, owner) = FORMATIONS.densest(seed, wx, wz, |_| ());
+    (density, owner.is_some_and(|f| 2 * f.distance <= f.radius))
 }
 
 #[cfg(test)]

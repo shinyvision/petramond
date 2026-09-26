@@ -240,6 +240,40 @@ host_fn! {
         => BlockInfos { blocks } => BlockInfos
 }
 
+/// Every registered block and its row, in id order — the whole block
+/// registry read through [`block_infos`] a page at a time. Block ids are
+/// dense, so the read stops at the first unregistered id. How a mod
+/// classifies the registry once at init (which ids are fluids, which are
+/// tagged); cache the answer, never re-read it per tick.
+pub fn registered_blocks() -> Vec<(BlockId, mod_api::BlockInfoData)> {
+    dense_prefix(block_infos)
+}
+
+/// The registered prefix of the id space, asked a page at a time. A reply
+/// that answers fewer ids than asked ends the read like an unregistered id:
+/// nothing past a gap is trusted.
+fn dense_prefix<T>(mut query: impl FnMut(Vec<BlockId>) -> Vec<Option<T>>) -> Vec<(BlockId, T)> {
+    const PAGE: u16 = 256;
+    let mut out = Vec::new();
+    let mut first = 0u16;
+    loop {
+        let end = first.saturating_add(PAGE);
+        let asked = usize::from(end - first);
+        let infos = query((first..end).map(BlockId).collect());
+        let answered = infos.len();
+        for (id, info) in (first..).zip(infos) {
+            match info {
+                Some(info) => out.push((BlockId(id), info)),
+                None => return out,
+            }
+        }
+        if answered < asked || end == u16::MAX {
+            return out;
+        }
+        first = end;
+    }
+}
+
 host_fn! {
     /// What each [`BlockRecord`](mod_api::BlockRecord) asks of construction on
     /// its own — clearance, a member of an object anchored elsewhere, or a
@@ -247,4 +281,34 @@ host_fn! {
     /// [`mod_api::SIM_BATCH_MAX`]). Registry-only, legal on any instance.
     pub fn block_record_plans(records: Vec<mod_api::BlockRecord>) -> Vec<mod_api::RecordPlan>
         => BlockRecordPlans { records } => RecordPlans
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_registry_is_read_in_pages_up_to_the_first_unregistered_id() {
+        let mut pages = Vec::new();
+        let found = dense_prefix(|ids: Vec<BlockId>| {
+            pages.push(ids.len());
+            ids.into_iter()
+                .map(|id| (id.0 < 600).then_some(id.0 * 2))
+                .collect()
+        });
+        assert_eq!(pages, [256, 256, 256], "one page per crossing, none past the gap");
+        assert_eq!(found.len(), 600);
+        assert_eq!(found[599], (BlockId(599), 1198));
+    }
+
+    #[test]
+    fn a_short_reply_ends_the_read() {
+        let mut calls = 0;
+        let found = dense_prefix(|ids: Vec<BlockId>| {
+            calls += 1;
+            ids.into_iter().take(10).map(|id| Some(id.0)).collect()
+        });
+        assert_eq!(calls, 1);
+        assert_eq!(found.len(), 10);
+    }
 }
