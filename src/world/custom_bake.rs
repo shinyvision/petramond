@@ -79,8 +79,8 @@ impl World {
     /// Record a custom shape cell's baked light aperture on its section (the
     /// deterministic SIM bake). The wire aperture is already a per-cell "opaque to
     /// light" decision — Opaque blocks light, Open passes it. A real opacity
-    /// TRANSITION relights the cell's section neighbourhood so the change
-    /// propagates; an unchanged bake costs nothing.
+    /// TRANSITION relights the change (see `relight_aperture_change`); an
+    /// unchanged bake costs nothing.
     pub fn set_custom_light_aperture(&mut self, pos: IVec3, aperture: mod_api::LightAperture) {
         let opaque = match aperture {
             mod_api::LightAperture::Opaque => true,
@@ -90,7 +90,7 @@ impl World {
             if let Some(section) = self.section_mut(sp) {
                 let idx = petramond_world::chunk::section_idx(lx, ly, lz) as u16;
                 if section.set_custom_light_aperture(idx, opaque) {
-                    self.mark_light_dirty_neighborhood(sp, true);
+                    self.relight_aperture_change(pos, sp);
                 }
             }
         }
@@ -102,9 +102,21 @@ impl World {
             if let Some(section) = self.section_mut(sp) {
                 let idx = petramond_world::chunk::section_idx(lx, ly, lz) as u16;
                 if section.clear_custom_light_aperture(idx) {
-                    self.mark_light_dirty_neighborhood(sp, true);
+                    self.relight_aperture_change(pos, sp);
                 }
             }
+        }
+    }
+
+    /// One cell's light aperture changed. When its region's stored light can
+    /// be trusted, an authoritative world relights it incrementally like any
+    /// other single-cell light change, instead of rebaking all 27 sections
+    /// around it. Otherwise — the replica (its light is server-owned), or a
+    /// bake landing on freshly streamed terrain — the section neighbourhood
+    /// is marked as before.
+    fn relight_aperture_change(&mut self, pos: IVec3, sp: petramond_world::chunk::SectionPos) {
+        if !self.queue_incremental_relight(pos) {
+            self.mark_light_dirty_neighborhood(sp, true);
         }
     }
 }

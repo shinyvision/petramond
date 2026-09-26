@@ -7,6 +7,7 @@ use crate::chunk::{SectionPos, SECTION_SIZE, SECTION_VOLUME, SKY_FULL};
 use crate::light::{LightRgb, DECAY};
 use crate::mathh::IVec3;
 
+use super::neighborhood::cube_idx;
 use super::shape::LightCells;
 use super::{NBHD, NBHD_VOLUME};
 
@@ -66,11 +67,6 @@ impl FloodScratch {
         self.queue.clear();
         (light, &mut self.queue)
     }
-}
-
-#[inline]
-fn cube_idx(dim: usize, x: usize, y: usize, z: usize) -> usize {
-    (y * dim + z) * dim + x
 }
 
 /// Flood skylight across the 3x3x3 section neighbourhood, then clip to the centre.
@@ -268,7 +264,7 @@ const CURSOR_STEP: [u32; 6] = [
 
 /// The `+Y` entry of [`FACE_NEIGHBORS`]; its opposite (index 3) is the
 /// straight-down step direct skylight rides losslessly.
-const DOWN: usize = 3;
+pub(super) const DOWN: usize = 3;
 
 /// The sub-box of the flood cube whose values the caller will actually KEEP —
 /// the centre section for a per-section bake, the whole member group for a
@@ -355,7 +351,7 @@ fn in_cube(k: usize, x: u32, y: u32, z: u32, dim: u32) -> bool {
 }
 
 #[inline]
-fn face_mask(word: u32, face: usize) -> u32 {
+pub(super) fn face_mask(word: u32, face: usize) -> u32 {
     (word >> (face * 4)) & 0xF
 }
 

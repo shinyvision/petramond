@@ -176,6 +176,13 @@ pub struct WorldData {
     /// `request_light_dependencies`; the pending-bake dedup makes that free.
     /// Bounded by edits per tick.
     pub relight_demand: FxHashSet<SectionPos>,
+    /// Cells whose light-relevant content changed since the last incremental
+    /// relight (`light::incremental`), each with the full-rebake invalidation
+    /// radius to fall back to (`-1`: the change was proven light-neutral, so a
+    /// fallback marks nothing for it). Authoritative worlds only; drained
+    /// before anything reads or persists the light it would change. Bounded
+    /// by edits per drain.
+    pub light_edits: Vec<(crate::mathh::IVec3, i32)>,
     /// Sections whose bake landed since the last save flush. Light changes
     /// don't set `modified` (they're derived, not player content), but a
     /// section whose on-disk record already exists must re-persist after a
@@ -215,6 +222,49 @@ pub struct WorldData {
 }
 
 impl WorldData {
+    /// An empty world: nothing loaded, nothing queued, no save attached.
+    pub fn new(seed: u32, role: WorldRole, render_dist: i32) -> Self {
+        Self {
+            seed,
+            role,
+            sections: FxHashMap::default(),
+            columns: FxHashMap::default(),
+            column_payload_revisions: FxHashMap::default(),
+            column_revision_counter: 0,
+            section_column_cys: FxHashMap::default(),
+            section_column_rt: FxHashMap::default(),
+            random_tick_dirty: FxHashSet::default(),
+            render_dist,
+            lighting_revision: 0,
+            block_entity_sections: FxHashSet::default(),
+            particle_emitter_sections: FxHashSet::default(),
+            light_deferred: FxHashSet::default(),
+            deferred_recheck_needed: false,
+            deferred_rechecks: FxHashSet::default(),
+            last_load_target: None,
+            extra_load_targets: Vec::new(),
+            missing_columns_settled: false,
+            column_summaries: FxHashMap::default(),
+            column_biome_halos: FxHashMap::default(),
+            column_deep_band_los: FxHashMap::default(),
+            relight_demand: FxHashSet::default(),
+            light_edits: Vec::new(),
+            relit_since_persist: FxHashSet::default(),
+            light_edited_since_persist: FxHashSet::default(),
+            sim: TickState::new(seed),
+            environment: WorldEnvironment::default(),
+            content: ContentState {
+                block_hooks: Vec::new(),
+                world_kv: BTreeMap::new(),
+                disabled_mods: std::collections::BTreeSet::new(),
+                custom_bake: FxHashMap::default(),
+                custom_bake_dirty: FxHashSet::default(),
+            },
+            stream_nonfinal: FxHashSet::default(),
+            saved: SavedIndex::default(),
+        }
+    }
+
     /// Ensure the per-column data for `(cx,cz)` exists, building it cheaply if not.
     /// Worldgen fills biome + both height maps; an empty column is the pre-gen placeholder.
     pub fn ensure_column(&mut self, pos: ChunkPos) -> &mut Column {

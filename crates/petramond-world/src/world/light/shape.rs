@@ -1,11 +1,17 @@
 use crate::block::{Block, BlockLightShape};
 
-/// Collect a section's light-relevant per-cell apertures out of the UNIFIED
-/// state store: every `Shaped`-light cell's FAMILY answers its packed
-/// per-face apertures from its own stored state (`ShapeSim::light_apertures`)
-/// — no family knowledge here or anywhere downstream. Shared by the
-/// per-section and the batched light gathers so the two can't diverge.
-pub fn collect_shape_states(
+/// Collect every per-cell aperture OVERRIDE a section holds, in the sparse
+/// currency the floods read: each `Shaped`-light cell with stored state has its
+/// FAMILY answer its packed per-face apertures (`ShapeSim::light_apertures`),
+/// then each WASM custom-shape cell's baked "opaque to light" bit lands on top
+/// (opaque blocks every quadrant, open passes all). Later entries win in
+/// [`ShapeStateSnapshot::from_sparse`], so a custom bake overrides its cell's
+/// family answer.
+///
+/// This is the ONE producer of light overrides: the per-section and batched
+/// span gathers and the incremental relight all read a section through it, so
+/// no light path can drop a kind of override the others honour.
+pub fn collect_light_overrides(
     section: &crate::section::Section,
     mut idx: impl FnMut(usize, usize, usize) -> usize,
     states: &mut Vec<SparseCellState>,
@@ -23,6 +29,19 @@ pub fn collect_shape_states(
             idx: idx(lx, ly, lz),
             masks: k.sim.light_apertures(&k.params, &nb, pos, block),
         });
+    }
+    if let Some(aps) = section.custom_light_apertures() {
+        states.extend(aps.iter().map(|(&key, &opaque)| {
+            let (lx, ly, lz) = crate::chunk::section_local(key as usize);
+            SparseCellState {
+                idx: idx(lx, ly, lz),
+                masks: if opaque {
+                    0
+                } else {
+                    crate::block::LIGHT_APERTURES_OPEN
+                },
+            }
+        }));
     }
 }
 
@@ -133,17 +152,31 @@ impl<'a> LightCells<'a> {
     /// [`crate::block::LIGHT_CELL_DIRECT_SKY`] flag.
     #[inline]
     pub fn word(self, idx: usize) -> u32 {
-        // A raw id past the loaded registry reads as AIR's word (row 0),
-        // the same degradation `Block::from_id` applies — never a panic on a
-        // light worker.
-        let id = self.blocks[idx] as usize;
-        let w = self.cells.get(id).copied().unwrap_or(self.cells[0]);
-        if w & crate::block::LIGHT_CELL_SHAPED == 0 {
-            return w;
-        }
-        match self.apertures {
-            Some(a) if a[idx] != NO_ENTRY => a[idx] | (w & crate::block::LIGHT_CELL_DIRECT_SKY),
-            _ => w,
-        }
+        resolve_word(self.cells, self.blocks[idx], || match self.apertures {
+            Some(a) if a[idx] != NO_ENTRY => Some(a[idx]),
+            _ => None,
+        })
+    }
+}
+
+/// One cell's light word from its raw block id and, for a `Shaped` id only,
+/// its gathered override (asked lazily — the common unshaped cell never pays
+/// for the lookup). The one resolve rule behind [`LightCells::word`] and the
+/// incremental relight's live-section reads.
+#[inline]
+pub(super) fn resolve_word(
+    cells: &[u32],
+    id: u16,
+    override_masks: impl FnOnce() -> Option<u32>,
+) -> u32 {
+    // A raw id past the loaded registry reads as AIR's word (row 0), the same
+    // degradation `Block::from_id` applies — never a panic on a light worker.
+    let w = cells.get(id as usize).copied().unwrap_or(cells[0]);
+    if w & crate::block::LIGHT_CELL_SHAPED == 0 {
+        return w;
+    }
+    match override_masks() {
+        Some(masks) => masks | (w & crate::block::LIGHT_CELL_DIRECT_SKY),
+        None => w,
     }
 }

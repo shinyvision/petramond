@@ -401,7 +401,8 @@ impl Mobs {
         terrain_checked.clear();
         terrain_checked.resize(solid_motions.len(), 0.0);
         let mut solid_solver = std::mem::take(&mut self.solid_motion_solver);
-        let terrain_boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
+        let cells = world.cursor();
+        let terrain_boxes = |x: i32, y: i32, z: i32| cells.collision_boxes_xyz(x, y, z);
         let mut settled = false;
         for _ in 0..=solid_motions.len() {
             solid_solver.resolve_with_limits(&solid_motions, &solid_limits);

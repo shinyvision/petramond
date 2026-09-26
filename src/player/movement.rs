@@ -160,8 +160,10 @@ impl Player {
         if self.is_spectator() || (delta.x == 0.0 && delta.z == 0.0) {
             return;
         }
-        // Position-aware so a multi-cell bbmodel block collides per its own cell shape.
-        let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
+        // Position-aware so a multi-cell bbmodel block collides per its own cell shape;
+        // one cursor so the sweep's neighbouring cells share a section resolve.
+        let cells = world.cursor();
+        let boxes = |x: i32, y: i32, z: i32| cells.collision_boxes_xyz(x, y, z);
         self.sweep_boxes(Axis::X, delta.x, &boxes);
         self.sweep_boxes(Axis::Z, delta.z, &boxes);
     }
@@ -190,8 +192,10 @@ impl Player {
         input: Input,
         obstacles: &[DynBox],
     ) {
-        // Position-aware so a multi-cell bbmodel block collides per its own cell shape.
-        let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
+        // Position-aware so a multi-cell bbmodel block collides per its own cell shape;
+        // one cursor so the sweeps' neighbouring cells share a section resolve.
+        let cells = world.cursor();
+        let boxes = |x: i32, y: i32, z: i32| cells.collision_boxes_xyz(x, y, z);
         let fluid = |feet: petramond_math::world_pos::WorldPos| {
             world.body_fluid(feet, HEIGHT, Buoyancy::Swim)
         };

@@ -15,7 +15,12 @@ impl World {
     /// sky-cover segment whose meshes only requeue if the landed cubes prove
     /// changed, or a headless server with no mesh pump at all. First-time
     /// bakes still come from the streamer's `flush_settled_deferred`.
+    ///
+    /// Queued incremental relights drain first: they install exact cubes on
+    /// the spot, and whatever they decline lands in `relight_demand` in time
+    /// for this same pump to request its full rebakes.
     pub fn pump_light_bakes(&mut self) {
+        self.apply_light_edits();
         if !self.relight_demand.is_empty() {
             let target = self.last_load_target;
             let bakes: Vec<SectionPos> = std::mem::take(&mut self.relight_demand)
@@ -125,36 +130,55 @@ impl World {
                 }
                 continue;
             }
-            s.set_skylight(res.skylight);
-            s.set_blocklight(res.blocklight);
-            s.dirty = true;
-            // The cached light changed, so any in-flight mesh built from the old
-            // light is now stale: bump so its result is discarded and re-queue.
-            s.mesh_revision = s.mesh_revision.wrapping_add(1);
-            self.bump_lighting_revision();
-            if self.save.is_some() {
-                // An already-persisted record must rewrite with the new cubes
-                // (see `relit_since_persist`); unknown-to-disk sections are
-                // filtered at the persist gate. The landed bake also resolves
-                // any pending edit-staleness — the fresh cubes supersede it.
-                self.relit_since_persist.insert(res.pos);
-                self.light_edited_since_persist.remove(&res.pos);
-            }
-            if self.role == crate::world::WorldRole::ServerHeadless {
-                // A landed bake is new shippable content: LightData for
-                // recipients that already hold the section, and (via the
-                // revision) a replan for those still waiting on the light-final
-                // ship gate. No meshes to relight headless (`queue_dirty_mesh`).
-                self.replication.light_ship_log.insert(res.pos);
-                self.bump_terrain_revision();
-            } else {
-                self.terrain.dirty_meshes.push(res.pos);
-                if !first_bake {
-                    self.requeue_meshes_sampling_changed_regions(res.pos, mask);
-                }
-            }
+            self.install_light_cubes(res.pos, res.skylight, res.blocklight, mask, first_bake);
         }
         self.flush_light_blocked_meshes();
+    }
+
+    /// Install changed light cubes on `pos` — a landed bake, or an incremental
+    /// relight — and publish the change: `mask` names the mesh-sampling
+    /// regions that changed (see `light::cube_region_changes`); a `first_bake`
+    /// needs no neighbour requeue (its samplers were parked on its dirty
+    /// light and rebuild anyway).
+    pub(in crate::world) fn install_light_cubes(
+        &mut self,
+        pos: SectionPos,
+        skylight: std::sync::Arc<[u8]>,
+        blocklight: std::sync::Arc<[petramond_world::light::LightRgb]>,
+        mask: u32,
+        first_bake: bool,
+    ) {
+        let Some(s) = self.section_mut(pos) else {
+            return;
+        };
+        s.set_skylight(skylight);
+        s.set_blocklight(blocklight);
+        s.dirty = true;
+        // The cached light changed, so any in-flight mesh built from the old
+        // light is now stale: bump so its result is discarded and re-queue.
+        s.mesh_revision = s.mesh_revision.wrapping_add(1);
+        self.bump_lighting_revision();
+        if self.save.is_some() {
+            // An already-persisted record must rewrite with the new cubes
+            // (see `relit_since_persist`); unknown-to-disk sections are
+            // filtered at the persist gate. The fresh cubes also resolve any
+            // pending edit-staleness — they supersede it.
+            self.relit_since_persist.insert(pos);
+            self.light_edited_since_persist.remove(&pos);
+        }
+        if self.role == crate::world::WorldRole::ServerHeadless {
+            // Changed light is new shippable content: LightData for
+            // recipients that already hold the section, and (via the
+            // revision) a replan for those still waiting on the light-final
+            // ship gate. No meshes to relight headless (`queue_dirty_mesh`).
+            self.replication.light_ship_log.insert(pos);
+            self.bump_terrain_revision();
+        } else {
+            self.terrain.dirty_meshes.push(pos);
+            if !first_bake {
+                self.requeue_meshes_sampling_changed_regions(pos, mask);
+            }
+        }
     }
 
     /// A landed rebake changed cells in some of `pos`'s border regions: any

@@ -3,29 +3,28 @@ use crate::{
     block::Block,
     fluid_math::{fluid_height, is_source, surface_flow_dir},
     mathh::{IVec3, Vec3},
-    world::WorldData,
+    world::{SectionCursor, WorldData},
 };
 use petramond_math::world_pos::WorldPos;
 
 impl WorldData {
     /// The real fluid volume at a point; air above a thin flow is never immersed.
     pub fn fluid_at_point(&self, point: WorldPos) -> Option<Immersion> {
-        let sample = self.fluid_in_cell(point.block())?;
+        let sample = fluid_in_cell(&self.cursor(), point.block())?;
         (point.y < f64::from(sample.surface_y)).then_some(sample)
     }
 
     /// Fluid response for a body, using its size and buoyancy mode.
     pub fn body_fluid(&self, feet: WorldPos, height: f32, buoyancy: Buoyancy) -> Option<Immersion> {
+        let cur = self.cursor();
         if buoyancy == Buoyancy::Surface {
             let cell = feet.block();
-            return self
-                .fluid_surface_at(cell)
-                .or_else(|| self.fluid_surface_at(cell - IVec3::Y));
+            return fluid_surface_at(&cur, cell).or_else(|| fluid_surface_at(&cur, cell - IVec3::Y));
         }
         let x = feet.x.floor() as i32;
         let z = feet.z.floor() as i32;
         for y in feet.y.floor() as i32..=(feet.y + f64::from(height)).floor() as i32 {
-            let Some(sample) = self.fluid_in_cell(IVec3::new(x, y, z)) else {
+            let Some(sample) = fluid_in_cell(&cur, IVec3::new(x, y, z)) else {
                 continue;
             };
             let probe = feet.y + f64::from(sample.fluid.motion.probe_height(height));
@@ -38,41 +37,31 @@ impl WorldData {
 
     /// Top of the contiguous same-fluid column containing `cell`.
     pub fn fluid_surface_at(&self, cell: IVec3) -> Option<Immersion> {
-        let mut sample = self.fluid_in_cell(cell)?;
-        let mut top = cell;
-        while self.physics_block(top.x, top.y + 1, top.z).fluid() == Some(sample.fluid.block) {
-            top.y += 1;
-        }
-        sample.surface_y = top.y as f32
-            + fluid_height(
-                self.fluid_meta_world(top.x, top.y, top.z),
-                self.physics_block(top.x, top.y + 1, top.z),
-                sample.fluid.block,
-            );
-        Some(sample)
+        fluid_surface_at(&self.cursor(), cell)
     }
 
     /// Horizontal direction a body drifts in when it overlaps this cell of
     /// `fluid`. Matches [`surface_flow_dir`], which the mesher also uses to face
     /// the flow texture.
     pub fn fluid_flow_dir_at(&self, wx: i32, wy: i32, wz: i32, fluid: Block) -> Vec3 {
+        // ~20 probes around one cell: all but a seam's worth hit one section.
+        let cur = self.cursor();
         let block_at = |x: i32, y: i32, z: i32| {
-            let block = self.physics_block(x, y, z);
+            let block = cur.physics_block(IVec3::new(x, y, z));
             block.fluid().unwrap_or(block)
         };
         let fluid_at = |x: i32, y: i32, z: i32| -> Option<f32> {
-            let p = IVec3::new(x, y, z);
-            if block_at(p.x, p.y, p.z) != fluid {
+            if block_at(x, y, z) != fluid {
                 return None;
             }
             Some(fluid_height(
-                self.fluid_meta_world(p.x, p.y, p.z),
-                block_at(p.x, p.y + 1, p.z),
+                cur.fluid_meta(IVec3::new(x, y, z)),
+                block_at(x, y + 1, z),
                 fluid,
             ))
         };
         let still_at = |x: i32, y: i32, z: i32| {
-            block_at(x, y, z) == fluid && is_source(self.fluid_meta_world(x, y, z))
+            block_at(x, y, z) == fluid && is_source(cur.fluid_meta(IVec3::new(x, y, z)))
         };
         surface_flow_dir(wx, wy, wz, fluid, &block_at, &fluid_at, &still_at)
     }
@@ -103,20 +92,34 @@ impl WorldData {
     ) -> FluidCurrent {
         sample_body_current(feet, height, immersion, |p| self.fluid_current_at(p))
     }
+}
 
-    fn fluid_in_cell(&self, cell: IVec3) -> Option<Immersion> {
-        let fluid = self
-            .physics_block(cell.x, cell.y, cell.z)
-            .fluid()?
-            .fluid_def()?;
-        let surface_y = cell.y as f32
-            + fluid_height(
-                self.fluid_meta_world(cell.x, cell.y, cell.z),
-                self.physics_block(cell.x, cell.y + 1, cell.z),
-                fluid.block,
-            );
-        Some(Immersion { fluid, surface_y })
+/// Top of the contiguous same-fluid column containing `cell`, walked through
+/// one cursor so a deep column pays one section resolve per 16 cells.
+fn fluid_surface_at(cur: &SectionCursor<'_>, cell: IVec3) -> Option<Immersion> {
+    let mut sample = fluid_in_cell(cur, cell)?;
+    let mut top = cell;
+    while cur.physics_block(top + IVec3::Y).fluid() == Some(sample.fluid.block) {
+        top.y += 1;
     }
+    sample.surface_y = top.y as f32
+        + fluid_height(
+            cur.fluid_meta(top),
+            cur.physics_block(top + IVec3::Y),
+            sample.fluid.block,
+        );
+    Some(sample)
+}
+
+fn fluid_in_cell(cur: &SectionCursor<'_>, cell: IVec3) -> Option<Immersion> {
+    let fluid = cur.physics_block(cell).fluid()?.fluid_def()?;
+    let surface_y = cell.y as f32
+        + fluid_height(
+            cur.fluid_meta(cell),
+            cur.physics_block(cell + IVec3::Y),
+            fluid.block,
+        );
+    Some(Immersion { fluid, surface_y })
 }
 
 /// Sample a body's fluid current from any point-query source.

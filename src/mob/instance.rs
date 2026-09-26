@@ -758,7 +758,7 @@ impl Instance {
         let solid = super::nav::nav_solid_fn(&cursor);
         let support = super::nav::nav_support_fn(&cursor, d.size.half_width);
         // The model-aware box source for body collision (legs/top of a bbmodel block).
-        let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
+        let boxes = |x: i32, y: i32, z: i32| cursor.collision_boxes_xyz(x, y, z);
         let fluid = super::nav::nav_fluid_fn(&cursor);
         // Navigation footing, not physical immersion (`body_fluid` below): it
         // stays set while the mob bobs at the surface, so AI, repathing and

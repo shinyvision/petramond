@@ -201,9 +201,11 @@ impl WorldData {
     pub fn surface_collision_y(&self, wx: i32, wz: i32) -> Option<i32> {
         let col = self.columns.get(&ChunkPos::new(wx >> 4, wz >> 4))?;
         let top = col.surface_y(chunk::lx(wx), chunk::lz(wz));
+        // A column walk: one section resolve per 16 cells, not one per cell.
+        let cur = self.cursor();
         (WORLD_MIN_Y..=top)
             .rev()
-            .find(|&y| self.blocks_movement_at(wx, y, wz))
+            .find(|&y| cur.blocks_movement(IVec3::new(wx, y, wz)))
     }
 
     /// The loaded column's biome id at world `(wx, wz)`, or `None` when the
@@ -222,11 +224,10 @@ impl WorldData {
     pub fn precipitation_ceiling_y(&self, wx: i32, wz: i32) -> Option<i32> {
         let col = self.columns.get(&ChunkPos::new(wx >> 4, wz >> 4))?;
         let top = col.surface_y(chunk::lx(wx), chunk::lz(wz));
+        let cur = self.cursor();
         (WORLD_MIN_Y..=top).rev().find(|&y| {
-            self.blocks_movement_at(wx, y, wz)
-                || self
-                    .block_if_loaded(wx, y, wz)
-                    .is_some_and(|b| b.is_fluid())
+            let c = IVec3::new(wx, y, wz);
+            cur.blocks_movement(c) || cur.block_if_loaded(c).is_some_and(|b| b.is_fluid())
         })
     }
 

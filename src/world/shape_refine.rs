@@ -83,6 +83,15 @@ impl World {
             if self.replication.replication_capture {
                 self.record_block_delta(p.x, p.y, p.z);
             }
+            // A refined state can move the cell's light apertures (a stair's
+            // corner join), and the edit's own relight never seeded this cell:
+            // an authoritative world relights it in its own right. The
+            // replica's light follows the server's.
+            if self.role() != WorldRole::ClientReplica
+                && petramond_world::world::light::incremental::light_depends_on_state(block)
+            {
+                self.relight_cell(p.x, p.y, p.z, Self::LIGHT_REACH);
+            }
             for d in FACE_NEIGHBORS {
                 queue.push_back(p + d);
             }

@@ -232,6 +232,84 @@ impl World {
         }
     }
 
+    /// Route one changed cell's relight. An authoritative world queues it for
+    /// the incremental relight (`apply_light_edits`) when its region's stored
+    /// light can be trusted, and otherwise marks the full rebake at once
+    /// (`radius` as [`mark_light_dirty_around_cell_radius`]). The replica
+    /// always marks: its light is server-owned, and its predicted edits
+    /// relight through the prediction bundle's own bakes.
+    ///
+    /// A negative `radius` means the caller proved the change light-neutral
+    /// — possibly by reading light that queued edits have not updated yet
+    /// ("dark here" may be stale). With edits pending, the cell is queued
+    /// anyway so the batch seeds it; on its own it needs nothing.
+    ///
+    /// [`mark_light_dirty_around_cell_radius`]: Self::mark_light_dirty_around_cell_radius
+    pub(super) fn relight_cell(&mut self, wx: i32, wy: i32, wz: i32, radius: i32) {
+        if self.role == WorldRole::ClientReplica {
+            if radius >= 0 {
+                self.mark_light_dirty_around_cell_radius(wx, wy, wz, radius);
+            }
+            return;
+        }
+        if radius < 0 && self.data.light_edits.is_empty() {
+            return;
+        }
+        let cell = petramond_math::math::IVec3::new(wx, wy, wz);
+        if radius < 0 || petramond_world::world::light::edit_relightable(&self.data.sections, cell) {
+            self.data.light_edits.push((cell, radius));
+        } else {
+            self.mark_light_dirty_around_cell_radius(wx, wy, wz, radius);
+        }
+    }
+
+    /// Queue one changed cell for the incremental relight when this world can
+    /// take it there (authoritative, region trusted). Returns `false`
+    /// otherwise, leaving the caller's own invalidation in charge — which must
+    /// dirty the cell's section, so no pending batch whose region holds the
+    /// cell can relight around it unseeded.
+    pub(super) fn queue_incremental_relight(&mut self, cell: petramond_math::math::IVec3) -> bool {
+        if self.role == WorldRole::ClientReplica
+            || !petramond_world::world::light::edit_relightable(&self.data.sections, cell)
+        {
+            return false;
+        }
+        self.data.light_edits.push((cell, Self::LIGHT_REACH));
+        true
+    }
+
+    /// Drain the queued incremental relights: one BFS pass over the stored
+    /// cubes for the whole batch, installing the sections whose light moved.
+    /// When any queued cell's region cannot be trusted any more (a neighbour
+    /// evicted or dirtied since it was queued), EVERY queued cell falls back
+    /// to its full-rebake mark — a partial batch would relight against cells
+    /// whose own change it never seeded.
+    pub(in crate::world) fn apply_light_edits(&mut self) {
+        if self.data.light_edits.is_empty() {
+            return;
+        }
+        let edits = std::mem::take(&mut self.data.light_edits);
+        let cells: Vec<_> = edits.iter().map(|&(cell, _)| cell).collect();
+        match petramond_world::world::light::relight_edits(
+            &self.data.sections,
+            &self.data.columns,
+            &cells,
+        ) {
+            Some(relit) => {
+                for r in relit {
+                    self.install_light_cubes(r.pos, r.skylight, r.blocklight, r.mask, false);
+                }
+            }
+            None => {
+                for (cell, radius) in edits {
+                    if radius >= 0 {
+                        self.mark_light_dirty_around_cell_radius(cell.x, cell.y, cell.z, radius);
+                    }
+                }
+            }
+        }
+    }
+
     /// Queue a remesh of every section whose mesh samples world cell
     /// `(wx, wy, wz)`: the owning section plus every bordering neighbour whose
     /// sampling halo (`petramond_mesh::SAMPLING_HALO`: the one-cell pad for
@@ -290,5 +368,101 @@ impl World {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use petramond_world::block::Block;
+    use petramond_world::section::Section;
+    use petramond_world::world::light::{bake_section, SectionBakeJob};
+
+    /// A settled 3×3×3 block of sections: a solid stone floor layer (fully
+    /// opaque, so it never bakes), an air layer under a one-cell stone roof at
+    /// y = 15, and open sky above — every bakeable section's light landed.
+    fn settled_room() -> World {
+        let mut w = World::new(0, 4);
+        for cy in -1..=1 {
+            for cz in -1..=1 {
+                for cx in -1..=1 {
+                    let mut s = Section::new(cx, cy, cz);
+                    if cy == -1 {
+                        s.blocks_mut().fill(Block::Stone.id());
+                        s.recompute_opaque_count();
+                    } else if cy == 0 {
+                        for z in 0..SECTION_SIZE {
+                            for x in 0..SECTION_SIZE {
+                                s.set_block(x, SECTION_SIZE - 1, z, Block::Stone);
+                            }
+                        }
+                    }
+                    w.insert_section_for_test(SectionPos::new(cx, cy, cz), s);
+                }
+            }
+        }
+        for column in w.columns.values_mut() {
+            for z in 0..SECTION_SIZE {
+                for x in 0..SECTION_SIZE {
+                    column.set_surface_y(x, z, SECTION_SIZE as i32 - 1);
+                    column.set_sky_cover_y(x, z, SECTION_SIZE as i32 - 1);
+                }
+            }
+        }
+        for _ in 0..2500 {
+            w.pump_light_bakes();
+            if w.sections.values().all(|s| !s.light_dirty || s.all_opaque()) {
+                return w;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        panic!("fixture light never settled");
+    }
+
+    /// An edit whose whole region holds settled light relights incrementally:
+    /// nothing goes light-dirty, no bake is requested, and the next pump
+    /// installs cubes equal to a fresh full rebake of every section.
+    #[test]
+    fn a_settled_edit_relights_incrementally_and_exactly() {
+        let mut w = settled_room();
+        let torch = petramond_math::math::IVec3::new(8, 4, 8);
+        assert!(w.set_block_world(torch.x, torch.y, torch.z, Block::Torch));
+
+        assert!(
+            w.sections.values().all(|s| !s.light_dirty || s.all_opaque()),
+            "an incremental edit marks nothing for a full rebake"
+        );
+        assert!(w.relight_demand.is_empty());
+        assert_eq!(w.light_edits.len(), 1, "the edit waits for the next drain");
+
+        w.pump_light_bakes();
+        assert!(w.light_edits.is_empty());
+        assert!(!w.blocklight_rgb_at_world(torch.x + 1, torch.y, torch.z).is_dark());
+        for (&pos, section) in w.sections.iter() {
+            if section.all_opaque() {
+                continue;
+            }
+            let want = bake_section(
+                SectionBakeJob::snapshot_unchecked(pos, &w.data.sections, &w.data.columns)
+                    .expect("loaded"),
+            );
+            assert_eq!(section.skylight_arc().as_deref(), Some(&want.skylight[..]), "{pos:?}");
+            let block = section.blocklight_arc();
+            let block = block.as_deref().unwrap_or(&petramond_world::world::light::ZERO_CUBE[..]);
+            assert_eq!(block, &want.blocklight[..], "{pos:?}");
+        }
+    }
+
+    /// The same edit beside an absent section cannot trust its region: it
+    /// marks the full rebake on the spot, exactly as before incremental light.
+    #[test]
+    fn an_edit_beside_an_absent_section_marks_the_full_rebake() {
+        let mut w = settled_room();
+        w.sections.remove(&SectionPos::new(1, 0, 0));
+        let torch = petramond_math::math::IVec3::new(12, 4, 8);
+        assert!(w.set_block_world(torch.x, torch.y, torch.z, Block::Torch));
+        assert!(w.light_edits.is_empty());
+        assert!(w.sections[&SectionPos::new(0, 0, 0)].light_dirty);
+        assert!(w.relight_demand.contains(&SectionPos::new(0, 0, 0)));
     }
 }

@@ -4,94 +4,122 @@ use std::sync::Arc;
 use crate::chunk::{section_idx, SectionPos, SECTION_SIZE};
 use crate::light::LightRgb;
 use crate::mathh::IVec3;
-use crate::section::Section;
+use crate::section::{BlockCube, Section};
 
-use super::shape::SparseCellState;
-use super::{nbhd_idx, NBHD_VOLUME};
+use super::shape::{ShapeStateSnapshot, SparseCellState};
 
-/// Shared block buffers of a section's 3x3x3 neighbourhood, indexed by [`arc_idx`].
-/// `None` for an absent neighbour, which reads as air.
-type BlockArcs = [Option<crate::section::BlockCube>; 27];
+/// Cell index into a `dim`³ flood cube: X fastest, then Z, then Y — the one
+/// layout every gather, flood and clip in the light subsystem shares.
+#[inline]
+pub fn cube_idx(dim: usize, x: usize, y: usize, z: usize) -> usize {
+    (y * dim + z) * dim + x
+}
 
+/// Cheap shared handles for a `span`³ window of sections: each section's block
+/// buffer plus its sparse light overrides, in the window's flood-cube index
+/// space. Taken on the main thread; the dense block cube is assembled in the
+/// worker. The per-section bake gathers a 3³ window around its section, the
+/// batched bake a 4³ window around its 2×2×2 group — through this ONE gather,
+/// so the two bakes cannot read different inputs.
 pub struct Snapshot {
-    blocks: BlockArcs,
+    span: usize,
+    /// `span`³ block buffers indexed by [`span_idx`]; `None` for an absent
+    /// section, which reads as air.
+    blocks: Vec<Option<BlockCube>>,
     states: Vec<SparseCellState>,
 }
 
-impl Snapshot {
-    pub fn states(&self) -> &[SparseCellState] {
-        &self.states
-    }
-}
-
 #[inline]
-fn arc_idx(dcx: i32, dcy: i32, dcz: i32) -> usize {
-    (((dcy + 1) * 3 + (dcz + 1)) * 3 + (dcx + 1)) as usize
+fn span_idx(span: usize, dx: usize, dy: usize, dz: usize) -> usize {
+    (dy * span + dz) * span + dx
 }
 
-/// Take cheap shared handles plus sparse per-cell light state for `pos`'s 3x3x3
-/// neighbourhood. Runs on the main thread; dense buffers are assembled in the worker.
-pub fn gather(pos: SectionPos, sections: &FxHashMap<SectionPos, Arc<Section>>) -> Snapshot {
-    let mut blocks: BlockArcs = std::array::from_fn(|_| None);
-    let mut states = Vec::new();
-    for dcy in -1..=1 {
-        for dcz in -1..=1 {
-            for dcx in -1..=1 {
-                let npos = SectionPos::new(pos.cx + dcx, pos.cy + dcy, pos.cz + dcz);
-                let Some(section) = sections.get(&npos) else {
-                    continue;
-                };
-                blocks[arc_idx(dcx, dcy, dcz)] = Some(section.block_cube());
-                let bx = ((dcx + 1) as usize) * SECTION_SIZE;
-                let by = ((dcy + 1) as usize) * SECTION_SIZE;
-                let bz = ((dcz + 1) as usize) * SECTION_SIZE;
-                super::shape::collect_shape_states(
-                    section,
-                    |lx, ly, lz| nbhd_idx(bx + lx, by + ly, bz + lz),
-                    &mut states,
-                );
-                if let Some(aps) = section.custom_light_apertures() {
-                    // A WASM shape's baked per-cell opacity, in the same
-                    // aperture currency the families answer: opaque blocks
-                    // every quadrant, open passes all.
-                    states.extend(aps.iter().map(|(&key, &opaque)| {
-                        let (lx, ly, lz) = crate::chunk::section_local(key as usize);
-                        SparseCellState {
-                            idx: nbhd_idx(bx + lx, by + ly, bz + lz),
-                            masks: if opaque {
-                                0
-                            } else {
-                                crate::block::LIGHT_APERTURES_OPEN
-                            },
-                        }
-                    }));
+/// The section position at offset `(dx, dy, dz)` of the window whose low corner
+/// is `low`.
+#[inline]
+fn window_pos(low: SectionPos, dx: usize, dy: usize, dz: usize) -> SectionPos {
+    SectionPos::new(
+        low.cx + dx as i32,
+        low.cy + dy as i32,
+        low.cz + dz as i32,
+    )
+}
+
+impl Snapshot {
+    /// Gather the `span`³ window of sections whose low corner is `low`.
+    pub fn gather(
+        low: SectionPos,
+        span: usize,
+        sections: &FxHashMap<SectionPos, Arc<Section>>,
+    ) -> Self {
+        let dim = span * SECTION_SIZE;
+        let mut blocks = vec![None; span * span * span];
+        let mut states = Vec::new();
+        for dy in 0..span {
+            for dz in 0..span {
+                for dx in 0..span {
+                    let Some(section) = sections.get(&window_pos(low, dx, dy, dz)) else {
+                        continue;
+                    };
+                    blocks[span_idx(span, dx, dy, dz)] = Some(section.block_cube());
+                    let (bx, by, bz) = (dx * SECTION_SIZE, dy * SECTION_SIZE, dz * SECTION_SIZE);
+                    super::shape::collect_light_overrides(
+                        section,
+                        |lx, ly, lz| cube_idx(dim, bx + lx, by + ly, bz + lz),
+                        &mut states,
+                    );
                 }
             }
         }
+        Self {
+            span,
+            blocks,
+            states,
+        }
     }
-    Snapshot { blocks, states }
-}
 
-/// Assemble the neighbourhood block-id cube into `out` (a reused per-thread
-/// buffer of `NBHD_VOLUME` bytes). Absent neighbours read as air.
-pub fn assemble_blocks(snapshot: &Snapshot, out: &mut [u16]) {
-    debug_assert_eq!(out.len(), NBHD_VOLUME);
-    out.fill(0);
-    for dcy in -1..=1 {
-        for dcz in -1..=1 {
-            for dcx in -1..=1 {
-                let Some(src) = &snapshot.blocks[arc_idx(dcx, dcy, dcz)] else {
-                    continue;
-                };
-                let bx = ((dcx + 1) as usize) * SECTION_SIZE;
-                let by = ((dcy + 1) as usize) * SECTION_SIZE;
-                let bz = ((dcz + 1) as usize) * SECTION_SIZE;
-                // Both layouts run X fastest, so a section row is one copy.
-                for ly in 0..SECTION_SIZE {
-                    for lz in 0..SECTION_SIZE {
-                        let d = nbhd_idx(bx, by + ly, bz + lz);
-                        let s = section_idx(0, ly, lz);
-                        src.expand_row_into(s, &mut out[d..d + SECTION_SIZE]);
+    /// Cells per axis of this window's flood cube.
+    #[inline]
+    pub fn dim(&self) -> usize {
+        self.span * SECTION_SIZE
+    }
+
+    /// Cells in this window's flood cube.
+    #[inline]
+    pub fn volume(&self) -> usize {
+        let dim = self.dim();
+        dim * dim * dim
+    }
+
+    pub fn states(&self) -> &[SparseCellState] {
+        &self.states
+    }
+
+    /// The window's light overrides, densified for the flood.
+    pub fn shape_states(&self) -> ShapeStateSnapshot {
+        ShapeStateSnapshot::from_sparse(&self.states, self.volume())
+    }
+
+    /// Assemble the window's block-id cube into `out` (a reused per-thread
+    /// buffer of [`volume`](Self::volume) ids). Absent sections read as air.
+    pub fn assemble_blocks(&self, out: &mut [u16]) {
+        debug_assert_eq!(out.len(), self.volume());
+        let (span, dim) = (self.span, self.dim());
+        out.fill(0);
+        for dy in 0..span {
+            for dz in 0..span {
+                for dx in 0..span {
+                    let Some(src) = &self.blocks[span_idx(span, dx, dy, dz)] else {
+                        continue;
+                    };
+                    let (bx, by, bz) = (dx * SECTION_SIZE, dy * SECTION_SIZE, dz * SECTION_SIZE);
+                    // Both layouts run X fastest, so a section row is one copy.
+                    for ly in 0..SECTION_SIZE {
+                        for lz in 0..SECTION_SIZE {
+                            let d = cube_idx(dim, bx, by + ly, bz + lz);
+                            let s = section_idx(0, ly, lz);
+                            src.expand_row_into(s, &mut out[d..d + SECTION_SIZE]);
+                        }
                     }
                 }
             }
@@ -99,17 +127,18 @@ pub fn assemble_blocks(snapshot: &Snapshot, out: &mut [u16]) {
     }
 }
 
-/// Collect every block-light emitter in `pos`'s 3x3x3 section neighbourhood,
-/// as `(cell, emitted colour)` seeds for the flood.
+/// Collect every block-light emitter in the `span`³ window of sections whose
+/// low corner is `low`, as `(cell, emitted colour)` seeds for the flood.
 pub fn collect_emitters(
-    pos: SectionPos,
+    low: SectionPos,
+    span: usize,
     sections: &FxHashMap<SectionPos, Arc<Section>>,
 ) -> Vec<(IVec3, LightRgb)> {
     let mut emitters = Vec::new();
-    for dcy in -1..=1 {
-        for dcz in -1..=1 {
-            for dcx in -1..=1 {
-                let npos = SectionPos::new(pos.cx + dcx, pos.cy + dcy, pos.cz + dcz);
+    for dy in 0..span {
+        for dz in 0..span {
+            for dx in 0..span {
+                let npos = window_pos(low, dx, dy, dz);
                 if let Some(section) = sections.get(&npos) {
                     collect_section_emitters(npos, section, &mut emitters);
                 }

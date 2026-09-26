@@ -1,34 +1,25 @@
-//! A read cursor over the section grid, for probe-bound walks.
+//! The engine's read cursor for probe-bound walks: the world crate's
+//! [`petramond_world::world::SectionCursor`] (the cached last-section resolve
+//! every voxel read goes through) plus the one per-section fact only the
+//! engine knows — the streaming-finality verdict navigation gates on.
 //!
-//! Every world-coordinate read (`physics_block`, `collision_boxes_at`,
-//! `water_cell_at`, `physics_cell_final_at`) resolves its section through one
-//! `FxHashMap<SectionPos, Arc<Section>>` lookup plus an `Arc` deref — two
-//! likely cache misses per CELL. Navigation is the tick's hot loop and walks
-//! contiguous cells: a confinement fill, an A* expansion and a body sweep all
-//! ask about neighbours of the cell they just asked about, so the section is
-//! overwhelmingly the one they resolved last.
-//!
-//! [`SectionCursor`] remembers the last section (and the last streaming
-//! verdict) and answers from it when the next cell falls inside. It borrows
-//! the world immutably for its whole life, so the borrow checker — not a
-//! hand-maintained invalidation hook — is what proves the cached reference
-//! still points at the live section.
+//! Navigation is the tick's hot loop and walks contiguous cells: a confinement
+//! fill, an A* expansion and a body sweep all ask about neighbours of the cell
+//! they just asked about. The cursor borrows the world immutably for its whole
+//! life, so the borrow checker — not a hand-maintained invalidation hook — is
+//! what proves the cached references still point at live sections.
 
 use std::cell::Cell;
 
 use petramond_math::math::IVec3;
 use petramond_world::block::{Aabb, Block};
-use petramond_world::chunk::{self, SectionPos, SECTION_SIZE};
-use petramond_world::section::Section;
+use petramond_world::chunk::SectionPos;
 
 use super::store::World;
 
 pub struct SectionCursor<'w> {
     world: &'w World,
-    /// The last section resolved, `None` until the first hit. A miss (absent
-    /// section) is deliberately NOT cached: absent sections fall through to
-    /// the generated-summary path, which the cursor does not shortcut.
-    last: Cell<Option<(SectionPos, &'w Section)>>,
+    cells: petramond_world::world::SectionCursor<'w>,
     /// The last `physics_cell_final_at` verdict, which is a per-SECTION fact.
     last_final: Cell<Option<(SectionPos, bool)>>,
 }
@@ -40,72 +31,49 @@ impl World {
     pub fn cursor(&self) -> SectionCursor<'_> {
         SectionCursor {
             world: self,
-            last: Cell::new(None),
+            cells: self.data.cursor(),
             last_final: Cell::new(None),
         }
     }
 }
 
 impl<'w> SectionCursor<'w> {
-    /// The loaded section owning `(wx, wy, wz)` plus its section-local coords.
-    #[inline]
-    fn section_at(&self, wx: i32, wy: i32, wz: i32) -> Option<(&'w Section, usize, usize, usize)> {
-        let sp = SectionPos::from_world(wx, wy, wz)?;
-        let local = (
-            chunk::lx(wx),
-            wy.rem_euclid(SECTION_SIZE as i32) as usize,
-            chunk::lz(wz),
-        );
-        if let Some((last_pos, section)) = self.last.get() {
-            if last_pos == sp {
-                return Some((section, local.0, local.1, local.2));
-            }
-        }
-        let section = self.world.section_ref(sp)?;
-        self.last.set(Some((sp, section)));
-        Some((section, local.0, local.1, local.2))
-    }
-
     /// Mirror of `World::physics_block`.
     #[inline]
     pub fn physics_block(&self, c: IVec3) -> Block {
-        match self.section_at(c.x, c.y, c.z) {
-            Some((s, lx, ly, lz)) => s.block(lx, ly, lz),
-            None => self.world.physics_block(c.x, c.y, c.z),
-        }
+        self.cells.physics_block(c)
     }
 
     /// Mirror of `World::fluid_cell_at`.
     #[inline]
     pub fn fluid_cell(&self, c: IVec3) -> bool {
-        self.physics_block(c).fluid().is_some()
+        self.cells.fluid_cell(c)
     }
 
     /// Mirror of `World::fluid_meta_world`.
     #[inline]
     pub fn fluid_meta(&self, c: IVec3) -> u8 {
-        match self.section_at(c.x, c.y, c.z) {
-            Some((s, lx, ly, lz)) => s.fluid_meta(lx, ly, lz),
-            None => self.world.fluid_meta_world(c.x, c.y, c.z),
-        }
+        self.cells.fluid_meta(c)
     }
 
-    /// Mirror of `World::collision_boxes_at`, taking the dense per-id table
-    /// first exactly like it does.
+    /// Mirror of `World::collision_boxes_at`.
     #[inline]
     pub fn collision_boxes(&self, c: IVec3) -> &'static [Aabb] {
-        self.boxes_of(c, self.physics_block(c))
+        self.cells.collision_boxes(c)
+    }
+
+    /// [`collision_boxes`](Self::collision_boxes) in the `(x, y, z)` shape
+    /// the swept-AABB resolver's box source takes.
+    #[inline]
+    pub fn collision_boxes_xyz(&self, x: i32, y: i32, z: i32) -> &'static [Aabb] {
+        self.cells.collision_boxes_xyz(x, y, z)
     }
 
     /// The boxes of a block already read at `c` — so a probe that needs both
     /// the block and its boxes reads the cell once.
     #[inline]
     pub fn boxes_of(&self, c: IVec3, block: Block) -> &'static [Aabb] {
-        if let Some(boxes) = block.static_collision_boxes() {
-            return boxes;
-        }
-        let k = block.shape_kind_def();
-        k.sim.collision_boxes(&k.params, self.world, c, block)
+        self.cells.boxes_of(c, block)
     }
 
     /// Mirror of [`World::physics_cell_final_at`] — a per-section fact, so it

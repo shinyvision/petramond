@@ -98,6 +98,9 @@ impl World {
         if self.save.is_none() {
             return;
         }
+        // Queued incremental relights land first: a clean section's cubes
+        // persist as final, so they must already reflect every edit.
+        self.apply_light_edits();
         // Flush's harvest policy: CLONE the resting drops and mobs (they stay active in
         // memory) so a crash can't lose them.
         let mut by_section = self.dropped_items.items_by_section();

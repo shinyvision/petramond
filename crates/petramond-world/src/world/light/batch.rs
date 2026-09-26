@@ -31,13 +31,14 @@
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
-use crate::chunk::{section_idx, ChunkPos, SectionPos, SECTION_SIZE, SKY_FULL};
+use crate::chunk::{ChunkPos, SectionPos, SECTION_SIZE, SKY_FULL};
 use crate::column::Column;
 use crate::light::LightRgb;
 use crate::mathh::IVec3;
 use crate::section::Section;
 
-use super::shape::{LightCells, ShapeStateSnapshot, SparseCellState};
+use super::bake::LightBakeOutput;
+use super::shape::LightCells;
 use super::skylight::SkyClass;
 use super::{flood, neighborhood, skylight};
 
@@ -48,16 +49,6 @@ pub const SPAN: usize = GROUP as usize + 2;
 /// Cells per axis / total cells of the batch flood cube.
 const BDIM: usize = SPAN * SECTION_SIZE;
 const BVOL: usize = BDIM * BDIM * BDIM;
-
-#[inline]
-fn bidx(x: usize, y: usize, z: usize) -> usize {
-    (y * BDIM + z) * BDIM + x
-}
-
-#[inline]
-fn span_idx(dx: usize, dy: usize, dz: usize) -> usize {
-    (dy * SPAN + dz) * SPAN + dx
-}
 
 struct BatchMember {
     pos: SectionPos,
@@ -70,19 +61,12 @@ struct BatchMember {
 pub struct LightBatchJob {
     base: SectionPos,
     members: Vec<BatchMember>,
-    /// `SPAN`³ field-`Arc` block buffers (`None` = absent, reads as air).
-    blocks: Vec<Option<crate::section::BlockCube>>,
-    states: Vec<SparseCellState>,
+    /// The group's `SPAN`³ section window — the per-section bake's gather,
+    /// one span wider. Present only when a flood will actually run.
+    nbhd: Option<neighborhood::Snapshot>,
     /// `BDIM`² sky-cover map, gathered only when a member needs the sky flood.
     surface: Option<Box<[i32]>>,
     emitters: Vec<(IVec3, LightRgb)>,
-}
-
-pub struct LightBatchOutput {
-    pub pos: SectionPos,
-    pub revision: u64,
-    pub skylight: Arc<[u8]>,
-    pub blocklight: Arc<[LightRgb]>,
 }
 
 impl LightBatchJob {
@@ -121,8 +105,8 @@ pub fn group_positions(positions: &[SectionPos]) -> Vec<(SectionPos, Vec<Section
         .collect()
 }
 
-/// Snapshot one batch: the same cheap per-section handles `super::queue::LightBakeJob`
-/// takes, gathered once for the whole group.
+/// Snapshot one batch: the same cheap per-section handles
+/// [`super::bake::SectionBakeJob`] takes, gathered once for the whole group.
 pub fn snapshot_batch(
     base: SectionPos,
     member_positions: &[SectionPos],
@@ -151,36 +135,12 @@ pub fn snapshot_batch(
     }
     let any_flood = members.iter().any(|m| m.sky == SkyClass::Flood);
 
-    let mut emitters = Vec::new();
-    let mut blocks: Vec<Option<crate::section::BlockCube>> = vec![None; SPAN * SPAN * SPAN];
-    let mut states = Vec::new();
-    for dy in 0..SPAN {
-        for dz in 0..SPAN {
-            for dx in 0..SPAN {
-                let npos = SectionPos::new(
-                    base.cx + dx as i32 - 1,
-                    base.cy + dy as i32 - 1,
-                    base.cz + dz as i32 - 1,
-                );
-                let Some(section) = sections.get(&npos) else {
-                    continue;
-                };
-                neighborhood::collect_section_emitters(npos, section, &mut emitters);
-                blocks[span_idx(dx, dy, dz)] = Some(section.block_cube());
-                let (bx, by, bz) = (dx * SECTION_SIZE, dy * SECTION_SIZE, dz * SECTION_SIZE);
-                super::shape::collect_shape_states(
-                    section,
-                    |lx, ly, lz| bidx(bx + lx, by + ly, bz + lz),
-                    &mut states,
-                );
-            }
-        }
-    }
-    if !any_flood && emitters.is_empty() {
-        // No flood will run: match the per-section jobs, which skip the gather.
-        blocks.iter_mut().for_each(|b| *b = None);
-        states.clear();
-    }
+    let low = SectionPos::new(base.cx - 1, base.cy - 1, base.cz - 1);
+    let emitters = neighborhood::collect_emitters(low, SPAN, sections);
+    // No flood will run without either: match the per-section jobs, which
+    // skip the gather.
+    let nbhd = (any_flood || !emitters.is_empty())
+        .then(|| neighborhood::Snapshot::gather(low, SPAN, sections));
 
     let surface = any_flood.then(|| {
         skylight::gather_surface_span(ChunkPos::new(base.cx - 1, base.cz - 1), SPAN, columns)
@@ -189,35 +149,10 @@ pub fn snapshot_batch(
     Some(LightBatchJob {
         base,
         members,
-        blocks,
-        states,
+        nbhd,
         surface,
         emitters,
     })
-}
-
-/// Assemble the batch block cube from the gathered `Arc`s, one 16-wide row copy at
-/// a time (absent sections stay air).
-fn assemble_blocks(arcs: &[Option<crate::section::BlockCube>], out: &mut [u16]) {
-    debug_assert_eq!(out.len(), BVOL);
-    out.fill(0);
-    for dy in 0..SPAN {
-        for dz in 0..SPAN {
-            for dx in 0..SPAN {
-                let Some(src) = &arcs[span_idx(dx, dy, dz)] else {
-                    continue;
-                };
-                let (bx, by, bz) = (dx * SECTION_SIZE, dy * SECTION_SIZE, dz * SECTION_SIZE);
-                for ly in 0..SECTION_SIZE {
-                    for lz in 0..SECTION_SIZE {
-                        let d = bidx(bx, by + ly, bz + lz);
-                        let s = section_idx(0, ly, lz);
-                        src.expand_row_into(s, &mut out[d..d + SECTION_SIZE]);
-                    }
-                }
-            }
-        }
-    }
 }
 
 struct BatchScratch {
@@ -233,12 +168,11 @@ thread_local! {
         });
 }
 
-pub fn run_light_bake_batch(job: LightBatchJob) -> Vec<LightBatchOutput> {
+pub fn run_light_bake_batch(job: LightBatchJob) -> Vec<LightBakeOutput> {
     let LightBatchJob {
         base,
         members,
-        blocks,
-        states,
+        nbhd,
         surface,
         emitters,
     } = job;
@@ -250,10 +184,13 @@ pub fn run_light_bake_batch(job: LightBatchJob) -> Vec<LightBatchOutput> {
             flood: flood_scratch,
         } = &mut *scratch;
 
-        if surface.is_some() || !emitters.is_empty() {
-            assemble_blocks(&blocks, block_buf);
+        if let Some(n) = &nbhd {
+            n.assemble_blocks(block_buf);
         }
-        let states = ShapeStateSnapshot::from_sparse(&states, BVOL);
+        let states = nbhd
+            .as_ref()
+            .map(neighborhood::Snapshot::shape_states)
+            .unwrap_or_default();
         // Every member sits in the group box; light that cannot reach it is
         // work the flood need not do.
         let keep = flood::Keep::new(SECTION_SIZE, SECTION_SIZE * (1 + GROUP as usize));
@@ -319,7 +256,7 @@ pub fn run_light_bake_batch(job: LightBatchJob) -> Vec<LightBatchOutput> {
             .iter()
             .zip(sky_cubes)
             .zip(block_cubes)
-            .map(|((m, skylight), blocklight)| LightBatchOutput {
+            .map(|((m, skylight), blocklight)| LightBakeOutput {
                 pos: m.pos,
                 revision: m.revision,
                 skylight,
@@ -327,21 +264,4 @@ pub fn run_light_bake_batch(job: LightBatchJob) -> Vec<LightBatchOutput> {
             })
             .collect()
     })
-}
-
-/// Everything this module's relocated tests (in the engine crate) exercise.
-/// Test-support builds only; never a public api surface.
-#[cfg(any(test, feature = "test-support"))]
-pub mod test_exports {
-    pub use super::SPAN;
-    #[allow(unused_imports)]
-    pub use super::*;
-    pub use crate::chunk::section_idx;
-    pub use crate::chunk::ChunkPos;
-    pub use crate::chunk::SectionPos;
-    pub use crate::chunk::SECTION_SIZE;
-    pub use crate::column::Column;
-    pub use crate::section::Section;
-    pub use rustc_hash::FxHashMap;
-    pub use std::sync::Arc;
 }

@@ -1,19 +1,30 @@
 //! Async section light baking plus the light-shape rules used by the floods.
 //!
-//! Keep this subsystem split by responsibility: the queue owns jobs and workers,
-//! `neighborhood` owns snapshot assembly, `skylight` owns sky-cover planning,
-//! `flood` owns propagation, and `shape` owns per-block boundary rules.
+//! Keep this subsystem split by responsibility: the engine's queue owns jobs
+//! and workers, `neighborhood` owns snapshot assembly, `skylight` owns
+//! sky-cover planning, `flood` owns full propagation, `bake`/`batch` run the
+//! full per-section and 2×2×2 bakes, `incremental` relights edits over the
+//! stored cubes, and `shape` owns per-block boundary rules.
 
+pub mod bake;
 pub mod batch;
 pub mod flood;
+pub mod incremental;
 pub mod neighborhood;
 
 pub mod shape;
 pub mod skylight;
 
+#[cfg(test)]
+mod parity_tests;
+#[cfg(test)]
+mod test_fixture;
+
 use crate::chunk::SECTION_SIZE;
 
+pub use bake::{bake_section, LightBakeOutput, SectionBakeJob};
 pub use batch::{group_positions, run_light_bake_batch, snapshot_batch, LightBatchJob};
+pub use incremental::{edit_relightable, relight_edits, RelitSection};
 
 pub use skylight::cover_change_affects_section;
 
@@ -111,7 +122,7 @@ pub const NBHD_AREA: usize = NBHD * NBHD;
 
 #[inline]
 pub fn nbhd_idx(x: usize, y: usize, z: usize) -> usize {
-    (y * NBHD + z) * NBHD + x
+    neighborhood::cube_idx(NBHD, x, y, z)
 }
 
 #[cfg(test)]

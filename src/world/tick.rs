@@ -178,11 +178,11 @@ impl World {
         self.random_tick_sections();
     }
 
-    /// Announce that the block at `(wx, wy, wz)` changed: schedule the light
-    /// rebake for every section the change can influence, then queue a block
-    /// update for the cell itself and each of its 6 orthogonal neighbours
-    /// (crossing chunk borders). Block updates are deduped within the current
-    /// tick.
+    /// Announce that the block at `(wx, wy, wz)` changed: relight what the
+    /// change can influence (incrementally, or by scheduling full rebakes),
+    /// then queue a block update for the cell itself and each of its 6
+    /// orthogonal neighbours (crossing chunk borders). Block updates are
+    /// deduped within the current tick.
     ///
     /// The relight is emitted HERE, alongside the block update, so the two can
     /// never drift apart: this is the single "a block changed" choke point that
@@ -243,11 +243,10 @@ impl World {
         // The caller may have PROVED the change navigationally equivalent
         // (`edit_nav_relevant`); readers of the nav view then never see it.
         self.sim.change_log.push(IVec3::new(wx, wy, wz), nav);
-        if light_radius >= 0 {
-            // Persist staleness notes ride the mark (see
-            // `mark_light_dirty_around_cell_radius`).
-            self.mark_light_dirty_around_cell_radius(wx, wy, wz, light_radius);
-        }
+        // Incremental when the region's stored light can be trusted, a
+        // full-rebake mark (which carries the persist staleness notes)
+        // otherwise — see `relight_cell`.
+        self.relight_cell(wx, wy, wz, light_radius);
         let p = IVec3::new(wx, wy, wz);
         self.queue_block_update(p);
         for d in FACE_NEIGHBORS {

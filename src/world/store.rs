@@ -1,5 +1,5 @@
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::mob::Mobs;
@@ -15,9 +15,6 @@ use petramond_worldgen::driver::{ChunkGenerator, ColumnGen, SectionGen};
 use super::entities::DroppedItems;
 use super::light::LightBakeQueue;
 use super::mesh_queue::DirtyMeshQueue;
-use petramond_world::world::environment::WorldEnvironment;
-use petramond_world::world::saved_index::SavedIndex;
-use petramond_world::world::tick_state::TickState;
 
 // Moved halves, re-exported under their historical `store::` paths.
 pub use petramond_world::world::column_heightmaps::SkyCoverChange;
@@ -343,44 +340,7 @@ impl World {
         jobs: std::sync::Arc<JobPool>,
     ) -> Self {
         Self {
-            data: WorldData {
-                seed,
-                role,
-                sections: FxHashMap::default(),
-                columns: FxHashMap::default(),
-                column_payload_revisions: FxHashMap::default(),
-                column_revision_counter: 0,
-                section_column_cys: FxHashMap::default(),
-                section_column_rt: FxHashMap::default(),
-                random_tick_dirty: FxHashSet::default(),
-                render_dist,
-                lighting_revision: 0,
-                block_entity_sections: FxHashSet::default(),
-                particle_emitter_sections: FxHashSet::default(),
-                light_deferred: FxHashSet::default(),
-                deferred_recheck_needed: false,
-                deferred_rechecks: FxHashSet::default(),
-                last_load_target: None,
-                extra_load_targets: Vec::new(),
-                missing_columns_settled: false,
-                column_summaries: FxHashMap::default(),
-                column_biome_halos: FxHashMap::default(),
-                column_deep_band_los: FxHashMap::default(),
-                relight_demand: FxHashSet::default(),
-                relit_since_persist: FxHashSet::default(),
-                light_edited_since_persist: FxHashSet::default(),
-                sim: TickState::new(seed),
-                environment: WorldEnvironment::default(),
-                content: ContentState {
-                    block_hooks: Vec::new(),
-                    world_kv: BTreeMap::new(),
-                    disabled_mods: std::collections::BTreeSet::new(),
-                    custom_bake: FxHashMap::default(),
-                    custom_bake_dirty: FxHashSet::default(),
-                },
-                stream_nonfinal: FxHashSet::default(),
-                saved: SavedIndex::default(),
-            },
+            data: WorldData::new(seed, role, render_dist),
             terrain: TerrainRenderState {
                 meshes: FxHashMap::default(),
                 mesh_columns: FxHashSet::default(),

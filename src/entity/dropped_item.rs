@@ -357,7 +357,8 @@ impl DroppedItem {
         debug_assert!(matches!(self.motion, Motion::Loose));
         // The shared, model-aware box source — the item collides with a bbmodel block's
         // real legs/top, exactly like the player/mob bodies (all via `collision_boxes_at`).
-        let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
+        let cells = world.cursor();
+        let boxes = |x: i32, y: i32, z: i32| cells.collision_boxes_xyz(x, y, z);
         let feet = self.pos - Vec3::Y * ITEM_HALF_EXTENT;
         let immersion = world.body_fluid(feet, 2.0 * ITEM_HALF_EXTENT, Buoyancy::Swim);
         let current = world.fluid_current_at(self.pos);

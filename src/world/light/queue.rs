@@ -1,15 +1,12 @@
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
-use petramond_math::math::IVec3;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 use petramond_world::column::Column;
 use petramond_world::light::LightRgb;
 use petramond_world::section::Section;
 
-use petramond_world::world::light::shape::{LightCells, ShapeStateSnapshot};
-use petramond_world::world::light::skylight::SkyPlan;
-use petramond_world::world::light::{flood, neighborhood, skylight};
+use petramond_world::world::light::bake::{bake_section, LightBakeOutput, SectionBakeJob};
 
 pub struct LightBakeQueue {
     backend: Backend,
@@ -23,13 +20,11 @@ struct PendingLightBake {
     cancel: crate::worker::JobCancel,
 }
 
+/// One queued per-section bake: the world crate's [`SectionBakeJob`] tagged
+/// with the queue id its result must match.
 pub struct LightBakeJob {
     id: u64,
-    pos: SectionPos,
-    revision: u64,
-    sky: SkyPlan,
-    nbhd: Option<neighborhood::Snapshot>,
-    emitters: Vec<(IVec3, LightRgb)>,
+    bake: SectionBakeJob,
 }
 
 pub struct LightBakeResult {
@@ -41,16 +36,20 @@ pub struct LightBakeResult {
 }
 
 impl LightBakeResult {
-    /// Build a result outside the async queue (prediction batch clips).
-    /// `id` is unused by the prediction install path.
-    pub fn from_batch_output(out: petramond_world::world::light::batch::LightBatchOutput) -> Self {
+    fn from_output(id: u64, out: LightBakeOutput) -> Self {
         Self {
-            id: 0,
+            id,
             pos: out.pos,
             revision: out.revision,
             skylight: out.skylight,
             blocklight: out.blocklight,
         }
+    }
+
+    /// Build a result outside the async queue (prediction batch clips).
+    /// `id` is unused by the prediction install path.
+    pub fn from_batch_output(out: LightBakeOutput) -> Self {
+        Self::from_output(0, out)
     }
 }
 
@@ -160,119 +159,18 @@ impl LightBakeJob {
         sections: &FxHashMap<SectionPos, Arc<Section>>,
         columns: &FxHashMap<ChunkPos, Column>,
     ) -> Option<Self> {
-        let section = sections.get(&pos)?;
-        if !section.light_dirty {
-            return None;
-        }
-        Self::snapshot_unchecked(id, pos, sections, columns)
-    }
-
-    /// [`Self::snapshot`] without the dirty gate — the batch parity test
-    /// rebakes settled sections to compare against the batched bake.
-    pub fn snapshot_unchecked(
-        id: u64,
-        pos: SectionPos,
-        sections: &FxHashMap<SectionPos, Arc<Section>>,
-        columns: &FxHashMap<ChunkPos, Column>,
-    ) -> Option<Self> {
-        let section = sections.get(&pos)?;
-        let revision = section.light_revision;
-        let sky = skylight::plan(pos, columns);
-        let emitters = neighborhood::collect_emitters(pos, sections);
-        let nbhd = (matches!(sky, SkyPlan::Flood { .. }) || !emitters.is_empty())
-            .then(|| neighborhood::gather(pos, sections));
-        Some(Self {
-            id,
-            pos,
-            revision,
-            sky,
-            nbhd,
-            emitters,
-        })
+        let bake = SectionBakeJob::snapshot(pos, sections, columns)?;
+        Some(Self { id, bake })
     }
 
     pub fn pos(&self) -> SectionPos {
-        self.pos
+        self.bake.pos()
     }
 }
 
-/// Per-light-thread reusable bake scratch: the assembled 48³ neighbourhood block
-/// cube plus the flood working set. Streaming bakes run thousands of times across
-/// several threads; reusing these keeps ~220 KB of per-bake churn off the allocator
-/// (the returned per-section light cubes are still allocated fresh — they outlive
-/// the bake).
-struct BakeScratch {
-    blocks: Box<[u16]>,
-    flood: flood::FloodScratch,
-}
-
-thread_local! {
-    static BAKE_SCRATCH: std::cell::RefCell<BakeScratch> = std::cell::RefCell::new(BakeScratch {
-        blocks: vec![0u16; super::NBHD_VOLUME].into_boxed_slice(),
-        flood: flood::FloodScratch::new(),
-    });
-}
-
+/// Run one queued bake (the world crate's [`bake_section`]) and tag the result.
 pub fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
-    let LightBakeJob {
-        id,
-        pos,
-        revision,
-        sky,
-        nbhd,
-        emitters,
-    } = job;
-
-    BAKE_SCRATCH.with(|scratch| {
-        let mut scratch = scratch.borrow_mut();
-        let BakeScratch { blocks, flood } = &mut *scratch;
-
-        let blocks: Option<&[u16]> = nbhd.as_ref().map(|n| {
-            neighborhood::assemble_blocks(n, blocks);
-            &blocks[..]
-        });
-        let states = nbhd
-            .as_ref()
-            .map(|n| ShapeStateSnapshot::from_sparse(n.states(), super::NBHD_VOLUME))
-            .unwrap_or_default();
-
-        let skylight = match sky {
-            SkyPlan::Full => {
-                petramond_world::section::uniform_cube(petramond_world::chunk::SKY_FULL)
-            }
-            SkyPlan::Dark => petramond_world::section::uniform_cube(0),
-            SkyPlan::Flood { surface } => {
-                let blocks =
-                    blocks.expect("a flooding skylight bake carries its neighbourhood blocks");
-                flood::skylight(
-                    pos,
-                    LightCells::new(blocks, &states, super::NBHD),
-                    &surface,
-                    flood,
-                )
-            }
-        };
-
-        let blocklight = if emitters.is_empty() {
-            petramond_world::light::dark_cube()
-        } else {
-            let blocks = blocks.expect("a block-light bake carries its neighbourhood blocks");
-            flood::block_light(
-                pos,
-                LightCells::new(blocks, &states, super::NBHD),
-                &emitters,
-                flood,
-            )
-        };
-
-        LightBakeResult {
-            id,
-            pos,
-            revision,
-            skylight,
-            blocklight,
-        }
-    })
+    LightBakeResult::from_output(job.id, bake_section(job.bake))
 }
 
 /// Light-stage adapter over the shared [`crate::worker::JobPool`]: `submit` queues a
@@ -329,13 +227,7 @@ impl Backend {
                 let Some((_, id, _)) = cancels.iter().find(|(p, _, _)| *p == out.pos) else {
                     continue;
                 };
-                let _ = tx.send(LightBakeResult {
-                    id: *id,
-                    pos: out.pos,
-                    revision: out.revision,
-                    skylight: out.skylight,
-                    blocklight: out.blocklight,
-                });
+                let _ = tx.send(LightBakeResult::from_output(*id, out));
             }
         });
     }

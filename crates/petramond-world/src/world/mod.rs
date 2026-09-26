@@ -3,6 +3,7 @@
 //! lives in the engine crate and derefs into [`data::WorldData`].
 
 pub mod column_heightmaps;
+pub mod cursor;
 pub mod custom_bake;
 pub mod data;
 pub mod environment;
@@ -23,5 +24,6 @@ pub mod stair;
 pub mod tick_state;
 pub mod torch;
 
+pub use cursor::SectionCursor;
 pub use data::{WorldData, WorldRole};
 pub use saved_index::SavedIndex;

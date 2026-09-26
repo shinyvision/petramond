@@ -92,6 +92,10 @@ impl World {
         drop_columns: Vec<ChunkPos>,
         drop_sections: Vec<SectionPos>,
     ) {
+        // Queued incremental relights land while their whole region is still
+        // loaded: the harvest persists clean cubes as final, and after the
+        // eviction the region could only fall back to full rebakes.
+        self.apply_light_edits();
         // Persist (harvesting entities into the record) before anything leaves memory.
         if self.save.is_some() {
             let mut snaps = Vec::new();
