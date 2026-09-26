@@ -11,9 +11,16 @@
 //! it, refuse to overwrite it, or refuse to open the world.
 //!
 //! Policy for changing a persisted layout:
-//! - Bump the format's `current` and add ONE upgrade step from the previous
-//!   version. The step works on that version's bytes as they were shipped,
-//!   so it must not call the live decoders (which follow the new layout).
+//! - A record built as a tagged record (`save::wire`: player files, mobs,
+//!   item entities) GAINS a field by adding a new tag with a default: no
+//!   bump, no step — older records read the default. A field an older build
+//!   does not know is kept, never dropped: player files carry it back
+//!   through the save, and a mob or item entity carrying one stays in disk
+//!   form (kept beside its section) instead of coming to life without it.
+//! - Any other change bumps the format's `current` and adds ONE upgrade step
+//!   from the previous version. The step works on that version's bytes as
+//!   they were shipped, so it must not call the live decoders (which follow
+//!   the new layout).
 //! - Commit a golden fixture of the new version under `src/save/fixtures/`
 //!   with a test that decodes it; keep every older fixture decoding.
 //! - The oldest readable version (`current - steps`) only moves by deleting
@@ -253,7 +260,11 @@ pub fn prepare_world(dir: &Path) -> io::Result<Option<WorldFormat>> {
     if let Some(stamp) = found {
         stamp.check()?;
         if stamp != current {
-            back_up_small_files(dir, &stamp)?;
+            let name = format!(
+                "format-s{}-l{}-p{}",
+                stamp.section, stamp.level, stamp.player
+            );
+            back_up_small_files(dir, &name)?;
             log::info!(
                 "world {} is saved in an older format ({stamp:?}); its records migrate to \
                  {current:?} as they are saved",
@@ -268,22 +279,29 @@ pub fn prepare_world(dir: &Path) -> io::Result<Option<WorldFormat>> {
     Ok(found)
 }
 
-/// Copy the eagerly rewritten small files (`level.dat`, `palette.json`,
-/// `format.json`, `players/`) into `backup/format-s<section>-l<level>-p<player>/`
-/// before a newer build starts rewriting them. Region records are migrated
-/// one by one as they are saved and are not copied.
-fn back_up_small_files(dir: &Path, stamp: &WorldFormat) -> io::Result<()> {
-    let backup = dir.join("backup").join(format!(
-        "format-s{}-l{}-p{}",
-        stamp.section, stamp.level, stamp.player
-    ));
+/// Copy the eagerly rewritten small files (`level.dat` and its backup,
+/// `palette.json`, `format.json`, `mods.json`, `settings.json`, `players/`)
+/// into `backup/<name>/` before this build starts rewriting them: when a
+/// newer build migrates the world, or when the world opens with mods
+/// missing. Region records are rewritten one by one as they are saved (and
+/// keep whatever this build cannot read), so they are not copied. A backup
+/// that already exists under `name` is kept as it is.
+pub fn back_up_small_files(dir: &Path, name: &str) -> io::Result<()> {
+    let backup = dir.join("backup").join(name);
     if backup.exists() {
         return Ok(());
     }
     let staging = backup.with_extension("partial");
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(staging.join("players"))?;
-    for name in ["level.dat", "palette.json", STAMP] {
+    for name in [
+        super::level::FILE,
+        super::level::BACKUP,
+        "palette.json",
+        STAMP,
+        "mods.json",
+        "settings.json",
+    ] {
         copy_if_present(&dir.join(name), &staging.join(name))?;
     }
     match std::fs::read_dir(dir.join("players")) {

@@ -1,56 +1,67 @@
-//! The one shared slot codec: inventory/container/item-entity slots all
-//! write the same `[item id, count, blob]` shape through the save palette.
+//! The one shared slot codec: inventory/container/item-entity/mob slots all
+//! store the same [`DiskSlot`] shape through the save palette.
 
-use petramond_util::bytecodec::{put_u16, put_u8, Reader};
 use petramond_world::item::{ItemStack, ItemType};
 
-/// Encode one inventory/container slot as `[item id, count]` + a `u16`-length-
-/// prefixed instance-data blob (`0` = plain stack — the ordinary case), with
-/// `[0, 0, 0, 0]` for an empty or absent slot. Shared by the `level`
-/// (inventory/cursor), `furnace`, and item-entity codecs so the slot format
-/// lives in exactly one place. The blob is the variant's CANONICAL bytes
-/// ([`petramond_world::item::variant::encode`]) — the disk never sees the session
-/// [`petramond_world::item::VariantId`].
-pub fn put_item_slot(buf: &mut Vec<u8>, slot: Option<ItemStack>) {
-    match slot {
-        Some(s) if !s.is_empty() => {
-            put_u16(buf, super::palette::active().item_to_disk(s.item.id()));
-            put_u8(buf, s.count);
-            match petramond_world::item::variant::blob(s.variant) {
-                Some(blob) => {
-                    put_u16(buf, blob.len() as u16);
-                    buf.extend_from_slice(&blob);
-                }
-                None => put_u16(buf, 0),
+use crate::save::palette::Palette;
+use crate::save::wire::{wire_struct, Blob16};
+
+/// One slot as stored: the world's DISK item id, the count, and the
+/// instance-data blob (`[id: u16][count: u8][blob len: u16][blob]`; an empty
+/// slot is all zeros). The blob is the variant's CANONICAL bytes
+/// ([`petramond_world::item::variant::encode`]) — the disk never sees the
+/// session [`petramond_world::item::VariantId`].
+///
+/// A slot whose item this build cannot resolve (unknown, or its mod is
+/// disabled for the world) stays a `DiskSlot`: the codecs that can keep it
+/// write it back unchanged, so the item returns with its mod.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DiskSlot {
+    pub item: u16,
+    pub count: u8,
+    pub blob: Blob16,
+}
+wire_struct!(DiskSlot { item, count, blob });
+
+impl DiskSlot {
+    pub fn is_empty(&self) -> bool {
+        self.item == 0 || self.count == 0
+    }
+
+    /// A live slot as stored through `pal`.
+    pub fn of(slot: Option<ItemStack>, pal: &Palette) -> Self {
+        match slot {
+            Some(s) if !s.is_empty() => Self {
+                item: pal.item_to_disk(s.item.id()),
+                count: s.count,
+                blob: Blob16(
+                    petramond_world::item::variant::blob(s.variant)
+                        .map(|blob| blob.to_vec())
+                        .unwrap_or_default(),
+                ),
+            },
+            _ => Self::default(),
+        }
+    }
+
+    /// The live slot through `pal`: `Ok(None)` for an empty slot, `Err`
+    /// with the slot itself when its item cannot be resolved. A malformed
+    /// instance-data blob (a save touched by a newer/modded build) degrades
+    /// to a plain stack with a warning.
+    pub fn resolve(self, pal: &Palette) -> Result<Option<ItemStack>, DiskSlot> {
+        if self.is_empty() {
+            return Ok(None);
+        }
+        let Some(id) = pal.item_from_disk_known(self.item) else {
+            return Err(self);
+        };
+        let mut stack = ItemStack::new(ItemType::from_id(id), self.count);
+        if !self.blob.0.is_empty() {
+            match petramond_world::item::variant::intern_blob(&self.blob.0) {
+                Some(v) => stack.variant = v,
+                None => log::warn!("save slot: unreadable instance-data blob dropped"),
             }
         }
-        _ => {
-            put_u16(buf, 0);
-            put_u8(buf, 0);
-            put_u16(buf, 0);
-        }
+        Ok(Some(stack))
     }
-}
-
-/// Decode a slot written by [`put_item_slot`]: `None` on truncated input,
-/// `Some(None)` for an empty slot, else the stack. A malformed instance-data
-/// blob (a save touched by a newer/modded build) degrades to a plain stack
-/// with a warning, mirroring the palette's unknown-name policy.
-pub fn get_item_slot(r: &mut Reader) -> Option<Option<ItemStack>> {
-    let id = r.u16()?;
-    let count = r.u8()?;
-    let blob_len = r.u16()? as usize;
-    let blob = r.bytes(blob_len)?;
-    if id == 0 || count == 0 {
-        return Some(None);
-    }
-    let id = super::palette::active().item_from_disk(id);
-    let mut stack = ItemStack::new(ItemType::from_id(id), count);
-    if !blob.is_empty() {
-        match petramond_world::item::variant::intern_blob(blob) {
-            Some(v) => stack.variant = v,
-            None => log::warn!("save slot: unreadable instance-data blob dropped"),
-        }
-    }
-    Some(Some(stack))
 }

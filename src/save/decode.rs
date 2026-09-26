@@ -5,17 +5,20 @@ use std::thread::JoinHandle;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
 use super::format::{self, RecordError};
+use super::palette::Palette;
 use super::{
-    codec, colgen, region, LoadedColumnGen, LoadedSection, SectionRecord, SectionStore, Unreadable,
+    codec, colgen, region, DecodedLoad, LoadedColumnGen, LoadedSection, SectionRecord,
+    SectionStore, Unreadable,
 };
+use super::codec::KeptContent;
 
-/// Cores kept out of decoding: the save reader that feeds the pool and the
+/// Cores kept out of decoding: the save readers that feed the pool and the
 /// game thread that consumes what it publishes.
 const RESERVED_CORES: usize = 2;
-/// Decoder ceiling. Records are read serially, so past a few decoders the
-/// reader cannot keep them fed and the extra threads only contend with the
-/// generation and mesh pools for cores.
-const MAX_DECODERS: usize = 4;
+/// Decoder ceiling. The sharded readers (see `read`) can keep more decoders
+/// fed than one serial reader could, but past this the extra threads only
+/// contend with the generation and mesh pools for cores.
+const MAX_DECODERS: usize = 8;
 /// Jobs the reader may queue ahead of the decoders, per decoder: two keeps a
 /// worker busy across a job boundary without letting the reader's read-ahead
 /// memory grow with the file.
@@ -40,7 +43,7 @@ pub(super) enum DecodeJob {
 }
 
 enum Decoded {
-    Section(LoadedSection),
+    Section(DecodedLoad),
     Column(LoadedColumnGen),
 }
 
@@ -59,7 +62,8 @@ impl Decoders {
     /// `dir` is the world directory unreadable records are quarantined in.
     pub(super) fn new(
         dir: PathBuf,
-        sections: mpsc::Sender<LoadedSection>,
+        palette: Arc<Palette>,
+        sections: mpsc::Sender<DecodedLoad>,
         columns: mpsc::Sender<LoadedColumnGen>,
     ) -> Self {
         let count = std::thread::available_parallelism().map_or(1, |n| {
@@ -102,7 +106,8 @@ impl Decoders {
             .expect("spawn load publisher");
         let mut workers: Vec<_> = (0..count)
             .map(|i| {
-                let (rx, completed, dir) = (rx.clone(), completed.clone(), dir.clone());
+                let (rx, completed, dir, palette) =
+                    (rx.clone(), completed.clone(), dir.clone(), palette.clone());
                 std::thread::Builder::new()
                     .name(format!("petramond-decode-{i}"))
                     .spawn(move || {
@@ -112,10 +117,11 @@ impl Decoders {
                             let Ok((seq, job)) = job else { break };
                             let value = match job {
                                 DecodeJob::Section { pos, store, bytes } => {
-                                    Decoded::Section(LoadedSection {
-                                        pos,
-                                        store,
-                                        record: decode_record(&dir, pos, store, bytes),
+                                    let (record, kept) =
+                                        decode_record(&dir, pos, store, bytes, &palette);
+                                    Decoded::Section(DecodedLoad {
+                                        loaded: LoadedSection { pos, store, record },
+                                        kept,
                                     })
                                 }
                                 DecodeJob::Column { pos, seed, bytes } => {
@@ -164,24 +170,27 @@ impl Drop for Decoders {
     }
 }
 
-/// Decode one section read. A record that exists but cannot be read is
-/// logged with its position and, when authoritative, its bytes are kept
-/// under `quarantine/region/` before anything can replace them.
+/// Decode one section read, with the content its record keeps (see
+/// [`KeptContent`]). A record that exists but cannot be read is logged with
+/// its position and, when authoritative, its bytes are kept under
+/// `quarantine/region/` before anything can replace them.
 fn decode_record(
     dir: &Path,
     pos: SectionPos,
     store: SectionStore,
     bytes: std::io::Result<Option<Vec<u8>>>,
-) -> SectionRecord {
+    pal: &Palette,
+) -> (SectionRecord, KeptContent) {
     let (error, bytes) = match bytes {
-        Ok(None) => return SectionRecord::Absent,
-        Ok(Some(bytes)) => match codec::decode_section(pos, &bytes) {
-            Ok((section, entities, mobs)) => {
-                return SectionRecord::Decoded {
-                    section: Box::new(section),
-                    entities,
-                    mobs,
-                }
+        Ok(None) => return (SectionRecord::Absent, KeptContent::default()),
+        Ok(Some(bytes)) => match codec::decode_section(pos, &bytes, pal) {
+            Ok(decoded) => {
+                let record = SectionRecord::Decoded {
+                    section: Box::new(decoded.section),
+                    entities: decoded.entities,
+                    mobs: decoded.mobs,
+                };
+                return (record, decoded.kept);
             }
             Err(error) => (error, Some(bytes)),
         },
@@ -196,10 +205,11 @@ fn decode_record(
     if store == SectionStore::ExploredCache {
         // A rebuildable cache: regenerating over it loses nothing.
         log::warn!("explored-cache section {pos:?} is unreadable ({error}); regenerating");
-        return SectionRecord::Unreadable(Unreadable {
+        let record = SectionRecord::Unreadable(Unreadable {
             error,
             quarantined: None,
         });
+        return (record, KeptContent::default());
     }
     let quarantined = bytes.and_then(|bytes| {
         let (rx, rz) = region::region_of(pos);
@@ -209,7 +219,10 @@ fn decode_record(
             .ok()
     });
     log::error!("saved section {pos:?} is unreadable ({error}); kept at {quarantined:?}");
-    SectionRecord::Unreadable(Unreadable { error, quarantined })
+    (
+        SectionRecord::Unreadable(Unreadable { error, quarantined }),
+        KeptContent::default(),
+    )
 }
 
 #[cfg(test)]

@@ -212,7 +212,7 @@ fn a_display_name_never_unlocks_another_identitys_save() {
     saved.inventory.add(ItemStack::new(ItemType::Dirt, 64));
     std::fs::write(
         dir.join(format!("players/{rachel}.dat")),
-        crate::save::player::encode(&saved),
+        crate::save::player::encode(&saved, &crate::save::palette::Palette::identity()),
     )
     .expect("player file");
 

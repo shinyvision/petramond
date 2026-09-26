@@ -10,18 +10,20 @@
 //! re-baking the whole explored area; the cubes are mostly uniform and deflate
 //! to almost nothing.
 
+mod cell_state;
 #[cfg(test)]
 mod golden;
 mod item_slot;
+mod kept;
 #[cfg(test)]
 mod tests;
 mod v19;
+mod v20;
 
-pub use item_slot::{get_item_slot, put_item_slot};
+pub use item_slot::DiskSlot;
 pub use petramond_util::bytecodec::{deflate, inflate, Reader};
 pub use petramond_util::bytecodec::{
-    get_indexed, get_kv_map, put_f32, put_f64, put_i64, put_indexed, put_kv_map, put_u16, put_u32,
-    put_u64, put_u8,
+    get_indexed, get_kv_map, put_indexed, put_kv_map, put_u16, put_u32, put_u64, put_u8,
 };
 
 use std::collections::BTreeMap;
@@ -35,8 +37,11 @@ use petramond_world::container::Container;
 use petramond_world::furnace::Furnace;
 use petramond_world::section::{CellMap, Section};
 
+use super::entities::EntityRecord;
 use super::format::{Format, RecordError};
+use super::mobs::DiskMob;
 use super::palette;
+use kept::{KeptBlock, KeptCells};
 
 /// Current section-record version. Flag-gated payloads are appended at the end, so a
 /// new one that fits a free flag bit needs no version bump. The cubic format starts
@@ -110,13 +115,16 @@ use super::palette;
 /// first MIGRATED bump: v19 records upgrade through `v19::upgrade` on read.
 /// From here on a layout change adds an upgrade step (see `save::format`);
 /// it is never a clean break.
-const SECTION_REC_VERSION: u8 = 20;
+/// v21 (2026-09-26): item entities and mobs are tagged records (`save::wire`):
+/// a field they gain later reads as its default in older records, without
+/// another bump. v20 records upgrade through `v20::upgrade` on read.
+const SECTION_REC_VERSION: u8 = 21;
 
 /// The section-record format: v19 and newer decode, older is retired.
 pub(super) const SECTION: Format = Format::new(
     "section record",
     SECTION_REC_VERSION as u32,
-    &[v19::upgrade],
+    &[v19::upgrade, v20::upgrade],
 );
 
 const FLAG_HAS_FLUID: u8 = 0x01;
@@ -188,13 +196,18 @@ pub struct SectionSnapshot {
     /// Per-cell mod KV entries (`mod_id:key` → bytes), keyed by section-local
     /// index. Opaque to the engine and PRESERVED byte-exact through load/save —
     /// unknown keys are never dropped, so an absent mod's data survives. See
-    /// `Section::cell_kv`.
+    /// `Section::cell_kv`. Blocks and container slots kept in disk form ride
+    /// here too, under reserved keys (see `kept`).
     pub cell_kv: CellMap<BTreeMap<String, Vec<u8>>>,
     /// Mobs resting in this section, captured at save time so a passive owl reloads
     /// where it was left. Like [`entities`](Self::entities) these don't live in the
     /// `Section`, so the world save paths set this from the live mob set. Empty for the
     /// common section.
     pub mobs: Vec<SavedMob>,
+    /// Content this build cannot bring to life, kept from the section's last
+    /// load and written back unchanged. The save attaches it (see
+    /// `WorldSave::save_sections`); world code leaves it empty.
+    pub kept: KeptContent,
 }
 
 impl SectionSnapshot {
@@ -215,22 +228,45 @@ impl SectionSnapshot {
             blocklight: (!s.light_dirty).then(|| s.blocklight_arc()).flatten(),
             cell_kv: s.cell_kv().clone(),
             mobs: Vec::new(),
+            kept: KeptContent::default(),
         }
+    }
+}
+
+/// Section content this build cannot bring to life — mobs and item entities
+/// it cannot represent (see `save::mobs`, `save::entities`) — kept in disk
+/// form. The save holds it beside the section while the section is loaded
+/// and writes it back with every save of the section, so it returns when
+/// its mod does. (Kept blocks and container slots ride the section's own
+/// cell KV instead: they belong to one cell, and a write to that cell must
+/// discard them — see `kept`.)
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KeptContent {
+    pub mobs: Vec<DiskMob>,
+    pub entities: Vec<EntityRecord>,
+}
+
+impl KeptContent {
+    pub fn is_empty(&self) -> bool {
+        self.mobs.is_empty() && self.entities.is_empty()
     }
 }
 
 /// Compress a section snapshot into a record: `[version, flags, flags2, flags3, blocks,
 /// fluid meta?, entities?, …]`, zlib-deflated. Each flag-gated payload is appended only
 /// when present, framed with its length, so a terrain-only section pays for just its
-/// block array.
-pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
-    encode_snapshot_with(s, &super::palette::active())
-}
+/// block array. Every id is written as the world's disk id through `pal`, and
+/// content kept in disk form goes back exactly as it was read.
+pub fn encode_snapshot(s: &SectionSnapshot, pal: &palette::Palette) -> Vec<u8> {
+    let kept = KeptCells::of(s);
+    let cell_states = kept.cell_states(&s.cell_states);
+    let cell_kv = kept::stored_kv(&s.cell_kv);
+    // Light baked with a kept block's cell as air would be wrong once the
+    // block is back: withhold it, so the section re-bakes on load.
+    let light = kept.blocks.is_empty();
+    let has_entities = !s.entities.is_empty() || !s.kept.entities.is_empty();
+    let has_mobs = !s.mobs.is_empty() || !s.kept.mobs.is_empty();
 
-/// [`encode_snapshot`] against an explicit palette — the world's is a
-/// process-wide handle, and a test that means to state something about the
-/// FORMAT must not depend on which world happens to be open.
-pub fn encode_snapshot_with(s: &SectionSnapshot, pal: &palette::Palette) -> Vec<u8> {
     let extra = s.fluid.as_ref().map_or(0, |w| w.len());
     let mut payload = Vec::with_capacity(4 + s.blocks.len() + extra);
     put_u8(&mut payload, SECTION_REC_VERSION);
@@ -238,30 +274,32 @@ pub fn encode_snapshot_with(s: &SectionSnapshot, pal: &palette::Palette) -> Vec<
     if s.fluid.is_some() {
         flags |= FLAG_HAS_FLUID;
     }
-    if !s.entities.is_empty() {
+    if has_entities {
         flags |= FLAG_HAS_ENTITIES;
     }
     if !s.furnaces.is_empty() {
         flags |= FLAG_HAS_FURNACES;
     }
-    if !s.cell_states.is_empty() {
+    if !cell_states.is_empty() {
         flags |= FLAG_HAS_CELL_STATES;
     }
-    if !s.mobs.is_empty() {
+    if has_mobs {
         flags |= FLAG_HAS_MOBS;
     }
     let mut flags2 = 0u8;
-    if !s.cell_kv.is_empty() {
+    if !cell_kv.is_empty() {
         flags2 |= FLAG2_HAS_CELL_KV;
     }
     if !s.containers.is_empty() {
         flags2 |= FLAG2_HAS_CONTAINERS;
     }
+    let skylight = s.skylight.as_ref().filter(|_| light);
+    let blocklight = s.blocklight.as_ref().filter(|_| light);
     let mut flags3 = 0u8;
-    if s.skylight.is_some() {
+    if skylight.is_some() {
         flags3 |= FLAG3_HAS_SKYLIGHT;
     }
-    if s.blocklight.is_some() {
+    if blocklight.is_some() {
         flags3 |= FLAG3_HAS_BLOCKLIGHT;
     }
     put_u8(&mut payload, flags);
@@ -269,14 +307,14 @@ pub fn encode_snapshot_with(s: &SectionSnapshot, pal: &palette::Palette) -> Vec<
     put_u8(&mut payload, flags3);
     // Block ids are stored as the SAVE's ids (see `super::palette`), so a
     // future registry renumbering can't corrupt old worlds.
-    put_block_cube(&mut payload, &s.blocks, pal);
+    put_block_cube(&mut payload, &s.blocks, pal, &kept.blocks);
     // Every flag-gated payload below is framed (`put_framed`), in flag order.
     if let Some(w) = &s.fluid {
         put_framed(&mut payload, |buf| buf.extend_from_slice(w));
     }
-    if !s.entities.is_empty() {
+    if has_entities {
         put_framed(&mut payload, |buf| {
-            super::entities::put_entities(buf, &s.entities)
+            super::entities::put_entities(buf, &s.entities, &s.kept.entities, pal)
         });
     }
     if !s.furnaces.is_empty() {
@@ -284,49 +322,34 @@ pub fn encode_snapshot_with(s: &SectionSnapshot, pal: &palette::Palette) -> Vec<
             super::furnace::put_furnaces(buf, &s.furnaces)
         });
     }
-    if !s.cell_states.is_empty() {
-        // Each record is `[len][id_mask][len bytes]`; the id-masked bytes
-        // are BLOCK IDS and go through the palette like the block array —
-        // the ONLY interpretation this codec ever applies to state bytes.
+    if !cell_states.is_empty() {
         put_framed(&mut payload, |buf| {
-            put_indexed(buf, &s.cell_states, 8, |buf, state| {
-                let bytes = state.bytes();
-                put_u8(buf, bytes.len() as u8);
-                put_u8(buf, state.id_mask());
-                let mut i = 0;
-                while i < bytes.len() {
-                    if state.id_mask() & (1 << i) != 0 && i + 1 < bytes.len() {
-                        put_u16(buf, pal.block_to_disk(state.id_at(i)));
-                        i += 2;
-                    } else {
-                        put_u8(buf, bytes[i]);
-                        i += 1;
-                    }
-                }
-            })
+            put_indexed(buf, &cell_states, 8, |buf, state| state.put(buf, pal))
         });
     }
-    if !s.mobs.is_empty() {
-        put_framed(&mut payload, |buf| super::mobs::put_mobs(buf, &s.mobs));
+    if has_mobs {
+        put_framed(&mut payload, |buf| {
+            super::mobs::put_mobs(buf, &s.mobs, &s.kept.mobs, pal)
+        });
     }
-    if !s.cell_kv.is_empty() {
+    if !cell_kv.is_empty() {
         // Each record is the cell's KV map (idx written by put_indexed);
         // rec_bytes is a reserve hint only — the record body is variable.
         put_framed(&mut payload, |buf| {
-            put_indexed(buf, &s.cell_kv, 16, |buf, map| {
+            put_indexed(buf, &*cell_kv, 16, |buf, map| {
                 put_kv_map(buf, map);
             })
         });
     }
     if !s.containers.is_empty() {
         put_framed(&mut payload, |buf| {
-            super::container::put_containers(buf, &s.containers)
+            super::container::put_containers(buf, &s.containers, &kept.slots, pal)
         });
     }
-    if let Some(sky) = &s.skylight {
+    if let Some(sky) = skylight {
         put_framed(&mut payload, |buf| buf.extend_from_slice(sky));
     }
-    if let Some(bl) = &s.blocklight {
+    if let Some(bl) = blocklight {
         put_framed(&mut payload, |buf| {
             buf.extend_from_slice(&petramond_world::light::to_le_bytes(bl))
         });
@@ -338,16 +361,23 @@ pub fn encode_snapshot_with(s: &SectionSnapshot, pal: &palette::Palette) -> Vec<
 /// one index per cell — a BYTE while the section holds ≤ 256 distinct blocks
 /// (every section a world ever produces) and a `u16` otherwise. The palette is
 /// what keeps the record ~4 KiB after block ids widened to two bytes, and it
-/// also gives deflate a much shorter dictionary to chew on.
+/// also gives deflate a much shorter dictionary to chew on. A cell holding a
+/// kept block writes the kept disk id.
 fn put_block_cube(
     buf: &mut Vec<u8>,
     blocks: &petramond_world::section::BlockCube,
     pal: &palette::Palette,
+    kept: &CellMap<KeptBlock>,
 ) {
     let mut ids: Vec<u16> = Vec::new();
     let mut index: Vec<u16> = Vec::with_capacity(blocks.len());
-    for b in blocks.iter() {
-        let disk = pal.block_to_disk(b);
+    for (cell, b) in blocks.iter().enumerate() {
+        let disk = if kept.is_empty() {
+            pal.block_to_disk(b)
+        } else {
+            kept.get(&(cell as u16))
+                .map_or_else(|| pal.block_to_disk(b), |block| block.disk)
+        };
         let at = match ids.iter().position(|&p| p == disk) {
             Some(i) => i,
             None => {
@@ -370,28 +400,42 @@ fn put_block_cube(
     }
 }
 
-/// Inverse of [`put_block_cube`], mapping each palette entry back through the
-/// save palette on the way out.
-fn get_block_cube(r: &mut Reader, pal: &palette::Palette) -> Option<Vec<u16>> {
+/// Inverse of [`put_block_cube`]: each cell's runtime block through the save
+/// palette, plus `(cell, disk id)` for every cell whose block this build
+/// cannot resolve (those cells read as air).
+fn get_block_cube(r: &mut Reader, pal: &palette::Palette) -> Option<(Vec<u16>, Vec<(u16, u16)>)> {
     let distinct = r.u16()? as usize;
     if distinct == 0 || distinct > petramond_world::registry::WIDE_ID_CAP {
         return None;
     }
-    let mut ids = Vec::with_capacity(distinct);
+    let mut disk = Vec::with_capacity(distinct);
     for _ in 0..distinct {
-        ids.push(pal.block_from_disk(r.u16()?));
+        disk.push(r.u16()?);
     }
+    let runtime: Vec<Option<u16>> = disk.iter().map(|&d| pal.block_from_disk_known(d)).collect();
     let mut out = Vec::with_capacity(SECTION_VOLUME);
+    let mut unknown = Vec::new();
+    let mut place = |cell: usize, i: usize| -> Option<()> {
+        match *runtime.get(i)? {
+            Some(id) => out.push(id),
+            None => {
+                out.push(0);
+                unknown.push((cell as u16, disk[i]));
+            }
+        }
+        Some(())
+    };
     if distinct <= u8::MAX as usize + 1 {
-        for &i in r.bytes(SECTION_VOLUME)?.iter() {
-            out.push(*ids.get(i as usize)?);
+        for (cell, &i) in r.bytes(SECTION_VOLUME)?.iter().enumerate() {
+            place(cell, i as usize)?;
         }
     } else {
-        for _ in 0..SECTION_VOLUME {
-            out.push(*ids.get(r.u16()? as usize)?);
+        for cell in 0..SECTION_VOLUME {
+            let i = r.u16()? as usize;
+            place(cell, i)?;
         }
     }
-    Some(out)
+    Some((out, unknown))
 }
 
 /// Append one flag-gated payload as `[len: u32][bytes]`, `body` writing the
@@ -404,19 +448,23 @@ fn put_framed(buf: &mut Vec<u8>, body: impl FnOnce(&mut Vec<u8>)) {
     buf[at..at + 4].copy_from_slice(&len.to_le_bytes());
 }
 
-/// A section record's contents: the section plus the item entities and
-/// mobs stored with it.
-pub type DecodedSection = (Section, Vec<DroppedItem>, Vec<SavedMob>);
-
-/// Decode a compressed section record into a `Section` at `pos` plus any item
-/// entities and mobs stored with it. An older record is migrated first; a
-/// newer, corrupt or unknown one is a typed error — never "no record".
-pub fn decode_section(pos: SectionPos, blob: &[u8]) -> Result<DecodedSection, RecordError> {
-    decode_section_with(pos, blob, &super::palette::active())
+/// A section record's contents.
+pub struct DecodedSection {
+    pub section: Section,
+    /// The item entities stored with it that this build can represent.
+    pub entities: Vec<DroppedItem>,
+    /// The mobs stored with it that this build can spawn.
+    pub mobs: Vec<SavedMob>,
+    /// What it holds that this build cannot bring to life (see
+    /// [`KeptContent`]).
+    pub kept: KeptContent,
 }
 
-/// [`decode_section`] against an explicit palette (see [`encode_snapshot_with`]).
-pub fn decode_section_with(
+/// Decode a compressed section record into a `Section` at `pos` plus any item
+/// entities and mobs stored with it, mapping disk ids back through `pal`. An
+/// older record is migrated first; a newer, corrupt or unknown one is a typed
+/// error — never "no record".
+pub fn decode_section(
     pos: SectionPos,
     blob: &[u8],
     pal: &palette::Palette,
@@ -511,26 +559,27 @@ fn decode_current(
             flags: unknown,
         });
     }
-    let blocks = get_block_cube(&mut frames.r, pal).ok_or_else(|| frames.corrupt("block cube"))?;
+    let (blocks, unknown_cells) =
+        get_block_cube(&mut frames.r, pal).ok_or_else(|| frames.corrupt("block cube"))?;
     let fluid = frames
         .payload(flags & FLAG_HAS_FLUID != 0, "fluid")?
         .map(|f| f.exact(SECTION_VOLUME))
         .transpose()?;
     let entities = frames
         .payload(flags & FLAG_HAS_ENTITIES != 0, "entities")?
-        .map(|f| f.decode(super::entities::get_entities))
+        .map(|f| f.decode(|r| super::entities::get_entities(r, pal)))
         .transpose()?;
     let furnaces = frames
         .payload(flags & FLAG_HAS_FURNACES != 0, "furnaces")?
         .map(|f| f.decode(super::furnace::get_furnaces))
         .transpose()?;
-    let cell_states = frames
+    let stored_states = frames
         .payload(flags & FLAG_HAS_CELL_STATES != 0, "cell states")?
-        .map(|f| f.decode(|r| get_cell_states(r, pal)))
+        .map(|f| f.decode(cell_state::get_stored))
         .transpose()?;
     let mobs = frames
         .payload(flags & FLAG_HAS_MOBS != 0, "mobs")?
-        .map(|f| f.decode(super::mobs::get_mobs))
+        .map(|f| f.decode(|r| super::mobs::get_mobs(r, pal)))
         .transpose()?;
     let cell_kv = frames
         .payload(flags2 & FLAG2_HAS_CELL_KV != 0, "cell kv")?
@@ -538,7 +587,7 @@ fn decode_current(
         .transpose()?;
     let containers = frames
         .payload(flags2 & FLAG2_HAS_CONTAINERS != 0, "containers")?
-        .map(|f| f.decode(super::container::get_containers))
+        .map(|f| f.decode(|r| super::container::get_containers(r, pal)))
         .transpose()?;
     let skylight = frames
         .payload(flags3 & FLAG3_HAS_SKYLIGHT != 0, "skylight")?
@@ -551,6 +600,18 @@ fn decode_current(
     if !frames.r.is_at_end() {
         return Err(frames.corrupt("trailing bytes"));
     }
+
+    let (containers, kept_slots) = containers.unwrap_or_default();
+    let (cell_states, cell_kv) = kept::restore_cells(
+        unknown_cells,
+        stored_states.unwrap_or_default(),
+        cell_kv.unwrap_or_default(),
+        kept_slots,
+        pal,
+    );
+    let light_is_current = !cell_kv
+        .values()
+        .any(|map| map.contains_key(kept::KEPT_BLOCK_KEY));
     let mut section = Section::from_saved(
         pos.cx,
         pos.cy,
@@ -558,51 +619,33 @@ fn decode_current(
         &blocks,
         fluid.map(|w| w.to_vec().into_boxed_slice()),
         furnaces.unwrap_or_default(),
-        containers.unwrap_or_default(),
-        cell_states.unwrap_or_default(),
-        cell_kv.unwrap_or_default(),
+        containers,
+        cell_states,
+        cell_kv,
     );
     // Persisted clean light: seed the cache and clear `light_dirty`, so the
     // streamer's settle flush skips the bake for this section entirely. The
     // `light_from_persist` flag records that these cubes are the settled
     // persisted bake — the streamer's cover-change invalidation spares them
-    // when the change's source is itself persisted content.
-    if let Some(sky) = skylight {
+    // when the change's source is itself persisted content. Light baked
+    // with a now-kept block in place does not match the air standing in for
+    // it, so such a section re-bakes.
+    if let Some(sky) = skylight.filter(|_| light_is_current) {
         section.set_skylight(Arc::from(sky));
         if let Some(bl) = blocklight {
             section.set_blocklight(Arc::from(bl));
         }
         section.light_from_persist = true;
     }
-    Ok((
+    let (entities, kept_entities) = entities.unwrap_or_default();
+    let (mobs, kept_mobs) = mobs.map(|m| (m.live, m.kept)).unwrap_or_default();
+    Ok(DecodedSection {
         section,
-        entities.unwrap_or_default(),
-        mobs.unwrap_or_default(),
-    ))
-}
-
-/// The unified cell-state list: per cell `[len][id_mask][len bytes]`, the
-/// id-masked pairs mapped back through the save palette.
-fn get_cell_states(r: &mut Reader, pal: &palette::Palette) -> Option<CellMap<ShapeState>> {
-    get_indexed(r, |r| {
-        let len = r.u8()? as usize;
-        let id_mask = r.u8()?;
-        if len > petramond_world::block::SHAPE_STATE_MAX {
-            return None;
-        }
-        let mut bytes = [0u8; petramond_world::block::SHAPE_STATE_MAX];
-        let mut i = 0;
-        while i < len {
-            if id_mask & (1 << i) != 0 && i + 1 < len {
-                let [lo, hi] = ShapeState::id_bytes(pal.block_from_disk(r.u16()?));
-                bytes[i] = lo;
-                bytes[i + 1] = hi;
-                i += 2;
-            } else {
-                bytes[i] = r.u8()?;
-                i += 1;
-            }
-        }
-        Some(ShapeState::with_ids(&bytes[..len], id_mask))
+        entities,
+        mobs,
+        kept: KeptContent {
+            mobs: kept_mobs,
+            entities: kept_entities,
+        },
     })
 }

@@ -1,30 +1,109 @@
 //! `players/<key>.dat` (one per player identity): one player's persisted
 //! state — position, velocity, look, mode, health, bed spawn, full inventory,
-//! and active status effects.
+//! active status effects and progression.
 //!
-//! Split out of `level.dat` at v7 so every connected player saves and restores
-//! independently. The file name is the player name run
-//! through the same sanitize routine world save directories use (see
-//! `save::mod.rs`); this module owns only the codec.
+//! Split out of `level.dat` at v7 so every connected player saves and
+//! restores independently. Since v8 the body is one tagged record
+//! (`save::wire`): a field added later reads as its default in older files,
+//! and a field this build does not know is kept (see [`KeptPlayer`]) and
+//! written back. Slots whose items this world cannot resolve (a removed or
+//! disabled mod's items) load empty and are kept the same way, so they
+//! return with their mod.
+
+mod v7;
 
 use crate::player::{BedSpawn, Player, PlayerMode};
-use crate::save::codec::{get_item_slot, put_f32, put_item_slot, put_u32, put_u8, Reader};
+use crate::save::codec::DiskSlot;
 use crate::save::format::{Format, RecordError};
+use crate::save::palette::Palette;
+use crate::save::wire::{tagged_record, wire_struct, UnknownFields, Wire};
 use petramond_math::math::{IVec3, Vec3};
+use petramond_math::world_pos::WorldPos;
+use petramond_util::bytecodec::{put_u32, Reader};
 use petramond_world::inventory::{Inventory, TOTAL_SLOTS};
 use petramond_world::item::ItemStack;
 
-/// The player-file version this build writes, and the oldest it reads; a
-/// later layout change adds an upgrade step to [`FORMAT`] (see
-/// `save::format`).
-const VERSION: u32 = 7;
+/// The player-file version this build writes. v8 (2026-09-26) replaces the
+/// positional v7 body with a tagged record; v7 files upgrade through
+/// [`v7::upgrade`] on read.
+const VERSION: u32 = 8;
 
 /// The player-file format and its upgrade chain.
-pub const FORMAT: Format = Format::new("player file", VERSION, &[]);
+pub const FORMAT: Format = Format::new("player file", VERSION, &[v7::upgrade]);
+
+/// The bed a player respawns at.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct BedRecord {
+    bed: IVec3,
+    spot: IVec3,
+}
+wire_struct!(BedRecord { bed, spot });
+
+/// The v8 body. Tags are forever: a new field takes a new tag.
+#[derive(Default)]
+struct PlayerRecord {
+    pos: WorldPos,
+    vel: Vec3,
+    yaw: f32,
+    pitch: f32,
+    mode: u8,
+    health: u32,
+    bed_spawn: Option<BedRecord>,
+    /// Every inventory slot, in [`Inventory::raw_slots`] order.
+    slots: Vec<DiskSlot>,
+    cursor: DiskSlot,
+    off_hand: DiskSlot,
+    active_slot: u8,
+    craft_craftable_only: bool,
+    /// Active status effects as `(registry name, remaining ticks)`.
+    effects: Vec<(String, u32)>,
+    obtained_items: Vec<String>,
+    unlocked_recipes: Vec<String>,
+    unknown: UnknownFields,
+}
+tagged_record!(PlayerRecord {
+    1 => pos,
+    2 => vel,
+    3 => yaw,
+    4 => pitch,
+    5 => mode,
+    6 => health,
+    7 => bed_spawn,
+    8 => slots,
+    9 => cursor,
+    10 => off_hand,
+    11 => active_slot,
+    12 => craft_craftable_only,
+    13 => effects,
+    14 => obtained_items,
+    15 => unlocked_recipes,
+});
+
+/// What a player file holds that a live [`Player`] cannot: slots whose
+/// items this world cannot resolve (each loads empty) and fields this build
+/// does not know. The save keeps it per player and writes it back — a kept
+/// slot into its slot while that slot is still empty.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KeptPlayer {
+    /// `(inventory slot index, slot as stored)`.
+    inventory: Vec<(usize, DiskSlot)>,
+    cursor: Option<DiskSlot>,
+    off_hand: Option<DiskSlot>,
+    unknown: UnknownFields,
+}
+
+impl KeptPlayer {
+    pub fn is_empty(&self) -> bool {
+        self.inventory.is_empty()
+            && self.cursor.is_none()
+            && self.off_hand.is_none()
+            && self.unknown.is_empty()
+    }
+}
 
 /// Decoded `players/<key>.dat` contents.
 pub struct PlayerData {
-    pub pos: petramond_math::world_pos::WorldPos,
+    pub pos: WorldPos,
     pub vel: Vec3,
     /// Look direction, radians (see `player::Player::yaw` / `pitch`).
     pub yaw: f32,
@@ -48,82 +127,83 @@ pub struct PlayerData {
     pub obtained_items: Vec<String>,
     /// Unlocked crafting recipe keys, in unlock order.
     pub unlocked_recipes: Vec<String>,
+    /// What the file held that the live player cannot (see [`KeptPlayer`]).
+    pub kept: KeptPlayer,
 }
 
-pub fn encode(player: &Player) -> Vec<u8> {
+/// Encode `player`; item ids are written as the world's disk ids through
+/// `pal`.
+pub fn encode(player: &Player, pal: &Palette) -> Vec<u8> {
+    encode_keeping(player, pal, &KeptPlayer::default())
+}
+
+/// [`encode`], writing back what an earlier load kept.
+pub fn encode_keeping(player: &Player, pal: &Palette, kept: &KeptPlayer) -> Vec<u8> {
+    let or_kept = |live: Option<ItemStack>, kept: Option<&DiskSlot>| match (live, kept) {
+        (None, Some(stored)) => stored.clone(),
+        (live, _) => DiskSlot::of(live, pal),
+    };
+    let kept_at = |i: usize| {
+        kept.inventory
+            .iter()
+            .find(|(at, _)| *at == i)
+            .map(|(_, slot)| slot)
+    };
+    // Kept slots past this build's inventory ride along after it.
+    let live_slots = player.inventory.raw_slots();
+    let slot_count = kept
+        .inventory
+        .iter()
+        .map(|(i, _)| i + 1)
+        .fold(live_slots.len(), usize::max);
+    let record = PlayerRecord {
+        pos: player.pos,
+        vel: player.vel,
+        yaw: player.yaw,
+        pitch: player.pitch,
+        mode: player.mode().to_u8(),
+        health: player.health() as u32,
+        bed_spawn: player.bed_spawn.map(|bs| BedRecord {
+            bed: bs.bed,
+            spot: bs.spot,
+        }),
+        slots: (0..slot_count)
+            .map(|i| or_kept(live_slots.get(i).copied().flatten(), kept_at(i)))
+            .collect(),
+        cursor: or_kept(player.inventory.cursor().copied(), kept.cursor.as_ref()),
+        off_hand: or_kept(player.inventory.off_hand().copied(), kept.off_hand.as_ref()),
+        active_slot: player.inventory.active_slot(),
+        craft_craftable_only: player.craft_craftable_only,
+        // By registry NAME — ids are session-scoped.
+        effects: player
+            .effects()
+            .iter()
+            .map(|e| (e.effect.def().name.to_owned(), e.remaining))
+            .collect(),
+        obtained_items: player
+            .progression
+            .obtained()
+            .iter()
+            .filter_map(|item| petramond_world::registry::names().items.name(item.id()))
+            .map(str::to_owned)
+            .collect(),
+        // In unlock order: the order the wire catch-up depends on.
+        unlocked_recipes: player.progression.unlocked().to_vec(),
+        unknown: kept.unknown.clone(),
+    };
     let mut b = Vec::new();
     put_u32(&mut b, VERSION);
-    put_world_pos(&mut b, player.pos);
-    put_vec3(&mut b, player.vel);
-    put_f32(&mut b, player.yaw);
-    put_f32(&mut b, player.pitch);
-    put_u8(&mut b, player.mode().to_u8());
-    put_u32(&mut b, player.health() as u32);
-    // The bed spawn point: presence byte + bed base cell + wake spot.
-    match player.bed_spawn {
-        Some(bs) => {
-            put_u8(&mut b, 1);
-            put_ivec3(&mut b, bs.bed);
-            put_ivec3(&mut b, bs.spot);
-        }
-        None => put_u8(&mut b, 0),
-    }
-    for slot in player.inventory.raw_slots() {
-        put_item_slot(&mut b, *slot);
-    }
-    put_item_slot(&mut b, player.inventory.cursor().copied());
-    put_item_slot(&mut b, player.inventory.off_hand().copied());
-    put_u8(&mut b, player.inventory.active_slot());
-    put_u8(&mut b, player.craft_craftable_only as u8);
-    // Active status effects, persisted by registry NAME — ids are
-    // session-scoped.
-    put_u32(&mut b, player.effects().len() as u32);
-    for e in player.effects() {
-        let name = e.effect.def().name;
-        put_u32(&mut b, name.len() as u32);
-        b.extend_from_slice(name.as_bytes());
-        put_u32(&mut b, e.remaining);
-    }
-    // Progression: obtained items by registry name, then unlocked recipe keys
-    // in unlock order (the order the wire catch-up depends on).
-    let obtained: Vec<&str> = player
-        .progression
-        .obtained()
-        .iter()
-        .filter_map(|item| petramond_world::registry::names().items.name(item.id()))
-        .collect();
-    put_strings(&mut b, obtained.iter().copied());
-    put_strings(
-        &mut b,
-        player.progression.unlocked().iter().map(String::as_str),
-    );
+    record.put(&mut b);
     b
-}
-
-fn put_strings<'a>(b: &mut Vec<u8>, values: impl ExactSizeIterator<Item = &'a str>) {
-    put_u32(b, values.len() as u32);
-    for value in values {
-        put_u32(b, value.len() as u32);
-        b.extend_from_slice(value.as_bytes());
-    }
-}
-
-fn get_strings(r: &mut Reader) -> Option<Vec<String>> {
-    let n = r.u32()? as usize;
-    let mut out = Vec::with_capacity(n.min(1024));
-    for _ in 0..n {
-        let len = r.u32()? as usize;
-        out.push(std::str::from_utf8(r.bytes(len)?).ok()?.to_owned());
-    }
-    Some(out)
 }
 
 /// Decode a player file, migrating an older version first. A newer, retired
 /// or malformed one is an error — never a fresh player.
-pub fn decode(bytes: &[u8]) -> Result<PlayerData, RecordError> {
+pub fn decode(bytes: &[u8], pal: &Palette) -> Result<PlayerData, RecordError> {
     let body = FORMAT.upgrade_u32_record(bytes)?;
     let mut r = Reader::new(&body);
-    let data = decode_body(&mut r)
+    // Offsets count from the start of the file (the version header is 4 bytes).
+    let record = PlayerRecord::get(&mut r)
         .ok_or_else(|| RecordError::corrupt(FORMAT.name, "player record", 4 + r.offset()))?;
     if !r.is_at_end() {
         return Err(RecordError::corrupt(
@@ -132,65 +212,57 @@ pub fn decode(bytes: &[u8]) -> Result<PlayerData, RecordError> {
             4 + r.offset(),
         ));
     }
-    Ok(data)
-}
-
-/// The current-version body; `r` is left where decoding stopped.
-fn decode_body(r: &mut Reader) -> Option<PlayerData> {
-    let pos = get_world_pos(r)?;
-    let vel = get_vec3(r)?;
-    let (yaw, pitch) = (r.f32()?, r.f32()?);
-    let mode = PlayerMode::from_u8(r.u8()?);
-    let health = r.u32()? as i32;
-
-    let bed_spawn = if r.u8()? == 1 {
-        Some(BedSpawn {
-            bed: get_ivec3(r)?,
-            spot: get_ivec3(r)?,
-        })
-    } else {
-        None
-    };
-
-    let mut slots: [Option<ItemStack>; TOTAL_SLOTS] = [None; TOTAL_SLOTS];
-    for slot in slots.iter_mut() {
-        *slot = get_item_slot(r)?;
-    }
-    let cursor = get_item_slot(r)?;
-    let off_hand = get_item_slot(r)?;
-    let active = r.u8()?;
-    let inventory = Inventory::from_parts(slots, cursor, off_hand, active);
-    let craft_craftable_only = r.u8()? != 0;
-
-    let mut effects = Vec::new();
-    let n = r.u32()?;
-    for _ in 0..n {
-        let klen = r.u32()? as usize;
-        let name = std::str::from_utf8(r.bytes(klen)?).ok()?.to_owned();
-        let remaining = r.u32()?;
-        effects.push((name, remaining));
-    }
-
-    let obtained_items = get_strings(r)?;
-    let unlocked_recipes = get_strings(r)?;
-
-    Some(PlayerData {
-        pos,
-        vel,
-        yaw,
-        pitch,
-        mode,
-        health,
-        bed_spawn,
-        inventory,
-        effects,
-        craft_craftable_only,
-        obtained_items,
-        unlocked_recipes,
-    })
+    Ok(PlayerData::from_record(record, pal))
 }
 
 impl PlayerData {
+    fn from_record(record: PlayerRecord, pal: &Palette) -> Self {
+        let mut kept = KeptPlayer {
+            unknown: record.unknown,
+            ..KeptPlayer::default()
+        };
+        let mut slots: [Option<ItemStack>; TOTAL_SLOTS] = [None; TOTAL_SLOTS];
+        for (i, stored) in record.slots.into_iter().enumerate() {
+            if i >= TOTAL_SLOTS {
+                // A slot past this build's inventory is kept as stored.
+                if !stored.is_empty() {
+                    kept.inventory.push((i, stored));
+                }
+                continue;
+            }
+            match stored.resolve(pal) {
+                Ok(live) => slots[i] = live,
+                Err(stored) => kept.inventory.push((i, stored)),
+            }
+        }
+        let cursor = record.cursor.resolve(pal).unwrap_or_else(|stored| {
+            kept.cursor = Some(stored);
+            None
+        });
+        let off_hand = record.off_hand.resolve(pal).unwrap_or_else(|stored| {
+            kept.off_hand = Some(stored);
+            None
+        });
+        Self {
+            pos: record.pos,
+            vel: record.vel,
+            yaw: record.yaw,
+            pitch: record.pitch,
+            mode: PlayerMode::from_u8(record.mode),
+            health: record.health as i32,
+            bed_spawn: record.bed_spawn.map(|b| BedSpawn {
+                bed: b.bed,
+                spot: b.spot,
+            }),
+            inventory: Inventory::from_parts(slots, cursor, off_hand, record.active_slot),
+            effects: record.effects,
+            craft_craftable_only: record.craft_craftable_only,
+            obtained_items: record.obtained_items,
+            unlocked_recipes: record.unlocked_recipes,
+            kept,
+        }
+    }
+
     /// Rebuild a live [`Player`] from the decoded record. Effects resolve by
     /// registry name; a name the session doesn't know (its mod was removed or
     /// disabled) is dropped with a warning, never an error.
@@ -223,202 +295,5 @@ impl PlayerData {
     }
 }
 
-fn put_world_pos(b: &mut Vec<u8>, p: petramond_math::world_pos::WorldPos) {
-    crate::save::codec::put_f64(b, p.x);
-    crate::save::codec::put_f64(b, p.y);
-    crate::save::codec::put_f64(b, p.z);
-}
-
-fn get_world_pos(r: &mut Reader) -> Option<petramond_math::world_pos::WorldPos> {
-    Some(petramond_math::world_pos::WorldPos::new(
-        r.f64()?,
-        r.f64()?,
-        r.f64()?,
-    ))
-}
-
-fn put_vec3(b: &mut Vec<u8>, v: Vec3) {
-    put_f32(b, v.x);
-    put_f32(b, v.y);
-    put_f32(b, v.z);
-}
-
-fn get_vec3(r: &mut Reader) -> Option<Vec3> {
-    Some(Vec3::new(r.f32()?, r.f32()?, r.f32()?))
-}
-
-fn put_ivec3(b: &mut Vec<u8>, v: IVec3) {
-    put_u32(b, v.x as u32);
-    put_u32(b, v.y as u32);
-    put_u32(b, v.z as u32);
-}
-
-fn get_ivec3(r: &mut Reader) -> Option<IVec3> {
-    Some(IVec3::new(
-        r.u32()? as i32,
-        r.u32()? as i32,
-        r.u32()? as i32,
-    ))
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use petramond_math::world_pos::WorldPos;
-
-    #[test]
-    fn player_file_roundtrips() {
-        let mut player = Player::new(WorldPos::new(10.0, 72.0, -4.0));
-        player.set_mode(PlayerMode::Spectator);
-        player.vel = Vec3::new(0.0, -1.5, 0.25); // after set_mode, which zeroes vel
-        player.yaw = 1.25;
-        player.pitch = -0.5;
-        player.set_health(7);
-        player.inventory.set_active(3);
-        *player.inventory.off_hand_mut() = Some(petramond_world::item::ItemStack::new(
-            petramond_world::item::ItemType::Coal,
-            9,
-        ));
-        player.bed_spawn = Some(BedSpawn {
-            bed: IVec3::new(-3, 70, 12),
-            spot: IVec3::new(-2, 70, 13),
-        });
-        player.apply_effect(petramond_world::effect::Effect::Regeneration, 950);
-        player.craft_craftable_only = true;
-        player
-            .progression
-            .obtain(petramond_world::item::ItemType::OakLog);
-        player
-            .progression
-            .obtain(petramond_world::item::ItemType::Coal);
-        player.progression.unlock("petramond:oak_planks");
-        player.progression.unlock("petramond:torch");
-
-        let bytes = encode(&player);
-        let got = decode(&bytes).expect("decodes");
-
-        assert_eq!(got.pos, WorldPos::new(10.0, 72.0, -4.0));
-        assert_eq!(got.vel, Vec3::new(0.0, -1.5, 0.25));
-        assert_eq!(got.yaw, 1.25);
-        assert_eq!(got.pitch, -0.5);
-        assert_eq!(got.mode, PlayerMode::Spectator);
-        assert_eq!(got.health, 7, "health survives the round-trip");
-        assert_eq!(got.inventory.active_slot(), 3);
-        assert_eq!(
-            got.bed_spawn, player.bed_spawn,
-            "the bed spawn survives the round-trip"
-        );
-        assert_eq!(
-            got.effects,
-            vec![("petramond:regeneration".to_owned(), 950)],
-            "active effects survive the round-trip by name"
-        );
-        // Demo hotbar survives the round-trip.
-        assert_eq!(
-            got.inventory.selected().map(|s| s.item),
-            player.inventory.selected().map(|s| s.item)
-        );
-        assert_eq!(
-            got.inventory.off_hand().map(|s| (s.item, s.count)),
-            Some((petramond_world::item::ItemType::Coal, 9)),
-            "the off-hand slot survives the round-trip"
-        );
-        assert!(
-            got.restore().craft_craftable_only,
-            "the craftable-only browser preference survives the round-trip"
-        );
-        // Progression is the one record a player cannot re-earn by playing:
-        // losing it re-hides recipes they already unlocked, and losing the
-        // obtained set re-fires `item_obtained` for things they have had for
-        // days. Both travel by NAME, and unlock ORDER is the wire catch-up's
-        // contract.
-        let restored = got.restore();
-        assert_eq!(
-            restored.progression.unlocked(),
-            ["petramond:oak_planks", "petramond:torch"],
-            "unlocked recipes survive in unlock order"
-        );
-        assert!(restored.progression.obtained().intersects(
-            &[
-                petramond_world::item::ItemType::OakLog,
-                petramond_world::item::ItemType::Coal
-            ]
-            .into_iter()
-            .collect()
-        ));
-        let mut fresh = petramond_world::item::ItemSet::EMPTY;
-        fresh.insert(petramond_world::item::ItemType::Diamond);
-        assert!(
-            !restored.progression.obtained().intersects(&fresh),
-            "an item never held stays unheld"
-        );
-    }
-
-    #[test]
-    fn other_versions_are_typed_errors_not_a_fresh_player() {
-        // A player file this build cannot read must never look like "no
-        // file": the caller would respawn the player with an empty inventory
-        // and save it over the original.
-        let mut bytes = encode(&Player::new(WorldPos::new(1.0, 2.0, 3.0)));
-        bytes[0..4].copy_from_slice(&(VERSION + 1).to_le_bytes());
-        assert!(matches!(
-            decode(&bytes),
-            Err(RecordError::Newer { found, .. }) if found == VERSION + 1
-        ));
-        bytes[0..4].copy_from_slice(&(FORMAT.oldest() - 1).to_le_bytes());
-        assert!(matches!(decode(&bytes), Err(RecordError::Retired { .. })));
-    }
-
-    #[test]
-    fn a_truncated_file_is_corrupt() {
-        let bytes = encode(&Player::new(WorldPos::new(1.0, 2.0, 3.0)));
-        assert!(matches!(
-            decode(&bytes[..bytes.len() - 1]),
-            Err(RecordError::Corrupt { .. })
-        ));
-    }
-
-    /// Golden player file v7, laid out by hand rather than by the encoder:
-    /// survival at (1.5, 64, -2.5), health 20, no bed, empty inventory with
-    /// hotbar slot 2 active, one effect, one obtained item, one recipe. Item
-    /// slots are all empty so the fixture holds no palette-dependent id.
-    #[test]
-    fn golden_player_v7_decodes() {
-        let got = decode(include_bytes!("fixtures/player_v7.bin")).expect("v7 decodes");
-        assert_eq!(got.pos, WorldPos::new(1.5, 64.0, -2.5));
-        assert_eq!(got.vel, Vec3::new(0.0, -0.5, 0.0));
-        assert_eq!((got.yaw, got.pitch), (0.5, -0.25));
-        assert_eq!(got.mode, PlayerMode::Survival);
-        assert_eq!(got.health, 20);
-        assert_eq!(got.bed_spawn, None);
-        assert_eq!(got.inventory.active_slot(), 2);
-        assert!(got.inventory.raw_slots().iter().all(Option::is_none));
-        assert!(got.craft_craftable_only);
-        assert_eq!(
-            got.effects,
-            vec![("petramond:regeneration".to_owned(), 100)]
-        );
-        assert_eq!(got.obtained_items, vec!["petramond:coal".to_owned()]);
-        assert_eq!(got.unlocked_recipes, vec!["petramond:torch".to_owned()]);
-    }
-
-    #[test]
-    fn restore_drops_unknown_effect_names_and_keeps_known_ones() {
-        // A removed/disabled mod's effect must not error the whole restore —
-        // it is dropped (with a warning) while known effects still apply.
-        let mut player = Player::new(WorldPos::new(0.0, 70.0, 0.0));
-        player.apply_effect(petramond_world::effect::Effect::Regeneration, 400);
-        let mut data = decode(&encode(&player)).expect("decodes");
-        data.effects
-            .push(("gone_mod:vanished_effect".to_owned(), 100));
-
-        let restored = data.restore();
-        let active = restored.effects();
-        assert_eq!(active.len(), 1, "only the known effect is restored");
-        assert_eq!(
-            active[0].effect,
-            petramond_world::effect::Effect::Regeneration
-        );
-        assert_eq!(active[0].remaining, 400);
-    }
-}
+mod tests;

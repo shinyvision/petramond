@@ -6,16 +6,19 @@
 //! 16³ sections the player has modified. Everything else regenerates from the
 //! seed, so a save stays small.
 //!
-//! Disk I/O (compression + file reads/writes) runs on a dedicated thread so the
-//! 20 TPS game loop never blocks. The game thread sends snapshots / requests and
-//! drains loaded sections via [`WorldSave::poll_loaded`], mirroring the section-gen
-//! worker pool.
+//! Nothing here blocks the 20 TPS game loop: section records deflate on the
+//! shared job pool (see `encode`), one writer thread journals and applies
+//! the writes (`io`), and a few reader threads sharded by region feed a
+//! decoder pool (`read`, `decode`). The game thread queues snapshots and
+//! requests and drains loaded sections via [`WorldSave::poll_loaded`],
+//! mirroring the section-gen worker pool.
 
 pub mod client;
 mod codec;
 pub use petramond_worldgen::colgen;
 mod container;
 mod decode;
+mod encode;
 pub mod entities;
 pub mod format;
 mod furnace;
@@ -25,14 +28,16 @@ pub mod level;
 pub mod mobs;
 pub mod palette;
 pub mod player;
+mod read;
 pub(crate) use petramond_region as region;
 pub mod settings;
+pub mod wire;
 mod worlds;
 
 #[cfg(test)]
 mod tests;
 
-pub use codec::SectionSnapshot;
+pub use codec::{DiskSlot, KeptContent, SectionSnapshot};
 pub use format::RecordError;
 pub use level::LevelData;
 pub use petramond_util::paths::base_data_dir;
@@ -46,7 +51,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use crate::entity::DroppedItem;
@@ -55,7 +60,9 @@ use petramond_world::chunk::{ChunkPos, SectionPos};
 use petramond_world::section::Section;
 
 use crate::net::identity::PlayerKey;
-use io::{read_thread, write_thread, IoMsg, ReadMsg};
+use encode::EncodeSlot;
+use io::{write_thread, IoMsg};
+use read::{ReadMsg, ReadQueues};
 use worlds::{legacy_player_path, player_path};
 
 /// The identity→display-name registry file inside `players/`.
@@ -106,6 +113,14 @@ impl Unreadable {
     }
 }
 
+/// A section read as the decoders publish it: the load, plus what its record
+/// keeps that this build cannot bring to life, for the save to hold (see
+/// [`WorldSave::poll_loaded`]).
+struct DecodedLoad {
+    loaded: LoadedSection,
+    kept: KeptContent,
+}
+
 /// A column-gen cache record read back from disk (`record` is `None` when the
 /// cache misses — absent, corrupt, or seed/version drift: regenerate instead).
 pub struct LoadedColumnGen {
@@ -116,13 +131,13 @@ pub struct LoadedColumnGen {
 /// Live handle to a world's on-disk save and its I/O thread.
 pub struct WorldSave {
     writes: Arc<WriteQueue>,
-    read_tx: Sender<ReadMsg>,
+    reads: Arc<ReadQueues>,
     section_write_barriers: HashMap<(SectionStore, i32, i32), u64>,
     colgen_write_barriers: HashMap<(i32, i32), u64>,
-    load_rx: Receiver<LoadedSection>,
+    load_rx: Receiver<DecodedLoad>,
     colgen_rx: Receiver<LoadedColumnGen>,
     writer_handle: Option<JoinHandle<()>>,
-    reader_handle: Option<JoinHandle<()>>,
+    reader_handles: Vec<JoinHandle<()>>,
     /// Columns with a column-gen cache record on disk ("Optimize explored
     /// terrain"): seeded at open from `colgen/` headers, grown as we save.
     /// Presence only — a hit still validates seed/version at decode.
@@ -149,7 +164,26 @@ pub struct WorldSave {
     write_protected: HashSet<SectionPos>,
     /// Player files under the same protection, by player identity.
     protected_players: Mutex<HashSet<PlayerKey>>,
+    /// Content kept in disk form from each loaded section's record (mobs and
+    /// item entities this build cannot bring to life — a removed or disabled
+    /// mod's), written back with every save of the section so it returns
+    /// with its mod. Replaced by each load of the section.
+    kept_sections: Mutex<HashMap<SectionPos, KeptContent>>,
+    /// The same for player files: slots and fields a live player cannot
+    /// carry, by player identity.
+    kept_players: Mutex<HashMap<PlayerKey, player::KeptPlayer>>,
+    /// This world's name↔id palette. Every record the save writes or reads
+    /// maps its ids through it (see [`palette`]).
+    palette: Arc<palette::Palette>,
+    /// The shared job pool section records deflate on (see `encode`);
+    /// `None` until one is attached, when the writer encodes them itself.
+    encoders: Option<Arc<crate::worker::JobPool>>,
 }
+
+/// Where section encoding sits among the pool's jobs (lower runs sooner):
+/// just behind predicted terrain, ahead of every generation, light and mesh
+/// job — a save's latency is what a crash would lose.
+const ENCODE_PRIORITY: i64 = i64::MIN + 1;
 
 /// The ordered lane to the write thread, shared with any open
 /// [`SaveBatch`].
@@ -234,12 +268,42 @@ pub struct OpenedWorld {
     /// Day length in real minutes (`settings.json`; night mirrors it — the
     /// session converts to cycle ticks).
     pub day_minutes: u32,
+    /// Mods the world was last saved with that are not active now (see
+    /// `modding::modset`). Their content is kept, and the world's small
+    /// files were backed up before this open; the session can tell the
+    /// player which mods to bring back.
+    pub missing_mods: Vec<String>,
+}
+
+/// The backup directory for an open with `missing` mods: one per distinct
+/// missing set, so reopening without the same mods keeps the first backup.
+fn missing_mods_backup_name(missing: &[String]) -> String {
+    let ids: Vec<String> = missing
+        .iter()
+        .map(|id| {
+            id.chars()
+                .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' })
+                .collect()
+        })
+        .collect();
+    format!("mods-missing-{}", ids.join("+"))
 }
 
 impl WorldSave {
     /// The world's save directory.
     pub fn dir(&self) -> &std::path::Path {
         &self.dir
+    }
+
+    /// This world's save palette.
+    pub fn palette(&self) -> &palette::Palette {
+        &self.palette
+    }
+
+    /// Deflate section records on `pool` (the world's shared job pool)
+    /// instead of on the writer thread.
+    pub fn use_job_pool(&mut self, pool: Arc<crate::worker::JobPool>) {
+        self.encoders = Some(pool);
     }
 
     fn queue_write(&self, msg: IoMsg) -> u64 {
@@ -268,12 +332,25 @@ impl WorldSave {
         }
     }
 
-    /// How many write jobs are being held back because one failed to reach
-    /// disk (it is retried; the rest wait behind it). 0 = saving works.
+    /// How many queued writes are being held back because one failed to
+    /// reach disk (it is retried; the rest merge into it). 0 = saving works.
     pub fn held_writes(&self) -> u64 {
         self.held_writes.load(Ordering::Relaxed)
     }
 
+    /// How many queued writes have not reached disk yet — the save's lag
+    /// behind the game. Healthy saving keeps this near zero; it grows while
+    /// the disk is slow or failing (the writer merges the backlog, so its
+    /// memory stays bounded by the distinct records written).
+    pub fn write_backlog(&self) -> u64 {
+        self.writes
+            .next_seq
+            .load(Ordering::Acquire)
+            .saturating_sub(self.reads.completed())
+    }
+
+    /// One write per region group; each group starts deflating on the job
+    /// pool right away (see `encode`).
     fn queue_section_writes(&mut self, store: SectionStore, snaps: Vec<SectionSnapshot>) {
         let mut by_region: HashMap<(i32, i32), Vec<SectionSnapshot>> = HashMap::new();
         for snap in snaps {
@@ -283,7 +360,12 @@ impl WorldSave {
                 .push(snap);
         }
         for ((rx, rz), snaps) in by_region {
-            let seq = self.queue_write(IoMsg::SaveSections { store, snaps });
+            let records = EncodeSlot::new(snaps);
+            if let Some(pool) = &self.encoders {
+                let (records, palette) = (records.clone(), self.palette.clone());
+                pool.submit(ENCODE_PRIORITY, move || records.encode(&palette));
+            }
+            let seq = self.queue_write(IoMsg::SaveSections { store, records });
             self.section_write_barriers.insert((store, rx, rz), seq);
         }
     }
@@ -318,7 +400,8 @@ impl WorldSave {
         }
         let mut authoritative = Vec::new();
         let mut explored = Vec::new();
-        for s in snaps {
+        let kept = self.kept_sections.lock().expect("kept sections");
+        for mut s in snaps {
             if self.write_protected.contains(&s.pos) {
                 continue;
             }
@@ -328,10 +411,14 @@ impl WorldSave {
                 continue;
             }
             saved.insert_authoritative(s.pos);
+            if let Some(kept) = kept.get(&s.pos) {
+                s.kept = kept.clone();
+            }
             // Track whether the record we're about to write carries any live entities —
-            // drops or mobs (matching `encode_snapshot`'s FLAG_HAS_ENTITIES /
-            // FLAG_HAS_MOBS). A section that loses them all is then re-saved once to clear
+            // drops or mobs. A section that loses them all is then re-saved once to clear
             // the record (see the persist decisions in `world::stream`/`world::store`).
+            // Kept content does not count: it rides every save of the section, so it
+            // never needs a clearing rewrite.
             if s.entities.is_empty() && s.mobs.is_empty() {
                 self.entities_on_disk.remove(&s.pos);
             } else {
@@ -339,6 +426,7 @@ impl WorldSave {
             }
             authoritative.push(s);
         }
+        drop(kept);
         if !authoritative.is_empty() {
             self.queue_section_writes(SectionStore::Authoritative, authoritative);
         }
@@ -351,12 +439,12 @@ impl WorldSave {
         self.queue_write(IoMsg::SaveLevel(bytes));
     }
 
-    /// Queue a player-file write (`players/<hex key>.dat`, atomic like
-    /// `level.dat`). `bytes` come from [`player::encode`].
+    /// Encode `player` through this world's palette and queue its file
+    /// write (`players/<hex key>.dat`, atomic like `level.dat`).
     ///
     /// A player whose file could not be read and was not kept aside is not
     /// written (see [`load_player`](Self::load_player)).
-    pub fn save_player(&self, key: &PlayerKey, bytes: Vec<u8>) {
+    pub fn save_player(&self, key: &PlayerKey, player: &crate::player::Player) {
         if self
             .protected_players
             .lock()
@@ -365,6 +453,10 @@ impl WorldSave {
         {
             return;
         }
+        let bytes = match self.kept_players.lock().expect("kept players").get(key) {
+            Some(kept) => player::encode_keeping(player, &self.palette, kept),
+            None => player::encode(player, &self.palette),
+        };
         self.queue_write(IoMsg::SavePlayer { key: *key, bytes });
     }
 
@@ -456,8 +548,16 @@ impl WorldSave {
         bytes: &[u8],
         key: &PlayerKey,
     ) -> Result<player::PlayerData, RecordError> {
-        let error = match player::decode(bytes) {
-            Ok(data) => return Ok(data),
+        let error = match player::decode(bytes, &self.palette) {
+            Ok(data) => {
+                let mut kept = self.kept_players.lock().expect("kept players");
+                if data.kept.is_empty() {
+                    kept.remove(key);
+                } else {
+                    kept.insert(*key, data.kept.clone());
+                }
+                return Ok(data);
+            }
             Err(error) => error,
         };
         let relative = std::path::Path::new("players").join(path.file_name().unwrap_or_default());
@@ -529,7 +629,7 @@ impl WorldSave {
                 .get(&(store, rx, rz))
                 .copied()
                 .unwrap_or(0);
-            let _ = self.read_tx.send(ReadMsg::Section {
+            self.reads.request(ReadMsg::Section {
                 pos,
                 store,
                 barrier,
@@ -537,8 +637,18 @@ impl WorldSave {
         }
     }
 
+    /// The next finished section read. What its record keeps in disk form
+    /// stays with the save (see `kept_sections`), so world code only ever
+    /// sees content it can bring to life.
     pub fn poll_loaded(&self) -> Option<LoadedSection> {
-        self.load_rx.try_recv().ok()
+        let DecodedLoad { loaded, kept } = self.load_rx.try_recv().ok()?;
+        let mut held = self.kept_sections.lock().expect("kept sections");
+        if kept.is_empty() {
+            held.remove(&loaded.pos);
+        } else {
+            held.insert(loaded.pos, kept);
+        }
+        Some(loaded)
     }
 
     /// A missing record must not stay in the presence index or every revisit
@@ -614,7 +724,8 @@ impl WorldSave {
             .get(&colgen::region_of(pos))
             .copied()
             .unwrap_or(0);
-        let _ = self.read_tx.send(ReadMsg::ColumnGen { pos, seed, barrier });
+        self.reads
+            .request(ReadMsg::ColumnGen { pos, seed, barrier });
     }
 
     pub fn poll_loaded_column_gen(&self) -> Option<LoadedColumnGen> {
@@ -634,8 +745,8 @@ impl WorldSave {
         if let Some(h) = self.writer_handle.take() {
             let _ = h.join();
         }
-        let _ = self.read_tx.send(ReadMsg::Shutdown);
-        if let Some(h) = self.reader_handle.take() {
+        self.reads.shut_down();
+        for h in self.reader_handles.drain(..) {
             let _ = h.join();
         }
     }
@@ -667,14 +778,10 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     if journal::recover(&dir)? {
         log::info!("finished an interrupted save in {}", dir.display());
     }
-    // A `level.dat` that exists but does not decode refuses the open: a
-    // world treated as new would get a fresh seed and world KV written over
-    // the real ones.
-    let level = match std::fs::read(dir.join("level.dat")) {
-        Ok(bytes) => Some(level::decode(&bytes)?),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(e),
-    };
+    // A `level.dat` that cannot be read (nor recovered from its backup)
+    // refuses the open: a world treated as new would get a fresh seed and
+    // world KV written over the real ones.
+    let level = level::load(&dir)?;
 
     // Per-world settings (`settings.json`; absent = defaults). Mod enablement
     // is read BEFORE the palette so disabled-mod content decodes as unknown.
@@ -685,12 +792,19 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
 
     // Pin (or load) the save's block/item name palette BEFORE any record is
     // read or written: the codec maps every id through it (see `palette`).
-    palette::activate(&dir, &disabled_mods)?;
+    let palette = Arc::new(palette::load_or_create(&dir, &disabled_mods)?);
 
     // Compare the save's recorded mod set with the ENABLED one (loud warning
-    // on any difference; never blocks — content degrades safely via the
-    // palette). Deliberately disabled mods are not a mismatch.
-    crate::modding::modset::warn_on_mismatch(&dir, &disabled_mods);
+    // on any difference; never blocks — a missing mod's content is kept in
+    // disk form). Deliberately disabled mods are not a mismatch. A world
+    // opened with mods missing is backed up before anything is rewritten.
+    let missing_mods: Vec<String> = crate::modding::modset::check_at_open(&dir, &disabled_mods)
+        .into_iter()
+        .map(|entry| entry.id)
+        .collect();
+    if !missing_mods.is_empty() {
+        format::back_up_small_files(&dir, &missing_mods_backup_name(&missing_mods))?;
+    }
 
     let t_meta = t0.elapsed();
 
@@ -805,22 +919,24 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     let players_dir = dir.join("players");
     let world_dir = dir.clone();
     let (tx, rx) = std::sync::mpsc::channel::<(u64, IoMsg)>();
-    let (read_tx, read_rx) = std::sync::mpsc::channel::<ReadMsg>();
-    let (load_tx, load_rx) = std::sync::mpsc::channel::<LoadedSection>();
+    let (load_tx, load_rx) = std::sync::mpsc::channel::<DecodedLoad>();
     let (colgen_tx, colgen_rx) = std::sync::mpsc::channel::<LoadedColumnGen>();
-    let completed = Arc::new((Mutex::new(0u64), Condvar::new()));
-    let writer_completed = completed.clone();
+    let reads = ReadQueues::new(read::reader_count());
     let held_writes = Arc::new(AtomicU64::new(0));
-    let writer_held = held_writes.clone();
-    let writer_dir = dir.clone();
-    let writer_handle = std::thread::Builder::new()
-        .name("petramond-save".to_string())
-        .spawn(move || write_thread(writer_dir, rx, writer_completed, writer_held))
-        .expect("spawn save writer");
-    let reader_handle = std::thread::Builder::new()
-        .name("petramond-load".to_string())
-        .spawn(move || read_thread(dir, read_rx, load_tx, colgen_tx, completed))
-        .expect("spawn save reader");
+    let writer_handle = {
+        let (dir, reads, held, palette) = (
+            dir.clone(),
+            reads.clone(),
+            held_writes.clone(),
+            palette.clone(),
+        );
+        std::thread::Builder::new()
+            .name("petramond-save".to_string())
+            .spawn(move || write_thread(dir, rx, reads, held, palette))
+            .expect("spawn save writer")
+    };
+    let reader_handles =
+        read::spawn_readers(dir, palette.clone(), reads.clone(), load_tx, colgen_tx);
 
     Ok(OpenedWorld {
         saved: crate::world::SavedIndex::from_scan(manifest, explored_manifest),
@@ -830,13 +946,13 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
                 next_seq: AtomicU64::new(0),
                 open: Mutex::new(None),
             }),
-            read_tx,
+            reads,
             section_write_barriers: HashMap::new(),
             colgen_write_barriers: HashMap::new(),
             load_rx,
             colgen_rx,
             writer_handle: Some(writer_handle),
-            reader_handle: Some(reader_handle),
+            reader_handles,
             colgen_manifest,
             entities_on_disk: HashSet::new(),
             players_dir,
@@ -844,10 +960,15 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
             held_writes,
             write_protected: HashSet::new(),
             protected_players: Mutex::new(HashSet::new()),
+            kept_sections: Mutex::new(HashMap::new()),
+            kept_players: Mutex::new(HashMap::new()),
+            palette,
+            encoders: None,
         },
         level,
         disabled_mods,
         keep_inventory,
         day_minutes,
+        missing_mods,
     })
 }

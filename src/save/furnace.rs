@@ -3,31 +3,28 @@
 //! container list in `save::container`, and its facing rides the shared
 //! entity-facing list; see `save::codec`).
 
-use crate::save::codec::{get_indexed, put_indexed, put_u16, Reader};
+use crate::save::codec::{get_indexed, put_indexed, Reader};
+use crate::save::wire::{wire_struct, Wire};
 use petramond_world::furnace::Furnace;
 use petramond_world::section::CellMap;
 
 /// Bytes per serialized furnace: idx(2) + cook/burn_remaining/burn_max (2 each).
 const FURNACE_BYTES: usize = 2 + 6;
 
+wire_struct!(Furnace {
+    cook_progress,
+    burn_remaining,
+    burn_max,
+});
+
 /// Append a `u16`-length-prefixed list of `(local index, furnace)` records to `buf`.
 pub fn put_furnaces(buf: &mut Vec<u8>, furnaces: &CellMap<Furnace>) {
-    put_indexed(buf, furnaces, FURNACE_BYTES, |buf, f| {
-        put_u16(buf, f.cook_progress);
-        put_u16(buf, f.burn_remaining);
-        put_u16(buf, f.burn_max);
-    });
+    put_indexed(buf, furnaces, FURNACE_BYTES, |buf, f| f.put(buf));
 }
 
 /// Read the furnace list written by [`put_furnaces`]. `None` on truncated input.
 pub fn get_furnaces(r: &mut Reader) -> Option<CellMap<Furnace>> {
-    get_indexed(r, |r| {
-        Some(Furnace {
-            cook_progress: r.u16()?,
-            burn_remaining: r.u16()?,
-            burn_max: r.u16()?,
-        })
-    })
+    get_indexed(r, |r| Furnace::get(r))
 }
 
 #[cfg(test)]
@@ -57,7 +54,7 @@ mod tests {
     #[test]
     fn truncated_input_is_none() {
         let mut buf = Vec::new();
-        put_u16(&mut buf, 1); // claims one furnace, provides no body
+        crate::save::codec::put_u16(&mut buf, 1); // claims one furnace, provides no body
         let mut r = Reader::new(&buf);
         assert!(get_furnaces(&mut r).is_none());
     }

@@ -145,10 +145,7 @@ impl ServerGame {
         self.detach_departing_session(s);
         if let Some(save) = self.world.save() {
             if let Some(snapshot) = snapshot {
-                save.save_player(
-                    &self.sessions[s].key,
-                    crate::save::player::encode(&snapshot),
-                );
+                save.save_player(&self.sessions[s].key, &snapshot);
             } else {
                 log::debug!(
                     "deferring final player save for '{}': no stream-final detached riding position",

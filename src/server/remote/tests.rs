@@ -200,9 +200,12 @@ fn full_lan_join_place_pause_gate_and_leave() {
     );
     let mut visitor = crate::player::Player::new(visitor_feet);
     visitor.inventory.add(ItemStack::new(ItemType::Dirt, 64));
+    // Written before the world opens: the identity palette is what a fresh
+    // world pins (registry order).
+    let pal = crate::save::palette::Palette::identity();
     std::fs::write(
         dir.join("players/Visitor.dat"),
-        crate::save::player::encode(&visitor),
+        crate::save::player::encode(&visitor, &pal),
     )
     .expect("player file");
     // The later join/leave cycles (dedupe + broadcast ordering) get restored
@@ -213,7 +216,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
     for extra in ["vISITOR2", "Guest"] {
         std::fs::write(
             dir.join(format!("players/{extra}.dat")),
-            crate::save::player::encode(&visitor),
+            crate::save::player::encode(&visitor, &pal),
         )
         .expect("player file");
     }
@@ -530,7 +533,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
         let left = remain();
         if let Some(data) = std::fs::read(dir.join(format!("players/{}.dat", visitor_id.key())))
             .ok()
-            .and_then(|bytes| crate::save::player::decode(&bytes).ok())
+            .and_then(|bytes| crate::save::player::decode(&bytes, &pal).ok())
         {
             let count = data
                 .inventory

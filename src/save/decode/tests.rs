@@ -1,5 +1,15 @@
 use super::*;
 
+/// [`super::decode_record`] through the identity palette.
+fn decode_record(
+    dir: &Path,
+    pos: SectionPos,
+    store: SectionStore,
+    bytes: std::io::Result<Option<Vec<u8>>>,
+) -> SectionRecord {
+    super::decode_record(dir, pos, store, bytes, &Palette::identity()).0
+}
+
 fn temp_world_dir(tag: &str) -> PathBuf {
     let dir =
         std::env::temp_dir().join(format!("petramond-decodetest-{}-{tag}", std::process::id()));
@@ -11,7 +21,12 @@ fn temp_world_dir(tag: &str) -> PathBuf {
 fn decoders_publish_in_request_order_and_shutdown_drains_accepted_jobs() {
     let (tx, rx) = mpsc::channel();
     let (columns, _) = mpsc::channel();
-    let mut decoders = Decoders::new(temp_world_dir("order"), tx, columns);
+    let mut decoders = Decoders::new(
+        temp_world_dir("order"),
+        Arc::new(Palette::identity()),
+        tx,
+        columns,
+    );
     for x in 0..32 {
         decoders.submit(DecodeJob::Section {
             pos: SectionPos::new(x, 0, 0),
@@ -23,8 +38,9 @@ fn decoders_publish_in_request_order_and_shutdown_drains_accepted_jobs() {
     let results: Vec<_> = rx.try_iter().collect();
     assert_eq!(results.len(), 32);
     for (x, result) in results.iter().enumerate() {
-        assert_eq!(result.pos.cx, x as i32);
-        assert!(matches!(result.record, SectionRecord::Absent));
+        assert_eq!(result.loaded.pos.cx, x as i32);
+        assert!(matches!(result.loaded.record, SectionRecord::Absent));
+        assert!(result.kept.is_empty());
     }
 }
 

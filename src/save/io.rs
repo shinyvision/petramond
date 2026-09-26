@@ -1,18 +1,36 @@
-use std::collections::VecDeque;
+//! The write side of a world's save: one writer thread that journals and
+//! applies every queued write, in order.
+//!
+//! The writer never compresses anything on the queue's behalf: section
+//! groups arrive as [`EncodeSlot`]s already deflating on the shared job pool
+//! (see `encode`), so the writer only collects bytes. Every message that is
+//! waiting when the writer turns to the queue joins ONE job, later writes of
+//! the same record, file or region slot replacing earlier ones — so a slow or
+//! failing disk turns a backlog into a single larger batch whose size is
+//! bounded by the distinct records written, not by how long the disk
+//! stalled, and a batch still lands whole or not at all.
+
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::sync::Arc;
 
-use petramond_world::chunk::{ChunkPos, SectionPos};
+use petramond_world::chunk::SectionPos;
 
+use super::encode::EncodeSlot;
+use super::journal::Entry;
+use super::palette::Palette;
+use super::read::ReadQueues;
 use super::worlds::player_path;
-use super::{codec, colgen, region, LoadedColumnGen, LoadedSection, SectionSnapshot, SectionStore};
+use super::{colgen, level, region, SectionStore};
 
-/// Messages from the game thread to the I/O thread.
+/// Messages from the game thread to the writer.
 pub(super) enum IoMsg {
+    /// One region group of sections, encoding (or encoded) in its slot.
     SaveSections {
         store: SectionStore,
-        snaps: Vec<SectionSnapshot>,
+        records: EncodeSlot,
     },
     SaveColumnGens(Vec<colgen::ColumnGenRecord>),
     SaveLevel(Vec<u8>),
@@ -26,319 +44,239 @@ pub(super) enum IoMsg {
     Shutdown,
 }
 
-pub(super) enum ReadMsg {
-    Section {
-        pos: SectionPos,
-        store: SectionStore,
-        barrier: u64,
-    },
-    ColumnGen {
-        pos: ChunkPos,
-        seed: u32,
-        barrier: u64,
-    },
-    Shutdown,
-}
-
-/// Open region readers retained by recency. Distance-ordered streaming crosses
-/// region boundaries repeatedly, so a one-entry cache thrashes even though the
-/// request set is spatially compact.
-struct RegionFileCache {
-    entries: VecDeque<(PathBuf, region::RegionReader, u64)>,
-    capacity: usize,
-}
-
-impl RegionFileCache {
-    fn new(capacity: usize) -> Self {
-        Self {
-            entries: VecDeque::with_capacity(capacity),
-            capacity,
-        }
-    }
-
-    /// The record's bytes, `Ok(None)` when the region file or the record is
-    /// absent. Any other failure is an error: the record may exist.
-    fn read_record(
-        &mut self,
-        path: &Path,
-        lidx: u16,
-        barrier: u64,
-    ) -> std::io::Result<Option<Vec<u8>>> {
-        let entry = if let Some(i) = self
-            .entries
-            .iter()
-            .position(|(p, _, epoch)| p == path && *epoch >= barrier)
-        {
-            self.entries
-                .remove(i)
-                .expect("cache position came from this deque")
-        } else {
-            if let Some(i) = self.entries.iter().position(|(p, _, _)| p == path) {
-                self.entries.remove(i);
-            }
-            let reader = match region::RegionReader::open(path) {
-                Ok(reader) => reader,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-                Err(e) => return Err(e),
-            };
-            (path.to_path_buf(), reader, barrier)
-        };
-        self.entries.push_back(entry);
-        while self.entries.len() > self.capacity {
-            self.entries.pop_front();
-        }
-        let (_, reader, _) = self.entries.back_mut().expect("pushed above");
-        reader.read_record(lidx)
-    }
-}
-
 /// How often a batch that failed to land is tried again while no new write
 /// arrives to prompt it.
 const RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// One write message's work, in the order it was queued.
+/// Every write received since the last one landed, merged.
 struct Job {
+    /// The newest message folded in: landing the job completes every write
+    /// up to it.
     seq: u64,
+    /// Messages folded in (reported as held while the job fails).
+    msgs: u64,
     /// The authoritative part: lands whole through the journal.
-    entries: Vec<super::journal::Entry>,
-    /// Rebuildable caches riding the same message; written after the
-    /// entries land, never journaled.
+    entries: Vec<Entry>,
+    /// Rebuildable caches riding along; written after the entries land,
+    /// never journaled.
     caches: Vec<CacheWrite>,
 }
 
 enum CacheWrite {
-    ExploredSections(Vec<SectionSnapshot>),
+    ExploredSections(Vec<(SectionPos, Vec<u8>)>),
     ColumnGens(Vec<colgen::ColumnGenRecord>),
 }
 
-/// The write loop. Jobs land strictly in order: one that fails stays at the
-/// head and is retried, later ones wait behind it in memory, and `completed`
-/// only ever names a job whose writes are on disk — so a read barrier never
-/// opens onto a record an unfinished write was about to replace. `held` is
-/// the number of jobs waiting (0 = healthy).
+impl Job {
+    fn new() -> Self {
+        Self {
+            seq: 0,
+            msgs: 0,
+            entries: Vec::new(),
+            caches: Vec::new(),
+        }
+    }
+
+    /// Fold message `seq` in. While the job keeps failing (`failing`),
+    /// cache writes are dropped instead: held jobs already cost memory, and
+    /// a cache rebuilds.
+    fn absorb(&mut self, seq: u64, msg: IoMsg, dir: &Path, pal: &Palette, failing: bool) {
+        self.seq = seq;
+        self.msgs += 1;
+        self.fold(msg, dir, pal, failing);
+    }
+
+    fn fold(&mut self, msg: IoMsg, dir: &Path, pal: &Palette, failing: bool) {
+        match msg {
+            IoMsg::SaveSections {
+                store: SectionStore::ExploredCache,
+                records,
+            } => {
+                if !failing {
+                    self.caches
+                        .push(CacheWrite::ExploredSections(records.take(pal)));
+                }
+            }
+            IoMsg::SaveColumnGens(recs) => {
+                if !failing {
+                    self.caches.push(CacheWrite::ColumnGens(recs));
+                }
+            }
+            IoMsg::SaveSections {
+                store: SectionStore::Authoritative,
+                records,
+            } => {
+                let mut by_region: HashMap<(i32, i32), Vec<(u16, Vec<u8>)>> = HashMap::new();
+                for (pos, bytes) in records.take(pal) {
+                    by_region
+                        .entry(region::region_of(pos))
+                        .or_default()
+                        .push((region::local_index(pos), bytes));
+                }
+                for ((rx, rz), records) in by_region {
+                    self.add_region(rx, rz, records);
+                }
+            }
+            IoMsg::SaveLevel(bytes) => {
+                // The header being replaced becomes the backup, in the same
+                // batch (see `level`).
+                if let Some(previous) = level::backup_bytes(dir) {
+                    self.add_file(level::BACKUP.into(), previous);
+                }
+                self.add_file(level::FILE.into(), bytes);
+            }
+            IoMsg::SavePlayer { key, bytes } => self.add_file(
+                player_path(Path::new("players"), &key)
+                    .to_string_lossy()
+                    .into_owned(),
+                bytes,
+            ),
+            IoMsg::SaveModsJson(bytes) => self.add_file("mods.json".into(), bytes),
+            IoMsg::Batch(msgs) => {
+                for msg in msgs {
+                    self.fold(msg, dir, pal, failing);
+                }
+            }
+            IoMsg::Shutdown => {}
+        }
+    }
+
+    /// Records for region `(rx, rz)`, replacing any this job already holds
+    /// for the same slots.
+    fn add_region(&mut self, rx: i32, rz: i32, records: Vec<(u16, Vec<u8>)>) {
+        let existing = self.entries.iter_mut().find_map(|entry| match entry {
+            Entry::Region {
+                rx: x,
+                rz: z,
+                records,
+            } if (*x, *z) == (rx, rz) => Some(records),
+            _ => None,
+        });
+        let Some(existing) = existing else {
+            self.entries.push(Entry::Region { rx, rz, records });
+            return;
+        };
+        let mut at: HashMap<u16, usize> = existing
+            .iter()
+            .enumerate()
+            .map(|(i, (lidx, _))| (*lidx, i))
+            .collect();
+        for (lidx, bytes) in records {
+            match at.get(&lidx) {
+                Some(&i) => existing[i].1 = bytes,
+                None => {
+                    at.insert(lidx, existing.len());
+                    existing.push((lidx, bytes));
+                }
+            }
+        }
+    }
+
+    /// A whole file, replacing any version of it this job already holds.
+    fn add_file(&mut self, path: String, bytes: Vec<u8>) {
+        let existing = self.entries.iter_mut().find_map(|entry| match entry {
+            Entry::File { path: p, bytes } if *p == path => Some(bytes),
+            _ => None,
+        });
+        match existing {
+            Some(existing) => *existing = bytes,
+            None => self.entries.push(Entry::File { path, bytes }),
+        }
+    }
+}
+
+/// The write loop. Writes land strictly in order: a job that fails stays
+/// pending and is retried, everything queued meanwhile merges into it, and
+/// the readers' completion mark only ever names a write that is on disk —
+/// so a read barrier never opens onto a record an unfinished write was
+/// about to replace. `held` is the number of queued writes waiting behind
+/// a failure (0 = healthy).
 pub(super) fn write_thread(
     dir: PathBuf,
     rx: Receiver<(u64, IoMsg)>,
-    completed: Arc<(Mutex<u64>, Condvar)>,
-    held: Arc<std::sync::atomic::AtomicU64>,
+    reads: Arc<ReadQueues>,
+    held: Arc<AtomicU64>,
+    palette: Arc<Palette>,
 ) {
-    use std::sync::mpsc::RecvTimeoutError;
     crate::worker::lower_current_thread_priority();
     let explored_dir = dir.join("explored");
     let colgen_dir = dir.join("colgen");
-    let mut jobs: VecDeque<Job> = VecDeque::new();
+    let mut pending: Option<Job> = None;
     let mut failing = false;
     let mut shutdown = false;
     while !shutdown {
-        let received = if jobs.is_empty() {
-            rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
-        } else {
-            rx.recv_timeout(RETRY_INTERVAL)
+        let first = match pending {
+            None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+            Some(_) => rx.recv_timeout(RETRY_INTERVAL),
         };
-        match received {
-            Ok((seq, msg)) => {
-                shutdown = matches!(msg, IoMsg::Shutdown);
-                let mut job = Job {
-                    seq,
-                    entries: Vec::new(),
-                    caches: Vec::new(),
-                };
-                split_job(msg, &mut job);
-                if !jobs.is_empty() {
-                    // Held jobs already cost memory; a cache rebuilds.
-                    job.caches.clear();
-                }
-                jobs.push_back(job);
-            }
+        let mut received = Vec::new();
+        match first {
+            Ok(msg) => received.push(msg),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => shutdown = true,
         }
-        while let Some(job) = jobs.front_mut() {
-            if let Err(e) = super::journal::write(&dir, &job.entries) {
-                if !failing {
-                    log::error!(
-                        "saving {} failed ({e}); holding the batch and retrying",
-                        dir.display()
-                    );
-                }
-                failing = true;
-                break;
-            }
-            if failing {
-                log::info!("saving {} works again", dir.display());
-                failing = false;
-            }
-            for cache in job.caches.drain(..) {
-                match cache {
-                    CacheWrite::ExploredSections(snaps) => {
-                        let _ = std::fs::create_dir_all(&explored_dir);
-                        write_sections(&explored_dir, snaps);
-                    }
-                    CacheWrite::ColumnGens(recs) => {
-                        let _ = std::fs::create_dir_all(&colgen_dir);
-                        colgen::write_records(&colgen_dir, recs);
-                    }
-                }
-            }
-            *completed.0.lock().unwrap() = job.seq;
-            completed.1.notify_all();
-            jobs.pop_front();
+        // Everything already queued joins the same job.
+        received.extend(rx.try_iter());
+        for (seq, msg) in received {
+            shutdown |= matches!(msg, IoMsg::Shutdown);
+            pending
+                .get_or_insert_with(Job::new)
+                .absorb(seq, msg, &dir, &palette, failing);
         }
-        held.store(jobs.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        let Some(job) = pending.as_ref() else {
+            continue;
+        };
+        if let Err(e) = super::journal::write(&dir, &job.entries) {
+            if !failing {
+                log::error!(
+                    "saving {} failed ({e}); holding the batch and retrying",
+                    dir.display()
+                );
+            }
+            failing = true;
+            held.store(job.msgs, Ordering::Relaxed);
+            continue;
+        }
+        if failing {
+            log::info!("saving {} works again", dir.display());
+            failing = false;
+        }
+        let job = pending.take().expect("checked above");
+        for cache in job.caches {
+            match cache {
+                CacheWrite::ExploredSections(records) => {
+                    let _ = std::fs::create_dir_all(&explored_dir);
+                    write_cache_sections(&explored_dir, records);
+                }
+                CacheWrite::ColumnGens(recs) => {
+                    let _ = std::fs::create_dir_all(&colgen_dir);
+                    colgen::write_records(&colgen_dir, recs);
+                }
+            }
+        }
+        reads.complete(job.seq);
+        held.store(0, Ordering::Relaxed);
     }
-    if !jobs.is_empty() {
+    if let Some(job) = pending {
         log::error!(
-            "{} save batch(es) for {} never reached disk",
-            jobs.len(),
+            "{} save write(s) for {} never reached disk",
+            job.msgs,
             dir.display()
         );
     }
 }
 
-pub(super) fn read_thread(
-    dir: PathBuf,
-    rx: Receiver<ReadMsg>,
-    load_tx: Sender<LoadedSection>,
-    colgen_tx: Sender<LoadedColumnGen>,
-    completed: Arc<(Mutex<u64>, Condvar)>,
-) {
-    crate::worker::lower_current_thread_priority();
-    let mut decoders = super::decode::Decoders::new(dir.clone(), load_tx, colgen_tx);
-    let region_dir = dir.join("region");
-    let explored_dir = dir.join("explored");
-    let colgen_dir = dir.join("colgen");
-    let mut region_cache = RegionFileCache::new(32);
-    let mut colgen_cache = RegionFileCache::new(32);
-    let mut pending = VecDeque::new();
-    loop {
-        let completed_seq = *completed.0.lock().unwrap();
-        let ready = pending.iter().position(|msg| match msg {
-            ReadMsg::Section { barrier, .. } | ReadMsg::ColumnGen { barrier, .. } => {
-                *barrier <= completed_seq
-            }
-            ReadMsg::Shutdown => unreachable!("shutdown ends the loop on receipt"),
-        });
-        let msg = if let Some(index) = ready {
-            pending
-                .remove(index)
-                .expect("ready read index came from this queue")
-        } else {
-            let received = if pending.is_empty() {
-                rx.recv()
-                    .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)
-            } else {
-                rx.recv_timeout(std::time::Duration::from_millis(2))
-            };
-            match received {
-                // Reads still waiting on a write that never landed have
-                // nobody left to answer.
-                Ok(ReadMsg::Shutdown) => break,
-                Ok(msg) => {
-                    pending.push_back(msg);
-                    continue;
-                }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-            }
-        };
-        match msg {
-            ReadMsg::Section {
-                pos,
-                store,
-                barrier,
-            } => {
-                let (rx_, rz_) = region::region_of(pos);
-                let source_dir = match store {
-                    SectionStore::Authoritative => &region_dir,
-                    SectionStore::ExploredCache => &explored_dir,
-                };
-                let path = region::region_path(source_dir, rx_, rz_);
-                let bytes = region_cache.read_record(&path, region::local_index(pos), barrier);
-                decoders.submit(super::decode::DecodeJob::Section { pos, store, bytes });
-            }
-            ReadMsg::ColumnGen { pos, seed, barrier } => {
-                let (rx_, rz_) = colgen::region_of(pos);
-                let path = colgen::cache_path(&colgen_dir, rx_, rz_);
-                // A rebuildable cache: an unreadable record is simply a miss.
-                let bytes = colgen_cache
-                    .read_record(&path, colgen::local_index(pos), barrier)
-                    .ok()
-                    .flatten();
-                decoders.submit(super::decode::DecodeJob::Column { pos, seed, bytes });
-            }
-            ReadMsg::Shutdown => unreachable!("shutdown ends the loop on receipt"),
-        }
-    }
-}
-
-/// Sort a write message into the journal entries its authoritative parts
-/// stand for and the cache writes riding along.
-fn split_job(msg: IoMsg, job: &mut Job) {
-    use super::journal::Entry;
-    match msg {
-        IoMsg::SaveSections {
-            store: SectionStore::ExploredCache,
-            snaps,
-        } => job.caches.push(CacheWrite::ExploredSections(snaps)),
-        IoMsg::SaveColumnGens(recs) => job.caches.push(CacheWrite::ColumnGens(recs)),
-        IoMsg::SaveSections {
-            store: SectionStore::Authoritative,
-            snaps,
-        } => {
-            // Per region: each section's local index and its encoded record.
-            type RegionRecords = Vec<(u16, Vec<u8>)>;
-            let mut by_region: std::collections::BTreeMap<(i32, i32), RegionRecords> =
-                Default::default();
-            for s in &snaps {
-                by_region
-                    .entry(region::region_of(s.pos))
-                    .or_default()
-                    .push((region::local_index(s.pos), codec::encode_snapshot(s)));
-            }
-            job.entries.extend(
-                by_region
-                    .into_iter()
-                    .map(|((rx, rz), records)| Entry::Region { rx, rz, records }),
-            );
-        }
-        IoMsg::SaveLevel(bytes) => job.entries.push(Entry::File {
-            path: "level.dat".into(),
-            bytes,
-        }),
-        IoMsg::SavePlayer { key, bytes } => job.entries.push(Entry::File {
-            path: player_path(Path::new("players"), &key)
-                .to_string_lossy()
-                .into_owned(),
-            bytes,
-        }),
-        IoMsg::SaveModsJson(bytes) => job.entries.push(Entry::File {
-            path: "mods.json".into(),
-            bytes,
-        }),
-        IoMsg::Batch(msgs) => {
-            for msg in msgs {
-                split_job(msg, job);
-            }
-        }
-        IoMsg::Shutdown => {}
-    }
-}
-
-/// Merge cache snapshots into their region files (read-modify-write per region).
-fn write_sections(region_dir: &Path, snaps: Vec<SectionSnapshot>) {
-    use std::collections::HashMap;
-    let mut by_region: HashMap<(i32, i32), Vec<SectionSnapshot>> = HashMap::new();
-    for s in snaps {
+/// Merge encoded cache records into their region files.
+fn write_cache_sections(region_dir: &Path, records: Vec<(SectionPos, Vec<u8>)>) {
+    let mut by_region: HashMap<(i32, i32), Vec<(u16, Vec<u8>)>> = HashMap::new();
+    for (pos, bytes) in records {
         by_region
-            .entry(region::region_of(s.pos))
+            .entry(region::region_of(pos))
             .or_default()
-            .push(s);
+            .push((region::local_index(pos), bytes));
     }
-    for ((rx, rz), group) in by_region {
+    for ((rx, rz), records) in by_region {
         let path = region::region_path(region_dir, rx, rz);
-        let records = group
-            .iter()
-            .map(|s| (region::local_index(s.pos), codec::encode_snapshot(s)));
         let _ = region::merge_region(&path, records, region::MergePolicy::Rebuildable);
     }
 }

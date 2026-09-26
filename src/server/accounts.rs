@@ -212,7 +212,7 @@ mod tests {
         legacy.inventory.set_active(5);
         std::fs::write(
             dir.join("players/Visitor.dat"),
-            crate::save::player::encode(&legacy),
+            crate::save::player::encode(&legacy, opened.save.palette()),
         )
         .expect("legacy file");
 

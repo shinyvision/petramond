@@ -1,8 +1,11 @@
 //! The save's recorded mod set (`mods.json` in the save dir): active pack ids
 //! and versions, written on every save and compared at world open with a LOUD
-//! warning listing added / removed / version-changed mods. Nothing blocks —
-//! content already degrades safely (the name-addressed save palette maps
-//! unknown blocks to air, unknown mob species are skipped).
+//! warning listing added / removed / version-changed mods. Nothing blocks and
+//! nothing is lost: content of a mod that is gone is kept in disk form (the
+//! save palette cannot resolve its names, so the codecs store it back as it
+//! was — see `save::palette`), and it returns when the mod does. A world
+//! opened with mods missing is still backed up first (`save::open_at`), and
+//! the missing ids are reported to the session so it can tell the player.
 //!
 //! Only id-bearing packs are recorded: a content-only override pack has no
 //! namespace and introduces no name-addressed content of its own.
@@ -59,21 +62,22 @@ fn encode(mods: Vec<ModSetEntry>) -> Vec<u8> {
     serde_json::to_vec_pretty(&ModsFile { mods }).unwrap_or_default()
 }
 
-/// Compare the save's recorded mod set against the ENABLED one and warn
-/// loudly on any difference. A missing `mods.json` (a fresh world, or one
-/// last saved before mod-set recording existed) compares silently — the first
-/// save writes it. Both sides exclude the world's deliberately disabled mods
-/// (the record was written that way too), so per-world disables never warn.
-/// Called at world open (`save::open_at`).
-pub fn warn_on_mismatch(save_dir: &Path, disabled: &BTreeSet<String>) {
+/// Compare the save's recorded mod set against the ENABLED one, warn loudly
+/// on any difference, and return the recorded mods that are MISSING now. A
+/// missing `mods.json` (a fresh world, or one last saved before mod-set
+/// recording existed) compares silently — the first save writes it. Both
+/// sides exclude the world's deliberately disabled mods (the record was
+/// written that way too), so per-world disables never warn. Called at world
+/// open (`save::open_at`).
+pub fn check_at_open(save_dir: &Path, disabled: &BTreeSet<String>) -> Vec<ModSetEntry> {
     let Ok(bytes) = std::fs::read(save_dir.join("mods.json")) else {
-        return;
+        return Vec::new();
     };
     let recorded = match serde_json::from_slice::<ModsFile>(&bytes) {
         Ok(f) => f.mods,
         Err(e) => {
             log::warn!("save mods.json is unreadable ({e}); mod-set check skipped");
-            return;
+            return Vec::new();
         }
     };
     // A record written before the mod was disabled would otherwise report it
@@ -82,9 +86,20 @@ pub fn warn_on_mismatch(save_dir: &Path, disabled: &BTreeSet<String>) {
         .into_iter()
         .filter(|r| !disabled.contains(&r.id))
         .collect();
-    for line in diff(&recorded, &active(disabled)) {
+    let active = active(disabled);
+    for line in diff(&recorded, &active) {
         log::warn!("{line}");
     }
+    missing(&recorded, &active)
+}
+
+/// The recorded mods the active set lacks. Pure, for the unit test.
+fn missing(recorded: &[ModSetEntry], active: &[ModSetEntry]) -> Vec<ModSetEntry> {
+    recorded
+        .iter()
+        .filter(|r| !active.iter().any(|a| a.id == r.id))
+        .cloned()
+        .collect()
 }
 
 /// One human-readable warning line per difference between the save's recorded
@@ -95,7 +110,8 @@ fn diff(recorded: &[ModSetEntry], active: &[ModSetEntry]) -> Vec<String> {
         match active.iter().find(|a| a.id == r.id) {
             None => lines.push(format!(
                 "mod '{}' (v{}) was active when this world was last saved but is MISSING now; \
-                 its content degrades safely (blocks→air, mobs skipped) but its data is inert",
+                 its blocks, items and mobs are kept but not placed, usable or spawned until \
+                 it returns",
                 r.id, r.version
             )),
             Some(a) if a.version != r.version => lines.push(format!(
@@ -155,6 +171,18 @@ mod tests {
             diff(&recorded, &recorded).is_empty(),
             "identical sets are silent"
         );
+    }
+
+    #[test]
+    fn only_mods_absent_from_the_active_set_are_missing() {
+        let recorded = [entry("daynight", "1.0"), entry("wheel", "0.2")];
+        let active = [entry("daynight", "1.1"), entry("zombies", "0.1")];
+        assert_eq!(
+            missing(&recorded, &active),
+            [entry("wheel", "0.2")],
+            "a version change is not a removal"
+        );
+        assert!(missing(&recorded, &recorded).is_empty());
     }
 
     #[test]

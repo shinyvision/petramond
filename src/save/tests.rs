@@ -18,7 +18,7 @@ fn legacy_player_files_are_adopted_once_by_the_first_claimant() {
     let legacy = |slot| {
         let mut plr = Player::new(WorldPos::new(1.0, 70.0, 2.0));
         plr.inventory.set_active(slot);
-        player::encode(&plr)
+        player::encode(&plr, &palette::Palette::identity())
     };
     std::fs::write(dir.join("players/Ann_.dat"), legacy(3)).expect("legacy file");
     std::fs::write(dir.join("players/Bob.dat"), legacy(5)).expect("legacy file");
@@ -74,7 +74,7 @@ fn load_blocking(
     save: &WorldSave,
     saved: &crate::world::SavedIndex,
     pos: SectionPos,
-) -> Option<codec::DecodedSection> {
+) -> Option<(Section, Vec<DroppedItem>, Vec<SavedMob>)> {
     save.request_load(saved, pos, true);
     for _ in 0..500 {
         if let Some(l) = save.poll_loaded() {
@@ -134,7 +134,7 @@ fn save_reopen_roundtrips_section_level_entities() {
         // The player rides its own file, keyed by identity.
         let mut plr = Player::new(WorldPos::new(80.0, 70.0, -40.0));
         plr.inventory.set_active(4);
-        opened.save.save_player(&RACHEL, player::encode(&plr));
+        opened.save.save_player(&RACHEL, &plr);
 
         opened.save.shutdown(); // flush queued writes + join the I/O thread
     }
@@ -391,10 +391,9 @@ fn an_unreadable_player_file_is_quarantined_not_respawned_over() {
         opened.save.load_player(&PAT),
         Err(RecordError::Newer { .. })
     ));
-    opened.save.save_player(
-        &PAT,
-        player::encode(&Player::new(WorldPos::new(0.0, 70.0, 0.0))),
-    );
+    opened
+        .save
+        .save_player(&PAT, &Player::new(WorldPos::new(0.0, 70.0, 0.0)));
     opened.save.shutdown();
     assert_eq!(
         std::fs::read(&path).unwrap(),
@@ -437,10 +436,9 @@ fn an_unreadable_legacy_player_file_is_not_migrated() {
         opened.save.adopt_legacy_player("Ann", &ANN),
         Err(RecordError::Newer { .. })
     ));
-    opened.save.save_player(
-        &ANN,
-        player::encode(&Player::new(WorldPos::new(0.0, 70.0, 0.0))),
-    );
+    opened
+        .save
+        .save_player(&ANN, &Player::new(WorldPos::new(0.0, 70.0, 0.0)));
     opened.save.shutdown();
     assert_eq!(std::fs::read(&legacy).unwrap(), newer);
     assert!(
@@ -499,5 +497,143 @@ fn a_write_protected_section_is_never_saved_over() {
     let (section, ..) =
         load_blocking(&opened.save, &opened.saved, pos).expect("original still on disk");
     assert_eq!(section.block_raw(1, 1, 1), Block::Stone.id());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Two worlds open in one process at once, with palettes that disagree about
+/// every block's disk id: each world's records map through its OWN palette,
+/// so both read back the blocks they were saved with. (A process-wide
+/// palette made the second open remap the first world's records.)
+#[test]
+fn two_open_worlds_each_map_through_their_own_palette() {
+    let (dir_a, dir_b) = (temp_world_dir("two-a"), temp_world_dir("two-b"));
+    // World A: its palette.json lists the blocks rotated by one past air, so
+    // every disk id differs from world B's fresh (registry-order) palette.
+    std::fs::create_dir_all(&dir_a).unwrap();
+    let name = |v: serde_json::Value| v.as_str().expect("serde name").to_owned();
+    let mut blocks: Vec<String> = Block::all()
+        .iter()
+        .map(|&b| name(serde_json::to_value(b).unwrap()))
+        .collect();
+    blocks[1..].rotate_left(1);
+    let items: Vec<String> = ItemType::all()
+        .iter()
+        .map(|&i| name(serde_json::to_value(i).unwrap()))
+        .collect();
+    std::fs::write(
+        dir_a.join("palette.json"),
+        serde_json::json!({ "blocks": blocks, "items": items }).to_string(),
+    )
+    .unwrap();
+
+    let pos = SectionPos::new(1, 4, 1);
+    let mut section = Section::new(pos.cx, pos.cy, pos.cz);
+    section.set_block(2, 2, 2, Block::Stone);
+    section.set_block(3, 3, 3, Block::OakLog);
+    {
+        let mut a = open_at(dir_a.clone()).expect("open a");
+        let mut b = open_at(dir_b.clone()).expect("open b");
+        assert_ne!(
+            a.save.palette().block_to_disk(Block::Stone.id()),
+            b.save.palette().block_to_disk(Block::Stone.id()),
+            "the two worlds really disagree about disk ids"
+        );
+        for opened in [&mut a, &mut b] {
+            opened.save.save_sections(
+                &mut opened.saved,
+                vec![SectionSnapshot::from_section(&section)],
+            );
+        }
+        a.save.shutdown();
+        b.save.shutdown();
+    }
+    let a = open_at(dir_a.clone()).expect("reopen a");
+    let b = open_at(dir_b.clone()).expect("reopen b");
+    for opened in [&a, &b] {
+        let (back, ..) = load_blocking(&opened.save, &opened.saved, pos).expect("loads");
+        assert_eq!(back.block_raw(2, 2, 2), Block::Stone.id());
+        assert_eq!(back.block_raw(3, 3, 3), Block::OakLog.id());
+    }
+    drop((a, b));
+    let _ = std::fs::remove_dir_all(&dir_a);
+    let _ = std::fs::remove_dir_all(&dir_b);
+}
+
+/// A mob whose mod is gone never reaches the world, yet survives its section
+/// being loaded and saved again: the save holds it from the load and writes
+/// it back with the section.
+#[test]
+fn a_mob_whose_mod_is_gone_survives_its_section_being_resaved() {
+    let dir = temp_world_dir("kept-mobs");
+    std::fs::create_dir_all(&dir).unwrap();
+    // The world's first mob species belongs to a mod this build lacks.
+    std::fs::write(
+        dir.join("palette.json"),
+        r#"{ "blocks": ["petramond:air"], "items": ["petramond:air"], "mobs": ["gonemod:phantom"] }"#,
+    )
+    .unwrap();
+    let pos = SectionPos::new(1, 4, 1);
+    let phantom = mobs::DiskMob {
+        species: 0,
+        pos: WorldPos::new(20.0, 70.0, 20.0),
+        yaw: 0.5,
+        tags: Default::default(),
+        slots: Vec::new(),
+        unknown: Default::default(),
+    };
+    {
+        let mut opened = open_at(dir.clone()).expect("open");
+        let mut snap = SectionSnapshot::from_section(&Section::new(pos.cx, pos.cy, pos.cz));
+        snap.kept.mobs.push(phantom.clone());
+        opened.save.save_sections(&mut opened.saved, vec![snap]);
+        opened.save.shutdown();
+    }
+    {
+        // Loaded: nothing to spawn. Saved again the way the world saves it,
+        // from the section alone.
+        let mut opened = open_at(dir.clone()).expect("reopen");
+        let (section, _, mobs) =
+            load_blocking(&opened.save, &opened.saved, pos).expect("section loads");
+        assert!(mobs.is_empty(), "the phantom is not spawned");
+        opened
+            .save
+            .save_sections(&mut opened.saved, vec![SectionSnapshot::from_section(&section)]);
+        opened.save.shutdown();
+    }
+    let opened = open_at(dir.clone()).expect("reopen again");
+    let bytes = region::RegionReader::open(&region::region_path(&dir.join("region"), 0, 0))
+        .expect("region opens")
+        .read_record(region::local_index(pos))
+        .expect("record reads")
+        .expect("record present");
+    let decoded = codec::decode_section(pos, &bytes, opened.save.palette()).expect("decodes");
+    assert_eq!(decoded.kept.mobs, [phantom], "still on disk, unchanged");
+    drop(opened);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Opening a world whose last save had a mod that is missing now reports
+/// it and backs up the small files before anything rewrites them.
+#[test]
+fn opening_with_a_mod_missing_backs_the_world_up_first() {
+    let dir = temp_world_dir("missing-mod");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("mods.json"),
+        r#"{ "mods": [{ "id": "gonemod", "version": "1.0" }] }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("level.dat"),
+        level::encode(5, 10, &Default::default(), &Default::default()),
+    )
+    .unwrap();
+    let opened = open_at(dir.clone()).expect("opens");
+    assert_eq!(opened.missing_mods, ["gonemod"]);
+    let backup = dir.join("backup").join("mods-missing-gonemod");
+    assert!(backup.join("level.dat").exists());
+    assert!(backup.join("palette.json").exists());
+    assert!(backup.join("mods.json").exists());
+    drop(opened);
     let _ = std::fs::remove_dir_all(&dir);
 }

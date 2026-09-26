@@ -18,26 +18,34 @@
 //!   as the empty-slot sentinel — and loading validates that. Mobs have no
 //!   such sentinel.
 //! - A disk name this build doesn't know (a save touched by a newer/modded
-//!   build) decodes to air, with a warning, rather than to a wrong block. An
-//!   unknown MOB name has no safe stand-in, so it decodes to `None` and the
-//!   record reader skips that mob (see `save::mobs`).
+//!   build, or a mod since removed) never decodes to a wrong block, item or
+//!   mob: the `*_from_disk_known` lookups answer `None`, and the codecs keep
+//!   such content in its DISK form — a block cell as air carrying its disk
+//!   id, a slot or a mob as its stored record — and write it back unchanged
+//!   (see `save::codec`, `save::mobs`). The plain `block_from_disk` /
+//!   `item_from_disk` answer air for them.
 //! - A save without the file (created before palettes existed) gets the
 //!   IDENTITY palette — correct, because such saves were written with the
 //!   current registry order — and the file is written so the save is pinned
 //!   from then on. A pre-mob palette file (no `mobs` list) backfills the same
 //!   way: identity from the registry.
 //! - Per-world DISABLED mods (`settings.json`): a name namespaced to a
-//!   disabled mod id is treated exactly like an unknown name (blocks/items
-//!   decode to air/empty, mobs are skipped) even though the registry knows
-//!   it, and no NEW palette entries are appended for such names while the mod
-//!   is disabled. Entries the file already has STAY (append-only), so
-//!   re-enabling the mod restores its world content on the next load — for
-//!   records not re-saved while it was disabled (a section saved with the
-//!   content decoded to air persists the air).
+//!   disabled mod id is treated exactly like an unknown name (its content is
+//!   kept in disk form, not live) even though the registry knows it, and no
+//!   NEW palette entries are appended for such names while the mod is
+//!   disabled. Entries the file already has STAY (append-only), and the
+//!   content kept in disk form is written back under the same disk ids, so
+//!   re-enabling the mod restores its world content even in records re-saved
+//!   while it was disabled.
+//!
+//! A palette belongs to ONE world: [`super::WorldSave`] loads it at open and
+//! passes it explicitly to every codec call (section records, item slots,
+//! mobs, player files). There is no process-wide "active" palette, so any
+//! number of worlds can be open in one process (a multi-world server, a
+//! preview beside a running world, parallel tests).
 
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::mob::Mob;
 use petramond_world::block::Block;
@@ -50,8 +58,10 @@ use petramond_world::item::ItemType;
 /// direction would be pure cache pressure.
 pub struct Palette {
     block_to_disk: Box<[u16]>,
+    /// [`UNKNOWN`] for a disk id whose name this build cannot resolve.
     block_from_disk: Box<[u16]>,
     item_to_disk: Box<[u16]>,
+    /// [`UNKNOWN`] for a disk id whose name this build cannot resolve.
     item_from_disk: Box<[u16]>,
     /// `None` = a runtime species this palette has no disk pin for (a
     /// per-world DISABLED mod's species): such a mob cannot be persisted —
@@ -61,20 +71,33 @@ pub struct Palette {
     mob_from_disk: [Option<u8>; 256],
 }
 
-/// An out-of-range id decodes/encodes to air (0) rather than panicking: a
-/// record from a wider build, or a runtime id this save never pinned, is
-/// exactly the "unknown name" case the module contract already answers with
-/// air.
+/// A from-disk entry whose name this build cannot resolve (unknown, or owned
+/// by a disabled mod). No runtime id reaches it (ids stop at the registry's
+/// id ceiling).
+const UNKNOWN: u16 = u16::MAX;
+
+/// An out-of-range runtime id — one this save never pinned — encodes to air
+/// (0) rather than panicking.
 #[inline]
 fn lut(table: &[u16], id: u16) -> u16 {
     table.get(id as usize).copied().unwrap_or(0)
 }
 
+/// The runtime id for a disk id, `None` when its name cannot be resolved or
+/// the id lies past every name the save ever pinned.
+#[inline]
+fn from_lut(table: &[u16], id: u16) -> Option<u16> {
+    match table.get(id as usize) {
+        Some(&UNKNOWN) | None => None,
+        Some(&runtime) => Some(runtime),
+    }
+}
+
 impl Palette {
-    /// Identity over the WHOLE id space, not just the loaded registry: this is
-    /// the palette a record round-trips through when no world is open, and a
-    /// codec test must be able to prove the record carries an id the shipped
-    /// registry happens not to have reached yet.
+    /// Identity over the WHOLE id space, not just the loaded registry: the
+    /// palette a record round-trips through outside any world (codec tests,
+    /// tools), wide enough that a test can prove the record carries an id the
+    /// shipped registry happens not to have reached yet.
     pub fn identity() -> Palette {
         let ids = |n: usize| -> Box<[u16]> { (0..n as u16).collect::<Vec<_>>().into_boxed_slice() };
         let n = petramond_world::registry::WIDE_ID_CAP;
@@ -97,9 +120,18 @@ impl Palette {
         lut(&self.block_to_disk, id)
     }
 
+    /// The runtime block for a disk id; air for one this build cannot
+    /// resolve (see [`block_from_disk_known`](Self::block_from_disk_known)).
     #[inline]
     pub fn block_from_disk(&self, id: u16) -> u16 {
-        lut(&self.block_from_disk, id)
+        self.block_from_disk_known(id).unwrap_or(0)
+    }
+
+    /// The runtime block for a disk id, `None` when this build cannot
+    /// resolve it — content the codec keeps in disk form.
+    #[inline]
+    pub fn block_from_disk_known(&self, id: u16) -> Option<u16> {
+        from_lut(&self.block_from_disk, id)
     }
 
     #[inline]
@@ -107,9 +139,18 @@ impl Palette {
         lut(&self.item_to_disk, id)
     }
 
+    /// The runtime item for a disk id; air for one this build cannot
+    /// resolve (see [`item_from_disk_known`](Self::item_from_disk_known)).
     #[inline]
     pub fn item_from_disk(&self, id: u16) -> u16 {
-        lut(&self.item_from_disk, id)
+        self.item_from_disk_known(id).unwrap_or(0)
+    }
+
+    /// The runtime item for a disk id, `None` when this build cannot resolve
+    /// it — a slot the codec keeps in disk form.
+    #[inline]
+    pub fn item_from_disk_known(&self, id: u16) -> Option<u16> {
+        from_lut(&self.item_from_disk, id)
     }
 
     /// The disk id for a runtime mob id, or `None` when this palette carries
@@ -121,8 +162,9 @@ impl Palette {
     }
 
     /// The runtime mob id for a disk id, or `None` when the save's name for it is
-    /// unknown to this build — the reader must SKIP such a mob (there is no "air
-    /// mob" to degrade to, and guessing a species would corrupt the world).
+    /// unknown to this build — the reader keeps such a mob in disk form (there
+    /// is no "air mob" to degrade to, and guessing a species would corrupt the
+    /// world).
     #[inline]
     pub fn mob_from_disk(&self, id: u8) -> Option<u8> {
         self.mob_from_disk[id as usize]
@@ -177,6 +219,19 @@ fn mob_from_name(name: &str) -> Option<Mob> {
 /// namespace is reserved and never appears in the disabled mod-id set.
 fn name_disabled(name: &str, disabled: &BTreeSet<String>) -> bool {
     petramond_world::registry::namespace(name).is_some_and(|ns| disabled.contains(ns))
+}
+
+/// The mod namespaces owning the names at or past `ceiling`, deduplicated
+/// in first-seen order — who to blame when a palette outgrows its id space.
+fn owners_past(names: &[String], ceiling: usize) -> String {
+    let mut owners: Vec<&str> = Vec::new();
+    for name in &names[ceiling.min(names.len())..] {
+        let owner = petramond_world::registry::namespace(name).unwrap_or(name.as_str());
+        if !owners.contains(&owner) {
+            owners.push(owner);
+        }
+    }
+    owners.join(", ")
 }
 
 /// Load the save's palette, creating (or extending) `palette.json` as needed.
@@ -243,11 +298,20 @@ pub fn load_or_create(dir: &Path, disabled: &BTreeSet<String>) -> std::io::Resul
         )));
     }
     let cap = petramond_world::registry::WIDE_ID_CAP;
-    if file.blocks.len() > cap || file.items.len() > cap || file.mobs.len() > 256 {
-        return Err(invalid(format!(
-            "save palette {} exceeds the id ceiling ({cap} blocks/items, 256 mobs)",
-            path.display()
-        )));
+    for (kind, names, ceiling) in [
+        ("block", &file.blocks, cap),
+        ("item", &file.items, cap),
+        ("mob", &file.mobs, 256),
+    ] {
+        if names.len() > ceiling {
+            return Err(invalid(format!(
+                "save palette {} holds {} {kind} kinds, past the ceiling of {ceiling}; the \
+                 kinds that do not fit come from: {} (disable some of those mods for this world)",
+                path.display(),
+                names.len(),
+                owners_past(names, ceiling)
+            )));
+        }
     }
     if changed {
         // Durable BEFORE this returns: the world's writer only starts after
@@ -262,96 +326,74 @@ pub fn load_or_create(dir: &Path, disabled: &BTreeSet<String>) -> std::io::Resul
         )?;
     }
 
-    // Build the LUTs. Unknown disk names map to air (0) for blocks/items and
-    // to a skip (`None`) for mobs. Names owned by a DISABLED mod get the same
-    // treatment even though the registry knows them: their world content
-    // vanishes for this session, and nothing at runtime can encode to their
-    // disk ids. The to-disk side is total after the append above, except for
-    // disabled species (mob_to_disk = None → the encoder skips the mob).
+    // Build the LUTs. Unknown disk names stay unresolved (`UNKNOWN` for
+    // blocks/items, `None` for mobs): the codecs keep their content in disk
+    // form. Names owned by a DISABLED mod get the same treatment even though
+    // the registry knows them: their content is kept, not live, this
+    // session, and nothing at runtime can encode to their disk ids. The
+    // to-disk side is total after the append above, except for disabled
+    // species (mob_to_disk = None: no live mob of theirs is ever saved).
     // Each direction must cover the wider of "every runtime id" and "every
     // disk id", so neither side can index past its table.
-    let zeros = |n: usize| -> Box<[u16]> { vec![0u16; n].into_boxed_slice() };
+    let filled = |n: usize, v: u16| -> Box<[u16]> { vec![v; n].into_boxed_slice() };
     let block_len = Block::all().len().max(file.blocks.len());
     let item_len = ItemType::all().len().max(file.items.len());
     let mut p = Palette {
-        block_to_disk: zeros(block_len),
-        block_from_disk: zeros(block_len),
-        item_to_disk: zeros(item_len),
-        item_from_disk: zeros(item_len),
+        block_to_disk: filled(block_len, 0),
+        block_from_disk: filled(block_len, UNKNOWN),
+        item_to_disk: filled(item_len, 0),
+        item_from_disk: filled(item_len, UNKNOWN),
         mob_to_disk: [None; 256],
         mob_from_disk: [None; 256],
     };
     for (disk, name) in file.blocks.iter().enumerate() {
         match block_from_name(name) {
             Some(_) if name_disabled(name, disabled) => log::info!(
-                "save palette: block '{name}' (disk id {disk}) decodes as air — its mod is \
-                 disabled for this world"
+                "save palette: block '{name}' (disk id {disk}) is kept but not placed — its \
+                 mod is disabled for this world"
             ),
             Some(b) => {
                 p.block_from_disk[disk] = b.id();
                 p.block_to_disk[b.id() as usize] = disk as u16;
             }
             None => log::warn!(
-                "save palette: unknown block '{name}' (disk id {disk}) decodes as air — \
-                 was this world last played on a newer or modded build?"
+                "save palette: unknown block '{name}' (disk id {disk}) is kept but not \
+                 placed — was this world last played on a newer or modded build?"
             ),
         }
     }
     for (disk, name) in file.items.iter().enumerate() {
         match item_from_name(name) {
             Some(_) if name_disabled(name, disabled) => log::info!(
-                "save palette: item '{name}' (disk id {disk}) decodes as empty — its mod is \
-                 disabled for this world"
+                "save palette: item '{name}' (disk id {disk}) is kept but not usable — its \
+                 mod is disabled for this world"
             ),
             Some(i) => {
                 p.item_from_disk[disk] = i.id();
                 p.item_to_disk[i.id() as usize] = disk as u16;
             }
             None => {
-                log::warn!("save palette: unknown item '{name}' (disk id {disk}) decodes as air")
+                log::warn!("save palette: unknown item '{name}' (disk id {disk}) is kept but not usable")
             }
         }
     }
     for (disk, name) in file.mobs.iter().enumerate() {
         match mob_from_name(name) {
             Some(_) if name_disabled(name, disabled) => log::info!(
-                "save palette: mob '{name}' (disk id {disk}) is skipped on load — its mod is \
-                 disabled for this world"
+                "save palette: mob '{name}' (disk id {disk}) is kept but not spawned — its mod \
+                 is disabled for this world"
             ),
             Some(m) => {
                 p.mob_from_disk[disk] = Some(m.id());
                 p.mob_to_disk[m.id() as usize] = Some(disk as u8);
             }
             None => log::warn!(
-                "save palette: unknown mob '{name}' (disk id {disk}); such mobs are \
-                 skipped on load (never respawned as a wrong species)"
+                "save palette: unknown mob '{name}' (disk id {disk}); such mobs are kept \
+                 but not spawned (never respawned as a wrong species)"
             ),
         }
     }
     Ok(p)
-}
-
-static ACTIVE: RwLock<Option<Arc<Palette>>> = RwLock::new(None);
-
-/// Make `dir`'s palette the one the codec maps through (called when a world
-/// opens; the save I/O worker reads it from any thread). `disabled` = the
-/// world's disabled mod ids (`settings.json`).
-pub fn activate(dir: &Path, disabled: &BTreeSet<String>) -> std::io::Result<()> {
-    let p = load_or_create(dir, disabled)?;
-    *ACTIVE.write().expect("palette lock") = Some(Arc::new(p));
-    Ok(())
-}
-
-/// The palette codec calls map through: the opened world's, or identity when
-/// no world is open (unit tests round-tripping records in isolation).
-pub fn active() -> Arc<Palette> {
-    if let Some(p) = ACTIVE.read().expect("palette lock").as_ref() {
-        return p.clone();
-    }
-    static IDENTITY: OnceLock<Arc<Palette>> = OnceLock::new();
-    IDENTITY
-        .get_or_init(|| Arc::new(Palette::identity()))
-        .clone()
 }
 
 #[cfg(test)]
@@ -397,6 +439,34 @@ mod tests {
             std::fs::read(dir.join("palette.json")).unwrap(),
             b"{ not json",
             "the file is left as found"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_palette_past_the_mob_ceiling_is_an_error_naming_the_mods() {
+        // Reachable by installing many mob mods: the open fails with an error
+        // that says whom to disable, and the file is left as found.
+        let dir = temp_dir("mobceiling");
+        let blocks: Vec<String> = Block::all().iter().map(|&b| block_name(b)).collect();
+        let items: Vec<String> = ItemType::all().iter().map(|&i| item_name(i)).collect();
+        let mut mobs: Vec<String> = (0..250).map(|i| format!("herdmod:m{i}")).collect();
+        mobs.extend((0..20).map(|i| format!("swarmmod:m{i}")));
+        let text = serde_json::to_string(&PaletteFile {
+            blocks,
+            items,
+            mobs,
+        })
+        .unwrap();
+        std::fs::write(dir.join("palette.json"), &text).unwrap();
+        let err = load_or_create(&dir, &no_disabled()).err().expect("refused");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        let message = err.to_string();
+        assert!(message.contains("swarmmod"), "{message}");
+        assert!(!message.contains("herdmod"), "{message}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("palette.json")).unwrap(),
+            text
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -452,6 +522,13 @@ mod tests {
         .unwrap();
         let p = load_or_create(&dir, &no_disabled()).unwrap();
         assert_eq!(p.block_from_disk(1), 0, "unknown disk name decodes to air");
+        assert_eq!(
+            p.block_from_disk_known(1),
+            None,
+            "and is reported unknown, so the codec keeps it"
+        );
+        assert_eq!(p.block_from_disk_known(0), Some(0), "air is known");
+        assert_eq!(p.block_from_disk_known(4000), None, "never pinned");
         // Every current block still has a disk id (shifted by the stranger).
         for &b in Block::all() {
             assert_eq!(p.block_from_disk(p.block_to_disk(b.id())), b.id());
@@ -595,6 +672,8 @@ mod tests {
         // empty), no to-disk pin, and the entry itself stays (append-only).
         let p = load_or_create(&save, &disabled).unwrap();
         assert_eq!(p.block_from_disk(disk), 0, "disabled block decodes to air");
+        assert_eq!(p.block_from_disk_known(disk), None, "kept in disk form");
+        assert_eq!(p.item_from_disk_known(item_disk), None);
         assert_eq!(
             p.item_from_disk(item_disk),
             0,

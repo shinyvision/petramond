@@ -109,7 +109,7 @@ impl ServerGame {
                     );
                     return None;
                 }
-                Some((session.key, crate::save::player::encode(&snapshot)))
+                Some((session.key, snapshot))
             })
             .collect();
 
@@ -120,8 +120,8 @@ impl ServerGame {
                 self.world.world_kv(),
                 self.world.populated_columns(),
             ));
-            for (key, bytes) in players {
-                save.save_player(&key, bytes);
+            for (key, snapshot) in &players {
+                save.save_player(key, snapshot);
             }
             save.save_mods_json(crate::modding::modset::encode_active(
                 self.world.disabled_mods(),

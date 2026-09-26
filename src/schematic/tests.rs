@@ -170,9 +170,10 @@ fn creative_modes_survive_player_save_restore() {
         let mut p =
             crate::player::Player::new(petramond_math::world_pos::WorldPos::new(1.0, 64.0, 1.0));
         p.set_mode(mode);
-        let bytes = crate::save::player::encode(&p);
+        let pal = crate::save::palette::Palette::identity();
+        let bytes = crate::save::player::encode(&p, &pal);
         assert_eq!(
-            crate::save::player::decode(&bytes)
+            crate::save::player::decode(&bytes, &pal)
                 .unwrap()
                 .restore()
                 .mode(),

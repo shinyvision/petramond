@@ -3,7 +3,10 @@
 //!
 //! A batch is first written whole to `journal.bin` (checksummed, flushed to
 //! disk, then renamed into place), only then applied to the region, level and
-//! player files, and only after every apply succeeded is the journal retired.
+//! player files, and only after every apply succeeded — and every region it
+//! appended to was flushed, once per file, at the end of the batch — is the
+//! journal retired. Region records are appended in place (see
+//! `petramond_region`), so a batch writes what changed, not whole regions.
 //! Opening a world finishes a journal left behind: a crash after the commit
 //! replays the whole batch (region records are replacements, files are whole,
 //! so replaying is idempotent), and a torn journal is discarded, leaving the
@@ -14,6 +17,7 @@ use std::io;
 use std::path::{Component, Path};
 
 use petramond_util::atomic_file;
+use petramond_util::bytecodec::Reader;
 
 use super::region::{self, MergePolicy};
 
@@ -102,12 +106,17 @@ fn commit(dir: &Path, entries: &[Entry]) -> io::Result<()> {
 }
 
 fn apply(dir: &Path, entries: &[Entry]) -> io::Result<()> {
+    // Region appends are flushed together once everything is written: one
+    // flush per touched file per batch, all before the journal may retire.
+    let mut appended = std::collections::BTreeSet::new();
     for entry in entries {
         match entry {
             Entry::Region { rx, rz, records } => {
                 let store_dir = dir.join(REGION_DIR);
                 std::fs::create_dir_all(&store_dir)?;
-                merge_records(&region::region_path(&store_dir, *rx, *rz), records)?;
+                let path = region::region_path(&store_dir, *rx, *rz);
+                merge_records(&path, records)?;
+                appended.insert(path);
             }
             Entry::File { path, bytes } => {
                 let path = dir.join(path);
@@ -118,7 +127,7 @@ fn apply(dir: &Path, entries: &[Entry]) -> io::Result<()> {
             }
         }
     }
-    Ok(())
+    appended.iter().try_for_each(|path| region::sync(path))
 }
 
 /// Merge into a region whose other records must survive. A region file whose
@@ -190,63 +199,46 @@ fn decode(bytes: &[u8]) -> Option<Vec<Entry>> {
     if blake3::hash(body).as_bytes() != hash {
         return None;
     }
-    let mut r = Reader(body);
-    let count = r.len()?;
+    let mut r = Reader::new(body);
+    let len = |r: &mut Reader| usize::try_from(r.u64()?).ok();
+    let count = len(&mut r)?;
     let mut entries = Vec::new();
     for _ in 0..count {
-        match r.take(1)?[0] {
+        match r.u8()? {
             0 => {
-                let rx = r.i32()?;
-                let rz = r.i32()?;
-                let n = r.len()?;
+                let rx = r.u32()? as i32;
+                let rz = r.u32()? as i32;
+                let n = len(&mut r)?;
                 let mut records = Vec::new();
                 for _ in 0..n {
-                    let index = u16::from_le_bytes(r.take(2)?.try_into().ok()?);
-                    let len = r.len()?;
-                    records.push((index, r.take(len)?.to_vec()));
+                    let index = r.u16()?;
+                    let body_len = len(&mut r)?;
+                    records.push((index, r.bytes(body_len)?.to_vec()));
                 }
                 entries.push(Entry::Region { rx, rz, records });
             }
             1 => {
-                let len = r.len()?;
-                let path = String::from_utf8(r.take(len)?.to_vec()).ok()?;
+                let path_len = len(&mut r)?;
+                let path = String::from_utf8(r.bytes(path_len)?.to_vec()).ok()?;
                 if !stays_inside(&path) {
                     return None;
                 }
-                let len = r.len()?;
+                let bytes_len = len(&mut r)?;
                 entries.push(Entry::File {
                     path,
-                    bytes: r.take(len)?.to_vec(),
+                    bytes: r.bytes(bytes_len)?.to_vec(),
                 });
             }
             _ => return None,
         }
     }
-    r.0.is_empty().then_some(entries)
+    r.is_at_end().then_some(entries)
 }
 
 /// A journal only ever names files inside the world directory.
 fn stays_inside(path: &str) -> bool {
     let mut components = Path::new(path).components().peekable();
     components.peek().is_some() && components.all(|c| matches!(c, Component::Normal(_)))
-}
-
-struct Reader<'a>(&'a [u8]);
-
-impl<'a> Reader<'a> {
-    fn take(&mut self, n: usize) -> Option<&'a [u8]> {
-        let (head, tail) = self.0.split_at_checked(n)?;
-        self.0 = tail;
-        Some(head)
-    }
-
-    fn len(&mut self) -> Option<usize> {
-        usize::try_from(u64::from_le_bytes(self.take(8)?.try_into().ok()?)).ok()
-    }
-
-    fn i32(&mut self) -> Option<i32> {
-        Some(i32::from_le_bytes(self.take(4)?.try_into().ok()?))
-    }
 }
 
 #[cfg(test)]

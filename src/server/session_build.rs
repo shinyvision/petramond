@@ -165,7 +165,12 @@ pub fn build_server_with_pool(
     let mut world =
         World::new_with_pool(seed, render_dist, WorldRole::ServerHeadless, pool.clone());
     perf.mark("pool_and_world");
-    attach_save(&mut world, opened.save);
+    // Section records deflate on the same shared pool.
+    let save = opened.save.map(|(mut save, saved)| {
+        save.use_job_pool(pool.clone());
+        (save, saved)
+    });
+    attach_save(&mut world, save);
     // Per-world mod enablement: the palette already applied it in
     // `save::open_at`; the world carries it for the natural spawner and
     // the mods.json record, and the mod host / recipes below take it.

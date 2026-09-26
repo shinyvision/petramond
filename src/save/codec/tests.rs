@@ -5,6 +5,20 @@ use petramond_world::block::Block;
 use petramond_world::block_state::{LogAxis, SlabSplit, SlabState, StairState};
 use petramond_world::item::{ItemStack, ItemType};
 
+/// These tests state facts about the FORMAT, so every record maps through
+/// the identity palette rather than any world's.
+fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
+    super::encode_snapshot(s, &palette::Palette::identity())
+}
+
+fn decode_section(
+    pos: SectionPos,
+    blob: &[u8],
+) -> Result<(Section, Vec<DroppedItem>, Vec<SavedMob>), RecordError> {
+    super::decode_section(pos, blob, &palette::Palette::identity())
+        .map(|d| (d.section, d.entities, d.mobs))
+}
+
 fn sec(cx: i32, cy: i32, cz: i32) -> Section {
     Section::new(cx, cy, cz)
 }
@@ -501,9 +515,8 @@ fn corrupt_blob_is_a_typed_error() {
 }
 
 /// The record's block cube must carry ids that do not fit a byte, at both
-/// index widths. The palette is EXPLICIT rather than the process-wide active
-/// one: this is a statement about the format, and the shipped registry has no
-/// id this high to reach it with.
+/// index widths, through the full-width identity palette: the shipped
+/// registry has no id this high to reach it with.
 #[test]
 fn the_record_block_cube_carries_ids_past_one_byte() {
     let pal = crate::save::palette::Palette::identity();
@@ -513,10 +526,12 @@ fn the_record_block_cube_carries_ids_past_one_byte() {
             &mut buf,
             &petramond_world::section::BlockCube::from_ids(ids),
             &pal,
+            &CellMap::new(),
         );
         let mut r = Reader::new(&buf);
-        let back = get_block_cube(&mut r, &pal).expect("cube decodes");
+        let (back, unknown) = get_block_cube(&mut r, &pal).expect("cube decodes");
         assert_eq!(&back[..], ids);
+        assert!(unknown.is_empty(), "the identity palette resolves every id");
     };
 
     // Narrow index (≤ 256 distinct) with high ids in the palette.
@@ -538,12 +553,14 @@ fn the_record_block_cube_carries_ids_past_one_byte() {
 /// ids the registry actually has.
 #[test]
 fn an_item_slot_stores_a_two_byte_id() {
-    let mut slot = Vec::new();
-    put_item_slot(&mut slot, Some(ItemStack::new(ItemType::Stone, 5)));
+    use crate::save::wire::{from_bytes, to_bytes};
+    let pal = palette::Palette::identity();
+    let slot = to_bytes(&DiskSlot::of(Some(ItemStack::new(ItemType::Stone, 5)), &pal));
     assert_eq!(slot.len(), 5, "u16 id + u8 count + u16 blob length");
-    let mut r = Reader::new(&slot);
-    let back = get_item_slot(&mut r)
+    let back = from_bytes::<DiskSlot>(&slot)
         .expect("decodes")
+        .resolve(&pal)
+        .expect("resolves")
         .expect("non-empty slot");
     assert_eq!((back.item, back.count), (ItemType::Stone, 5));
 }
@@ -569,12 +586,14 @@ fn a_high_id_survives_the_whole_section_record() {
         petramond_world::block::ShapeState::with_ids(&[0b0111, a_lo, a_hi, b_lo, b_hi], 0b0_1010),
     );
 
-    // Explicit identity palette, for the same reason as the cube test above:
-    // a real save palette only pins ids the registry actually has.
+    // The full-width identity palette, for the same reason as the cube test
+    // above: a real save palette only pins ids the registry actually has.
     let pal = crate::save::palette::Palette::identity();
     let snap = SectionSnapshot::from_section(&s);
-    let rec = encode_snapshot_with(&snap, &pal);
-    let (back, ..) = decode_section_with(SectionPos::new(2, -1, 3), &rec, &pal).expect("decodes");
+    let rec = super::encode_snapshot(&snap, &pal);
+    let back = super::decode_section(SectionPos::new(2, -1, 3), &rec, &pal)
+        .expect("decodes")
+        .section;
 
     assert_eq!(back.block_raw(1, 2, 3), HIGH_A);
     assert_eq!(back.block_raw(4, 5, 6), HIGH_B);
@@ -641,4 +660,151 @@ fn sparse_state_encodes_identically_whatever_the_insertion_order() {
         encode_snapshot(&SectionSnapshot::from_section(&loaded)),
         "a loaded section re-encodes byte-exact"
     );
+}
+
+/// A palette whose disk id 1 names a block and an item this build does not
+/// have — a world last saved with a mod that is gone now. Every other name
+/// is appended behind them.
+fn palette_missing_a_mod(tag: &str) -> palette::Palette {
+    let dir = std::env::temp_dir().join(format!("petramond-codec-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("palette.json"),
+        r#"{ "blocks": ["petramond:air", "gonemod:relic"], "items": ["petramond:air", "gonemod:gem"] }"#,
+    )
+    .unwrap();
+    let pal = palette::load_or_create(&dir, &Default::default()).expect("palette loads");
+    let _ = std::fs::remove_dir_all(&dir);
+    pal
+}
+
+/// Records written while a mod was present, loaded without it (disk id 1
+/// unresolvable), saved, and loaded with the mod back: its blocks — with
+/// their cell state — return where they were, the record written without
+/// the mod is the very record written with it, and building over a kept
+/// block replaces it.
+#[test]
+fn a_block_whose_mod_is_gone_is_kept_and_returns_with_its_mod() {
+    let with_mod = palette::Palette::identity();
+    let without = palette_missing_a_mod("kept-block");
+    let pos = SectionPos::new(0, 4, 0);
+    let mut s = sec(0, 4, 0);
+    s.set_block_raw(1, 1, 1, 1);
+    s.set_cell_state(
+        1,
+        1,
+        1,
+        petramond_world::block::ShapeState::with_ids(&[3, 4], 0),
+    );
+    s.set_block_raw(2, 2, 2, 1);
+    let original = super::encode_snapshot(&SectionSnapshot::from_section(&s), &with_mod);
+
+    let mut loaded = super::decode_section(pos, &original, &without)
+        .expect("decodes")
+        .section;
+    assert_eq!(loaded.block_raw(1, 1, 1), 0, "air stands in");
+    assert!(loaded.cell_states().is_empty(), "no live state for it");
+    let resaved = super::encode_snapshot(&SectionSnapshot::from_section(&loaded), &without);
+    assert_eq!(inflate(&resaved), inflate(&original), "written back exactly");
+
+    let back = super::decode_section(pos, &resaved, &with_mod)
+        .expect("decodes")
+        .section;
+    assert_eq!(back.block_raw(1, 1, 1), 1, "the block returns with its mod");
+    assert_eq!(back.block_raw(2, 2, 2), 1);
+    let idx = petramond_world::chunk::section_idx(1, 1, 1) as u16;
+    assert_eq!(back.cell_states()[&idx].bytes(), &[3, 4], "and its state");
+    assert!(back.cell_kv().is_empty(), "nothing kept once resolvable");
+
+    loaded.set_block(1, 1, 1, Block::Stone);
+    let built = super::encode_snapshot(&SectionSnapshot::from_section(&loaded), &without);
+    let back = super::decode_section(pos, &built, &without)
+        .expect("decodes")
+        .section;
+    assert_eq!(back.block_raw(1, 1, 1), Block::Stone.id(), "building replaced it");
+    assert_eq!(
+        super::decode_section(pos, &built, &with_mod)
+            .expect("decodes")
+            .section
+            .block_raw(2, 2, 2),
+        1,
+        "the untouched kept block is still there"
+    );
+}
+
+/// Light baked with a block that now reads as air is wrong for the air, and
+/// light baked around the stand-in air would be wrong once the block is
+/// back: both re-bake.
+#[test]
+fn light_never_persists_across_a_kept_block() {
+    use std::sync::Arc;
+    let without = palette_missing_a_mod("kept-light");
+    let pos = SectionPos::new(0, 4, 0);
+    let mut s = sec(0, 4, 0);
+    s.set_block_raw(1, 1, 1, 1);
+    s.set_skylight(Arc::from(vec![15u8; SECTION_VOLUME].into_boxed_slice()));
+    let original = encode_snapshot(&SectionSnapshot::from_section(&s));
+    let mut loaded = super::decode_section(pos, &original, &without)
+        .expect("decodes")
+        .section;
+    assert!(loaded.light_dirty, "the persisted bake is not trusted");
+
+    loaded.set_skylight(Arc::from(vec![15u8; SECTION_VOLUME].into_boxed_slice()));
+    let snap = SectionSnapshot::from_section(&loaded);
+    assert!(snap.skylight.is_some());
+    let resaved = super::encode_snapshot(&snap, &without);
+    let back = decode_section(pos, &resaved).expect("decodes").0;
+    assert!(!back.has_baked_light(), "a bake around a kept block is withheld");
+}
+
+/// A chest item whose mod is gone loads as an empty slot and goes back into
+/// that slot on save.
+#[test]
+fn a_container_item_whose_mod_is_gone_is_kept_in_its_slot() {
+    let with_mod = palette::Palette::identity();
+    let without = palette_missing_a_mod("kept-slot");
+    let pos = SectionPos::new(0, 4, 0);
+    let mut s = sec(0, 4, 0);
+    let mut chest = petramond_world::container::Container::with_len(3);
+    chest.slots[0] = Some(ItemStack::new(ItemType::from_id(1), 5));
+    s.insert_container(4, 4, 4, chest.clone());
+    let original = super::encode_snapshot(&SectionSnapshot::from_section(&s), &with_mod);
+
+    let loaded = super::decode_section(pos, &original, &without)
+        .expect("decodes")
+        .section;
+    assert_eq!(
+        loaded.container_at(4, 4, 4).expect("container").slots,
+        vec![None; 3],
+        "the item cannot be used without its mod"
+    );
+    let resaved = super::encode_snapshot(&SectionSnapshot::from_section(&loaded), &without);
+    assert_eq!(inflate(&resaved), inflate(&original), "written back exactly");
+    let back = super::decode_section(pos, &resaved, &with_mod)
+        .expect("decodes")
+        .section;
+    assert_eq!(back.container_at(4, 4, 4).expect("container"), &chest);
+}
+
+/// Mobs kept from a load ride the snapshot back into the record, beside the
+/// live ones.
+#[test]
+fn kept_mobs_are_written_back_with_the_section() {
+    let pos = SectionPos::new(0, 4, 0);
+    let mut snap = SectionSnapshot::from_section(&sec(0, 4, 0));
+    let stranger = crate::save::mobs::DiskMob {
+        species: 200,
+        pos: WorldPos::new(1.0, 65.0, 1.0),
+        yaw: 0.25,
+        tags: BTreeMap::new(),
+        slots: Vec::new(),
+        unknown: Default::default(),
+    };
+    snap.kept.mobs.push(stranger.clone());
+    let record = encode_snapshot(&snap);
+    let decoded = super::decode_section(pos, &record, &palette::Palette::identity())
+        .expect("decodes");
+    assert!(decoded.mobs.is_empty(), "no registered species 200");
+    assert_eq!(decoded.kept.mobs, [stranger]);
 }
