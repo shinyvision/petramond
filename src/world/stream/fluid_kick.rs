@@ -18,7 +18,10 @@ impl ServerWorld {
     /// guard dropped (`world::sim_guard`): whichever side of a fluid-air or
     /// quench seam lands LAST re-queues the contact, so no flow is permanently
     /// lost to gating. Each step is cheap in the bulk cases (calm ocean, deep
-    /// stone, a single-fluid body) by the section counters.
+    /// stone, a single-fluid body) by the section counters, and every
+    /// cross-cell probe reads through a section cursor: a scan walks one
+    /// section (or one neighbour's seam plane) at a time, so nearly every
+    /// probe hits the cursor's cached section instead of the section map.
     pub(in crate::world) fn queue_loaded_section_fluid_updates(&mut self, ingested: &[SectionPos]) {
         let ingested_set: FxHashSet<SectionPos> = ingested.iter().copied().collect();
         let mut updates: Vec<IVec3> = Vec::new();
@@ -56,6 +59,7 @@ impl ServerWorld {
     /// touches the fluid that quenches it, so a generated contact is judged
     /// instead of sitting unjudged until disturbed.
     fn kick_interior(&self, sp: SectionPos, section: &Section, updates: &mut Vec<IVec3>) {
+        let cursor = self.data.cursor();
         let (ox, oy, oz) = sp.origin_world();
         let blocks = section.blocks();
         let metas = section.fluid_slice();
@@ -72,8 +76,8 @@ impl ServerWorld {
                     let open_outflow = || {
                         KICK_OUTFLOW_DIRS.iter().any(|&d| {
                             let n = pos + IVec3::from(d);
-                            self.data.section_loaded_at(n.x, n.y, n.z)
-                                && self.data.chunk_block(n.x, n.y, n.z) == Block::Air.id()
+                            cursor.section_at(n).is_some()
+                                && cursor.chunk_block(n) == Block::Air.id()
                         })
                     };
                     // An unloaded neighbour reads as air, never as the quencher.
@@ -81,7 +85,7 @@ impl ServerWorld {
                         fluid.quench.is_some_and(|q| {
                             KICK_CONTACT_DIRS.iter().any(|&d| {
                                 let n = pos + IVec3::from(d);
-                                self.data.chunk_block(n.x, n.y, n.z) == q.by.id()
+                                cursor.chunk_block(n) == q.by.id()
                             })
                         })
                     };
@@ -97,6 +101,7 @@ impl ServerWorld {
     /// floor): only boundary fluid can flow, outward through the five outflow
     /// planes, and only against a loaded neighbour that holds air.
     fn kick_outflow_planes(&self, sp: SectionPos, section: &Section, updates: &mut Vec<IVec3>) {
+        let cursor = self.data.cursor();
         let blocks = section.blocks();
         for &d in &KICK_OUTFLOW_DIRS {
             let Some(neighbour) = self.data.sections.get(&offset_section(sp, d)) else {
@@ -106,8 +111,7 @@ impl ServerWorld {
                 continue; // full fluid/stone plane cannot accept flow
             }
             for_each_seam_cell(sp, d, |local, here, there| {
-                if is_fluid(blocks.get(local))
-                    && self.data.chunk_block(there.x, there.y, there.z) == Block::Air.id()
+                if is_fluid(blocks.get(local)) && cursor.chunk_block(there) == Block::Air.id()
                 {
                     updates.push(here);
                 }
@@ -119,6 +123,7 @@ impl ServerWorld {
     /// (falling in) or from the sides — the cross-seam case neither section's
     /// own fluid scan can see. Queues the NEIGHBOUR's fluid cell.
     fn kick_inflow_planes(&self, sp: SectionPos, section: &Section, updates: &mut Vec<IVec3>) {
+        let cursor = self.data.cursor();
         let blocks = section.blocks();
         for &d in &KICK_INFLOW_DIRS {
             let Some(neighbour) = self.data.sections.get(&offset_section(sp, d)) else {
@@ -128,8 +133,7 @@ impl ServerWorld {
                 continue;
             }
             for_each_seam_cell(sp, d, |local, _, there| {
-                if blocks.get(local) == Block::Air.id()
-                    && is_fluid(self.data.chunk_block(there.x, there.y, there.z))
+                if blocks.get(local) == Block::Air.id() && is_fluid(cursor.chunk_block(there))
                 {
                     updates.push(there);
                 }
@@ -142,6 +146,7 @@ impl ServerWorld {
     /// Kept six-directional: fluid below still has to queue the reacting cell's
     /// downward pour.
     fn kick_quench_seams(&self, sp: SectionPos, section: &Section, updates: &mut Vec<IVec3>) {
+        let cursor = self.data.cursor();
         let blocks = section.blocks();
         for &d in &KICK_CONTACT_DIRS {
             let Some(neighbour) = self.data.sections.get(&offset_section(sp, d)) else {
@@ -152,7 +157,7 @@ impl ServerWorld {
             }
             for_each_seam_cell(sp, d, |local, here, there| {
                 let id = blocks.get(local);
-                let other = self.data.chunk_block(there.x, there.y, there.z);
+                let other = cursor.chunk_block(there);
                 if quenched_by(id, other) {
                     updates.push(here);
                 }

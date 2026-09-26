@@ -262,8 +262,8 @@ fn water_arriving_beside_lava_during_the_same_tick_cools_it_before_it_pours() {
     assert!(w.set_fluid_world(lava, Block::Lava, FALLING));
     assert!(w.set_fluid_world(lava + UP, Block::Lava, 0));
     assert!(w.set_fluid_world(lava + DOWN, Block::Water, 0));
-    w.schedule_block_tick(water, 1);
-    w.schedule_block_tick(lava, 1);
+    w.schedule_fluid_tick(water, 1);
+    w.schedule_fluid_tick(lava, 1);
 
     run_ticks(&mut w, 1);
 

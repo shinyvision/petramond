@@ -11,6 +11,7 @@ impl<S: WorldSide> World<S> {
         if let Some(server) = self.side.server_mut() {
             if let Some(job) = server.gen.pending_section_jobs.remove(&pos) {
                 job.cancel();
+                server.worker.remove_queued([job.ticket]);
             }
             server.gen.awaited_overlays.remove(&pos);
             server.gen.disk_primary_sections.remove(&pos);
@@ -82,13 +83,16 @@ impl<S: WorldSide> World<S> {
             if let Some(Some(job)) = gen.pending.remove(&pos) {
                 job.cancel();
             }
+            let mut evicted_jobs = Vec::new();
             gen.pending_section_jobs.retain(|sp, job| {
                 let keep = sp.chunk_pos() != pos;
                 if !keep {
                     job.cancel();
+                    evicted_jobs.push(job.ticket);
                 }
                 keep
             });
+            server.worker.remove_queued(evicted_jobs);
         }
         self.forget_stream_column(pos);
         if let Some(server) = self.side.server_mut() {
@@ -132,9 +136,11 @@ impl<S: WorldSide> World<S> {
             for job in gen.pending_section_jobs.values() {
                 job.cancel();
             }
+            server.worker.remove_queued(gen.pending_section_jobs.values().map(|job| job.ticket));
             gen.pending_section_jobs.clear();
             gen.pending_sections.clear();
             gen.pending_section_columns.clear();
+            gen.section_requests_unsettled = false;
             gen.pending_overlays.clear();
             gen.awaited_overlays.clear();
             gen.disk_primary_sections.clear();

@@ -32,7 +32,6 @@
 //!   random-tickable are skipped wholesale via a per-section counter.
 
 use crate::world::{ServerWorld, World, WorldSide};
-use std::cmp::Reverse;
 
 use petramond_math::math::{IVec3, FACE_NEIGHBORS};
 use petramond_world::block::Block;
@@ -145,19 +144,33 @@ impl<S: WorldSide> World<S> {
     }
 
     fn notify_block_change(&mut self, wx: i32, wy: i32, wz: i32, light_radius: i32, nav: bool) {
+        self.record_cell_change(IVec3::new(wx, wy, wz), light_radius, nav);
+        self.queue_cell_and_neighbor_updates(IVec3::new(wx, wy, wz));
+    }
+
+    /// The per-cell half of the announce, minus the block updates: the
+    /// replication delta, the change log and the relight. Split out so a
+    /// batched writer (the fluid pass, see `fluid::announce`) can queue its
+    /// block updates at write time — keeping their order exact — and record
+    /// each touched cell ONCE when its batch ends, reading the cell's final
+    /// state.
+    pub(super) fn record_cell_change(&mut self, p: IVec3, light_radius: i32, nav: bool) {
         // Replication rides the same choke point, for the same reason as the
         // relight: every editor announces here, so no block/water change a
         // client could see can miss the delta log (see `record_block_delta`,
         // which logs only on a capturing server).
-        self.record_block_delta(wx, wy, wz);
+        self.record_block_delta(p.x, p.y, p.z);
         // The caller may have PROVED the change navigationally equivalent
         // (`edit_nav_relevant`); readers of the nav view then never see it.
-        self.data.sim.change_log.push(IVec3::new(wx, wy, wz), nav);
+        self.data.sim.change_log.push(p, nav);
         // Incremental when the region's stored light can be trusted, a
         // full-rebake mark (which carries the persist staleness notes)
         // otherwise — see `relight_cell`.
-        self.relight_cell(wx, wy, wz, light_radius);
-        let p = IVec3::new(wx, wy, wz);
+        self.relight_cell(p.x, p.y, p.z, light_radius);
+    }
+
+    /// Queue a block update for `p` and each of its 6 orthogonal neighbours.
+    pub(super) fn queue_cell_and_neighbor_updates(&mut self, p: IVec3) {
         self.queue_block_update(p);
         for d in FACE_NEIGHBORS {
             self.queue_block_update(p + d);
@@ -218,14 +231,16 @@ impl<S: WorldSide> World<S> {
     /// Ask for `pos` to run a scheduled tick `delay` ticks from now. No-op if a
     /// tick is already pending for `pos` (first schedule wins).
     pub(super) fn schedule_block_tick(&mut self, pos: IVec3, delay: u64) {
-        if self.data.sim.scheduled_set.insert(pos) {
-            let due = self.data.sim.tick.wrapping_add(delay);
-            let seq = self.data.sim.scheduled_seq;
-            self.data.sim.scheduled_seq += 1;
-            self.data.sim
-                .scheduled
-                .push(Reverse((due, seq, pos.x, pos.y, pos.z)));
-        }
+        let due = self.data.sim.tick.wrapping_add(delay);
+        self.data.sim.scheduled.schedule(pos, due);
+    }
+
+    /// Ask for a fluid flow check at `pos` `delay` ticks from now, on the
+    /// fluid scheduler (see `ServerWorld::run_fluid_checks`). No-op if one is
+    /// already pending for `pos` (first schedule wins).
+    pub(super) fn schedule_fluid_tick(&mut self, pos: IVec3, delay: u64) {
+        let due = self.data.sim.tick.wrapping_add(delay);
+        self.data.sim.fluid.schedule(pos, due);
     }
 
     /// Record that `block` at `pos` was destroyed by the simulation itself — a fragile
@@ -280,7 +295,8 @@ impl ServerWorld {
     ///
     /// Order per tick, which must stay exact (reordering reorders the simulation):
     /// 1. run the scheduled block ticks due now (these may set blocks, which
-    ///    enqueue fresh block updates),
+    ///    enqueue fresh block updates), then the due fluid flow checks up to
+    ///    the fluid budget (`ServerWorld::run_fluid_checks`),
     /// 2. dispatch every queued block update — which may also SET blocks now: the
     ///    support-loss reactions (fragile, door, grass) resolve their verdict at the
     ///    update itself. Such a write enqueues fresh updates for the NEXT tick's
@@ -301,13 +317,7 @@ impl ServerWorld {
         // 1. Run scheduled block ticks whose due time has arrived (EXECUTE phase).
         let mut due = std::mem::take(&mut self.data.sim.batch_scratch);
         due.clear();
-        while let Some(&Reverse((d, _, x, y, z))) = self.data.sim.scheduled.peek() {
-            if d > now {
-                break;
-            }
-            self.data.sim.scheduled.pop();
-            let pos = IVec3::new(x, y, z);
-            self.data.sim.scheduled_set.remove(&pos);
+        while let Some(pos) = self.data.sim.scheduled.pop_due(now) {
             due.push(pos);
         }
         for pos in due.drain(..) {
@@ -322,6 +332,10 @@ impl ServerWorld {
                 SimReadiness::Drop => {}
             }
         }
+
+        // 1b. Fluid flow checks, under their per-tick budget (the rest carries
+        //     over, oldest-first), with their writes announced as one batch.
+        self.run_fluid_checks(now, &mut due);
 
         // 2. Dispatch the block updates accumulated since the last tick (ANNOUNCE
         //    phase; may also set blocks — support rules resolve at the update).
@@ -411,18 +425,17 @@ impl ServerWorld {
         // Bring the random-tickable index up to date with this tick's edits
         // before it is read (see `World::random_tick_dirty`).
         self.repair_random_tick_index();
-        let Some(primary) = self.data.last_load_target else {
+        if self.data.last_load_target.is_none() {
             return;
-        };
-        // (center, radius) per anchor; radii can differ only via render_dist.
-        let mut anchors: Vec<(petramond_world::chunk::ChunkPos, i32)> =
-            Vec::with_capacity(1 + self.data.extra_load_targets.len());
-        for t in std::iter::once(&primary).chain(self.data.extra_load_targets.iter()) {
-            anchors.push((
-                t.center,
-                RANDOM_TICK_CHUNK_RADIUS.min((t.render_dist - 2).max(0)),
-            ));
         }
+        // (center, radius) per anchor; radii can differ only via render_dist.
+        let anchors: Vec<(petramond_world::chunk::ChunkPos, i32)> = self
+            .data
+            .last_load_target
+            .iter()
+            .chain(&self.data.extra_load_targets)
+            .map(|t| (t.center, RANDOM_TICK_CHUNK_RADIUS.min((t.render_dist - 2).max(0))))
+            .collect();
 
         // Gather phase: choose the cells to tick WITHOUT holding a section-map
         // borrow across the dispatch (which mutates the world). `self.data.sim` and
@@ -430,7 +443,13 @@ impl ServerWorld {
         // borrow side by side.
         let mut due = std::mem::take(&mut self.data.sim.batch_scratch);
         due.clear();
-        for (i, &(center, r)) in anchors.iter().enumerate() {
+        // Columns already visited this pass: a column inside several anchors'
+        // discs ticks once, for the first anchor (session order) covering it —
+        // O(anchors x disc) instead of re-testing every earlier anchor's disc
+        // per column. A lone anchor's disc has no overlap to track.
+        let mut visited: rustc_hash::FxHashSet<petramond_world::chunk::ChunkPos> =
+            rustc_hash::FxHashSet::default();
+        for &(center, r) in &anchors {
             for dz in -r..=r {
                 for dx in -r..=r {
                     if dx * dx + dz * dz > r * r {
@@ -439,11 +458,9 @@ impl ServerWorld {
                     let cx = center.cx + dx;
                     let cz = center.cz + dz;
                     // Covered by an earlier anchor: already ticked this pass.
-                    if anchors[..i].iter().any(|&(c, cr)| {
-                        let ddx = cx - c.cx;
-                        let ddz = cz - c.cz;
-                        ddx * ddx + ddz * ddz <= cr * cr
-                    }) {
+                    if anchors.len() > 1
+                        && !visited.insert(petramond_world::chunk::ChunkPos::new(cx, cz))
+                    {
                         continue;
                     }
                     // Walk the column's RANDOM-TICKABLE section bitset,
@@ -764,7 +781,7 @@ mod tests {
     /// Random ticks must cover EVERY streaming anchor, not just the primary —
     /// on a multi-player server the second player's surroundings used to get
     /// no random ticks at all (no leaf decay, no grass spread) because the
-    /// disc was centred only on `last_load_target`.
+    /// disc was centred only on the first anchor.
     #[test]
     fn random_ticks_reach_a_second_anchors_surroundings() {
         let mut world = ServerWorld::new(1, 4);
@@ -788,5 +805,33 @@ mod tests {
             decayed,
             "an isolated leaf near the second anchor never random-ticked into decay"
         );
+    }
+
+    /// Overlapping anchor discs tick each column once: a second anchor on
+    /// top of the first draws no extra random cells (the RNG advances exactly
+    /// as for the lone anchor), while a disjoint second anchor does.
+    #[test]
+    fn overlapping_anchor_discs_random_tick_each_column_once() {
+        let rng_after = |targets: &[LoadTarget]| {
+            let mut world = ServerWorld::new(1, 4);
+            world.insert_empty_column_for_test(ChunkPos::new(0, 0));
+            world.insert_empty_column_for_test(ChunkPos::new(40, 0));
+            // One leaf per column makes exactly those two sections tickable.
+            world.set_block_world(9, 70, 8, Block::OakLeaves);
+            world.set_block_world(40 * 16 + 9, 70, 8, Block::OakLeaves);
+            world.data.last_load_target = targets.first().copied();
+            world.data.extra_load_targets = targets.iter().skip(1).copied().collect();
+            world.random_tick_sections();
+            world.data.sim.rng
+        };
+        let near = LoadTarget::new(0, 4, 0, 4);
+        let far = LoadTarget::new(40, 4, 0, 4);
+        assert_eq!(rng_after(&[near]), rng_after(&[near, near]));
+        assert_eq!(
+            rng_after(&[near, LoadTarget::new(1, 4, 0, 4)]),
+            rng_after(&[near]),
+            "a shifted anchor still covers the same single tickable column"
+        );
+        assert_ne!(rng_after(&[near]), rng_after(&[near, far]));
     }
 }

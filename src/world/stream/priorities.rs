@@ -46,6 +46,39 @@ impl ServerWorld {
         self.side.worker.reprioritize(columns.chain(sections));
     }
 
+    /// Discard queued section work that no current anchor will use. Only
+    /// tickets actually removed from the pool release their pending slots;
+    /// running jobs still report normally. Saved overlays keep their read
+    /// handshake.
+    pub(super) fn prune_stale_section_requests(&mut self) {
+        let targets = self.generation_targets();
+        let stale = self
+            .side.gen.pending_section_jobs.iter()
+            .filter_map(|(sp, job)| {
+                if self.side.gen.awaited_overlays.contains(sp) {
+                    return None;
+                }
+                let wanted = self.side.gen.column_gen.get(&sp.chunk_pos()).is_some_and(|col| {
+                    targets.iter().any(|target| {
+                        Self::column_wanted(*target, sp.chunk_pos())
+                            && self.wanted_section_cys_for_column(
+                                sp.chunk_pos(), col, target.center_cy, 0,
+                            ).contains(&sp.cy)
+                    })
+                });
+                (!wanted).then_some((*sp, job.ticket))
+            })
+            .collect::<Vec<_>>();
+        let removed = self.side.worker.remove_queued(stale.iter().map(|(_, ticket)| *ticket));
+        for (sp, ticket) in stale {
+            if removed.contains(&ticket) {
+                self.side.gen.pending_section_jobs.remove(&sp);
+                self.remove_pending_section(sp);
+                self.side.gen.section_requests_unsettled = true;
+            }
+        }
+    }
+
     pub(super) fn reclaim_far_column_requests(&mut self) {
         use super::requests::MAX_PENDING_COLUMN_GEN_JOBS;
 

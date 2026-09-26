@@ -304,6 +304,12 @@ pub(in crate::world) struct WorldgenJobs {
     /// Cancellation handles for pending worker-generated sections. Disk-primary
     /// requests are in `pending_sections` without an entry here.
     pub(in crate::world) pending_section_jobs: FxHashMap<SectionPos, GenJobHandle>,
+    /// A wanted section could not be admitted under the in-flight limit. The
+    /// next poll retries the globally nearest missing sections after draining.
+    pub(in crate::world) section_requests_unsettled: bool,
+    /// Section admissions left in this load/poll phase. A burst of landed
+    /// columns cannot monopolize the shared generation queue in one pump.
+    pub(in crate::world) section_submit_budget: usize,
     /// Saved (player-modified) sections read back from disk whose generated column has
     /// not arrived yet — disk I/O usually beats noise-gen. Held here until the column
     /// lands, then overlaid over the generated terrain (see `world::stream::poll`).
@@ -344,6 +350,8 @@ impl WorldgenJobs {
             pending_sections: FxHashSet::default(),
             pending_section_columns: FxHashMap::default(),
             pending_section_jobs: FxHashMap::default(),
+            section_requests_unsettled: false,
+            section_submit_budget: super::stream::MAX_SECTION_GEN_SUBMITS_PER_PHASE,
             pending_overlays: FxHashMap::default(),
             awaited_overlays: FxHashSet::default(),
             disk_primary_sections: FxHashSet::default(),

@@ -121,10 +121,21 @@ pub(super) fn empty_biome() -> Arc<[u8]> {
     Arc::from(vec![0u8; BIOME_PAD_AREA].into_boxed_slice())
 }
 
+/// How one mesh job ended.
+pub(super) enum MeshOutcome {
+    Built(ChunkMesh),
+    /// Cancelled before or during the build: a newer job (or an unload)
+    /// superseded it.
+    Cancelled,
+    /// The build panicked. The failure is reported rather than lost so the
+    /// in-flight slot is released; the section keeps whatever mesh it had.
+    Failed,
+}
+
 pub(super) struct MeshDone {
     pub pos: SectionPos,
     pub revision: u64,
-    pub mesh: Option<ChunkMesh>,
+    pub outcome: MeshOutcome,
     pub cancel: crate::worker::JobCancel,
 }
 
@@ -147,23 +158,41 @@ impl MeshPool {
     }
 
     pub fn submit(&self, key: i64, job: MeshJob) -> crate::worker::JobCancel {
+        let (pos, revision) = (job.pos, job.revision);
+        self.submit_build(key, pos, revision, move |cancel| build(job, cancel))
+    }
+
+    /// Queue one build under the stage contract: exactly one [`MeshDone`]
+    /// reaches the drain per submission — built, cancelled, or (if `build`
+    /// panics) [`MeshOutcome::Failed`] via the job's report slot.
+    pub(super) fn submit_build(
+        &self,
+        key: i64,
+        pos: SectionPos,
+        revision: u64,
+        build: impl FnOnce(&crate::worker::JobCancel) -> Option<ChunkMesh> + Send + 'static,
+    ) -> crate::worker::JobCancel {
         let cancel = crate::worker::JobCancel::new();
         let job_cancel = cancel.clone();
-        let pos = job.pos;
-        let revision = job.revision;
-        let tx = self.tx.clone();
+        let failed = MeshDone {
+            pos,
+            revision,
+            outcome: MeshOutcome::Failed,
+            cancel: cancel.clone(),
+        };
+        let slot = crate::worker::ReportSlot::new(self.tx.clone(), failed, "mesh", pos);
         self.pool.submit(key, move || {
-            let done = if job_cancel.is_cancelled() {
-                MeshDone {
-                    pos,
-                    revision,
-                    mesh: None,
-                    cancel: job_cancel,
-                }
+            let outcome = if job_cancel.is_cancelled() {
+                MeshOutcome::Cancelled
             } else {
-                build(job, job_cancel)
+                build(&job_cancel).map_or(MeshOutcome::Cancelled, MeshOutcome::Built)
             };
-            let _ = tx.send(done);
+            slot.complete(MeshDone {
+                pos,
+                revision,
+                outcome,
+                cancel: job_cancel,
+            });
         });
         cancel
     }
@@ -178,7 +207,7 @@ impl MeshPool {
 /// output). Local predicted edits use this to skip the pool's submit→drain
 /// frame hops; everything else stays on the pool.
 pub(super) fn build_inline(job: MeshJob) -> Option<ChunkMesh> {
-    build(job, crate::worker::JobCancel::new()).mesh
+    build(job, &crate::worker::JobCancel::new())
 }
 
 impl crate::world::ReplicaWorld {
@@ -438,14 +467,14 @@ fn pad_border(d: i32, c: usize) -> Option<usize> {
     }
 }
 
-/// Build one section mesh from its owned snapshot.
-fn build(job: MeshJob, cancel: crate::worker::JobCancel) -> MeshDone {
+/// Build one section mesh from its owned snapshot; `None` when `cancel` fired.
+fn build(job: MeshJob, cancel: &crate::worker::JobCancel) -> Option<ChunkMesh> {
     let MeshJob {
         pos,
-        revision,
         center,
         nbhd,
         biome,
+        ..
     } = job;
 
     let mesh = PAD_SCRATCH.with(|pad| {
@@ -478,10 +507,44 @@ fn build(job: MeshJob, cancel: crate::worker::JobCancel) -> MeshDone {
         mesh.visibility = SectionVisibility::of_section(&center);
         mesh.into_sealed()
     });
-    MeshDone {
-        pos,
-        revision,
-        mesh,
-        cancel,
+    mesh
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn drain_one(pool: &MeshPool) -> MeshDone {
+        let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
+        loop {
+            if let Some(done) = pool.try_recv() {
+                return done;
+            }
+            assert!(std::time::Instant::now() < deadline, "no mesh result");
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn a_panicking_build_reports_failed_instead_of_leaking_its_slot() {
+        for threads in [0, 1] {
+            let pool = MeshPool::new(Arc::new(JobPool::new(threads)));
+            let pos = SectionPos::new(3, 1, -2);
+            pool.submit_build(0, pos, 9, |_| panic!("injected mesher panic"));
+            let done = drain_one(&pool);
+            assert_eq!((done.pos, done.revision), (pos, 9));
+            assert!(matches!(done.outcome, MeshOutcome::Failed));
+        }
+    }
+
+    #[test]
+    fn a_cancelled_build_reports_cancelled() {
+        let pool = MeshPool::new(Arc::new(JobPool::inline()));
+        let pos = SectionPos::new(0, 0, 0);
+        pool.submit_build(0, pos, 1, |cancel| {
+            cancel.cancel();
+            None
+        });
+        assert!(matches!(drain_one(&pool).outcome, MeshOutcome::Cancelled));
     }
 }

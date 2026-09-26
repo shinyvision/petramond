@@ -94,33 +94,23 @@ impl<S: WorldSide> World<S> {
         let start = std::time::Instant::now();
         let mut drained = 0usize;
         while drained < RESULT_DRAIN_MIN || start.elapsed() < RESULT_DRAIN_TIME_BUDGET {
-            let Some(res) = self.light_bakes.try_recv() else {
+            let Some(event) = self.light_bakes.try_recv() else {
                 break;
             };
             drained += 1;
+            let res = match event {
+                crate::world::light::LightBakeEvent::Baked(res) => res,
+                crate::world::light::LightBakeEvent::Failed { pos, revision } => {
+                    landed.extend(self.settle_failed_light_bake(pos, revision));
+                    continue;
+                }
+            };
             let fresh = self
                 .data.sections
                 .get(&res.pos)
                 .is_some_and(|s| s.light_dirty && s.light_revision == res.revision);
             if !fresh {
-                // A stale rejection is the moment the section has NO bake in
-                // flight anymore (`try_recv` cleared the pending slot) while
-                // every request made during the flight was dedup-dropped. If it
-                // is still dirty, re-request here or it wedges light-dirty and
-                // every mesh whose 3×3×3 reads it parks in
-                // `light_blocked_meshes` until an unrelated edit.
-                let rebake = self
-                    .data.sections
-                    .get(&res.pos)
-                    .is_some_and(|s| s.light_dirty && !s.all_opaque())
-                    && !self.data.light_deferred.contains(&res.pos);
-                if rebake {
-                    let key = self
-                        .data.last_load_target
-                        .map_or(0, |t| t.section_priority_key(res.pos));
-                    self.light_bakes
-                        .request(key, res.pos, &self.data.sections, &self.data.columns);
-                }
+                self.rerequest_stale_bake(res.pos);
                 continue;
             }
             let Some(s) = self.data.section_mut(res.pos) else {
@@ -165,6 +155,61 @@ impl<S: WorldSide> World<S> {
             });
         }
         landed
+    }
+
+    /// A result for `pos` arrived stale. That is the moment the section has NO
+    /// bake in flight anymore (`try_recv` cleared the pending slot) while
+    /// every request made during the flight was dedup-dropped. If it is still
+    /// dirty, re-request here or it wedges light-dirty and every mesh whose
+    /// 3×3×3 reads it parks in `light_blocked_meshes` until an unrelated edit.
+    fn rerequest_stale_bake(&mut self, pos: SectionPos) {
+        let rebake = self
+            .data
+            .sections
+            .get(&pos)
+            .is_some_and(|s| s.light_dirty && !s.all_opaque())
+            && !self.data.light_deferred.contains(&pos);
+        if rebake {
+            let key = self
+                .data
+                .last_load_target
+                .map_or(0, |t| t.section_priority_key(pos));
+            self.light_bakes
+                .request(key, pos, &self.data.sections, &self.data.columns);
+        }
+    }
+
+    /// The bake of `pos` panicked (SEC-03). A failure against a revision the
+    /// section has since moved past is just stale — re-request like a stale
+    /// result. A CURRENT failure settles the section's light instead of
+    /// leaving it dirty: dirty light parks every mesh sampling it, holds the
+    /// section back from clients (the light-final ship gate), and a
+    /// re-request would re-run a deterministic panic every pump. The section
+    /// keeps its previous cubes; an unbaked one gets the uncomputed defaults
+    /// (open sky, no block light) made explicit. Its next light-dirty mark (an
+    /// edit, a neighbour landing) bakes it again.
+    fn settle_failed_light_bake(&mut self, pos: SectionPos, revision: u64) -> Option<LandedLight> {
+        let s = self.data.sections.get(&pos)?;
+        if !(s.light_dirty && s.light_revision == revision) {
+            self.rerequest_stale_bake(pos);
+            return None;
+        }
+        let first_bake = !s.has_baked_light();
+        let skylight = s
+            .skylight_arc()
+            .unwrap_or_else(|| std::sync::Arc::from(vec![chunk::SKY_FULL; chunk::SECTION_VOLUME]));
+        let blocklight = s.blocklight_arc().unwrap_or_else(|| {
+            std::sync::Arc::from(vec![
+                petramond_world::light::LightRgb::ZERO;
+                chunk::SECTION_VOLUME
+            ])
+        });
+        self.install_light_cubes(pos, skylight, blocklight);
+        Some(LandedLight {
+            pos,
+            first_bake,
+            mask: crate::world::light::REGION_ALL,
+        })
     }
 
     /// Install changed light cubes on `pos` — a landed bake, or an incremental

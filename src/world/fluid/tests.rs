@@ -11,6 +11,7 @@ fn lava_flow_delay() -> u64 {
     Block::Lava.fluid_def().unwrap().delay
 }
 
+mod budget;
 mod quenching;
 mod source_renewal;
 
@@ -694,7 +695,7 @@ fn a_cut_cascade_flows_inside_its_gorge_and_a_breached_one_does_not() {
     // And the exhaustive version, so the result does not depend on which cell
     // the disturbance happened to reach.
     for &p in &generated {
-        w.schedule_block_tick(p, water_flow_delay());
+        w.schedule_fluid_tick(p, water_flow_delay());
     }
     run_ticks(&mut w, ring() * 12);
 
@@ -838,7 +839,7 @@ fn a_generated_lava_fall_rearms_and_builds_its_landing_pool() {
     w.insert_chunk_for_test(ChunkPos::new(0, 0), c);
 
     w.queue_loaded_section_fluid_updates(&[SectionPos::new(0, 4, 0)]);
-    w.schedule_block_tick(IVec3::new(5, 69, 5), lava_flow_delay());
+    w.schedule_fluid_tick(IVec3::new(5, 69, 5), lava_flow_delay());
     run_ticks(&mut w, lava_ring() * 8);
 
     let lava_cells_at = |w: &ServerWorld, y: i32| -> Vec<(i32, i32)> {

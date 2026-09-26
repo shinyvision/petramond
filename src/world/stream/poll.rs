@@ -115,6 +115,7 @@ impl ServerWorld {
     /// sections for column-map refresh + light + mesh. Returns the number of
     /// columns whose shared data was installed this call.
     pub fn poll(&mut self) -> usize {
+        self.side.gen.section_submit_budget = super::MAX_SECTION_GEN_SUBMITS_PER_PHASE;
         // Any change to what is loaded / stream-final re-keys the per-connection
         // terrain senders (their wanted-vs-sent rescan gates on this).
         let before = self.stream_finality_fingerprint();
@@ -206,6 +207,7 @@ impl ServerWorld {
                 GenOutput::SectionFailed(sp) => {
                     w.remove_pending_section(sp);
                     w.side.gen.pending_section_jobs.remove(&sp);
+                    w.side.gen.section_requests_unsettled = true;
                     w.queue_deferred_rechecks_around(sp);
                 }
                 // A hook is waiting on a fact another worker derives: run the
@@ -446,6 +448,7 @@ impl ServerWorld {
             if !self.data.missing_columns_settled && self.data.extra_load_targets.is_empty() {
                 self.request_missing_columns(target);
             }
+            self.refill_section_requests();
             return new_columns;
         }
 
@@ -575,6 +578,7 @@ impl ServerWorld {
         if !self.data.missing_columns_settled && self.data.extra_load_targets.is_empty() {
             self.request_missing_columns(target);
         }
+        self.refill_section_requests();
         new_columns
     }
 

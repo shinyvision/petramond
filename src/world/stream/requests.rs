@@ -12,6 +12,9 @@ use crate::world::store::{LoadAnchor, LoadTarget};
 /// when the anchors move.
 pub(super) const MAX_PENDING_COLUMN_GEN_JOBS: usize = 192;
 const MAX_COLUMN_GEN_SUBMITS_PER_TARGET: usize = 64;
+/// Includes worker generation and disk-primary loads. Keeping the whole stage
+/// below this ceiling also bounds the worldgen closures retained by JobPool.
+pub(super) const MAX_PENDING_SECTION_JOBS: usize = 512;
 
 impl ServerWorld {
     /// Update the streamed region around the player's SECTION `(cam_chunk_x, cam_chunk_y,
@@ -23,6 +26,7 @@ impl ServerWorld {
     /// caves below y=0). Scans are gated to player-section / render-distance changes; call
     /// `poll` every frame to keep ingesting worker results.
     pub fn update_load(&mut self, cam_chunk_x: i32, cam_chunk_y: i32, cam_chunk_z: i32) {
+        self.side.gen.section_submit_budget = super::MAX_SECTION_GEN_SUBMITS_PER_PHASE;
         let target = LoadTarget::new(cam_chunk_x, cam_chunk_y, cam_chunk_z, self.data.render_dist);
         self.update_load_target(target);
     }
@@ -46,6 +50,7 @@ impl ServerWorld {
             prev.is_none_or(|p| p.center != target.center || p.render_dist != target.render_dist);
 
         self.prune_stale_column_requests(target);
+        self.prune_stale_section_requests();
         self.reclaim_far_column_requests();
         self.refresh_generation_priorities();
         self.request_missing_columns(target);
@@ -79,6 +84,7 @@ impl ServerWorld {
     /// trades those delta scans for a plain full scan on anchor-set change (bounded by
     /// the anchors' discs, and it runs only on change).
     pub fn update_load_multi(&mut self, anchors: &[LoadAnchor]) {
+        self.side.gen.section_submit_budget = super::MAX_SECTION_GEN_SUBMITS_PER_PHASE;
         // Each anchor streams at ITS connection's radius (view distance),
         // never wider than this world's own `render_dist` budget.
         let radius = |a: &LoadAnchor| a.radius.clamp(1, self.data.render_dist);
@@ -121,6 +127,7 @@ impl ServerWorld {
             keep
         });
         self.reclaim_far_column_requests();
+        self.prune_stale_section_requests();
         self.refresh_generation_priorities();
         self.request_missing_columns_multi(&targets);
         self.request_wanted_sections_multi(&targets);
@@ -223,10 +230,7 @@ impl ServerWorld {
                 ));
             }
         }
-        wanted.sort_by_key(|(priority, _, _)| *priority);
-        for (priority, sp, col) in wanted {
-            self.submit_section_job(priority, sp, col);
-        }
+        self.admit_section_candidates(wanted);
     }
 
     /// Submit the (heavy, once-per-column) `ColumnGen` job for every in-radius column we
@@ -368,10 +372,7 @@ impl ServerWorld {
                 ));
             }
         }
-        wanted.sort_by_key(|(priority, _, _)| *priority);
-        for (priority, sp, col) in wanted {
-            self.submit_section_job(priority, sp, col);
-        }
+        self.admit_section_candidates(wanted);
     }
 
     fn request_newly_wanted_sections(&mut self, prev: LoadTarget, target: LoadTarget) {
@@ -406,10 +407,7 @@ impl ServerWorld {
                 ));
             }
         }
-        wanted.sort_by_key(|(priority, _, _)| *priority);
-        for (priority, sp, col) in wanted {
-            self.submit_section_job(priority, sp, col);
-        }
+        self.admit_section_candidates(wanted);
     }
 
     /// Submit per-section gen jobs for one freshly-loaded column's vertical window
@@ -438,9 +436,53 @@ impl ServerWorld {
                 sp,
             ));
         }
-        wanted.sort_by_key(|(key, _)| *key);
-        for (key, sp) in wanted {
-            self.submit_section_job(key, sp, col.clone());
+        self.admit_section_candidates(
+            wanted.into_iter().map(|(key, sp)| (key, sp, col.clone())).collect(),
+        );
+    }
+
+    /// Admit the nearest missing section requests under both the in-flight cap
+    /// and this pump's section quota. Remaining positions are not marked
+    /// pending: a later poll re-derives them from the loaded column data after
+    /// existing jobs drain, so no unbounded deferred queue is retained.
+    fn admit_section_candidates(&mut self, mut wanted: Vec<(i64, SectionPos, Arc<ColumnGen>)>) {
+        if wanted.is_empty() {
+            return;
+        }
+        wanted.sort_unstable_by_key(|(key, sp, _)| (*key, sp.cx, sp.cz, sp.cy));
+        let room = MAX_PENDING_SECTION_JOBS
+            .saturating_sub(self.side.gen.pending_sections.len())
+            .min(self.side.gen.section_submit_budget);
+        if wanted.len() > room {
+            self.side.gen.section_requests_unsettled = true;
+        }
+        for (key, sp, col) in wanted.into_iter().take(room) {
+            self.submit_section_job(key, sp, col);
+            self.side.gen.section_submit_budget -= 1;
+        }
+    }
+
+    /// Refill after a bounded pass omitted sections or a section job failed.
+    /// This full scan runs only while the stage is unsettled and has room; it
+    /// restores nearest-first ordering across every already landed column.
+    pub(super) fn refill_section_requests(&mut self) {
+        if !self.side.gen.section_requests_unsettled
+            || self.side.gen.pending_sections.len() >= MAX_PENDING_SECTION_JOBS
+            || self.side.gen.section_submit_budget == 0
+        {
+            return;
+        }
+        self.side.gen.section_requests_unsettled = false;
+        let Some(primary) = self.data.last_load_target else {
+            return;
+        };
+        if self.data.extra_load_targets.is_empty() {
+            self.request_wanted_sections(primary);
+        } else {
+            let targets: Vec<_> = std::iter::once(primary)
+                .chain(self.data.extra_load_targets.iter().copied())
+                .collect();
+            self.request_wanted_sections_multi(&targets);
         }
     }
 
@@ -487,5 +529,72 @@ impl ServerWorld {
                 self.note_stream_nonfinal(sp);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::worker::JobPool;
+    use petramond_worldgen::driver::ChunkGenerator;
+
+    #[test]
+    fn section_admission_stops_at_the_cap_and_retains_refill_intent() {
+        let pool = Arc::new(JobPool::new(1));
+        let (release, held) = std::sync::mpsc::channel();
+        pool.submit(i64::MIN, move || {
+            let _ = held.recv();
+        });
+        let mut world = ServerWorld::with_pool(7, 4, pool);
+        let col = Arc::new(ChunkGenerator::new(7).generate_column_gen(0, 0));
+        let wanted: Vec<_> = (0..=MAX_PENDING_SECTION_JOBS)
+            .map(|i| {
+                let sp = SectionPos::new((i / 16) as i32, (i % 16) as i32, 0);
+                (i as i64, sp, col.clone())
+            })
+            .collect();
+
+        world.side.gen.section_submit_budget = MAX_PENDING_SECTION_JOBS;
+        world.admit_section_candidates(wanted.clone());
+        assert_eq!(world.side.gen.pending_sections.len(), MAX_PENDING_SECTION_JOBS);
+        assert!(world.side.gen.section_requests_unsettled);
+        let last = wanted.last().unwrap().1;
+        assert!(!world.side.gen.pending_sections.contains(&last));
+
+        for job in world.side.gen.pending_section_jobs.values() {
+            job.cancel();
+        }
+        release.send(()).unwrap();
+    }
+
+    #[test]
+    fn omitted_sections_refill_without_an_anchor_move() {
+        let pool = Arc::new(JobPool::new(1));
+        let (release, held) = std::sync::mpsc::channel();
+        pool.submit(i64::MIN, move || {
+            let _ = held.recv();
+        });
+        let mut world = ServerWorld::with_pool(7, 4, pool);
+        let target = LoadTarget::new(0, 4, 0, 4);
+        world.data.last_load_target = Some(target);
+        world.side.gen.column_gen.insert(
+            target.center,
+            Arc::new(ChunkGenerator::new(7).generate_column_gen(0, 0)),
+        );
+
+        world.side.gen.section_submit_budget = 1;
+        world.request_wanted_sections(target);
+        assert_eq!(world.side.gen.pending_sections.len(), 1);
+        assert!(world.side.gen.section_requests_unsettled);
+
+        world.side.gen.section_submit_budget = super::super::MAX_SECTION_GEN_SUBMITS_PER_PHASE;
+        world.refill_section_requests();
+        assert!(world.side.gen.pending_sections.len() > 1);
+        assert!(!world.side.gen.section_requests_unsettled);
+
+        for job in world.side.gen.pending_section_jobs.values() {
+            job.cancel();
+        }
+        release.send(()).unwrap();
     }
 }

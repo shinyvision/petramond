@@ -12,6 +12,66 @@ use crate::mathh::IVec3;
 /// One pending scheduled tick, min-heap ordered: `(due tick, schedule order, x, y, z)`.
 type ScheduledTick = Reverse<(u64, u64, i32, i32, i32)>;
 
+/// A deduplicated min-heap of per-cell checks keyed by (due tick, schedule
+/// order): the first schedule for a cell wins, and checks due together pop
+/// in the order they were scheduled. A check left in the queue past its due
+/// tick (a budgeted drain stopped early) stays ahead of everything scheduled
+/// later, so carry-over drains oldest-first and is never lost.
+#[derive(Default)]
+pub struct ScheduledQueue {
+    heap: BinaryHeap<ScheduledTick>,
+    /// Monotonic counter that timestamps each schedule.
+    seq: u64,
+    /// Positions with a check already pending, for dedup.
+    pending: FxHashSet<IVec3>,
+}
+
+impl ScheduledQueue {
+    /// Queue a check for `pos` at tick `due`. Returns `false` (and changes
+    /// nothing) when one is already pending for `pos`.
+    pub fn schedule(&mut self, pos: IVec3, due: u64) -> bool {
+        if !self.pending.insert(pos) {
+            return false;
+        }
+        let seq = self.seq;
+        self.seq += 1;
+        self.heap.push(Reverse((due, seq, pos.x, pos.y, pos.z)));
+        true
+    }
+
+    /// Pop the oldest check due at or before `now`, if any.
+    pub fn pop_due(&mut self, now: u64) -> Option<IVec3> {
+        let &Reverse((due, _, x, y, z)) = self.heap.peek()?;
+        if due > now {
+            return None;
+        }
+        self.heap.pop();
+        let pos = IVec3::new(x, y, z);
+        self.pending.remove(&pos);
+        Some(pos)
+    }
+
+    /// Whether a check is pending for `pos`.
+    pub fn contains(&self, pos: IVec3) -> bool {
+        self.pending.contains(&pos)
+    }
+
+    /// How many checks are pending (due or not).
+    pub fn len(&self) -> usize {
+        self.heap.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.heap.is_empty()
+    }
+
+    /// How many pending checks are due at or before `now` — a scan, for
+    /// diagnostics and tests.
+    pub fn due_count(&self, now: u64) -> usize {
+        self.heap.iter().filter(|Reverse((due, ..))| *due <= now).count()
+    }
+}
+
 /// Per-world tick/update/schedule bookkeeping.
 #[derive(Default)]
 pub struct TickState {
@@ -20,14 +80,14 @@ pub struct TickState {
     /// Cells whose neighbourhood changed since the last tick, awaiting dispatch.
     pub update_queue: VecDeque<IVec3>,
     pub update_set: FxHashSet<IVec3>,
-    /// Pending scheduled ticks ordered by due tick, then by scheduling order
-    /// (min-heap via `Reverse`); the position rides along in the entry.
-    pub scheduled: BinaryHeap<ScheduledTick>,
-    /// Monotonic counter that timestamps each schedule, so ticks due on the same
-    /// game tick execute in the order they were scheduled.
-    pub scheduled_seq: u64,
-    /// Positions with a scheduled tick already pending, for dedup.
-    pub scheduled_set: FxHashSet<IVec3>,
+    /// Pending scheduled block ticks (every behaviour except fluid flow).
+    /// Drained completely each tick.
+    pub scheduled: ScheduledQueue,
+    /// Pending fluid flow checks — fluids run on their own scheduler so a
+    /// large fluid event drains under a per-tick budget (carry-over stays
+    /// queued, oldest-first) instead of stalling the whole tick, and never
+    /// starves the other behaviours' scheduled ticks.
+    pub fluid: ScheduledQueue,
     /// Blocks the simulation itself destroyed this tick (a fragile block losing its
     /// support, or one washed away by water), each as `(pos, block)`. Purely a
     /// hand-off to the presentation layer: `Game` drains it right after the tick (see

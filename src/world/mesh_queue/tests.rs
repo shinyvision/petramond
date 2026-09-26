@@ -398,3 +398,34 @@ fn forced_repack_remesh_bypasses_sealed_parking() {
     assert!(!world.side.terrain.repack_forced.contains(&center));
     assert!(!world.side.terrain.sealed_parked.contains(&center));
 }
+
+/// SEC-03: a mesh build that panics still reports, so its in-flight slot and
+/// cancel entry are released and the pipeline keeps admitting work.
+#[test]
+fn a_panicking_mesh_build_releases_its_in_flight_slot() {
+    let mut world = ReplicaWorld::new(0, 0);
+    let pos = SectionPos::new(0, 0, 0);
+    insert_solid_section(&mut world, pos);
+    world.data.section_mut(pos).unwrap().dirty = true;
+    let revision = world.data.sections[&pos].mesh_revision;
+    let cancel = world
+        .side
+        .terrain
+        .mesh_pool
+        .submit_build(0, pos, revision, |_| panic!("injected mesher panic"));
+    world.side.terrain.mesh_job_cancels.insert(pos, cancel);
+    world.side.terrain.mesh_jobs_in_flight += 1;
+
+    let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
+    while world.side.terrain.mesh_jobs_in_flight > 0 {
+        assert!(std::time::Instant::now() < deadline, "the failure never reported");
+        world.drain_finished_meshes();
+        std::thread::yield_now();
+    }
+    assert!(world.side.terrain.mesh_job_cancels.is_empty());
+    assert!(!world.side.terrain.meshes.contains_key(&pos));
+    assert!(
+        !world.data.sections[&pos].dirty,
+        "a failed build settles instead of spinning on a deterministic panic"
+    );
+}

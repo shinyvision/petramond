@@ -8,6 +8,13 @@ use super::{RESULT_DRAIN_MIN, RESULT_DRAIN_TIME_BUDGET};
 impl ReplicaWorld {
     /// Install meshes the pool finished, dropping any whose section has since changed
     /// (re-edited or re-lit, so its `mesh_revision` moved) or unloaded.
+    ///
+    /// Every submission reports exactly once (the pool's stage contract), so
+    /// the in-flight count and cancel slot are released for built, cancelled
+    /// AND failed jobs alike. A failed build (the mesher panicked on this
+    /// section) keeps the section's previous mesh and settles its dirty flag:
+    /// re-queueing a deterministic panic would only spin, while the next edit
+    /// or relight of the section re-queues it normally.
     pub(super) fn drain_finished_meshes(&mut self) {
         let start = std::time::Instant::now();
         let mut drained = 0usize;
@@ -25,8 +32,22 @@ impl ReplicaWorld {
             {
                 self.side.terrain.mesh_job_cancels.remove(&done.pos);
             }
-            let Some(mut mesh) = done.mesh else {
-                continue;
+            let mut mesh = match done.outcome {
+                crate::world::mesh_pool::MeshOutcome::Built(mesh) => mesh,
+                crate::world::mesh_pool::MeshOutcome::Cancelled => continue,
+                crate::world::mesh_pool::MeshOutcome::Failed => {
+                    let current = self
+                        .data
+                        .sections
+                        .get(&done.pos)
+                        .is_some_and(|s| s.mesh_revision == done.revision);
+                    if current {
+                        if let Some(s) = self.data.section_mut(done.pos) {
+                            s.dirty = false;
+                        }
+                    }
+                    continue;
+                }
             };
             let fresh = self
                 .data.sections

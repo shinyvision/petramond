@@ -126,3 +126,98 @@ fn jobs_run_under_the_submitters_content_registry() {
         "an unpinned submitter's job reads the process registry"
     );
 }
+
+#[test]
+fn a_panicking_job_reports_its_failure_through_its_slot() {
+    let pool = JobPool::new(1);
+    let (tx, rx) = channel::<Result<u32, SectionPos>>();
+    let at = SectionPos::new(1, 2, 3);
+    let slot = ReportSlot::new(tx.clone(), Err(at), "test", at);
+    pool.submit(0, move || {
+        let _slot = slot;
+        panic!("injected job panic");
+    });
+    let ok_slot = ReportSlot::new(tx, Err(at), "test", at);
+    pool.submit(1, move || ok_slot.complete(Ok(7)));
+    let deadline = petramond_util::test_time::TEST_HARD_DEADLINE;
+    assert_eq!(rx.recv_timeout(deadline).unwrap(), Err(at));
+    assert_eq!(
+        rx.recv_timeout(deadline).unwrap(),
+        Ok(7),
+        "the worker survives the panic and keeps running jobs"
+    );
+}
+
+#[test]
+fn an_inline_pool_contains_a_panicking_job_and_still_reports() {
+    let pool = JobPool::inline();
+    let (tx, rx) = channel::<bool>();
+    let slot = ReportSlot::new(tx, false, "test", SectionPos::new(0, 0, 0));
+    pool.submit(0, move || {
+        let _slot = slot;
+        panic!("injected inline panic");
+    });
+    assert_eq!(rx.try_recv(), Ok(false), "the caller got the failure, not the unwind");
+}
+
+#[test]
+fn a_job_discarded_unstarted_reports_its_failure() {
+    let pool = JobPool::new(1);
+    let (release, wait) = channel::<()>();
+    let (started, starting) = channel::<()>();
+    pool.submit(i64::MIN, move || {
+        started.send(()).unwrap();
+        let _ = wait.recv();
+    });
+    starting
+        .recv_timeout(petramond_util::test_time::TEST_HARD_DEADLINE)
+        .unwrap();
+    let (tx, rx) = channel::<bool>();
+    let slot = ReportSlot::new(tx, false, "test", SectionPos::new(0, 0, 0));
+    let ticket = pool.submit(0, move || slot.complete(true));
+    assert_eq!(pool.remove_queued([ticket]).len(), 1);
+    assert_eq!(rx.try_recv(), Ok(false));
+    release.send(()).unwrap();
+}
+
+#[test]
+fn rekeying_and_removing_touch_only_the_named_jobs() {
+    let pool = JobPool::new(1);
+    let (release, wait) = channel::<()>();
+    let (started, starting) = channel::<()>();
+    pool.submit(i64::MIN, move || {
+        started.send(()).unwrap();
+        let _ = wait.recv();
+    });
+    starting
+        .recv_timeout(petramond_util::test_time::TEST_HARD_DEADLINE)
+        .unwrap();
+    let (send, receive) = channel();
+    let tickets: Vec<JobTicket> = (0..1000i64)
+        .map(|i| {
+            let send = send.clone();
+            pool.submit(i, move || send.send(i).unwrap())
+        })
+        .collect();
+    assert_eq!(pool.queued_len(), 1000);
+    // Re-key three jobs to the front and drop one: the other jobs keep their
+    // places.
+    pool.reprioritize([(tickets[900], -3), (tickets[901], -2), (tickets[902], -1)]);
+    assert_eq!(pool.remove_queued([tickets[0]]).len(), 1);
+    assert_eq!(pool.queued_len(), 999);
+    release.send(()).unwrap();
+    let deadline = petramond_util::test_time::TEST_HARD_DEADLINE;
+    let first: Vec<i64> = (0..5)
+        .map(|_| receive.recv_timeout(deadline).unwrap())
+        .collect();
+    assert_eq!(first, vec![900, 901, 902, 1, 2]);
+}
+
+#[test]
+fn default_threads_never_exceeds_the_machine() {
+    let n = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let threads = JobPool::default_threads();
+    assert!(threads >= 1 && threads <= n);
+}
