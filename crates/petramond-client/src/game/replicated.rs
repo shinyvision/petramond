@@ -1150,7 +1150,7 @@ impl Game {
                 self.replica.set_shader_param(key, value);
             }
         }
-        self.open_chests = update.open_chests.into_iter().collect();
+        self.set_open_chests(update.open_chests.into_iter().collect());
         if let Some(sync) = update.menu_sync {
             if stale_menu {
                 self.menu_view.adopt_gui_state(sync);

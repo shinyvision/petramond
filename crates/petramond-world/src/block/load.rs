@@ -29,7 +29,9 @@ use crate::tile::Tile;
 use super::definition::{
     self, BlockDef, BlockFlags, BlockMaterial, ParticleEmitter, RootsFace, SupportDir,
 };
-use super::shape_kind::{self, RawShape, ShapeFamily, ShapeKindDef, ShapeKindInterner};
+use super::shape_kind::{
+    self, MeshEmitter, RawShape, RowFacts, ShapeKindDef, ShapeKindInterner, ShapeSim,
+};
 use super::{behavior, Aabb, Block, BlockInteraction, BlockTag};
 
 /// One block row as written in `blocks.json`: a field-for-field mirror of
@@ -150,6 +152,11 @@ pub(super) struct RawBlockDef {
     /// with the opposite root that names this row back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flipped: Option<String>,
+    /// An `animated_models.json` key: the moving model this row draws
+    /// outside the chunk mesh (a chest's lid, a door's swing). Required on
+    /// every row whose shape draws nothing itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animated_model: Option<String>,
     /// Namespaced consumer-data entries (`"ns:key": <any JSON>`): the block
     /// interop surface, exactly the item rows' `data` field — a consuming
     /// system's key, an opaque JSON value that consumer parses. Attachable to
@@ -424,16 +431,11 @@ pub(super) struct Registry {
     /// light flood's emitter gather reads it per cell over whole sections and
     /// must never touch the big `BlockDef` table to do it.
     pub emission_rgb: Box<[[u8; 3]]>,
-    /// Dense per-id copy of each block's [`ShapeFamily`] — the hot classifier
-    /// the mesher/nav read per cell, one small-array read instead of the
-    /// `def()`→`shape_kind`→table double indirection (same rationale as
-    /// [`flags`](Self::flags)).
-    pub shape_family: Box<[ShapeFamily]>,
     /// Dense per-id copy of [`ShapeKindDef::refines`] — the refine cascade's
     /// and the load sweep's per-cell gate. The sweep walks whole sections' id
     /// buffers looking for refining cells, so this MUST NOT cost the
     /// `def()`→`shape_kind`→table chain per byte (same rationale as
-    /// [`shape_family`](Self::shape_family)).
+    /// [`flags`](Self::flags)).
     pub shape_refines: Box<[bool]>,
     /// Dense per-id TAG BITSET (bit `tag.0`). `Block::has_tag` is asked
     /// several times per cell by the mesher (`is_log`, `is_leaves`,
@@ -555,7 +557,6 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
     let mut flags = vec![BlockFlags::NONE; n].into_boxed_slice();
     let mut emission = vec![0u8; n].into_boxed_slice();
     let mut emission_rgb = vec![[0u8; 3]; n].into_boxed_slice();
-    let mut shape_family = vec![ShapeFamily::Cube; n].into_boxed_slice();
     let mut shape_refines = vec![false; n].into_boxed_slice();
     let mut tag_bits = vec![0u128; n].into_boxed_slice();
     for d in defs {
@@ -568,7 +569,6 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
         emission[d.block.id() as usize] = d.emission;
         emission_rgb[d.block.id() as usize] = d.emission_rgb;
         let kind = &shape_kinds[d.shape_kind.0 as usize];
-        shape_family[d.block.id() as usize] = kind.family;
         shape_refines[d.block.id() as usize] = kind.refines;
     }
     Ok(Registry {
@@ -577,7 +577,6 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
         flags,
         emission,
         emission_rgb,
-        shape_family,
         shape_refines,
         tag_bits,
     })
@@ -731,14 +730,11 @@ fn parse_facing(name: &str) -> Result<Facing, String> {
 /// tile-slot families (cube/stair/slab) may declare it — every other shape
 /// textures through its own UV vocabulary (a box set rotates per box), where
 /// a row-level map could only be a silent no-op.
-fn resolve_uv_turns(r: &RawBlockDef, family: ShapeFamily) -> Result<[u8; 3], String> {
+fn resolve_uv_turns(r: &RawBlockDef, sim: &dyn ShapeSim) -> Result<[u8; 3], String> {
     let Some(map) = &r.uv_rotation else {
         return Ok([0; 3]);
     };
-    if !matches!(
-        family,
-        ShapeFamily::Cube | ShapeFamily::Stair | ShapeFamily::Slab
-    ) {
+    if !sim.accepts_row_uv_rotation() {
         return Err(
             "'uv_rotation' rotates the row's [top, bottom, side] tiles and only \
              applies to the cube/stair/slab shapes (a box set rotates per box, \
@@ -785,7 +781,10 @@ fn convert(
     // Resolve the composable shape kind once; its family/params drive every
     // shape-keyed flag and validation below, and it interns into the table.
     let (family, params, shape_key) = r.shape.resolve(r.corners)?;
-    let uv_turns = resolve_uv_turns(&r, family)?;
+    // The family's facets answer every shape-keyed rule, so this loader
+    // names no family.
+    let (sim, render, _) = shape_kind::families::singletons(family);
+    let uv_turns = resolve_uv_turns(&r, sim)?;
     let mut flags = BlockFlags::NONE;
     for f in &r.flags {
         flags = flags.with(f.to_flag());
@@ -818,52 +817,48 @@ fn convert(
         }
         flags = flags.with(BlockFlags::CONTAINS_FLUID);
     }
-    if flags.fluid() && (family != ShapeFamily::Cube || flags.is_opaque() || flags.is_solid()) {
+    if flags.fluid() && (!sim.hosts_fluid() || flags.is_opaque() || flags.is_solid()) {
         return Err("fluid requires a nonopaque, nonsolid cube".into());
     }
     // Derived, not row-listed: the shape classes the mesher needs as dense flags.
-    if family == ShapeFamily::Slab {
-        flags = flags.with(BlockFlags::SLAB);
-    }
-    if shape_kind::family_resolves_to_boxes(family) {
+    flags = flags.with(sim.row_flags());
+    if render.mesh_emitter(&params) == MeshEmitter::Boxes {
         flags = flags.with(BlockFlags::BOX_SHAPE);
     }
-    if family == ShapeFamily::BoxSet {
-        // A corner is a meeting of two facings; without a stored facing the
-        // rule never fires and the flag is dead data.
-        if r.corners && !flags.is_directional_view() {
-            return Err("'corners' requires the 'directional_view' flag".into());
-        }
-        // A run resolves along the vertical axis alone; a stored facing would
-        // turn forms that were never authored for a turn.
-        if params.box_set().is_some_and(|b| b.run().is_some()) && flags.is_directional_view() {
-            return Err("a 'run' row cannot carry the 'directional_view' flag".into());
-        }
-        // A sub-cell shape must not claim to be an opaque full cube: neighbours
-        // would cull the faces toward it and open an x-ray slit over its gaps.
-        if flags.is_opaque() {
-            return Err("a 'boxes' row must not carry the 'opaque' flag".into());
-        }
-        // Whole-cell AO would override the shape's own per-pocket answer and
-        // shadow neighbours as if the gaps were filled.
-        if flags.occludes_ao() {
+    sim.validate_row(
+        &params,
+        &RowFacts {
+            flags,
+            corners: r.corners,
+            authored_collision: !r.collision.is_empty(),
+        },
+    )?;
+    let animated_model = r
+        .animated_model
+        .as_deref()
+        .map(|key| {
+            crate::animated_model::by_key(key)
+                .ok_or_else(|| format!("unknown animated_model '{key}'"))
+        })
+        .transpose()?;
+    // A shape that meshes nothing itself is only ever seen through its model,
+    // and the model's gather finds a cell by its stored state: a meshing
+    // shape stores one only for a `directional_view` row (its front).
+    let draws_itself = render.mesh_emitter(&params) != MeshEmitter::Nothing;
+    match animated_model {
+        None if !draws_itself => {
             return Err(
-                "a 'boxes' row must not carry the 'ao_occluder' flag — its shape answers \
-                        occlusion per box"
-                    .into(),
-            );
+                "this shape draws nothing itself: the row must declare an animated_model".into(),
+            )
         }
-        // The SHAPE is the geometry: the box list already says what collides
-        // (per box), so an authored box could only restate or contradict it.
-        // Same contract as every other box-shaped family.
-        if !r.collision.is_empty() {
+        Some(_) if draws_itself && !flags.is_directional_view() => {
             return Err(
-                "a 'boxes' row derives its collision from the shape; author \
-                        \"collision\": [] and set \"collides\": false on any box that should be \
-                        walked through"
+                "an animated_model on this shape requires the 'directional_view' flag (the \
+                 model is posed by, and found through, the stored placement front)"
                     .into(),
-            );
+            )
         }
+        _ => {}
     }
     let drops: Vec<Drop> = r
         .drops
@@ -962,7 +957,7 @@ fn convert(
     // resolve. The converse is deliberately open: `interaction: "sleep"`
     // without the tag is a sleepable block that anchors no spawn.
     if tags.contains(&BlockTag::BED) {
-        if family != ShapeFamily::Model {
+        if params.model_kind().is_none() {
             return Err(
                 "the 'bed' tag requires a model shape — bed-spawn bookkeeping resolves the \
                  bed through its model group"
@@ -1003,7 +998,7 @@ fn convert(
     // the pairing are load errors (mirroring front ⇔ directional_view).
     let panel_facing = match &r.panel_facing {
         None => {
-            if family == ShapeFamily::Ladder {
+            if sim.faces_by_row() {
                 return Err(
                     "a ladder-shaped row must declare panel_facing (facing is block identity: \
                      one row per facing)"
@@ -1013,7 +1008,7 @@ fn convert(
             None
         }
         Some(name) => {
-            if family != ShapeFamily::Ladder {
+            if !sim.faces_by_row() {
                 return Err("panel_facing requires the 'ladder' shape".into());
             }
             Some(parse_facing(name)?)
@@ -1022,7 +1017,7 @@ fn convert(
     let facing_rows = match &r.facing_rows {
         None => None,
         Some(raw) => {
-            if family != ShapeFamily::Ladder {
+            if !sim.faces_by_row() {
                 return Err("facing_rows requires the 'ladder' shape".into());
             }
             let resolve = |name: &String| {
@@ -1177,6 +1172,7 @@ fn convert(
         next_stage,
         grows_into: leak(grows_into),
         panel_facing,
+        animated_model,
         facing_rows,
         flipped_row,
         data,
@@ -1316,6 +1312,7 @@ fn leak<T>(v: Vec<T>) -> &'static [T] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::block::ShapeFamily;
 
     /// The shipped `assets/blocks.json` must load fully — the same gate the game
     /// applies at startup, surfaced as a test so a bad edit fails CI, not a launch.

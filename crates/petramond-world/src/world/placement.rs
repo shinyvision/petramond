@@ -14,8 +14,8 @@
 
 use super::data::WorldData;
 use crate::block::SupportDir;
-use crate::block::{Aabb, Block, CellPart, ShapeFamily, ShapeState};
-use crate::block_state::{HeldBlockState, LogAxis, SlabState, StairHalf, StairState};
+use crate::block::{Aabb, Block, CellPart, ShapeState};
+use crate::block_state::{HeldBlockState, LogAxis, StairHalf};
 use crate::facing::Facing;
 use crate::item::ItemType;
 use crate::mathh::IVec3;
@@ -46,11 +46,14 @@ pub fn build_position(looked_at: Block, hit: IVec3, normal: IVec3) -> IVec3 {
     }
 }
 
+/// How many states the R-key cycle has for `block`: its shape's held
+/// rotations, or the log's two axes (a log turns by row flag, whatever its
+/// shape).
 fn rotation_count(block: crate::block::Block) -> u8 {
-    if block.shape_family() == ShapeFamily::Slab {
-        3
-    } else {
+    if block.is_log() {
         2
+    } else {
+        block.shape_kind_def().placement.held_rotations()
     }
 }
 
@@ -69,7 +72,7 @@ impl HeldRotation {
 }
 
 fn rotatable_block(block: crate::block::Block) -> bool {
-    matches!(block.shape_family(), ShapeFamily::Stair | ShapeFamily::Slab) || block.is_log()
+    rotation_count(block) > 1
 }
 
 /// The click spots on `normal`'s face a placer can deliberately aim at, most
@@ -158,19 +161,8 @@ impl HeldRotation {
         let Some(block) = selected.and_then(ItemType::as_block) else {
             return HeldBlockState::None;
         };
-        if block.shape_family() == ShapeFamily::Stair {
-            return HeldBlockState::Stair(StairState::new(
-                crate::block_model::DEFAULT_MODEL_FACING,
-                self.stair_half(selected),
-            ));
-        }
-        if block.shape_family() == ShapeFamily::Slab {
-            let slot = crate::slab::slot_for_rotation(
-                self.slab_rotation(selected),
-                IVec3::ZERO,
-                crate::facing::Facing::South,
-            );
-            return HeldBlockState::Slab(SlabState::single(slot.split, slot.index, block));
+        if let Some(held) = block.shape_kind_def().placement.held_state(block, self, selected) {
+            return held;
         }
         if block.is_log() {
             return HeldBlockState::Log(if self.active(selected) {
@@ -405,6 +397,24 @@ pub enum PlacementOutcome {
 /// per-family placement dispatch: `World::placement_plan` asks the cell's
 /// shape kind, and a mod family answers exactly as an engine one does.
 pub trait ShapePlacement: Send + Sync + 'static {
+    /// How many states the R-key cycle steps a HELD block of this shape
+    /// through (`1` = the key does nothing to it).
+    fn held_rotations(&self) -> u8 {
+        1
+    }
+
+    /// The state a held block of this shape previews (icon, in-hand form)
+    /// under the held-rotation cycle, or `None` for a shape whose held form
+    /// carries no state.
+    fn held_state(
+        &self,
+        _block: Block,
+        _rotation: &HeldRotation,
+        _selected: Option<ItemType>,
+    ) -> Option<HeldBlockState> {
+        None
+    }
+
     /// The construction INTENT a stored state carries: what a built copy of
     /// the cell reproduces and what an existing cell must hold to count as
     /// already built. State a player toggles in ordinary use (a door standing
@@ -578,7 +588,7 @@ impl WorldData {
         normal: IVec3,
         player_facing: Facing,
     ) -> Option<SlabSlot> {
-        if block.shape_family() != ShapeFamily::Slab {
+        if !crate::slab::is_slab(block) {
             return None;
         }
         let looked_at = Block::from_id(self.chunk_block(hit.x, hit.y, hit.z));

@@ -4,7 +4,7 @@ pub use petramond_math::pose::BoxPose;
 
 use crate::tile::Tile;
 
-/// How far a crop plane ([`ShapeFamily::Crop`](super::ShapeFamily::Crop)) sits
+/// How far a crop plane ([`PlantPlanes::Crop`](super::PlantPlanes::Crop)) sits
 /// in from the cell faces it is perpendicular to (2/16 of a block). Shared by
 /// the mesher, the targeting ray, and the selection outline so they always
 /// trace the same geometry.

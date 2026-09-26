@@ -2,7 +2,7 @@ use super::state::Player;
 use crate::world::World;
 use petramond_math::math::{IVec3, SelectionBoxes, SelectionShape, Vec3};
 use petramond_math::world_pos::WorldPos;
-use petramond_world::block::{Block, ShapeFamily};
+use petramond_world::block::{Block, MeshEmitter, PlantPlanes};
 use petramond_world::item::UseRay;
 use petramond_world::tile_alpha::{tile_alpha_bounds, TileAlphaBounds};
 use petramond_world::torch::{TorchPlacement, POLE_HALF, POLE_HEIGHT};
@@ -93,12 +93,12 @@ impl Player {
         // mounted — state that lives in the world's per-chunk torch map, not visible
         // to the block-only DDA core. Override the default full-cube outline here.
         let hit_block = Block::from_id(world.chunk_block(hit.block.x, hit.block.y, hit.block.z));
-        if hit_block.shape_family() == ShapeFamily::Torch {
+        if is_pole(hit_block) {
             hit.outline = SelectionShape::Torch {
                 origin: hit.block,
                 transform: world.torch_placement(hit.block).model_transform(),
             };
-        } else if hit_block.shape_family() == ShapeFamily::Model {
+        } else if hit_block.model_kind().is_some() {
             // A bbmodel block outlines its WHOLE-MODEL bounding box (baked from geometry),
             // drawn as one box hugging the model's real extent across all its cells — not
             // a per-cell cube. (The DDA still TARGETS per cell, above.)
@@ -458,18 +458,17 @@ fn outline_shape(block_pos: IVec3, block: Block) -> SelectionShape {
 /// other shape — solids, models, and torches keep their precise ray tests,
 /// which is what lets a ray aim past a chest or a bbmodel block's empty parts.
 fn plant_selection_aabb(block: Block) -> Option<(Vec3, Vec3)> {
-    let shape = block.shape_family();
-    if !matches!(shape, ShapeFamily::Cross | ShapeFamily::Crop) {
+    let MeshEmitter::Plant(layout) = block.shape_kind_def().mesh_emitter else {
         return None;
-    }
+    };
     let trimmed = tile_alpha_bounds(block.tiles()[0]).filter(|b| !should_outline_as_full_block(*b));
     let Some(b) = trimmed else {
         return Some((Vec3::ZERO, Vec3::ONE));
     };
-    Some(match shape {
+    Some(match layout {
         // The lattice's flanks are inset; the box hangs 1/16 below the cell,
         // rooted on sunken farmland (mirroring `mesh::face::crop_quads`).
-        ShapeFamily::Crop => {
+        PlantPlanes::Crop => {
             let inset = petramond_world::block::CROP_PLANE_INSET;
             let drop = petramond_world::block::CROP_PLANE_DROP;
             (
@@ -479,7 +478,7 @@ fn plant_selection_aabb(block: Block) -> Option<(Vec3, Vec3)> {
         }
         // An X sprite: the art's opaque extent, mirrored across the cell
         // centre so the box covers both diagonal quads however the art leans.
-        _ => {
+        PlantPlanes::Cross => {
             let lo = b.u_min.min(1.0 - b.u_max);
             let hi = b.u_max.max(1.0 - b.u_min);
             (Vec3::new(lo, b.v_min, lo), Vec3::new(hi, b.v_max, hi))
@@ -505,7 +504,7 @@ fn precise_shape_hit(
     block: Block,
     world: &World,
 ) -> Option<ShapeHit> {
-    if block.shape_family() == ShapeFamily::Torch {
+    if is_pole(block) {
         return ray_vs_torch(eye, dir, world.torch_placement(pos));
     }
     // A bbmodel block is picked PIXEL-PERFECT: the ray is tested against the actual
@@ -536,16 +535,6 @@ fn precise_shape_hit(
         )
         .map(ShapeHit::distance);
     }
-    // A door's or trapdoor's thin panel depends on its facing + open state, and
-    // a ladder's panel on its facing row, so test the resolved panel box
-    // rather than the block row's position-less default.
-    if matches!(
-        block.shape_family(),
-        ShapeFamily::Door | ShapeFamily::Trapdoor | ShapeFamily::Ladder
-    ) {
-        let (mn, mx) = world.selection_box_at(pos.x, pos.y, pos.z)?;
-        return ray_vs_aabb_hit(eye, dir, Vec3::from(mn), Vec3::from(mx));
-    }
     // Every family whose real form is a BOX SET is picked against its resolved
     // TARGET boxes: a stair's corner steps, a slab's layers, a pane's / fence's
     // neighbour-derived post + arm runs, a WASM shape bake's legs and seat, a
@@ -571,9 +560,11 @@ fn precise_shape_hit(
             })
             .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
     }
-    // Any other custom-shaped solid (the chest) tests its inset visual box —
-    // through the world seam, so what the ray tests is what the wireframe drew
-    // even when the shape reads per-cell state (a turned box set).
+    // Any other shaped solid tests its resolved selection box — the inset
+    // chest, a door's or trapdoor's panel at its facing and open state, a
+    // wall panel on its facing row — through the world seam, so what the ray
+    // tests is what the wireframe drew even when the shape reads per-cell
+    // state.
     let (mn, mx) = world.selection_box_at(pos.x, pos.y, pos.z)?;
     ray_vs_aabb_hit(eye, dir, Vec3::from(mn), Vec3::from(mx))
 }
@@ -588,6 +579,12 @@ fn dominant_axis(n: Vec3) -> IVec3 {
     } else {
         IVec3::new(0, 0, if n.z >= 0.0 { 1 } else { -1 })
     }
+}
+
+/// Whether `block` draws as a pole posed by its cell's [`TorchPlacement`] —
+/// what is picked and outlined as that pole rather than as a box.
+fn is_pole(block: Block) -> bool {
+    block.shape_kind_def().mesh_emitter == MeshEmitter::Pole
 }
 
 /// First-crossing distance of the ray through the torch's pole box. The pole is a

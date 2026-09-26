@@ -4,26 +4,18 @@
 //! to sibling game modules without moving renderer DTOs into `Game`. Only
 //! REPLICATED state is read here (the stores + the replica world — the sim
 //! lives on the server thread); everything mutated is
-//! client-owned (particles, lids, swings, the mesh pump).
+//! client-owned (particles, block animations, the mesh pump).
 
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
-use petramond_world::block::{Block, ShapeFamily};
+use petramond_world::block::Block;
 
 use super::dig_feedback::DigFeedback;
 use super::Game;
 
-/// Chest-lid open/close speed (fraction per second)
-const CHEST_LID_SPEED: f32 = 3.5;
-
-/// Hinged-panel (door, trapdoor) swing open/close speed (fraction per second).
-/// A touch slower than the chest lid so the 90 degree swing reads as a
-/// deliberate door, not a snap.
-const PANEL_SWING_SPEED: f32 = 4.5;
-
 impl Game {
     /// Spawn the presentation consequences of this frame's fixed ticks from
-    /// the REPLICATED world-anchored events — break bursts and door-swing
+    /// the REPLICATED world-anchored events — break bursts and block-swing
     /// seeds. Deliberately event-driven (not read from sim state): every
     /// client, local or remote, drives these off the identical messages.
     pub(super) fn apply_world_effects(&mut self, events: &[super::tick::WorldEvent]) {
@@ -39,28 +31,17 @@ impl Game {
                     // pump's deltas (the break landed before the events).
                     let (sky, blk) =
                         petramond::server::breaking::break_light(&self.replica, pos, normal);
+                    // A swing in progress on the broken block lapses on the
+                    // next advance, which finds no animated block there.
                     self.burst(
                         crate::particle::BLOCK_BREAK,
                         crate::particle::BurstEvent::broken(pos, block, tint, sky, blk),
                     );
-                    // A broken panel's swing entry dies with it (client-owned
-                    // state the sim can no longer clear). The event carries
-                    // the mined cell — either half of a door — so the swing
-                    // key is that cell or, for a door, the one below.
-                    if matches!(
-                        block.shape_family(),
-                        ShapeFamily::Door | ShapeFamily::Trapdoor
-                    ) {
-                        self.panel_swings.remove(&pos);
-                        self.panel_swings.remove(&(pos + IVec3::new(0, -1, 0)));
-                    }
                 }
                 super::tick::WorldEvent::PanelToggled { anchor, open } => {
                     // Seed the swing from the panel's OLD resting pose so it
                     // eases to the new one; a mid-swing entry keeps its angle.
-                    self.panel_swings
-                        .entry(anchor)
-                        .or_insert(if open { 0.0 } else { 1.0 });
+                    self.block_animations.begin(anchor, !open);
                 }
                 super::tick::WorldEvent::EmitterBurst {
                     emitter,
@@ -90,7 +71,8 @@ impl Game {
                         },
                     );
                 }
-                // Sounds only (played by the app); lids follow `open_chests`.
+                // Sounds only (played by the app); lids follow `open_chests`
+                // (see `set_open_chests`).
                 super::tick::WorldEvent::BlockPlaced { .. }
                 | super::tick::WorldEvent::ChestOpened { .. }
                 | super::tick::WorldEvent::ChestClosed { .. }
@@ -198,83 +180,38 @@ impl Game {
         self.particles.tick(dt, &self.replica);
     }
 
-    /// The transient open progress (`0.0` closed .. `1.0` open) of the chest at
-    /// `pos`, or `0.0` if it isn't tracked. The presentation snapshot reads this
-    /// to bake the chest's lid hinge; the easing/animation lives in
-    /// [`advance_chest_lids`](Self::advance_chest_lids).
+    /// Adopt the REPLICATED open-chest set (the server's viewer counts): a
+    /// chest entering it starts its lid opening, one leaving starts it
+    /// closing — ANY player's open screen lifts the lid on every client.
+    pub(super) fn set_open_chests(&mut self, open: rustc_hash::FxHashSet<IVec3>) {
+        for &pos in open.difference(&self.open_chests) {
+            self.block_animations.begin(pos, false);
+        }
+        for &pos in self.open_chests.difference(&open) {
+            self.block_animations.begin(pos, true);
+        }
+        self.open_chests = open;
+    }
+
+    /// The linear open progress (`0.0` closed .. `1.0` open) of the animated
+    /// block anchored at `anchor` whose cell pose says `pose_open`: eased
+    /// mid-swing, else resting at its logical state — the pose, or anyone
+    /// looking inside it. The presentation snapshot reads this per block.
     #[inline]
-    pub(super) fn chest_lid_angle(&self, pos: IVec3) -> f32 {
-        self.chest_lids.get(&pos).copied().unwrap_or(0.0)
+    pub(super) fn block_open_progress(&self, anchor: IVec3, pose_open: bool) -> f32 {
+        let open = pose_open || self.open_chests.contains(&anchor);
+        self.block_animations.progress(anchor, open)
     }
 
-    /// Advance the transient chest-lid animation by `dt`: the open chest's lid eases
-    /// toward fully open, every other tracked lid toward closed, and lids that reach
-    /// closed (and aren't the open chest) are dropped. The open/closed target is the
-    /// REPLICATED open-chest set (`TickUpdate::open_chests` — the server's viewer
-    /// counts), so the lid follows any player's open screen, purely client-side,
-    /// never saved.
-    pub(super) fn advance_chest_lids(&mut self, dt: f32) {
-        let step = (dt * CHEST_LID_SPEED).clamp(0.0, 1.0);
-        // Ensure every viewed chest is tracked so it animates from closed on
-        // the first frame — ANY player's open lifts the lid on every screen.
-        for pos in &self.open_chests {
-            self.chest_lids.entry(*pos).or_insert(0.0);
-        }
-        let open = &self.open_chests;
-        self.chest_lids.retain(|&pos, lid| {
-            let target = if open.contains(&pos) { 1.0 } else { 0.0 };
-            if *lid < target {
-                *lid = (*lid + step).min(target);
-            } else if *lid > target {
-                *lid = (*lid - step).max(target);
-            }
-            // Keep while still animating, or while anyone is looking inside.
-            *lid > f32::EPSILON || open.contains(&pos)
-        });
-    }
-
-    /// The transient swing angle (`0.0` closed .. `1.0` open) of the hinged
-    /// panel keyed on `anchor` (a door's LOWER cell, a trapdoor's own cell).
-    /// While a panel is mid-swing the eased value is read from
-    /// [`panel_swings`](Self::panel_swings); once it settles the entry is
-    /// dropped and the panel rests at its logical open state (read straight
-    /// from the replica). The presentation snapshot calls this per visible
-    /// panel to bake its hinge.
-    #[inline]
-    pub(super) fn panel_swing_angle(&self, anchor: IVec3) -> f32 {
-        if let Some(&a) = self.panel_swings.get(&anchor) {
-            return a;
-        }
-        // Not animating: rest at the panel's logical state.
-        match self.replica.panel_open_at(anchor) {
-            Some(true) => 1.0,
-            _ => 0.0,
-        }
-    }
-
-    /// Advance the transient panel-swing animation by `dt`: each tracked door
-    /// or trapdoor eases toward its current logical open state (flipped on the
-    /// tick server-side, mirrored onto the REPLICA by the cell-state deltas),
-    /// and a panel that reaches its target is dropped (it then rests at that
-    /// state). Purely client-side, never saved, like
-    /// [`advance_chest_lids`](Self::advance_chest_lids).
-    pub(super) fn advance_panel_swings(&mut self, dt: f32) {
-        let step = (dt * PANEL_SWING_SPEED).clamp(0.0, 1.0);
-        let world = &self.replica;
-        self.panel_swings.retain(|&anchor, angle| {
-            let target = match world.panel_open_at(anchor) {
-                Some(true) => 1.0,
-                Some(false) => 0.0,
-                // The panel was removed while swinging: stop tracking it.
-                None => return false,
-            };
-            if *angle < target {
-                *angle = (*angle + step).min(target);
-            } else if *angle > target {
-                *angle = (*angle - step).max(target);
-            }
-            // Keep only while still travelling toward the target.
-            (*angle - target).abs() > f32::EPSILON
+    /// Advance every animated block mid-swing by `dt` toward its logical open
+    /// state (its cell pose — flipped on the tick server-side and mirrored
+    /// onto the REPLICA by the cell-state deltas — or the replicated
+    /// open-chest set), at its model's own speed.
+    pub(super) fn advance_block_animations(&mut self, dt: f32) {
+        let (world, open_chests) = (&self.replica, &self.open_chests);
+        self.block_animations.advance(dt, |anchor| {
+            let (model, pose) = world.animated_pose_at(anchor)?;
+            Some((pose.open || open_chests.contains(&anchor), model.open_speed))
         });
     }
 

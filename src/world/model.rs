@@ -230,22 +230,6 @@ impl World {
         true
     }
 
-    /// Break the whole multi-block `pos` belongs to: set every footprint cell to air
-    /// (clearing its offset) and relight + remesh the region once. Returns the cells
-    /// removed (for drops/particles), or `None` if `pos` isn't a model block. The
-    /// caller spawns a single drop for the block (the group is one item).
-    pub fn remove_model_block(&mut self, pos: IVec3) -> Option<Vec<IVec3>> {
-        let (_, _, cells) = self.model_group(pos)?;
-        for &c in &cells {
-            if let Some((chunk, lx, ly, lz)) = self.chunk_at_world_mut(c.x, c.y, c.z) {
-                chunk.set_block(lx, ly, lz, Block::Air); // also clears the offset
-                chunk.modified = true;
-            }
-        }
-        self.refresh_region(&cells);
-        Some(cells)
-    }
-
     /// Relight + remesh every section each cell in `cells` can influence and
     /// announce the changes — the batched tail of [`set_block_world`] for a
     /// multi-cell edit.
@@ -421,7 +405,7 @@ mod tests {
             "kitchen:state".into(),
             vec![1, 2, 3]
         ));
-        w.remove_model_block(origin).expect("removes the group");
+        w.remove_compound(origin).expect("removes the group");
         assert!(
             w.cell_kv_get(origin.x, origin.y, origin.z, "kitchen:state")
                 .is_none(),
@@ -462,7 +446,7 @@ mod tests {
         assert!(w.place_model_block(origin, WB));
         // Break from a non-zero authored cell — the whole group must clear.
         let removed = w
-            .remove_model_block(origin + IVec3::new(1, 1, 0))
+            .remove_compound(origin + IVec3::new(1, 1, 0))
             .expect("removes a model group");
         assert_eq!(removed.len(), 4);
         for c in removed {

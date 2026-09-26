@@ -8,13 +8,10 @@ use glam::{IVec3, Vec3};
 
 use petramond::mob::Mob;
 use petramond::world::PlacedEmitter;
-use petramond_math::facing::Facing;
 use petramond_math::math::Tilt;
 use petramond_render::camera::ViewVolume;
 use petramond_render::{AnimatorRanges, ArenaRange, PlayerRenderInstance, RemotePlayerRender};
 use petramond_world::block::Block;
-use petramond_world::door::DoorState;
-use petramond_world::tile::Tile;
 
 use super::remote_players;
 use super::Game;
@@ -25,10 +22,9 @@ mod tests;
 use entity_emitters::{body_emitters, emitter_self_lit, emitter_tint};
 
 pub use petramond_render::views::{
-    BreakOverlayView, ChestPresentation, CrackBox, CrackBoxes, DoorPresentation,
-    DroppedItemPresentation, EntityShadow, FootstepSource, GamePresentation, MobPresentation,
-    ModelCrack, ParticleAtlas, ParticlePresentation, PlayerPresentation, TrapdoorPresentation,
-    MAX_CRACK_BOXES,
+    BlockEntityPresentation, BreakOverlayView, CrackBox, CrackBoxes, DroppedItemPresentation,
+    EntityShadow, FootstepSource, GamePresentation, MobPresentation, ModelCrack, ParticleAtlas,
+    ParticlePresentation, PlayerPresentation, MAX_CRACK_BOXES,
 };
 
 /// The local player's [`FootstepSource`] key. Remotes are `1 + PlayerId`, so
@@ -116,25 +112,9 @@ pub struct GamePresentationScratch {
     item_entities: Vec<DroppedItemPresentation>,
     particles: Vec<ParticlePresentation>,
     particle_emitters: Vec<PlacedEmitter>,
-    chest_rows: Vec<(IVec3, Facing, u8, petramond_world::light::BlockLight6)>,
+    animated_rows: Vec<petramond::world::animated_block::AnimatedBlock>,
     block_draws: Vec<petramond::world::draw::BlockDrawInstance>,
-    door_rows: Vec<(
-        IVec3,
-        DoorState,
-        [Tile; 3],
-        u8,
-        petramond_world::light::BlockLight6,
-    )>,
-    trapdoor_rows: Vec<(
-        IVec3,
-        petramond_world::trapdoor::TrapdoorState,
-        [Tile; 3],
-        u8,
-        petramond_world::light::BlockLight6,
-    )>,
-    chests: Vec<ChestPresentation>,
-    doors: Vec<DoorPresentation>,
-    trapdoors: Vec<TrapdoorPresentation>,
+    block_entities: Vec<BlockEntityPresentation>,
     mobs: Vec<MobPresentation>,
     remote_players: Vec<RemotePlayerRender>,
     /// Every drawn body's eased bone offsets, back to back — each body's
@@ -175,11 +155,9 @@ impl GamePresentationScratch {
         self.collect_particles(game);
         self.collect_ambient(game, now);
         self.collect_particle_emitters(game, view);
-        self.collect_chests(game);
+        self.collect_block_entities(game);
         self.collect_block_draws(game, view);
         self.collect_mob_draws(game, tick_alpha, view);
-        self.collect_doors(game);
-        self.collect_trapdoors(game);
         self.collect_mobs(game, tick_alpha);
         if game.particles.count_scale() > 0.0 {
             self.collect_mob_emitters(tick_alpha, view);
@@ -202,10 +180,8 @@ impl GamePresentationScratch {
             item_entities: &self.item_entities,
             particles: &self.particles,
             particle_emitters: &self.particle_emitters,
-            chests: &self.chests,
+            block_entities: &self.block_entities,
             block_draws: &self.block_draws,
-            doors: &self.doors,
-            trapdoors: &self.trapdoors,
             mobs: &self.mobs,
             remote_players: &self.remote_players,
             bone_offsets: &self.bone_offsets,
@@ -352,50 +328,16 @@ impl GamePresentationScratch {
         }
     }
 
-    fn collect_chests(&mut self, game: &Game) {
-        game.replica.collect_chests(&mut self.chest_rows);
-        self.chests.clear();
-        self.chests.extend(
-            self.chest_rows
-                .iter()
-                .map(|&(pos, facing, skylight, blocklight)| ChestPresentation {
-                    pos,
-                    facing,
-                    lid_progress: game.chest_lid_angle(pos),
-                    skylight,
-                    blocklight,
-                }),
-        );
-    }
-
-    fn collect_doors(&mut self, game: &Game) {
-        game.replica.collect_doors(&mut self.door_rows);
-        self.doors.clear();
-        self.doors.extend(self.door_rows.iter().map(
-            |&(pos, state, tiles, skylight, blocklight)| DoorPresentation {
-                pos,
-                state,
-                tiles,
-                swing_progress: game.panel_swing_angle(pos),
-                skylight,
-                blocklight,
-            },
-        ));
-    }
-
-    fn collect_trapdoors(&mut self, game: &Game) {
-        game.replica.collect_trapdoors(&mut self.trapdoor_rows);
-        self.trapdoors.clear();
-        self.trapdoors.extend(self.trapdoor_rows.iter().map(
-            |&(pos, state, tiles, skylight, blocklight)| TrapdoorPresentation {
-                pos,
-                state,
-                tiles,
-                swing_progress: game.panel_swing_angle(pos),
-                skylight,
-                blocklight,
-            },
-        ));
+    /// Every animated block (chests, doors, trapdoors, a pack's own) from the
+    /// ONE world gather, each with its eased open progress.
+    fn collect_block_entities(&mut self, game: &Game) {
+        game.replica.collect_animated_blocks(&mut self.animated_rows);
+        self.block_entities.clear();
+        self.block_entities
+            .extend(self.animated_rows.iter().map(|&block| BlockEntityPresentation {
+                block,
+                open_progress: game.block_open_progress(block.pos, block.pose.open),
+            }));
     }
 
     fn collect_mobs(&mut self, game: &Game, tick_alpha: f32) {

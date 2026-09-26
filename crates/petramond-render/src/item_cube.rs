@@ -353,8 +353,8 @@ fn push_log_cube_faces_lit(
 }
 
 /// Yaw (radians) that rotates the canonical front / closed edge (`+Z`, South) to
-/// `facing`'s — the shared convention for dynamic blocks modelled south-facing
-/// (chests, doors).
+/// `facing`'s — the shared convention for animated block models, authored
+/// south-facing.
 pub(super) fn facing_yaw(facing: Facing) -> f32 {
     use std::f32::consts::{FRAC_PI_2, PI};
     match facing {
@@ -368,7 +368,7 @@ pub(super) fn facing_yaw(facing: Facing) -> f32 {
 /// Rotate the verts appended at `start..` about the cell's vertical centre by
 /// [`facing_yaw`] (canonical = South), then translate to the world block origin
 /// `pos`. CPU vertex transform since the opaque pipeline has no per-draw model
-/// matrix (chests, doors, item entities all place geometry this way).
+/// matrix (animated blocks and item entities place geometry this way).
 pub(super) fn orient_faces_to_block(verts: &mut [Vertex], start: usize, facing: Facing, pos: Vec3) {
     let (ys, yc) = facing_yaw(facing).sin_cos();
     for v in verts[start..].iter_mut() {
@@ -526,6 +526,12 @@ pub(super) fn push_block_item_cube_lit_with_state(
     // pass `false`.
     sort_for_icon: bool,
 ) {
+    // An animated block whose row opts in draws its model, closed — a chest
+    // reads as a tiny chest in the icon, the hand and a dropped stack alike.
+    if let Some(model) = super::block_entity_model::item_model(block) {
+        super::block_entity_model::push_item(verts, indices, model, block, origin, size, light);
+        return;
+    }
     let faces = block_icon_faces_with_state(block, state);
     // A WASM-baked custom shape's item is its own baked geometry, cached at
     // client-mod load. Asked FIRST and by block id, so no family is named: a

@@ -303,14 +303,6 @@ fn resolve_run(raw: &RawRun) -> Result<(ShapeFamily, ShapeParams, String), Strin
     Ok((ShapeFamily::BoxSet, ShapeParams::BoxSet(params), key))
 }
 
-/// Whether a family resolves to a box set — the shape-kind row's
-/// [`resolves_to_boxes`](ShapeKindDef::resolves_to_boxes), reachable at LOAD
-/// time (before the kind table is installed) so the loader can mirror it onto
-/// the dense block flags.
-pub fn family_resolves_to_boxes(family: ShapeFamily) -> bool {
-    families::resolves_to_boxes(family)
-}
-
 /// One box of a `{"boxes": [...]}` shape, as authored. Extents are TEXELS
 /// (`0..=16`); `from` defaults to the cell origin and `to` to the far corner,
 /// so a plain full cube is `{}` and farmland is `{"to": [16, 15, 16]}`.

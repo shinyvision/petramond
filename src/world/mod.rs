@@ -12,6 +12,7 @@ pub use petramond_world::world::{
 };
 
 pub mod actor;
+pub mod animated_block;
 mod block_deltas;
 pub(crate) mod cells;
 pub mod chest;
@@ -34,7 +35,6 @@ mod mesh_pool;
 mod mesh_queue;
 mod mobs;
 mod model;
-mod panel;
 mod particle_emitters;
 pub mod placement;
 mod prediction_render;

@@ -1,62 +1,18 @@
 //! Trapdoors at the world level: the per-cell state lookup the position-aware
-//! collision/selection reads, plus the open/close toggle and the per-frame
-//! gather the dynamic renderer draws from.
+//! collision/selection reads, plus the open/close toggle.
 //!
 //! A trapdoor is ONE cell holding a [`TrapdoorState`]; placement and breaking
 //! need nothing of their own (the generic single-cell paths already write and
-//! clear the cell state). Like the door it is NOT chunk-meshed — it is drawn
-//! dynamically and its collision is read live from the state, so a toggle needs
-//! no remesh.
+//! clear the cell state). Like the door it is NOT chunk-meshed — it is drawn as
+//! its animated block model and its collision is read live from the state, so a
+//! toggle needs no remesh.
 
 use petramond_math::math::IVec3;
-use petramond_world::block::Block;
-use petramond_world::tile::Tile;
 use petramond_world::trapdoor::TrapdoorState;
 
 use super::store::World;
 
 impl World {
-    /// Gather the trapdoors to draw this frame: one entry per cell, as
-    /// `(world pos, state, [top_art, bottom_art, edge], skylight, blocklight)`.
-    /// Mirrors [`collect_doors`](Self::collect_doors); the swing angle is
-    /// paired in later from the client's panel swings.
-    pub fn collect_trapdoors(
-        &self,
-        out: &mut Vec<(
-            IVec3,
-            TrapdoorState,
-            [Tile; 3],
-            u8,
-            petramond_world::light::BlockLight6,
-        )>,
-    ) {
-        out.clear();
-        for sp in &self.block_entity_sections {
-            let Some(section) = self.sections.get(sp) else {
-                continue;
-            };
-            if section.cell_states().is_empty() {
-                continue;
-            }
-            let (ox, oy, oz) = section.origin_world();
-            for &key in section.cell_states().keys() {
-                let (lx, ly, lz) = petramond_world::chunk::section_local(key as usize);
-                // The gated wrapper answers `None` for every non-trapdoor state
-                // sharing the unified map (doors, stairs, torch mounts, fronts).
-                let Some(state) = section.trapdoor_state(lx, ly, lz) else {
-                    continue;
-                };
-                let tiles = Block::from_id(section.block_raw(lx, ly, lz)).tiles();
-                let pos = IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32);
-                let sky = self.skylight6_at_world(pos.x, pos.y, pos.z);
-                let block = petramond_world::light::BlockLight6::from_x2(
-                    self.blocklight_rgb_at_world(pos.x, pos.y, pos.z),
-                );
-                out.push((pos, state, tiles, sky, block));
-            }
-        }
-    }
-
     /// The trapdoor state at world `pos`, or `None` when no trapdoor is
     /// recorded there or the cell is unloaded.
     #[inline]
@@ -91,7 +47,7 @@ impl World {
 mod tests {
     use super::*;
     use petramond_math::facing::Facing;
-    use petramond_world::block::{CellCodec, CellView, ShapeFamily};
+    use petramond_world::block::{Block, CellCodec, CellView};
     use petramond_world::chunk::{Chunk, ChunkPos};
     use petramond_world::world::placement::PlacementPlan;
 
@@ -120,13 +76,12 @@ mod tests {
         // is — the failure mode a shape drawn outside the chunk mesh has.
         for top in [false, true] {
             let (w, pos) = world_with_a_trapdoor(top);
-            assert_eq!(TRAPDOOR.shape_family(), ShapeFamily::Trapdoor);
             let mut rows = Vec::new();
-            w.collect_trapdoors(&mut rows);
+            w.collect_animated_blocks(&mut rows);
             assert_eq!(rows.len(), 1, "top={top}: one gathered panel");
-            assert_eq!(rows[0].0, pos);
-            assert_eq!(rows[0].1.top, top);
-            assert!(!rows[0].1.open);
+            assert_eq!(rows[0].pos, pos);
+            assert_eq!(rows[0].pose.variant, u8::from(top));
+            assert!(!rows[0].pose.open);
         }
     }
 

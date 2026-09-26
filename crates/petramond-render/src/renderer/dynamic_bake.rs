@@ -67,8 +67,8 @@ impl Renderer {
         }
     }
 
-    /// Bake every dynamic world subsystem (item-entity, item-model-entity, chest,
-    /// door, mob, break, particle) for this frame, in the order that reuses the
+    /// Bake every dynamic world subsystem (item-entity, item-model-entity, block-entity,
+    /// mob, break, particle) for this frame, in the order that reuses the
     /// shared item-entity scratch. Extracted verbatim from `render`.
     pub(super) fn bake_world_instances(&mut self) {
         let render_origin = self.view.render_origin;
@@ -79,7 +79,7 @@ impl Renderer {
                     max.relative_to(render_origin),
                 )
             };
-        // Bake the dynamic world subsystems. Item-entity, chest, and break-overlay
+        // Bake the dynamic world subsystems. Item-entity, block-entity, and break-overlay
         // each clear-and-refill the SAME shared CPU scratch (`item_entity_verts` /
         // `item_entity_indices`) in this exact order — `bake` (clear count → build
         // → grow → upload to that subsystem's OWN buffers → store count) runs
@@ -203,64 +203,29 @@ impl Renderer {
         self.item_entity.sprite_scratch = sprite_scratch;
         self.item_entity.block_draws_visible = visible_draws;
 
-        // Chests (inset body + hinged lid), frustum-culled like item entities and
-        // reusing their CPU scratch. Drawn by the EXISTING opaque pipeline.
-        self.block_entity.chest_visible.clear();
-        for inst in &self.block_entity.chests {
-            // Cull box: the block cell, expanded upward to include the open lid.
-            let min = petramond_math::world_pos::WorldPos::block_min(inst.pos);
-            let max = min + glam::Vec3::new(1.0, 2.0, 1.0);
-            if visible_world_aabb(min, max) {
-                self.block_entity.chest_visible.push(*inst);
+        // Animated blocks (chest lids, door and trapdoor swings, a pack's
+        // own), frustum-culled against the bounds their model's swing sweeps
+        // and baked into ONE stream drawn by the EXISTING opaque pipeline,
+        // reusing the item entities' CPU scratch.
+        self.block_entity.visible.clear();
+        for inst in &self.block_entity.instances {
+            let Some(model) = inst.block.animated_model() else {
+                continue;
+            };
+            let cull = model.variant(inst.variant).cull;
+            let cell = petramond_math::world_pos::WorldPos::block_min(inst.pos);
+            let (min, max) = (glam::Vec3::from(cull.min), glam::Vec3::from(cull.max));
+            if visible_world_aabb(cell + min, cell + max) {
+                self.block_entity.visible.push(*inst);
             }
         }
         // Static geometry: rebake only when the visible set or the origin its
-        // vertices are relative to actually changed (see `chest_baked`).
-        let origin_moved = self.block_entity.baked_origin != render_origin;
-        if origin_moved || self.block_entity.chest_visible != self.block_entity.chest_baked {
-            let chest_visible = &self.block_entity.chest_visible;
-            self.block_entity.chest_draw.bake(
-                &self.device,
-                &self.queue,
-                &mut self.item_entity.verts,
-                &mut self.item_entity.indices,
-                |verts, indices| build_chests(chest_visible, render_origin, verts, indices),
-            );
-            self.block_entity.chest_baked.clear();
-            self.block_entity
-                .chest_baked
-                .extend_from_slice(&self.block_entity.chest_visible);
-        }
-
-        // Hinged panels (2-tall doors, single-cell trapdoors), frustum-culled
-        // and baked exactly like chests, reusing the same CPU scratch. ONE
-        // stream: both are drawn by the EXISTING opaque pipeline off the same
-        // atlas bind, so splitting them would only cost a second draw call.
-        self.block_entity.door_visible.clear();
-        for inst in &self.block_entity.doors {
-            // Cull box: the door's two-cell column (its swung slab stays within it).
-            let min = petramond_math::world_pos::WorldPos::block_min(inst.pos);
-            let max = min + glam::Vec3::new(1.0, 2.0, 1.0);
-            if visible_world_aabb(min, max) {
-                self.block_entity.door_visible.push(*inst);
-            }
-        }
-        self.block_entity.trapdoor_visible.clear();
-        for inst in &self.block_entity.trapdoors {
-            // Cull box: the panel's own cell — the swung panel stays within it.
-            let min = petramond_math::world_pos::WorldPos::block_min(inst.pos);
-            let max = min + glam::Vec3::splat(1.0);
-            if visible_world_aabb(min, max) {
-                self.block_entity.trapdoor_visible.push(*inst);
-            }
-        }
-        if origin_moved
-            || self.block_entity.door_visible != self.block_entity.door_baked
-            || self.block_entity.trapdoor_visible != self.block_entity.trapdoor_baked
+        // vertices are relative to actually changed (see `baked`).
+        if self.block_entity.baked_origin != render_origin
+            || self.block_entity.visible != self.block_entity.baked
         {
-            let door_visible = &self.block_entity.door_visible;
-            let trapdoor_visible = &self.block_entity.trapdoor_visible;
-            self.block_entity.panel_draw.bake(
+            let visible = &self.block_entity.visible;
+            self.block_entity.draw.bake(
                 &self.device,
                 &self.queue,
                 &mut self.item_entity.verts,
@@ -268,21 +233,16 @@ impl Renderer {
                 |verts, indices| {
                     verts.clear();
                     indices.clear();
-                    push_doors(door_visible, render_origin, verts, indices);
-                    push_trapdoors(trapdoor_visible, render_origin, verts, indices);
+                    push_block_entities(visible, render_origin, verts, indices);
                     indices.len() as u32
                 },
             );
-            self.block_entity.door_baked.clear();
+            self.block_entity.baked.clear();
             self.block_entity
-                .door_baked
-                .extend_from_slice(&self.block_entity.door_visible);
-            self.block_entity.trapdoor_baked.clear();
-            self.block_entity
-                .trapdoor_baked
-                .extend_from_slice(&self.block_entity.trapdoor_visible);
+                .baked
+                .extend_from_slice(&self.block_entity.visible);
+            self.block_entity.baked_origin = render_origin;
         }
-        self.block_entity.baked_origin = render_origin;
 
         // Mobs (animated entity models), grouped by species and frustum-culled, baked
         // into each species' OWN `ItemVertex` buffers (a different vertex type from the
@@ -696,26 +656,16 @@ impl HeldStreams {
                     crate::player_model::held_block_at(grip)
                 };
                 let start = self.block_verts.len();
-                if block == petramond_world::block::Block::Chest {
-                    crate::chest_model::push_chest_item(
-                        &mut self.block_verts,
-                        &mut self.block_indices,
-                        glam::Vec3::splat(-0.5),
-                        1.0,
-                        light,
-                    );
-                } else {
-                    crate::item_cube::push_block_item_cube_lit_with_state(
-                        &mut self.block_verts,
-                        &mut self.block_indices,
-                        block,
-                        block_state,
-                        glam::Vec3::splat(-0.5),
-                        1.0,
-                        light,
-                        false,
-                    );
-                }
+                crate::item_cube::push_block_item_cube_lit_with_state(
+                    &mut self.block_verts,
+                    &mut self.block_indices,
+                    block,
+                    block_state,
+                    glam::Vec3::splat(-0.5),
+                    1.0,
+                    light,
+                    false,
+                );
                 // Instance-data tint on the held mini-cube (dyed wool in a
                 // remote or third-person hand).
                 crate::item_model::dye_block_verts(&mut self.block_verts[start..], variant);

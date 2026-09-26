@@ -31,6 +31,25 @@ impl ShapeSim for TrapdoorFamily {
 }
 
 impl ShapeRender for TrapdoorFamily {
+    fn mesh_emitter(&self, _p: &ShapeParams) -> MeshEmitter {
+        MeshEmitter::Nothing
+    }
+
+    /// Variant `0` lies on the floor, variant `1` hangs from the ceiling.
+    fn animated_pose(
+        &self,
+        _p: &ShapeParams,
+        _block: Block,
+        state: ShapeState,
+    ) -> Option<crate::animated_model::AnimatedPose> {
+        let panel = crate::trapdoor::TrapdoorState::from_cell(state);
+        Some(crate::animated_model::AnimatedPose {
+            facing: panel.facing,
+            variant: u8::from(panel.top),
+            open: panel.open,
+        })
+    }
+
     fn selection_box(
         &self,
         _p: &ShapeParams,
@@ -112,4 +131,10 @@ impl ShapePlacement for TrapdoorFamily {
         }
         PlacementOutcome::Plan(PlacementPlan::single(p, block, state.to_cell()))
     }
+}
+
+/// Whether `block` is a trapdoor-shaped row — the ownership test of the
+/// trapdoor cell state.
+pub fn is_trapdoor(block: Block) -> bool {
+    block.shape_family() == ShapeFamily::Trapdoor
 }

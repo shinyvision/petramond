@@ -9,6 +9,14 @@ use super::*;
 pub struct SlabFamily;
 
 impl ShapeSim for SlabFamily {
+    fn accepts_row_uv_rotation(&self) -> bool {
+        true
+    }
+
+    fn row_flags(&self) -> crate::block::BlockFlags {
+        crate::block::BlockFlags::SLAB
+    }
+
     fn rotate_y(&self, block: Block, state: ShapeState) -> crate::block::rotation::CellRotation {
         let mut slab = SlabState::from_cell(state);
         let swap = slab.split == crate::block_state::SlabSplit::Z;
@@ -111,6 +119,10 @@ impl ShapeSim for SlabFamily {
 }
 
 impl ShapeRender for SlabFamily {
+    fn mesh_emitter(&self, _p: &ShapeParams) -> MeshEmitter {
+        MeshEmitter::Boxes
+    }
+
     fn item_boxes(
         &self,
         _p: &ShapeParams,
@@ -181,6 +193,27 @@ impl ShapeRender for SlabFamily {
 }
 
 impl ShapePlacement for SlabFamily {
+    /// The R key cycles a held slab through bottom, top and vertical.
+    fn held_rotations(&self) -> u8 {
+        3
+    }
+
+    fn held_state(
+        &self,
+        block: Block,
+        rotation: &crate::world::placement::HeldRotation,
+        selected: Option<crate::item::ItemType>,
+    ) -> Option<crate::block_state::HeldBlockState> {
+        let slot = crate::slab::slot_for_rotation(
+            rotation.slab_rotation(selected),
+            IVec3::ZERO,
+            Facing::South,
+        );
+        Some(crate::block_state::HeldBlockState::Slab(
+            crate::block_state::SlabState::single(slot.split, slot.index, block),
+        ))
+    }
+
     fn authored_plan(
         &self,
         block: Block,

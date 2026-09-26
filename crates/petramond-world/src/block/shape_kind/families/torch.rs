@@ -10,6 +10,14 @@ use super::*;
 pub struct TorchFamily;
 
 impl ShapeSim for TorchFamily {
+    fn collision_state_free(&self) -> bool {
+        true
+    }
+
+    fn nav_follows_row(&self) -> bool {
+        true
+    }
+
     fn rotate_y(&self, block: Block, state: ShapeState) -> crate::block::rotation::CellRotation {
         let mount = crate::torch::TorchPlacement::from_cell(state);
         let turned = match mount {
@@ -40,6 +48,10 @@ impl ShapeSim for TorchFamily {
 }
 
 impl ShapeRender for TorchFamily {
+    fn mesh_emitter(&self, _p: &ShapeParams) -> MeshEmitter {
+        MeshEmitter::Pole
+    }
+
     /// A tilted pole, not a box set: the ray must meet the actual geometry.
     fn precise_pick(&self, _p: &ShapeParams) -> bool {
         true
@@ -92,4 +104,10 @@ impl ShapePlacement for TorchFamily {
             None => PlacementOutcome::Refused,
         }
     }
+}
+
+/// Whether `block` is a torch-shaped row — the ownership test of the
+/// [`TorchPlacement`] cell state.
+pub fn is_torch(block: Block) -> bool {
+    block.shape_family() == ShapeFamily::Torch
 }

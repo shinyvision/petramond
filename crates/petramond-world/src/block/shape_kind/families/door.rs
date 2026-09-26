@@ -9,6 +9,22 @@ use super::*;
 pub struct DoorFamily;
 
 impl ShapeSim for DoorFamily {
+    /// The two stacked halves, lower first, each carrying the shared facing
+    /// and open bit with its own `top`. A cell with no stored state cannot
+    /// say which half it is, so it stands alone (the door's failure policy).
+    fn compound_members(
+        &self,
+        _p: &ShapeParams,
+        _block: Block,
+        pos: IVec3,
+        state: ShapeState,
+    ) -> Option<Vec<(IVec3, ShapeState)>> {
+        let door = Option::<crate::door::DoorState>::from_cell(state)?;
+        let lower = if door.top { pos - IVec3::Y } else { pos };
+        let half = |top| crate::door::DoorState { top, ..door }.to_cell();
+        Some(vec![(lower, half(false)), (lower + IVec3::Y, half(true))])
+    }
+
     fn rotate_y(&self, block: Block, state: ShapeState) -> crate::block::rotation::CellRotation {
         let mut door = crate::door::DoorState::from_cell(state);
         door.facing = crate::block::rotation::facing(door.facing);
@@ -30,6 +46,25 @@ impl ShapeSim for DoorFamily {
 }
 
 impl ShapeRender for DoorFamily {
+    fn mesh_emitter(&self, _p: &ShapeParams) -> MeshEmitter {
+        MeshEmitter::Nothing
+    }
+
+    /// The lower half draws the whole door; the upper draws nothing itself.
+    fn animated_pose(
+        &self,
+        _p: &ShapeParams,
+        _block: Block,
+        state: ShapeState,
+    ) -> Option<crate::animated_model::AnimatedPose> {
+        let door = crate::door::DoorState::from_cell(state);
+        (!door.top).then_some(crate::animated_model::AnimatedPose {
+            facing: door.facing,
+            variant: 0,
+            open: door.open,
+        })
+    }
+
     fn selection_box(
         &self,
         _p: &ShapeParams,
@@ -152,4 +187,10 @@ impl ShapePlacement for DoorFamily {
             ],
         })
     }
+}
+
+/// Whether `block` is a door-shaped row — the ownership test of the door
+/// cell state.
+pub fn is_door(block: Block) -> bool {
+    block.shape_family() == ShapeFamily::Door
 }

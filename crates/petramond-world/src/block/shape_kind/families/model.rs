@@ -9,6 +9,31 @@ use super::*;
 pub struct ModelFamily;
 
 impl ShapeSim for ModelFamily {
+    /// Every footprint cell, each holding its offset from the model's base.
+    fn compound_members(
+        &self,
+        p: &ShapeParams,
+        _block: Block,
+        pos: IVec3,
+        state: ShapeState,
+    ) -> Option<Vec<(IVec3, ShapeState)>> {
+        let kind = p.model_kind().expect("model family carries a model kind");
+        let model = crate::block_model::ModelCellState::from_cell(state);
+        let base = crate::block_model::base_from_cell(pos, kind, model.offset, model.facing);
+        Some(
+            crate::block_model::oriented_footprint_cells(base, kind, model.facing)
+                .into_iter()
+                .map(|(cell, offset)| {
+                    let member = crate::block_model::ModelCellState {
+                        offset,
+                        facing: model.facing,
+                    };
+                    (cell, member.to_cell())
+                })
+                .collect(),
+        )
+    }
+
     fn rotate_y(&self, block: Block, state: ShapeState) -> crate::block::rotation::CellRotation {
         let mut model = crate::block_model::ModelCellState::from_cell(state);
         model.facing = crate::block::rotation::facing(model.facing);
@@ -29,6 +54,10 @@ impl ShapeSim for ModelFamily {
 }
 
 impl ShapeRender for ModelFamily {
+    fn mesh_emitter(&self, _p: &ShapeParams) -> MeshEmitter {
+        MeshEmitter::Model
+    }
+
     fn selection_box(
         &self,
         p: &ShapeParams,

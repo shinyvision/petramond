@@ -384,7 +384,7 @@ impl World {
         // Mesh-feeding presentation keys render through the ordinary mesher
         // for NON-custom shapes (a dyed wool cube), which the custom-bake
         // re-mark above does not cover — re-mesh the section directly.
-        if affects_mesh && block.shape_family() != petramond_world::block::ShapeFamily::Custom {
+        if affects_mesh && !block.is_custom_shape() {
             self.queue_dirty_meshes_sampling_cell(kv.pos.x, kv.pos.y, kv.pos.z);
         }
     }

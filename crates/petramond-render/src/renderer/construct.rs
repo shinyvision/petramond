@@ -246,12 +246,11 @@ pub(super) fn new_renderer_inner(
         })
         .collect();
 
-    // Item entities + chests draw through the EXISTING opaque pipeline; clone its
+    // Item entities + animated blocks draw through the EXISTING opaque pipeline; clone its
     // (Arc-backed) handle so each `DynamicDraw` issues a byte-identical draw while
     // Terrain `opaque_pipe` is quantized; dynamic bakes need absolute Vertex.
     let item_entity_pipe = pipelines.dynamic_opaque_pipe.clone();
-    let chest_pipe = pipelines.dynamic_opaque_pipe.clone();
-    let door_pipe = pipelines.dynamic_opaque_pipe.clone();
+    let block_entity_pipe = pipelines.dynamic_opaque_pipe.clone();
 
     let mob_gpu = build_mob_gpu(&device, &queue, &pipelines.atlas_bgl, &pipelines.mob_pipe);
     let player_gpu = build_player_gpu(&device, &queue, &pipelines.atlas_bgl, &pipelines.mob_pipe);
@@ -343,8 +342,7 @@ pub(super) fn new_renderer_inner(
     let item_model_entity_draw = DynamicDraw::new(&device, model_pipe.clone(), "item model entity");
     let item_sprite_entity_draw =
         DynamicDraw::new(&device, pipelines.mob_pipe.clone(), "item sprite entity");
-    let chest_draw = DynamicDraw::new(&device, chest_pipe, "chest");
-    let panel_draw = DynamicDraw::new(&device, door_pipe, "hinged panel");
+    let block_entity_draw = DynamicDraw::new(&device, block_entity_pipe, "block entity");
     let break_draw = DynamicDraw::new(&device, pipelines.break_pipe, "break overlay");
     let emitter_particle_draw = DynamicVertexDraw::new(
         &device,
@@ -438,17 +436,10 @@ pub(super) fn new_renderer_inner(
             mobs: Vec::new(),
         },
         block_entity: BlockEntityPass {
-            chest_draw,
-            panel_draw,
-            chests: Vec::new(),
-            chest_visible: Vec::new(),
-            doors: Vec::new(),
-            door_visible: Vec::new(),
-            trapdoors: Vec::new(),
-            trapdoor_visible: Vec::new(),
-            chest_baked: Vec::new(),
-            door_baked: Vec::new(),
-            trapdoor_baked: Vec::new(),
+            draw: block_entity_draw,
+            instances: Vec::new(),
+            visible: Vec::new(),
+            baked: Vec::new(),
             baked_origin: glam::IVec3::MIN,
         },
         hand: HandPass {

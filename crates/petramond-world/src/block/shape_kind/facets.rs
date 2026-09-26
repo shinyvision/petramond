@@ -164,6 +164,50 @@ pub enum FullFace {
     Shaped,
 }
 
+/// Which of the chunk mesher's emitters draws a cell of this shape — the draw
+/// STRATEGY, never the family. A family picks one; the mesher classifies
+/// cells by it and holds no family knowledge, so a new family that draws
+/// like an existing one needs no mesher edit.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum MeshEmitter {
+    /// The cube path: per-face culling and the exposure-mask fast path.
+    Cube,
+    /// The unified box-set emitter over [`ShapeRender::boxes`].
+    Boxes,
+    /// Billboard planes (see [`PlantPlanes`]).
+    Plant(PlantPlanes),
+    /// The upright or leaning pole posed by the cell's
+    /// [`TorchPlacement`](crate::torch::TorchPlacement).
+    Pole,
+    /// The row's baked bbmodel.
+    Model,
+    /// Nothing is chunk-meshed: the row is drawn by its animated block model
+    /// (see [`crate::animated_model`]).
+    Nothing,
+}
+
+/// The two billboard layouts the plant emitter draws — also what a plant's
+/// selection box is trimmed to, so aiming and drawing share one answer.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PlantPlanes {
+    /// Two double-sided diagonal planes through the cell (flowers, grass).
+    Cross,
+    /// The inset, dropped crop lattice (see
+    /// [`CROP_PLANE_INSET`](crate::block::CROP_PLANE_INSET)).
+    Crop,
+}
+
+/// What a block row declares that its shape family may accept or refuse at
+/// load — the input of [`ShapeSim::validate_row`].
+#[derive(Copy, Clone, Debug)]
+pub struct RowFacts {
+    pub flags: crate::block::BlockFlags,
+    /// The row's `"corners": true`.
+    pub corners: bool,
+    /// Whether the row authored a non-empty `collision` list.
+    pub authored_collision: bool,
+}
+
 /// Whether the shape at `pos` LIES FLAT on its cell floor — its matter fills
 /// every bottom octant, so the cell rests on the ground the way a cover or a
 /// plate does rather than rooting in it like a plant. Asked of the shape, so a
@@ -520,6 +564,92 @@ pub trait ShapeSim: Send + Sync + 'static {
         })
     }
 
+    /// Whether this family's CELL COLLISION is fully determined by the block
+    /// id — it does NOT override [`collision_boxes`](Self::collision_boxes),
+    /// so the row's position-less boxes are the whole answer. Mirrored onto
+    /// [`ShapeKindDef::collision_state_free`](super::ShapeKindDef) so the
+    /// per-id collision table is baked once and every cell probe skips the
+    /// virtual resolve.
+    ///
+    /// SAFE BY DEFAULT: a family answering `true` that later grows a per-cell
+    /// `collision_boxes` override must answer `false` again, and
+    /// `collision_state_free_kinds_resolve_identically` fails until it does.
+    fn collision_state_free(&self) -> bool {
+        false
+    }
+
+    /// Whether this kind overrides [`refine_state`](Self::refine_state) —
+    /// mirrored onto [`ShapeKindDef::refines`](super::ShapeKindDef) so the edit
+    /// cascade's per-cell gate is a field read. Asked per KIND (the params
+    /// ride along), so a family whose rows only sometimes refine keeps the
+    /// cascade's cheap path for the rows that never do.
+    fn refines(&self, _params: &ShapeParams) -> bool {
+        false
+    }
+
+    /// Whether navigation over a cell of this shape follows the ROW alone —
+    /// its position-less collision boxes and hazard tag — so swapping one such
+    /// row for another with the same boxes leaves every path intact (grazed
+    /// grass, crop growth, farmland hydration). A family whose boxes resolve
+    /// from per-cell or neighbour state answers `false`, which keeps the edit
+    /// conservatively nav-relevant.
+    fn nav_follows_row(&self) -> bool {
+        false
+    }
+
+    /// Every cell of the COMPOUND object a cell of `block` in `state` at `pos`
+    /// belongs to, each with the canonical state that member holds — `None`
+    /// (the default) for a single-cell block. Pure in the cell's own state, so
+    /// a captured schematic, an edit batch and the live world all answer
+    /// alike: breaking clears every member, a capture takes them together, and
+    /// an edit is refused unless every member answers the same list.
+    fn compound_members(
+        &self,
+        _params: &ShapeParams,
+        _block: Block,
+        _pos: IVec3,
+        _state: ShapeState,
+    ) -> Option<Vec<(IVec3, ShapeState)>> {
+        None
+    }
+
+    // --- Load-time row rules ------------------------------------------------
+    //
+    // What a block row may declare depends on its shape; the family answers,
+    // so the block loader validates rows without naming any family.
+
+    /// Whether the row's `uv_rotation` map (quarter turns of its
+    /// `[top, bottom, side]` tiles) means anything for this shape — only the
+    /// tile-slot shapes draw those slots whole.
+    fn accepts_row_uv_rotation(&self) -> bool {
+        false
+    }
+
+    /// Whether a FLUID row may take this shape (fluids mesh and flow as
+    /// whole cells).
+    fn hosts_fluid(&self) -> bool {
+        false
+    }
+
+    /// Whether this shape's facing is ROW identity — one row per facing,
+    /// declared by `panel_facing` and linked by `facing_rows` — rather than
+    /// placement state. Both fields are refused on every other shape.
+    fn faces_by_row(&self) -> bool {
+        false
+    }
+
+    /// Dense flags every row of this shape carries, derived rather than
+    /// row-listed (the stacking slab's `SLAB`).
+    fn row_flags(&self) -> crate::block::BlockFlags {
+        crate::block::BlockFlags::NONE
+    }
+
+    /// The family's own checks over a row's declarations, beyond the shared
+    /// rules above. `Err` fails the load with the message.
+    fn validate_row(&self, _params: &ShapeParams, _row: &RowFacts) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Whether navigation reads a cell of this shape as solid even though its
     /// real collision boxes are not a full cube — true only for the fence
     /// family (a lone fence must be a wall or no pen holds). Everything else is
@@ -606,6 +736,42 @@ pub trait ShapeRender: Send + Sync + 'static {
     /// picker.
     fn precise_pick(&self, params: &ShapeParams) -> bool {
         self.picks_by_boxes(params)
+    }
+
+    /// Which chunk-mesher emitter draws this shape — see [`MeshEmitter`].
+    /// Mirrored onto [`ShapeKindDef::mesh_emitter`](super::ShapeKindDef) so
+    /// the mesher's per-block class table is a field read. The default is the
+    /// cube path.
+    fn mesh_emitter(&self, _params: &ShapeParams) -> MeshEmitter {
+        MeshEmitter::Cube
+    }
+
+    /// The pose a row's ANIMATED block model takes at a cell of `block`
+    /// holding `state`: its facing, which of the model's variants it draws,
+    /// and whether its state says it stands open. `None` = this cell draws
+    /// nothing itself (a compound member its anchor draws).
+    ///
+    /// Pure in the cell's own state, so the live world and a captured
+    /// schematic pose it identically. The default faces the stored placement
+    /// front of a `directional_view` row and is never open by state (a
+    /// container's lid follows who is looking inside, not the cell).
+    fn animated_pose(
+        &self,
+        _params: &ShapeParams,
+        block: Block,
+        state: ShapeState,
+    ) -> Option<crate::animated_model::AnimatedPose> {
+        use super::neighborhood::CellView;
+        let facing = if block.directional_view() {
+            crate::block_state::EntityFront::from_cell(state).0
+        } else {
+            crate::facing::Facing::default()
+        };
+        Some(crate::animated_model::AnimatedPose {
+            facing,
+            variant: 0,
+            open: false,
+        })
     }
 
     /// The cell-local boxes this shape's ITEM draws, when its item is true

@@ -10,12 +10,8 @@ use glam::{IVec3, Quat, Vec3};
 use crate::RemotePlayerRender;
 use petramond::mob::Mob;
 use petramond::world::PlacedEmitter;
-use petramond_math::facing::Facing;
 use petramond_math::math::Tilt;
-use petramond_world::door::DoorState;
 use petramond_world::item::ItemType;
-use petramond_world::tile::Tile;
-use petramond_world::trapdoor::TrapdoorState;
 
 /// The block-break overlay to draw this frame: a cracked-texture overlay over
 /// `block` at crack `stage` (0..=9, where 9 is fully cracked / about to break).
@@ -79,33 +75,13 @@ pub struct CrackBoxes {
     pub len: u8,
 }
 
+/// One animated block this frame: the world gather's row (position, block,
+/// the pose its cell's state gives it, light) plus the client's linear open
+/// progress, which the scene eases.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct ChestPresentation {
-    pub pos: IVec3,
-    pub facing: Facing,
-    pub lid_progress: f32,
-    pub skylight: u8,
-    pub blocklight: petramond_world::light::BlockLight6,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct DoorPresentation {
-    pub pos: IVec3,
-    pub state: DoorState,
-    pub tiles: [Tile; 3],
-    pub swing_progress: f32,
-    pub skylight: u8,
-    pub blocklight: petramond_world::light::BlockLight6,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct TrapdoorPresentation {
-    pub pos: IVec3,
-    pub state: TrapdoorState,
-    pub tiles: [Tile; 3],
-    pub swing_progress: f32,
-    pub skylight: u8,
-    pub blocklight: petramond_world::light::BlockLight6,
+pub struct BlockEntityPresentation {
+    pub block: petramond::world::animated_block::AnimatedBlock,
+    pub open_progress: f32,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -402,12 +378,11 @@ pub struct GamePresentation<'a> {
     /// Every emitter — block rows and mobs alike — whose particles are inside
     /// this frame's view volume, already culled by the gather.
     pub particle_emitters: &'a [PlacedEmitter],
-    pub chests: &'a [ChestPresentation],
+    /// Every animated block (chest, door, trapdoor, a pack's own) to draw.
+    pub block_entities: &'a [BlockEntityPresentation],
     /// Mod-submitted per-block draw sets with the light at their cell — the
     /// gather's own rows, handed on without a re-spelling copy.
     pub block_draws: &'a [petramond::world::draw::BlockDrawInstance],
-    pub doors: &'a [DoorPresentation],
-    pub trapdoors: &'a [TrapdoorPresentation],
     pub mobs: &'a [MobPresentation],
     /// Every OTHER connected player's body + held item for this frame,
     /// already interpolated and posed — the render input rows themselves

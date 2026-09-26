@@ -353,7 +353,7 @@ fn broken_bed_clears_the_spawn_and_respawn_falls_back_to_the_surface() {
     // The break path resolves the spawn clear before removal (breaking.rs);
     // this drives the same hook + removal pair it uses.
     game.server.clear_bed_spawn_at(base);
-    game.server.world.remove_model_block(base);
+    game.server.world.remove_compound(base);
     assert!(
         game.server.sessions[0].player.bed_spawn.is_none(),
         "destroying the bed removes the respawn point"

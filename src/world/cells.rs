@@ -10,7 +10,7 @@ use super::World;
 use crate::schematic::ResolvedCell;
 use petramond_math::math::IVec3;
 use petramond_world::{
-    block::{Block, CellView, ShapeFamily, ShapeState},
+    block::{Block, ShapeState},
     chunk::section_idx,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -411,57 +411,29 @@ impl World {
 /// Every cell of the compound block `data` belongs to at `pos`; `None` for a
 /// single-cell block.
 fn compound_members(pos: IVec3, data: &ResolvedCell) -> Option<Vec<IVec3>> {
-    use petramond_world::block_model::{base_from_cell, oriented_footprint_cells, ModelCellState};
-    if let Some(kind) = data.block.model_kind() {
-        let model = ModelCellState::from_cell(data.state);
-        let base = base_from_cell(pos, kind, model.offset, model.facing);
-        Some(
-            oriented_footprint_cells(base, kind, model.facing)
-                .into_iter()
-                .map(|(p, _)| p)
-                .collect(),
-        )
-    } else if data.block.shape_family() == ShapeFamily::Door {
-        let door = petramond_world::door::DoorState::from_cell(data.state);
-        Some(vec![pos, pos + if door.top { -IVec3::Y } else { IVec3::Y }])
-    } else {
-        None
-    }
+    let members = data.block.compound_members(pos, data.state)?;
+    Some(members.into_iter().map(|(cell, _)| cell).collect())
 }
 
+/// Every compound block in the edit must be whole and self-consistent: each
+/// member present, of the same block, and naming the same member list from
+/// its own state (a model's offsets agree on one base, a door's halves on one
+/// facing and open bit).
 fn validate_compounds(cells: &Cells, index: &HashMap<IVec3, u32>) -> Result<(), String> {
-    use petramond_world::block_model::{base_from_cell, oriented_footprint_cells, ModelCellState};
     let at = |p: &IVec3| index.get(p).map(|&i| &cells[i as usize].1);
     for (pos, data) in cells {
-        if let Some(kind) = data.block.model_kind() {
-            let model = ModelCellState::from_cell(data.state);
-            let base = base_from_cell(*pos, kind, model.offset, model.facing);
-            let mut member = false;
-            for (p, offset) in oriented_footprint_cells(base, kind, model.facing) {
-                member |= p == *pos;
-                let expected = ModelCellState {
-                    offset,
-                    facing: model.facing,
-                };
-                if !at(&p).is_some_and(|d| {
-                    d.block == data.block && ModelCellState::from_cell(d.state) == expected
-                }) {
-                    return Err("Edit contains an incomplete model block".into());
-                }
-            }
-            if !member {
-                return Err("Invalid model offset".into());
-            }
-        } else if data.block.shape_family() == ShapeFamily::Door {
-            let door = petramond_world::door::DoorState::from_cell(data.state);
-            let other = *pos + if door.top { -IVec3::Y } else { IVec3::Y };
-            if !at(&other).is_some_and(|d| {
-                d.block == data.block && {
-                    let peer = petramond_world::door::DoorState::from_cell(d.state);
-                    peer.top != door.top && peer.facing == door.facing && peer.open == door.open
-                }
+        let Some(members) = data.block.compound_members(*pos, data.state) else {
+            continue;
+        };
+        if !members.iter().any(|(p, _)| p == pos) {
+            return Err("Edit contains a compound block cell outside its own footprint".into());
+        }
+        for (p, _) in &members {
+            if !at(p).is_some_and(|d| {
+                d.block == data.block
+                    && d.block.compound_members(*p, d.state).as_ref() == Some(&members)
             }) {
-                return Err("Edit contains half a door".into());
+                return Err("Edit contains an incomplete compound block".into());
             }
         }
     }

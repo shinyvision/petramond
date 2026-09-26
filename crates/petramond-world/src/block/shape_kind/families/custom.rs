@@ -77,6 +77,10 @@ impl ShapeSim for CustomFamily {
 }
 
 impl ShapeRender for CustomFamily {
+    fn mesh_emitter(&self, _p: &ShapeParams) -> MeshEmitter {
+        MeshEmitter::Boxes
+    }
+
     fn boxes(&self, ctx: &ShapeCtx<'_>, out: &mut Vec<ShapeBox>) {
         // A custom shape draws what its WASM bake produced. No bake reachable
         // (never baked, trapped, or outside the caller's window) emits nothing,

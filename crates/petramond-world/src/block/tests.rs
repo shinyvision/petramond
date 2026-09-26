@@ -126,15 +126,13 @@ fn floor_fully_covered(boxes: &[crate::block::shape_kind::BoxDef]) -> bool {
 }
 
 /// The shape-kind registry resolves every block to a valid, self-consistent
-/// kind: the dense family LUT (`shape_family`) agrees with the registry row
-/// (`shape_kind().family`), the payload accessors agree with the row's params,
+/// kind: the payload accessors agree with the row's params,
 /// and known engine blocks land in the expected family. Pins the loader's
 /// shape-kind interning (`shape_kind::ShapeKindInterner`) end-to-end.
 #[test]
 fn shape_kinds_resolve_consistently_for_every_block() {
     for &b in Block::all() {
         let def = b.shape_kind().def();
-        assert_eq!(b.shape_family(), def.family, "{b:?} LUT vs registry family");
         // The payload accessors are exactly the row's params.
         assert_eq!(b.model_kind(), def.params.model_kind(), "{b:?} model");
         // Payloads exist iff the family carries them.

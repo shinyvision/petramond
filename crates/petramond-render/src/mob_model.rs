@@ -7,7 +7,7 @@
 //! `anim_time` when `moving`, or in the model's neutral [rest pose](Model::rest_pose)
 //! when idle (so a standing mob shows straight legs with no per-animation tuning).
 //!
-//! Like [`item_entity`](super::item_entity) / [`chest_model`](super::chest_model)
+//! Like [`item_entity`](super::item_entity) / [`block_entity_model`](super::block_entity_model)
 //! this bakes in WORLD space on the CPU (the mob pipeline's vertex shader applies
 //! only `view_proj`). Per cube the transform is `G · pose[bone] · S_cube`, where
 //! `S_cube` is the cube's modelled static tilt, `pose[bone]` the animation (or rest)

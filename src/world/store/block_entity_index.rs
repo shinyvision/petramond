@@ -1,18 +1,15 @@
-use petramond_world::block::{Block, ShapeFamily};
+use petramond_world::block::Block;
 use petramond_world::chunk::SectionPos;
 
 use super::World;
 
 /// Whether a cell holding `block` puts its section in the block-entity index:
-/// the render fan-outs that draw OUTSIDE the chunk mesh (hinged panels, chest
-/// lids) walk that index, so a block they draw must be admitted by it. Shared
-/// by the index refresh and by every writer that must notice a fresh one —
-/// a panel missing from the index is simply invisible.
+/// the animated-block gather that draws OUTSIDE the chunk mesh walks that
+/// index, so every block with an animated model must be admitted by it.
+/// Shared by the index refresh and by every writer that must notice a fresh
+/// one — an animated block missing from the index is simply invisible.
 pub(in crate::world) fn indexes_block_entity(block: Block) -> bool {
-    matches!(
-        block.shape_family(),
-        ShapeFamily::Door | ShapeFamily::Trapdoor
-    ) || block.directional_view()
+    block.animated_model().is_some() || block.directional_view()
 }
 
 impl World {

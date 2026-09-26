@@ -52,7 +52,7 @@ pub(super) fn cross_quads(x: f32, y: f32, z: f32, inset: f32) -> [[[f32; 3]; 4];
 }
 
 /// The four axis-aligned billboard quads of a planted-crop lattice
-/// ([`ShapeFamily::Crop`](petramond_world::block::ShapeFamily::Crop)): one pair
+/// ([`PlantPlanes::Crop`](petramond_world::block::PlantPlanes::Crop)): one pair
 /// perpendicular to each horizontal axis, inset
 /// [`CROP_PLANE_INSET`](petramond_world::block::CROP_PLANE_INSET) from the cell faces
 /// and running edge to edge along their long axis — a `#` from above. Corner

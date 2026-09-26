@@ -280,11 +280,11 @@ fn replica_converges_on_payloads_and_deltas() {
     );
     assert_eq!(replica.model_facing_at(10, 65, 10), Facing::East);
     let mut chests = Vec::new();
-    replica.collect_chests(&mut chests);
+    replica.collect_animated_blocks(&mut chests);
     assert!(
         chests
             .iter()
-            .any(|&(p, f, ..)| p == IVec3::new(1, 65, 1) && f == Facing::West),
+            .any(|r| r.pos == IVec3::new(1, 65, 1) && r.pose.facing == Facing::West),
         "the chest renders on the replica with its facing"
     );
     assert_eq!(
@@ -453,11 +453,11 @@ fn deltas_carry_cell_state_and_replicas_converge_on_it() {
         Facing::East
     );
     let mut chests = Vec::new();
-    replica.collect_chests(&mut chests);
+    replica.collect_animated_blocks(&mut chests);
     assert!(
         chests
             .iter()
-            .any(|&(p, f, ..)| p == chest && f == Facing::West),
+            .any(|r| r.pos == chest && r.pose.facing == Facing::West),
         "the chest placed post-join renders on the replica with its facing"
     );
 

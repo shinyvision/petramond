@@ -333,24 +333,11 @@ impl Renderer {
         self.item_entity.instances.extend_from_slice(v);
     }
 
-    /// Store the placed chests to draw this frame. Reuses the existing `Vec`
-    /// capacity (clear + extend) to avoid per-frame reallocation.
-    pub(crate) fn set_chests(&mut self, v: &[ChestInstance]) {
-        self.block_entity.chests.clear();
-        self.block_entity.chests.extend_from_slice(v);
-    }
-
-    /// Store the placed doors to draw this frame. Reuses the existing `Vec` capacity
-    /// (clear + extend) to avoid per-frame reallocation.
-    pub(crate) fn set_doors(&mut self, v: &[DoorInstance]) {
-        self.block_entity.doors.clear();
-        self.block_entity.doors.extend_from_slice(v);
-    }
-
-    /// Store the placed trapdoors to draw this frame, alongside the doors.
-    pub(crate) fn set_trapdoors(&mut self, v: &[TrapdoorInstance]) {
-        self.block_entity.trapdoors.clear();
-        self.block_entity.trapdoors.extend_from_slice(v);
+    /// Store the animated blocks to draw this frame. Reuses the existing
+    /// `Vec` capacity (clear + extend) to avoid per-frame reallocation.
+    pub(crate) fn set_block_entities(&mut self, v: &[BlockEntityInstance]) {
+        self.block_entity.instances.clear();
+        self.block_entity.instances.extend_from_slice(v);
     }
 
     /// Store the mobs to draw this frame (already interpolated by the scene adapter).

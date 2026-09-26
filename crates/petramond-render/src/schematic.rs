@@ -3,7 +3,7 @@ use petramond::schematic::Scene;
 use petramond_math::math::IVec3;
 use petramond_mesh::{ModelVertex, Vertex};
 use petramond_world::{
-    block::{Block, CellView, ShapeFamily, ShapeState},
+    block::{Block, ShapeState},
     chunk::SectionPos,
 };
 
@@ -94,60 +94,34 @@ impl Geometry {
                 v
             }));
         }
-        let mut chests = Vec::new();
-        let mut doors = Vec::new();
-        let mut trapdoors = Vec::new();
-        for (p, cell) in &scene.cells {
-            if only.is_some_and(|only| SectionPos::from_world(p.x, p.y, p.z) != Some(only)) {
-                continue;
-            }
-            if cell.block == Block::Chest {
-                chests.push(crate::ChestInstance {
+        // Animated blocks draw from their models, posed by the captured
+        // state and resting where it says (closed, or a door standing open).
+        let entities: Vec<crate::BlockEntityInstance> = scene
+            .cells
+            .iter()
+            .filter(|(p, _)| {
+                only.is_none_or(|only| SectionPos::from_world(p.x, p.y, p.z) == Some(only))
+            })
+            .filter_map(|(p, cell)| {
+                let (_, pose) = cell.block.animated_pose(cell.state)?;
+                Some(crate::BlockEntityInstance {
                     pos: *p,
-                    facing: petramond_world::block_state::EntityFront::from_cell(cell.state).0,
-                    lid01: 0.0,
+                    block: cell.block,
+                    facing: pose.facing,
+                    variant: pose.variant,
+                    open01: if pose.open { 1.0 } else { 0.0 },
                     skylight: 63,
                     blocklight: petramond_world::light::BlockLight6::DARK,
-                });
-            }
-            if cell.block.shape_family() == ShapeFamily::Trapdoor {
-                let panel = petramond_world::trapdoor::TrapdoorState::from_cell(cell.state);
-                let tiles = cell.block.tiles();
-                trapdoors.push(crate::TrapdoorInstance {
-                    pos: *p,
-                    facing: panel.facing,
-                    top: panel.top,
-                    open01: if panel.open { 1.0 } else { 0.0 },
-                    top_tile: tiles[0],
-                    bottom_tile: tiles[1],
-                    side_tile: tiles[2],
-                    skylight: 63,
-                    blocklight: petramond_world::light::BlockLight6::DARK,
-                });
-            }
-            if cell.block.shape_family() == ShapeFamily::Door {
-                let door = petramond_world::door::DoorState::from_cell(cell.state);
-                if !door.top {
-                    let tiles = cell.block.tiles();
-                    doors.push(crate::DoorInstance {
-                        pos: *p,
-                        facing: door.facing,
-                        open01: if door.open { 1.0 } else { 0.0 },
-                        bottom_tile: tiles[1],
-                        top_tile: tiles[0],
-                        side_tile: tiles[2],
-                        skylight: 63,
-                        blocklight: petramond_world::light::BlockLight6::DARK,
-                    });
-                }
-            }
-        }
+                })
+            })
+            .collect();
         let (mut verts, mut indices) = (Vec::new(), Vec::new());
-        crate::chest_model::build_chests(&chests, IVec3::ZERO, &mut verts, &mut indices);
-        out.append(verts, indices);
-        let (mut verts, mut indices) = (Vec::new(), Vec::new());
-        crate::door_model::build_doors(&doors, IVec3::ZERO, &mut verts, &mut indices);
-        crate::trapdoor_model::push_trapdoors(&trapdoors, IVec3::ZERO, &mut verts, &mut indices);
+        crate::block_entity_model::push_block_entities(
+            &entities,
+            IVec3::ZERO,
+            &mut verts,
+            &mut indices,
+        );
         out.append(verts, indices);
         for vertex in &mut out.blocks {
             for axis in 0..3 {

@@ -31,6 +31,7 @@
 //! session 0 server-side.
 
 pub mod ambient;
+mod block_animation;
 pub mod body_pose;
 mod client_mods;
 mod client_presentation;
@@ -254,7 +255,8 @@ pub struct Game {
     /// notion of game time for presentation scheduling.
     replicated_tick: u64,
     /// Chests with at least one open screen anywhere (replicated per batch —
-    /// the server's `chest_viewers` key set). Drives the lid animation.
+    /// the server's `chest_viewers` key set). Opens their animated lids; set
+    /// through [`Game::set_open_chests`], which starts the lids' swings.
     open_chests: rustc_hash::FxHashSet<IVec3>,
     /// Optimistic prediction ledger (request ids + undo snapshots).
     pub prediction: prediction::PredictionLedger,
@@ -343,20 +345,14 @@ pub struct Game {
     mining_feedback: dig_feedback::DigFeedback,
     /// Dust and dig-hit pacing per digging mob.
     mob_digging: HashMap<u64, dig_feedback::DigFeedback>,
-    /// Transient per-chest lid open angle (`0.0` closed .. `1.0` open), keyed by world
-    /// position. Eased toward open for the chest whose screen is up and toward closed
-    /// for the rest; client-side animation only, never persisted. The render-side
-    /// presentation snapshot reads the angle (via [`Game::chest_lid_angle`]) to bake the lid;
-    /// the easing in [`Game::advance_chest_lids`] is the owning sim/animation state.
-    chest_lids: HashMap<IVec3, f32>,
-    /// Transient per-panel swing angle (`0.0` closed .. `1.0` open) for doors and
-    /// trapdoors alike, keyed by the panel's anchor cell (a door's LOWER half, a
-    /// trapdoor's own cell). A panel enters the map when a use click toggles it and is
-    /// eased toward its (now flipped) logical open state by [`Game::advance_panel_swings`];
-    /// once it reaches the target it is dropped (the renderer then reads the resting angle
-    /// straight from the cell state). Client-side animation only, never persisted — the
-    /// authoritative open/closed bit lives in the cell-state store.
-    panel_swings: HashMap<IVec3, f32>,
+    /// The eased open fraction of every animated block mid-swing (a chest's
+    /// lid, a door's or trapdoor's panel), keyed by its anchor cell. Seeded
+    /// when a block's logical open state changes, eased by
+    /// [`Game::advance_block_animations`], read per frame by the presentation
+    /// snapshot through [`Game::block_open_progress`]. Client-side animation
+    /// only, never persisted — the authoritative state lives in the cell-state
+    /// store and the replicated open-chest set.
+    block_animations: block_animation::BlockAnimations,
 }
 
 impl Game {

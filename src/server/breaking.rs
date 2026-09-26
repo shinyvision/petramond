@@ -2,7 +2,7 @@ use crate::entity::DroppedItem;
 use crate::events::{BlockBreakPre, Outcome, PostEvent};
 use crate::world::World;
 use petramond_math::math::IVec3;
-use petramond_world::block::{Block, ShapeFamily};
+use petramond_world::block::Block;
 use petramond_world::item::ItemStack;
 use petramond_world::mining::{BreakEvent, MiningState};
 
@@ -456,17 +456,11 @@ impl ServerGame {
         // stamp them onto the block's own item drops as instance data.
         let carry_variant = self.carry_variant_at(container_pos, event.block, 0);
         let broken_tint = self.world.cell_burst_tint(event.pos);
-        // A bbmodel block breaks as a whole: removing any cell clears every footprint
-        // cell (the 2×2×1 workbench vanishes as one object, drops one item below).
-        if event.block.shape_family() == ShapeFamily::Model {
-            self.world.remove_model_block(event.pos);
-        } else if event.block.shape_family() == ShapeFamily::Door {
-            // A door breaks as a whole: removing either cell clears both halves and
-            // drops one door item (the `spawn_drops` below). The client-side swing
-            // animation entry dies with it, dropped from the `block_broken` event
-            // in `Game::apply_world_effects` (client-owned state).
-            self.world.remove_door(event.pos);
-        } else {
+        // A compound block breaks as a whole: removing any cell clears every
+        // member (the 2×2×1 workbench vanishes as one object, a door takes both
+        // halves) and drops one item (the `spawn_drops` below). A client's
+        // animation entry for it lapses once the cell no longer holds it.
+        if self.world.remove_compound(event.pos).is_none() {
             // Plain-cube clears leave the block's break residue (air for
             // almost everything; melting ice leaves water — see
             // `Block::break_residue`). The predicted clear applies the same

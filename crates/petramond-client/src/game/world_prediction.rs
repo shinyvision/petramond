@@ -458,7 +458,7 @@ impl Game {
             if self.predict_mod_claim(sneak, payload) {
                 return PlacePrediction::No;
             }
-            if block.shape_family() == petramond_world::block::ShapeFamily::Custom {
+            if block.is_custom_shape() {
                 if let Some(prediction) = self.try_predict_custom_place(sneak, block, look, pre_pos)
                 {
                     return prediction;

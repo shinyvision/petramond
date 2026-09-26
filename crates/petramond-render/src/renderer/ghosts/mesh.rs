@@ -17,7 +17,7 @@ impl GhostPipelines {
     pub fn new(r: &Renderer) -> Self {
         let uniform_layout = r
             .block_entity
-            .chest_draw
+            .draw
             .pipeline
             .get(1)
             .get_bind_group_layout(0);
@@ -30,7 +30,7 @@ impl GhostPipelines {
                 &if model {
                     r.world_model_pipe.get(1)
                 } else {
-                    r.block_entity.chest_draw.pipeline.get(1)
+                    r.block_entity.draw.pipeline.get(1)
                 }
                 .get_bind_group_layout(1),
                 model,

@@ -13,7 +13,7 @@
 use crate::world::WorldData;
 
 use petramond_math::math::IVec3;
-use petramond_world::block::{Block, ShapeFamily};
+use petramond_world::block::Block;
 
 use super::store::World;
 
@@ -41,7 +41,7 @@ impl World {
             } else {
                 Block::from_id(self.chunk_block(p.x, p.y, p.z))
             };
-            if cell.shape_family() == ShapeFamily::Custom {
+            if cell.is_custom_shape() {
                 self.content.custom_bake_dirty.insert(p);
             } else {
                 // The cell is no longer a custom shape: drop any stale baked

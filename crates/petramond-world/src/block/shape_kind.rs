@@ -10,11 +10,16 @@
 //! the table is built fresh each session from the loaded block rows and its ids
 //! are free to move.
 //!
-//! Consumers dispatch on the cheap [`ShapeFamily`] enum (`Block::shape_family`)
-//! exactly where they used to match `RenderShape`; a genuinely novel mod shape
-//! is [`ShapeFamily::Custom`] and dispatches through the facet traits / bake
-//! cache. The per-row payloads the old enum carried inline
-//! (`LoweredCube(u8)`, `Model(kind)`) live in [`ShapeParams`], so the parameter
+//! Consumers never branch on the family: every question they ask — how the
+//! mesher draws it, how a ray picks it, whether it refines, what cells a
+//! compound spans, how an animated model poses it — is a facet method (see
+//! [`facets`]) or a field the interner precomputed from one. [`ShapeFamily`]
+//! is the row's identity tag, named only inside this module (the singleton
+//! table, the loader's shape vocabulary, the family-identity tests of the
+//! state codecs); `workspace_names_no_shape_family_outside_shape_kind`
+//! enforces that. A genuinely novel mod shape is a custom shape and
+//! dispatches through the facet traits / bake cache. The per-row payloads the
+//! old enum carried inline (`LoweredCube(u8)`, `Model(kind)`) live in [`ShapeParams`], so the parameter
 //! variation the parameterized families need is data on the row, not a code variant.
 
 use std::collections::HashMap;
@@ -30,6 +35,8 @@ mod corner_form;
 mod custom;
 pub mod facets;
 pub mod families;
+#[cfg(test)]
+mod family_lint;
 mod load;
 mod neighborhood;
 pub mod run_form;
@@ -37,12 +44,12 @@ pub mod run_form;
 pub use custom::{CustomLight, CustomShapeDef};
 pub use facets::{
     full_face_at, light_aperture_face, pack_light_apertures, rests_flat_on_floor, FullFace,
-    ItemRender, NoNeighborhood, ShapeCtx, ShapeRender, ShapeSim, LIGHT_APERTURES_OPEN,
-    NO_PART_TINT,
+    ItemRender, MeshEmitter, NoNeighborhood, PlantPlanes, RowFacts, ShapeCtx, ShapeRender,
+    ShapeSim, LIGHT_APERTURES_OPEN, NO_PART_TINT,
 };
 
 pub use corner_form::{face_uv_turns, FRONT_AFTER_TURN};
-pub use load::{family_resolves_to_boxes, RawBox, RawCustomShape, RawRun, RawShape};
+pub use load::{RawBox, RawCustomShape, RawRun, RawShape};
 pub use neighborhood::{CellCodec, CellView, ShapeNeighborhood, ShapeState, SHAPE_STATE_MAX};
 
 /// A block shape kind — a session-local id into the [`ShapeKindDef`] table
@@ -59,11 +66,18 @@ impl BlockShapeKind {
         super::data::shape_kind_def(self)
     }
 
-    /// The shape family this kind belongs to — the cheap `Copy` discriminant
-    /// consumers match on (the `RenderShape`-match replacement).
+    /// The shape family this kind belongs to — its identity tag, for
+    /// diagnostics and tests; behaviour is asked of the facets instead.
     #[inline]
     pub fn family(self) -> ShapeFamily {
         self.def().family
+    }
+
+    /// Whether `other` is a kind of the SAME family, whatever its params — a
+    /// connection shape's same-family join (a wall joins any wall).
+    #[inline]
+    pub fn same_family(self, other: BlockShapeKind) -> bool {
+        self.family() == other.family()
     }
 
     /// This kind's parameters.
@@ -87,10 +101,12 @@ impl std::fmt::Debug for BlockShapeKind {
     }
 }
 
-/// The shape families the engine meshes/collides/places. This is the closed set
-/// consumers switch on (what `RenderShape`'s variants were), minus the inline
-/// payloads (which moved to [`ShapeParams`]) and plus [`Custom`](Self::Custom)
-/// for mod-defined procedural shapes. A mod never adds a variant here:
+/// The shape families the engine meshes/collides/places — each row's identity
+/// tag. Nothing outside this module matches on it: behaviour lives on the
+/// facet singletons [`families::singletons`] binds per family, and consumers
+/// ask those. The inline payloads `RenderShape` once carried moved to
+/// [`ShapeParams`]; [`Custom`](Self::Custom) covers mod-defined procedural
+/// shapes. A mod never adds a variant here:
 /// a parameterized shape reuses an existing family with different [`ShapeParams`], and
 /// a custom shape is `Custom`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -586,12 +602,12 @@ pub struct ShapeKindDef {
     /// writes) — the seam that replaced the engine's per-family placement
     /// match.
     pub placement: &'static dyn facets::ShapePlacement,
-    /// Whether this family answers [`ShapeRender::boxes`] — the mesher's
-    /// per-cell gate. A plain field so the hot loop reads it without a
-    /// virtual call; set from the family at intern time.
-    pub resolves_to_boxes: bool,
+    /// Which chunk-mesher emitter draws this kind ([`ShapeRender::mesh_emitter`])
+    /// — the mesher's per-cell class. A plain field so the hot loop reads it
+    /// without a virtual call; set from the family at intern time.
+    pub mesh_emitter: MeshEmitter,
     /// Whether this kind's cell collision is fully determined by the block id
-    /// (see `families::collision_is_state_free`) — a plain field so
+    /// (see [`ShapeSim::collision_state_free`]) — a plain field so
     /// `World::collision_boxes_at` and the navigation probes can take the
     /// baked per-id table instead of a virtual resolve.
     pub collision_state_free: bool,
@@ -686,9 +702,9 @@ impl ShapeKindInterner {
             sim,
             render,
             placement,
-            resolves_to_boxes: families::resolves_to_boxes(family),
-            collision_state_free: families::collision_is_state_free(family),
-            refines: families::refines(family, &params),
+            mesh_emitter: render.mesh_emitter(&params),
+            collision_state_free: sim.collision_state_free(),
+            refines: sim.refines(&params),
         });
         self.index.insert(key, id);
         Ok(BlockShapeKind(id))

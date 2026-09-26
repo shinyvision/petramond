@@ -258,6 +258,15 @@ fn chest_lids_follow_the_viewer_count_not_the_local_menu() {
     game.server
         .world
         .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
+    // The lid animates the chest the REPLICA holds; mirror what the deltas
+    // would ship.
+    let replica = &mut game.game.replica;
+    replica.insert_chunk_for_test(
+        petramond_world::chunk::ChunkPos::new(0, 0),
+        petramond_world::chunk::Chunk::new(0, 0),
+    );
+    replica.set_block_world(8, 64, 8, Block::Chest);
+    replica.insert_entity_facing(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
 
     let mut ev = petramond::events::tick::TickEvents::default();
     game.server.open_chest_screen_for(0, pos, &mut ev);
@@ -278,10 +287,10 @@ fn chest_lids_follow_the_viewer_count_not_the_local_menu() {
     // next batch would ship.
     game.sync_open_chests_for_test();
     for _ in 0..30 {
-        game.advance_chest_lids(0.05);
+        game.advance_block_animations(0.05);
     }
     assert!(
-        game.chest_lid_angle(pos) > 0.9,
+        game.block_open_progress(pos, false) > 0.9,
         "the lid stays open while ANY player is looking inside"
     );
 
@@ -289,10 +298,10 @@ fn chest_lids_follow_the_viewer_count_not_the_local_menu() {
     game.server.chest_viewers.remove(&pos);
     game.sync_open_chests_for_test();
     for _ in 0..60 {
-        game.advance_chest_lids(0.05);
+        game.advance_block_animations(0.05);
     }
     assert!(
-        game.chest_lid_angle(pos) < 0.05,
+        game.block_open_progress(pos, false) < 0.05,
         "the lid closes once the last viewer leaves"
     );
 }

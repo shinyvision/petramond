@@ -2,7 +2,7 @@ use crate::vertex::BlockLightVertexExt;
 use glam::IVec3;
 
 use petramond_world::block::CellView;
-use petramond_world::block::{Block, ShapeFamily};
+use petramond_world::block::{Block, PlantPlanes};
 use petramond_world::block_state::{LogAxis, SlabState};
 use petramond_world::chunk::{section_idx, SectionPos, SECTION_SIZE, SECTION_VOLUME, SKY_FULL};
 use petramond_world::section::Section;
@@ -178,7 +178,7 @@ pub(super) fn section_geometry(
     let occupancy_boxes = |p: IVec3, cell_block: Block, out: &mut Vec<([f32; 3], [f32; 3])>| {
         let nb_block = block_at(p.x, p.y, p.z);
         // Dense flag first: this runs per face of every box-shaped cell, and
-        // the shape-kind row behind `resolves_to_boxes` is a big-table load
+        // the shape-kind row behind `mesh_emitter` is a big-table load
         // that almost every neighbour is rejected without needing.
         if !nb_block.has_box_shape() {
             return;
@@ -423,7 +423,6 @@ pub(super) fn section_geometry(
                                 &neighbour_blocklight,
                             );
                         }
-                        let shape = block.shape_family();
                         let tile = block.tiles()[0];
                         let l = neighbour_light(wx, wy, wz) as u32;
                         let bl = neighbour_blocklight(wx, wy, wz).channels().map(u32::from);
@@ -432,17 +431,18 @@ pub(super) fn section_geometry(
                         // parameterized dimensions (a mod's retuned cross/crop) or the
                         // engine defaults for a parameterless row.
                         let dims = block.shape_kind_def().params.dimensions();
-                        let (inset, drop) = if class & CROP != 0 {
+                        let (layout, inset, drop) = if class & CROP != 0 {
                             (
+                                PlantPlanes::Crop,
                                 dims.map_or(petramond_world::block::CROP_PLANE_INSET, |d| d.inset),
                                 dims.map_or(petramond_world::block::CROP_PLANE_DROP, |d| d.drop),
                             )
                         } else {
-                            (dims.map_or(0.0, |d| d.inset), 0.0)
+                            (PlantPlanes::Cross, dims.map_or(0.0, |d| d.inset), 0.0)
                         };
                         emit_plant(
                             &mut opaque,
-                            shape,
+                            layout,
                             (wx - ox) as f32,
                             wy as f32,
                             (wz - oz) as f32,
@@ -605,13 +605,11 @@ pub(super) fn section_geometry(
                                 anchor,
                                 |gx, gz| {
                                     let below = block_at(gx, wy - 1, gz);
-                                    if below.shape_family() != ShapeFamily::Cube
-                                        || !below.is_opaque()
-                                    {
+                                    if !below.is_cube_shaped() || !below.is_opaque() {
                                         return false;
                                     }
                                     let at = block_at(gx, wy, gz);
-                                    at.shape_family() != ShapeFamily::Cube || !at.is_opaque()
+                                    !at.is_cube_shaped() || !at.is_opaque()
                                 },
                             );
                         }

@@ -9,6 +9,10 @@ use super::*;
 pub struct LadderFamily;
 
 impl ShapeSim for LadderFamily {
+    fn faces_by_row(&self) -> bool {
+        true
+    }
+
     fn rotate_y(&self, block: Block, state: ShapeState) -> crate::block::rotation::CellRotation {
         let to = crate::block::rotation::facing(block.panel_facing());
         crate::block::rotation::CellRotation::unchanged(block.rotated_wall_panel(to), state)
@@ -54,6 +58,10 @@ impl ShapeSim for LadderFamily {
 }
 
 impl ShapeRender for LadderFamily {
+    fn mesh_emitter(&self, _p: &ShapeParams) -> MeshEmitter {
+        MeshEmitter::Boxes
+    }
+
     /// A thin panel against a wall: aiming must meet the panel, not the cell.
     fn precise_pick(&self, _p: &ShapeParams) -> bool {
         true

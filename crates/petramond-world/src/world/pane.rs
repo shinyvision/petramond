@@ -4,7 +4,6 @@
 //! resolved by the edit cascade and stored in the cell — every read here is
 //! a free decode of the same bytes the mesher renders from.
 
-use crate::block::ShapeFamily;
 use crate::mathh::IVec3;
 
 use super::data::WorldData;
@@ -14,10 +13,13 @@ impl WorldData {
     /// — a cell-state decode, resolved by the edit cascade, never here.
     #[inline]
     pub fn pane_mask_at(&self, pos: IVec3) -> u8 {
-        debug_assert_eq!(
-            self.physics_block(pos.x, pos.y, pos.z).shape_family(),
-            ShapeFamily::Pane,
-            "pane_mask_at on a non-pane cell"
+        debug_assert!(
+            self.physics_block(pos.x, pos.y, pos.z)
+                .shape_kind_def()
+                .params
+                .connection()
+                .is_some(),
+            "pane_mask_at on a non-connection cell"
         );
         use crate::block::CellView;
         crate::connect::ConnectionMask::from_cell(crate::block::ShapeNeighborhood::shape_state(

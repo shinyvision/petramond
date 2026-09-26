@@ -68,16 +68,7 @@ pub(super) fn edit_nav_equivalent(old: Block, new: Block) -> bool {
     if old == new {
         return true;
     }
-    let static_shape = |b: Block| {
-        matches!(
-            b.shape_family(),
-            petramond_world::block::ShapeFamily::Cube
-                | petramond_world::block::ShapeFamily::BoxSet
-                | petramond_world::block::ShapeFamily::Cross
-                | petramond_world::block::ShapeFamily::Crop
-                | petramond_world::block::ShapeFamily::Torch
-        ) && b.fluid().is_none()
-    };
+    let static_shape = |b: Block| b.nav_follows_row() && b.fluid().is_none();
     static_shape(old)
         && static_shape(new)
         && old.has_tag(petramond_world::block::BlockTag::NAV_HAZARD)

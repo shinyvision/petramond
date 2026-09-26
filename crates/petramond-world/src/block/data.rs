@@ -11,7 +11,7 @@
 use std::sync::LazyLock;
 
 use super::definition::{BlockDef, BlockFlags};
-use super::shape_kind::{BlockShapeKind, ShapeFamily, ShapeKindDef};
+use super::shape_kind::{BlockShapeKind, ShapeKindDef};
 use super::{load, Block};
 
 /// Engine block names in frozen id order (`ENGINE_BLOCK_NAMES[id]` names
@@ -257,13 +257,6 @@ pub fn state_key_declared(key: &str) -> bool {
         .shape_kinds
         .iter()
         .any(|d| d.params.state_key() == Some(key))
-}
-
-/// Dense per-id [`ShapeFamily`] — the hot shape classifier, one small-array
-/// read (see the `shape_family` field on [`load::Registry`]).
-#[inline]
-pub(super) fn shape_family(id: u16) -> ShapeFamily {
-    row(&REGISTRY.shape_family, id)
 }
 
 /// Dense per-id [`ShapeKindDef::refines`] — the refine cascade's per-cell gate

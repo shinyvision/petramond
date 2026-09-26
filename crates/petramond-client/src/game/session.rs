@@ -216,8 +216,7 @@ impl Game {
             particles: ParticleSystem::new(),
             mining_feedback: Default::default(),
             mob_digging: HashMap::new(),
-            chest_lids: HashMap::new(),
-            panel_swings: HashMap::new(),
+            block_animations: Default::default(),
         }
     }
 }

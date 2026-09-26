@@ -48,7 +48,7 @@ crate::wire_enum::wire_enum! {
 
 impl crate::block::CellView for TorchPlacement {
     fn owns(block: crate::block::Block) -> bool {
-        block.shape_family() == crate::block::ShapeFamily::Torch
+        crate::block::shape_kind_families::is_torch(block)
     }
     fn from_cell(s: crate::block::ShapeState) -> Self {
         // Absence decodes to the floor mount (the zero byte).

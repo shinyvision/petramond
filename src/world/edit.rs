@@ -1,6 +1,6 @@
 use crate::world::WorldData;
 use petramond_math::math::IVec3;
-use petramond_world::block::{Block, ShapeFamily};
+use petramond_world::block::Block;
 use petramond_world::block_state::LogAxis;
 use petramond_world::chunk::{ChunkPos, SECTION_SIZE, WORLD_MIN_Y};
 use petramond_world::column::NO_SURFACE;
@@ -9,22 +9,38 @@ use petramond_world::section::SectionSummary;
 use super::store::{SkyCoverChange, World};
 
 impl World {
-    /// Cells a player break at `pos` clears: door both halves, model footprint,
-    /// or the single cell. Used by optimistic client clears and server
-    /// corrective-cell sync so deny restores the full footprint.
+    /// Cells a player break at `pos` clears: every member of the compound
+    /// block it belongs to (a door's two halves, a model's footprint), or the
+    /// single cell. Used by optimistic client clears and server corrective-cell
+    /// sync so deny restores the full footprint.
     pub fn break_footprint_cells(&self, pos: IVec3) -> Vec<IVec3> {
+        self.compound_cells(pos).unwrap_or_else(|| vec![pos])
+    }
+
+    /// Every cell of the compound block `pos` belongs to (see
+    /// [`Block::compound_members`]), or `None` for a single-cell block.
+    pub fn compound_cells(&self, pos: IVec3) -> Option<Vec<IVec3>> {
         let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
-        match block.shape_family() {
-            ShapeFamily::Model => self
-                .model_group(pos)
-                .map(|(_, _, cells)| cells)
-                .unwrap_or_else(|| vec![pos]),
-            ShapeFamily::Door => self
-                .door_cells(pos)
-                .map(|(lower, upper)| vec![lower, upper])
-                .unwrap_or_else(|| vec![pos]),
-            _ => vec![pos],
+        let state = petramond_world::block::ShapeNeighborhood::shape_state(self, pos);
+        let members = block.compound_members(pos, state)?;
+        Some(members.into_iter().map(|(cell, _)| cell).collect())
+    }
+
+    /// Break the whole compound block `pos` belongs to: set every member cell
+    /// to air (clearing its state) and relight + remesh the region once.
+    /// Returns the removed cells (for drops/particles — the compound is one
+    /// object and drops once), or `None` for a single-cell block.
+    pub fn remove_compound(&mut self, pos: IVec3) -> Option<Vec<IVec3>> {
+        let cells = self.compound_cells(pos)?;
+        for &c in &cells {
+            if let Some((chunk, lx, ly, lz)) = self.chunk_at_world_mut(c.x, c.y, c.z) {
+                chunk.set_block(lx, ly, lz, Block::Air); // also clears the cell state
+                chunk.modified = true;
+            }
+            self.note_block_entity_change(c);
         }
+        self.refresh_region(&cells);
+        Some(cells)
     }
 
     /// Snapshot previous block ids for `break_footprint_cells`, then clear
@@ -41,19 +57,11 @@ impl World {
             .into_iter()
             .map(|c| (c, self.chunk_block(c.x, c.y, c.z)))
             .collect();
-        match block.shape_family() {
-            ShapeFamily::Model => {
-                let _ = self.remove_model_block(pos);
-            }
-            ShapeFamily::Door => {
-                let _ = self.remove_door(pos);
-            }
-            _ => {
-                // Same residue rule as the server's authoritative break, so a
-                // predicted ice break leaves the same water the server will.
-                let below = Block::from_id(self.chunk_block(pos.x, pos.y - 1, pos.z));
-                let _ = self.set_block_world(pos.x, pos.y, pos.z, block.break_residue(below));
-            }
+        if self.remove_compound(pos).is_none() {
+            // Same residue rule as the server's authoritative break, so a
+            // predicted ice break leaves the same water the server will.
+            let below = Block::from_id(self.chunk_block(pos.x, pos.y - 1, pos.z));
+            let _ = self.set_block_world(pos.x, pos.y, pos.z, block.break_residue(below));
         }
         Some((block, cells))
     }

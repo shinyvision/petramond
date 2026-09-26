@@ -3231,6 +3231,7 @@
     {
       "block": "petramond:chest",
       "shape": "cube",
+      "animated_model": "petramond:chest",
       "flags": [
         "solid",
         "directional_view"
@@ -3502,6 +3503,7 @@
     {
       "block": "petramond:oak_door",
       "shape": "door",
+      "animated_model": "petramond:door",
       "flags": [
         "solid"
       ],
@@ -3544,6 +3546,7 @@
     {
       "block": "petramond:spruce_door",
       "shape": "door",
+      "animated_model": "petramond:door",
       "flags": [
         "solid"
       ],
@@ -3586,6 +3589,7 @@
     {
       "block": "petramond:birch_door",
       "shape": "door",
+      "animated_model": "petramond:door",
       "flags": [
         "solid"
       ],
@@ -3628,6 +3632,7 @@
     {
       "block": "petramond:jungle_door",
       "shape": "door",
+      "animated_model": "petramond:door",
       "flags": [
         "solid"
       ],
@@ -3670,6 +3675,7 @@
     {
       "block": "petramond:acacia_door",
       "shape": "door",
+      "animated_model": "petramond:door",
       "flags": [
         "solid"
       ],
@@ -3842,6 +3848,7 @@
     {
       "block": "petramond:redwood_door",
       "shape": "door",
+      "animated_model": "petramond:door",
       "flags": [
         "solid"
       ],
@@ -6191,6 +6198,7 @@
     {
       "block": "petramond:oak_trapdoor",
       "shape": "trapdoor",
+      "animated_model": "petramond:trapdoor",
       "flags": [
         "solid"
       ],
@@ -6233,6 +6241,7 @@
     {
       "block": "petramond:spruce_trapdoor",
       "shape": "trapdoor",
+      "animated_model": "petramond:trapdoor",
       "flags": [
         "solid"
       ],
@@ -6275,6 +6284,7 @@
     {
       "block": "petramond:birch_trapdoor",
       "shape": "trapdoor",
+      "animated_model": "petramond:trapdoor",
       "flags": [
         "solid"
       ],
@@ -6317,6 +6327,7 @@
     {
       "block": "petramond:jungle_trapdoor",
       "shape": "trapdoor",
+      "animated_model": "petramond:trapdoor",
       "flags": [
         "solid"
       ],
@@ -6359,6 +6370,7 @@
     {
       "block": "petramond:acacia_trapdoor",
       "shape": "trapdoor",
+      "animated_model": "petramond:trapdoor",
       "flags": [
         "solid"
       ],
@@ -6401,6 +6413,7 @@
     {
       "block": "petramond:redwood_trapdoor",
       "shape": "trapdoor",
+      "animated_model": "petramond:trapdoor",
       "flags": [
         "solid"
       ],

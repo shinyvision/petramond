@@ -257,9 +257,8 @@ impl ClientModRuntime {
     /// block. A block whose owner ships no client wasm (or a trapped bake) is
     /// simply skipped, and its item draws as a plain cube.
     fn bake_item_geometry(&mut self) {
-        use petramond_world::block::ShapeFamily;
         for &block in petramond_world::block::Block::all() {
-            if block.shape_family() != ShapeFamily::Custom {
+            if !block.is_custom_shape() {
                 continue;
             }
             let key = block.shape_kind().key();
@@ -1052,7 +1051,7 @@ impl ClientModRuntime {
 /// no registration); the per-world runtime re-bakes the enabled subset at join,
 /// idempotently. A headless server has no icon atlas and never calls this.
 pub fn bake_installed_custom_item_geometry() {
-    use petramond_world::block::{Block, ShapeFamily};
+    use petramond_world::block::Block;
 
     let all: BTreeSet<String> = petramond_world::assets::packs()
         .iter()
@@ -1063,7 +1062,7 @@ pub fn bake_installed_custom_item_geometry() {
             .iter()
             .copied()
             .filter(|b| {
-                b.shape_family() == ShapeFamily::Custom
+                b.is_custom_shape()
                     && petramond_world::registry::namespace(b.shape_kind().key())
                         == Some(id.as_str())
             })

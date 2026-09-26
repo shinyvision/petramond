@@ -1,5 +1,5 @@
 use crate::vertex::BlockLightVertexExt;
-use petramond_world::block::ShapeFamily;
+use petramond_world::block::PlantPlanes;
 use petramond_world::tile::Tile;
 
 use super::super::face::{crop_quads, cross_quads};
@@ -17,7 +17,7 @@ use super::super::vertex::{pack_vertex, Vertex};
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_plant(
     opaque: &mut Vec<Vertex>,
-    shape: ShapeFamily,
+    layout: PlantPlanes,
     bx: f32,
     y: f32,
     bz: f32,
@@ -30,12 +30,15 @@ pub(super) fn emit_plant(
 ) {
     let cross;
     let crop;
-    let planes: &[[[f32; 3]; 4]] = if shape == ShapeFamily::Crop {
-        crop = crop_quads(bx, y, bz, inset, drop);
-        &crop
-    } else {
-        cross = cross_quads(bx, y, bz, inset);
-        &cross
+    let planes: &[[[f32; 3]; 4]] = match layout {
+        PlantPlanes::Crop => {
+            crop = crop_quads(bx, y, bz, inset, drop);
+            &crop
+        }
+        PlantPlanes::Cross => {
+            cross = cross_quads(bx, y, bz, inset);
+            &cross
+        }
     };
     // Flat-lit: shade index 0 (top, no directional darkening), AO = 3, no overlay;
     // `pack_vertex` and `BlockLight6` own the bit layouts.

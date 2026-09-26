@@ -5,8 +5,8 @@ use crate::tile::Tile;
 
 use super::{
     data, definition, sounds, Aabb, Block, BlockBehavior, BlockFlags, BlockInteraction,
-    BlockLightShape, BlockMaterial, BlockShapeKind, BlockSoundAction, BlockTag, ParticleEmitter,
-    ShapeFamily, ShapeKindDef, SupportDir, ENGINE_BLOCK_NAMES,
+    BlockLightShape, BlockMaterial, BlockShapeKind, BlockSoundAction, BlockTag, MeshEmitter,
+    ParticleEmitter, ShapeFamily, ShapeKindDef, ShapeState, SupportDir, ENGINE_BLOCK_NAMES,
 };
 
 impl Block {
@@ -17,8 +17,8 @@ impl Block {
     }
 
     /// This block's composable [`BlockShapeKind`] — how it meshes / collides /
-    /// places. Carries the shape [`family`](crate::block::ShapeFamily) consumers
-    /// dispatch on plus the per-row [`params`](crate::block::ShapeParams).
+    /// places: the facet singletons consumers dispatch through plus the per-row
+    /// [`params`](crate::block::ShapeParams).
     #[inline]
     pub fn shape_kind(self) -> BlockShapeKind {
         self.def().shape_kind
@@ -30,17 +30,86 @@ impl Block {
         self.shape_kind().def()
     }
 
-    /// The shape family this block meshes/collides as — the cheap `Copy`
-    /// discriminant consumers switch on. Backed by a dense per-id LUT, so this
-    /// is one small-array read (cheaper than a `def()` load).
+    /// The shape family this block meshes/collides as — its identity tag, for
+    /// diagnostics and tests. Behaviour is never keyed on it outside the shape
+    /// kind module: ask the facets (or the capability accessors below).
     #[inline]
     pub fn shape_family(self) -> ShapeFamily {
-        data::shape_family(self.id())
+        self.shape_kind_def().family
+    }
+
+    /// Which chunk-mesher emitter draws this block: its shape kind's
+    /// [`MeshEmitter`], except that a row with an animated block model is
+    /// drawn by that model and chunk-meshes nothing.
+    #[inline]
+    pub fn mesh_emitter(self) -> MeshEmitter {
+        if self.animated_model().is_some() {
+            MeshEmitter::Nothing
+        } else {
+            self.shape_kind_def().mesh_emitter
+        }
+    }
+
+    /// Whether this block's shape draws through the plain cube path — the
+    /// ordinary six-faced cube, before any animated model takes over.
+    #[inline]
+    pub fn is_cube_shaped(self) -> bool {
+        self.shape_kind_def().mesh_emitter == MeshEmitter::Cube
+    }
+
+    /// Whether this block is a mod-declared procedural shape, meshed and
+    /// collided from its pack's WASM bake.
+    #[inline]
+    pub fn is_custom_shape(self) -> bool {
+        self.shape_kind_def().params.custom().is_some()
+    }
+
+    /// The row's animated block model — drawn outside the chunk mesh and
+    /// posed per cell by [`ShapeRender::animated_pose`](crate::block::ShapeRender)
+    /// — or `None` for a block with no moving parts.
+    #[inline]
+    pub fn animated_model(self) -> Option<&'static crate::animated_model::AnimatedModelDef> {
+        self.def().animated_model
+    }
+
+    /// The animated model and its pose at a cell of this block holding
+    /// `state`, or `None` when the block has no animated model or this cell
+    /// draws none itself (a compound member its anchor draws).
+    pub fn animated_pose(
+        self,
+        state: ShapeState,
+    ) -> Option<(
+        &'static crate::animated_model::AnimatedModelDef,
+        crate::animated_model::AnimatedPose,
+    )> {
+        let model = self.animated_model()?;
+        let k = self.shape_kind_def();
+        Some((model, k.render.animated_pose(&k.params, self, state)?))
+    }
+
+    /// Every cell of the compound object a cell of this block holding `state`
+    /// at `pos` belongs to, with each member's canonical state — see
+    /// [`ShapeSim::compound_members`](crate::block::ShapeSim). `None` for a
+    /// single-cell block.
+    pub fn compound_members(
+        self,
+        pos: crate::mathh::IVec3,
+        state: ShapeState,
+    ) -> Option<Vec<(crate::mathh::IVec3, ShapeState)>> {
+        let k = self.shape_kind_def();
+        k.sim.compound_members(&k.params, self, pos, state)
+    }
+
+    /// Whether navigation over this block follows its row alone — see
+    /// [`ShapeSim::nav_follows_row`](crate::block::ShapeSim).
+    #[inline]
+    pub fn nav_follows_row(self) -> bool {
+        self.shape_kind_def().sim.nav_follows_row()
     }
 
     /// Whether this block's shape kind resolves refined per-cell state from its
     /// neighbours ([`ShapeKindDef::refines`]) — the edit cascade's and the
-    /// load sweep's gate. Dense per-id LUT like [`shape_family`](Self::shape_family):
+    /// load sweep's gate. Dense per-id LUT like [`flags`](Self::flags):
     /// the cascade asks it seven times per edit and the load sweep asks it once
     /// per cell of a whole section, neither of which may pay a `def()` load.
     #[inline]
@@ -56,8 +125,8 @@ impl Block {
         data::shape_refines(id)
     }
 
-    /// The bbmodel kind of a [`Model`](ShapeFamily::Model) block, or `None` for
-    /// any other family — the shape-kind param accessor for the model kind.
+    /// The bbmodel kind of a model-shaped block, or `None` for any other
+    /// shape — the shape-kind param accessor for the model kind.
     #[inline]
     pub fn model_kind(self) -> Option<crate::block_model::BlockModelKind> {
         self.shape_kind_def().params.model_kind()
@@ -357,7 +426,7 @@ impl Block {
     /// Whether this block's form is a BOX SET, so its sub-cell geometry has to
     /// be asked of the shape (`ShapeRender::boxes` / `occupies_pocket`) rather
     /// than read as a whole-or-empty cell. Loader-derived from the shape
-    /// kind's `resolves_to_boxes`, so it cannot disagree with it; same dense-flag
+    /// kind's box `mesh_emitter`, so it cannot disagree with it; same dense-flag
     /// rationale as [`is_slab`](Self::is_slab).
     #[inline]
     pub fn has_box_shape(self) -> bool {

@@ -1,6 +1,6 @@
 use super::*;
 use petramond_world::{
-    block::CellCodec,
+    block::{CellCodec, CellView, ShapeFamily},
     container::Container,
     item::{ItemStack, ItemType},
     section::SectionSummary,

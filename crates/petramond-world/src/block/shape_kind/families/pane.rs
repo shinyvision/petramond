@@ -10,6 +10,10 @@ use super::*;
 pub struct PaneFamily;
 
 impl ShapeSim for PaneFamily {
+    fn refines(&self, _p: &ShapeParams) -> bool {
+        true
+    }
+
     fn rotate_y(&self, block: Block, state: ShapeState) -> crate::block::rotation::CellRotation {
         crate::block::rotation::connection(block, state)
     }
@@ -26,7 +30,7 @@ impl ShapeSim for PaneFamily {
         pos: IVec3,
         _b: Block,
     ) -> &'static [Aabb] {
-        connection_boxes(nb, pos, conn(p), ShapeFamily::Pane)
+        connection_boxes(nb, pos, conn(p))
     }
 
     fn refine_state(
@@ -34,16 +38,11 @@ impl ShapeSim for PaneFamily {
         p: &ShapeParams,
         nb: &dyn ShapeNeighborhood,
         pos: IVec3,
-        _b: Block,
+        b: Block,
         _state: ShapeState,
     ) -> ShapeState {
-        crate::connect::ConnectionMask(resolve_connection_mask(
-            nb,
-            pos,
-            conn(p).rule,
-            ShapeFamily::Pane,
-        ))
-        .to_cell()
+        let mask = resolve_connection_mask(nb, pos, conn(p).rule, b.shape_kind());
+        crate::connect::ConnectionMask(mask).to_cell()
     }
 
     fn occupies_pocket(
@@ -63,6 +62,10 @@ impl ShapeSim for PaneFamily {
 }
 
 impl ShapeRender for PaneFamily {
+    fn mesh_emitter(&self, _p: &ShapeParams) -> MeshEmitter {
+        MeshEmitter::Boxes
+    }
+
     fn boxes(&self, ctx: &ShapeCtx<'_>, out: &mut Vec<ShapeBox>) {
         // [top, bottom, side] tiles = [edge, edge, glass].
         let [edge_tile, _bottom, glass_tile] = ctx.block.tiles();
@@ -89,7 +92,7 @@ impl ShapeRender for PaneFamily {
         pos: IVec3,
         _b: Block,
     ) -> Option<([f32; 3], [f32; 3])> {
-        union(connection_boxes(nb, pos, conn(p), ShapeFamily::Pane))
+        union(connection_boxes(nb, pos, conn(p)))
     }
     fn item_render(&self, p: &ShapeParams, block: Block) -> ItemRender {
         item_from_form(conn(p).item_form, block)
@@ -104,6 +107,6 @@ impl ShapePlacement for PaneFamily {
         inputs: &PlaceInputs,
         occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
     ) -> PlacementOutcome {
-        connection_placement(w, block, inputs.place_pos, ShapeFamily::Pane, occupied)
+        connection_placement(w, block, inputs.place_pos, occupied)
     }
 }

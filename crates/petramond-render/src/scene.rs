@@ -5,20 +5,20 @@
 //! presentation snapshot and the [`Renderer`]. Each frame the App builds the snapshot,
 //! calls [`Scene::bake`], then [`Scene::upload`] to hand the baked instances to the
 //! renderer. Keeping the wire structs (`ItemEntityInstance` / `ParticleInstance` /
-//! `ChestInstance`) and their reused buffers here keeps renderer presentation types out
+//! `BlockEntityInstance`) and their reused buffers here keeps renderer presentation types out
 //! of simulation code.
 //!
 //! The buffers are cleared + refilled (capacity reused) so a bounded per-frame count
 //! never reallocs.
 
 use super::{
-    ChestInstance, DoorInstance, EntityShadow, ItemEntityInstance, MobRenderInstance,
+    BlockEntityInstance, EntityShadow, ItemEntityInstance, MobRenderInstance,
     ParticleEmitterInstance, ParticleInstance, PlayerRenderInstance, RemotePlayerRender, Renderer,
-    SolidParticleInstance, TrapdoorInstance,
+    SolidParticleInstance,
 };
 use crate::views::{
-    ChestPresentation, DoorPresentation, DroppedItemPresentation, GamePresentation,
-    MobPresentation, ParticleAtlas, ParticlePresentation, TrapdoorPresentation,
+    BlockEntityPresentation, DroppedItemPresentation, GamePresentation, MobPresentation,
+    ParticleAtlas, ParticlePresentation,
 };
 use petramond_math::math::lerp_angle;
 
@@ -39,16 +39,13 @@ pub struct Scene {
     solid_particles: Vec<SolidParticleInstance>,
     /// Baked block-row particle emitters for this frame.
     particle_emitters: Vec<ParticleEmitterInstance>,
-    /// Baked placed-chest instances for this frame.
-    chests: Vec<ChestInstance>,
+    /// Baked animated-block instances (chests, doors, trapdoors, ...) for this
+    /// frame.
+    block_entities: Vec<BlockEntityInstance>,
     /// Mod draw sets for this frame — a copy of the gather, already view-culled
     /// there (`World::collect_block_draws`), which is where the rule puts it:
     /// a presentation gather scales with what is VISIBLE, not what is loaded.
     block_draws: Vec<crate::BlockDrawInstance>,
-    /// Baked placed-door instances for this frame.
-    doors: Vec<DoorInstance>,
-    /// Baked placed-trapdoor instances for this frame.
-    trapdoors: Vec<TrapdoorInstance>,
     /// Entity blob-shadow rows for this frame — the gather's own rows, a copy
     /// (they are already resolved; nothing to interpolate).
     shadows: Vec<EntityShadow>,
@@ -86,10 +83,8 @@ impl Scene {
         self.model_particles.clear();
         self.solid_particles.clear();
         self.particle_emitters.clear();
-        self.chests.clear();
+        self.block_entities.clear();
         self.block_draws.clear();
-        self.doors.clear();
-        self.trapdoors.clear();
         self.mobs.clear();
         self.shadows.clear();
         self.player = None;
@@ -127,9 +122,7 @@ impl Scene {
         self.particle_emitters.clear();
         self.particle_emitters
             .extend_from_slice(presentation.particle_emitters);
-        self.bake_chests(presentation.chests);
-        self.bake_doors(presentation.doors);
-        self.bake_trapdoors(presentation.trapdoors);
+        self.bake_block_entities(presentation.block_entities);
         bake_mobs(presentation.mobs, alpha, &mut self.mobs);
         self.shadows.clear();
         self.shadows.extend_from_slice(presentation.shadows);
@@ -170,66 +163,22 @@ impl Scene {
         (self.held_item_skylight, self.held_item_blocklight) = presentation.held_item_light;
     }
 
-    /// The placed chests to draw this frame (world pos, facing, lid angle, skylight),
-    /// gathered from the loaded chunks. The linear open progress is smoothstepped so
-    /// the lid accelerates and decelerates instead of swinging at a constant rate.
-    fn bake_chests(&mut self, chests: &[ChestPresentation]) {
-        self.chests.clear();
-        for chest in chests {
-            let pos = chest.pos;
-            let raw = chest.lid_progress;
-            let lid01 = raw * raw * (3.0 - 2.0 * raw);
-            self.chests.push(ChestInstance {
-                pos,
-                facing: chest.facing,
-                lid01,
-                skylight: chest.skylight,
-                blocklight: chest.blocklight,
-            });
-        }
-    }
-
-    /// The placed doors to draw this frame (lower pos, facing, swing angle, the two
-    /// halves' tiles, skylight), gathered from the loaded chunks. The linear swing is
-    /// smoothstepped so it accelerates and decelerates instead of turning at a constant
-    /// rate — exactly like the chest lid.
-    fn bake_doors(&mut self, doors: &[DoorPresentation]) {
-        self.doors.clear();
-        for door in doors {
-            let pos = door.pos;
-            let [bottom_tile, top_tile, side_tile] = door.tiles;
-            let raw = door.swing_progress;
-            let open01 = raw * raw * (3.0 - 2.0 * raw);
-            self.doors.push(DoorInstance {
-                pos,
-                facing: door.state.facing,
-                open01,
-                bottom_tile,
-                top_tile,
-                side_tile,
-                skylight: door.skylight,
-                blocklight: door.blocklight,
-            });
-        }
-    }
-
-    /// The placed trapdoors to draw this frame, gathered from the loaded
-    /// chunks. The linear swing is smoothstepped like the door's.
-    fn bake_trapdoors(&mut self, trapdoors: &[TrapdoorPresentation]) {
-        self.trapdoors.clear();
-        for panel in trapdoors {
-            let [top_tile, bottom_tile, side_tile] = panel.tiles;
-            let raw = panel.swing_progress;
-            self.trapdoors.push(TrapdoorInstance {
-                pos: panel.pos,
-                facing: panel.state.facing,
-                top: panel.state.top,
+    /// The animated blocks to draw this frame, gathered from the loaded chunks.
+    /// The linear open progress is smoothstepped so every lid and panel
+    /// accelerates and decelerates instead of swinging at a constant rate.
+    fn bake_block_entities(&mut self, rows: &[BlockEntityPresentation]) {
+        self.block_entities.clear();
+        for row in rows {
+            let raw = row.open_progress;
+            let b = row.block;
+            self.block_entities.push(BlockEntityInstance {
+                pos: b.pos,
+                block: b.block,
+                facing: b.pose.facing,
+                variant: b.pose.variant,
                 open01: raw * raw * (3.0 - 2.0 * raw),
-                top_tile,
-                bottom_tile,
-                side_tile,
-                skylight: panel.skylight,
-                blocklight: panel.blocklight,
+                skylight: b.skylight,
+                blocklight: b.blocklight,
             });
         }
     }
@@ -241,10 +190,8 @@ impl Scene {
     pub fn upload(&mut self, renderer: &mut Renderer) {
         renderer.set_held_item_light(self.held_item_skylight, self.held_item_blocklight);
         renderer.set_item_entities(&self.item_entities);
-        renderer.set_chests(&self.chests);
+        renderer.set_block_entities(&self.block_entities);
         renderer.set_block_draws(&self.block_draws);
-        renderer.set_doors(&self.doors);
-        renderer.set_trapdoors(&self.trapdoors);
         renderer.set_mobs(&self.mobs);
         renderer.set_shadows(&self.shadows);
         renderer.set_player(self.player);

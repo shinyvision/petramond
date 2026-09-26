@@ -13,11 +13,12 @@
 //!
 //! The per-cell collision/selection boxes (full cell height, a thin slab on one edge)
 //! are returned here as `'static` slices so `World::collision_boxes_at` can hand
-//! them straight to the swept-AABB collider. The rendered model
-//! (`render::door_model`) builds the same closed slab and rotates it
-//! about [`hinge_pivot`] by [`swing_radians`] — and because that pivot is inset half a
-//! thickness from the cell corner, the swung slab lands exactly on the open
-//! collision slab (the door stays within its own cell, not 3px into the neighbour).
+//! them straight to the swept-AABB collider. The drawn door is the
+//! `petramond:door` animated model (`assets/animated_models.json`): the same closed
+//! slab swung about a hinge inset half a thickness from the cell corner, so the
+//! swung slab lands exactly on the open collision slab (the door stays within its
+//! own cell, not 3px into the neighbour) — `crate::animated_model`'s tests hold the
+//! two to each other.
 
 use crate::block::Aabb;
 use crate::facing::Facing;
@@ -40,7 +41,7 @@ pub struct DoorState {
 
 impl crate::block::CellView for Option<DoorState> {
     fn owns(block: crate::block::Block) -> bool {
-        block.shape_family() == crate::block::ShapeFamily::Door
+        crate::block::shape_kind_families::is_door(block)
     }
     /// `None` when no state is stored (the length distinguishes it from the
     /// valid all-zero pose byte) — readers then fall back to the row's static
@@ -55,7 +56,7 @@ impl crate::block::CellView for Option<DoorState> {
 
 impl crate::block::CellView for DoorState {
     fn owns(block: crate::block::Block) -> bool {
-        block.shape_family() == crate::block::ShapeFamily::Door
+        crate::block::shape_kind_families::is_door(block)
     }
     fn from_cell(s: crate::block::ShapeState) -> Self {
         DoorState::decode(s.byte(0))
@@ -104,8 +105,8 @@ macro_rules! slab {
 
 // Closed slabs sit on the `facing` edge; opening swings them 90° (hinge on the
 // placer's LEFT corner) onto the adjacent edge, staying within THIS cell. Worked out
-// per facing (see module docs); the open edge is the one the rendered swing about
-// [`hinge_pivot`] lands on (verified in tests).
+// per facing (see module docs); the open edge is the one the drawn swing lands on
+// (verified against the animated model in `crate::animated_model`'s tests).
 const NORTH_CLOSED: &[Aabb] = slab!(z, 0.0, THICKNESS); // -Z edge
 const NORTH_OPEN: &[Aabb] = slab!(x, FAR, 1.0); //  +X edge
 const SOUTH_CLOSED: &[Aabb] = slab!(z, FAR, 1.0); // +Z edge
@@ -137,44 +138,6 @@ pub fn collision_boxes(state: DoorState) -> &'static [Aabb] {
 pub fn selection_aabb(state: DoorState) -> ([f32; 3], [f32; 3]) {
     let b = collision_boxes(state)[0];
     (b.min, b.max)
-}
-
-/// The cell-local `(x, z)` pivot the rendered door swings about — the hinge on the
-/// placer's LEFT corner of the closed edge, **inset by half the slab thickness toward
-/// the cell interior**. That inset is the fix for the "open door pokes into the next
-/// cell" bug: a rigid 90° swing of a corner-hinged full-width slab lands its 3px body
-/// on the OUTER face of the adjacent edge (fully in the neighbour); pivoting `T/2`
-/// inward instead lands the swung slab exactly on this cell's adjacent edge — i.e. on
-/// the [`collision_boxes`] open slab (verified in tests).
-#[inline]
-pub fn hinge_pivot(facing: Facing) -> (f32, f32) {
-    let i = THICKNESS / 2.0;
-    match facing {
-        Facing::South => (i, 1.0 - i),
-        Facing::North => (1.0 - i, i),
-        Facing::West => (i, i),
-        Facing::East => (1.0 - i, 1.0 - i),
-    }
-}
-
-/// The swing angle (radians, about +Y) for a door `open01` of the way open: 0 closed,
-/// +90° fully open. The rendered panel (`render::door_model`) is the
-/// closed slab rotated about [`hinge_pivot`] by this angle, landing it on the adjacent
-/// (hinge-side) edge of its OWN cell — matching the open [`collision_boxes`].
-#[inline]
-pub fn swing_radians(open01: f32) -> f32 {
-    open01.clamp(0.0, 1.0) * std::f32::consts::FRAC_PI_2
-}
-
-/// Rotate cell-local point `(x, z)` about the vertical line through `(hx, hz)` by
-/// `angle` radians about +Y. Shared by `render::door_model` so the
-/// drawn swing pivots on the hinge.
-#[inline]
-pub fn rotate_about(x: f32, z: f32, hx: f32, hz: f32, angle: f32) -> (f32, f32) {
-    let (s, c) = angle.sin_cos();
-    let (dx, dz) = (x - hx, z - hz);
-    // Right-handed rotation about +Y: x' = dx·c + dz·s, z' = -dx·s + dz·c.
-    (hx + dx * c + dz * s, hz - dx * s + dz * c)
 }
 
 #[cfg(test)]
@@ -221,49 +184,6 @@ mod tests {
                 thin_axis(closed),
                 thin_axis(open),
                 "{facing:?}: opening must rotate the slab onto the perpendicular edge"
-            );
-        }
-    }
-
-    #[test]
-    fn the_rendered_swing_lands_on_the_open_collision_slab_in_cell() {
-        // THE fix: rotating the closed slab a full 90° about the (inset) hinge pivot
-        // reproduces the OPEN collision slab exactly — so the rendered open door sits on
-        // its own cell's adjacent edge, NOT 3px into the neighbour. (With a cell-CORNER
-        // pivot this would land a full thickness outside; the T/2 inset is what fixes it.)
-        let footprint = |b: Aabb| ([b.min[0], b.min[2]], [b.max[0], b.max[2]]);
-        for &facing in &[Facing::North, Facing::South, Facing::West, Facing::East] {
-            let closed = collision_boxes(DoorState {
-                facing,
-                open: false,
-                top: false,
-            })[0];
-            let open = collision_boxes(DoorState {
-                facing,
-                open: true,
-                top: false,
-            })[0];
-            let (hx, hz) = hinge_pivot(facing);
-            let angle = swing_radians(1.0);
-            let ([cx0, cz0], [cx1, cz1]) = footprint(closed);
-            let p0 = rotate_about(cx0, cz0, hx, hz, angle);
-            let p1 = rotate_about(cx1, cz1, hx, hz, angle);
-            let rmin = [p0.0.min(p1.0), p0.1.min(p1.1)];
-            let rmax = [p0.0.max(p1.0), p0.1.max(p1.1)];
-            let (omin, omax) = footprint(open);
-            for k in 0..2 {
-                assert!(
-                    (rmin[k] - omin[k]).abs() < 1e-5 && (rmax[k] - omax[k]).abs() < 1e-5,
-                    "{facing:?}: swung closed {rmin:?}..{rmax:?} != open {omin:?}..{omax:?}"
-                );
-            }
-            // And the swung slab stays within the unit cell (no poke into a neighbour).
-            assert!(
-                rmin[0] >= -1e-5
-                    && rmax[0] <= 1.0 + 1e-5
-                    && rmin[1] >= -1e-5
-                    && rmax[1] <= 1.0 + 1e-5,
-                "{facing:?}: open slab {rmin:?}..{rmax:?} escaped the cell"
             );
         }
     }

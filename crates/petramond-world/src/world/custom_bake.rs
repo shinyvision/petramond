@@ -11,7 +11,7 @@
 //! distinct geometries, not by the world.
 //! (Data-half queries; the mutation/orchestration half stays in the engine crate.)
 
-use crate::block::{Aabb, Block, ShapeFamily};
+use crate::block::{Aabb, Block};
 use crate::chunk::{ChunkPos, SectionPos};
 use crate::mathh::IVec3;
 use crate::world::data::WorldData;
@@ -104,7 +104,7 @@ impl WorldData {
             .into_iter()
             .filter_map(|pos| {
                 let block = crate::block::Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
-                if block.shape_family() != crate::block::ShapeFamily::Custom {
+                if !block.is_custom_shape() {
                     return None;
                 }
                 Some(CustomBakeCell {
@@ -145,7 +145,7 @@ impl WorldData {
         let (ox, oy, oz) = pos.origin_world();
         let mut dirty: Vec<IVec3> = Vec::new();
         for (idx, id) in section.blocks_iter().enumerate() {
-            if Block::from_id(id).shape_family() == ShapeFamily::Custom {
+            if Block::from_id(id).is_custom_shape() {
                 let (lx, ly, lz) = crate::chunk::section_local(idx);
                 dirty.push(IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32));
             }
@@ -179,7 +179,7 @@ impl WorldData {
         ] {
             let p = IVec3::new(wx + dx, wy + dy, wz + dz);
             let b = Block::from_id(self.chunk_block(p.x, p.y, p.z));
-            if b.shape_family() == ShapeFamily::Custom
+            if b.is_custom_shape()
                 && b.shape_kind_def().params.state_key() == Some(key)
             {
                 self.invalidate_custom_bake(p);

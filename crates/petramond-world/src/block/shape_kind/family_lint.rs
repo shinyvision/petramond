@@ -1,0 +1,74 @@
+//! The seam's guard: no production code outside this module branches on a
+//! [`ShapeFamily`](super::ShapeFamily) variant. A consumer that needs to know
+//! something about a shape asks a facet (or a field the interner precomputed
+//! from one), so adding a family is one file under `families/` plus data.
+
+use std::path::{Path, PathBuf};
+
+/// This module's own directory and file, the only places a variant is named.
+const ALLOWED: [&str; 2] = [
+    "crates/petramond-world/src/block/shape_kind/",
+    "crates/petramond-world/src/block/shape_kind.rs",
+];
+
+fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if path.is_dir() {
+            // Test directories are test code; `target` is build output.
+            if name != "target" && name != "tests" {
+                rust_files(&path, out);
+            }
+        } else if name.ends_with(".rs") && !name.ends_with("tests.rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// The production part of a source file: everything before its test module.
+fn production(text: &str) -> &str {
+    text.find("#[cfg(test)]\nmod ")
+        .map_or(text, |end| &text[..end])
+}
+
+#[test]
+fn workspace_names_no_shape_family_outside_shape_kind() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut files = Vec::new();
+    rust_files(&root.join("src"), &mut files);
+    rust_files(&root.join("crates"), &mut files);
+    assert!(
+        files.len() > 100,
+        "the scan must see the workspace (found {} files under {})",
+        files.len(),
+        root.display()
+    );
+    let mut offenders = Vec::new();
+    for path in files {
+        let rel = path
+            .strip_prefix(&root)
+            .expect("scanned under the root")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if ALLOWED.iter().any(|a| rel.starts_with(a)) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).expect("readable source");
+        for (i, line) in production(&text).lines().enumerate() {
+            if line.contains("ShapeFamily::") {
+                offenders.push(format!("{rel}:{}: {}", i + 1, line.trim()));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "production code branches on a shape family outside block/shape_kind — ask a \
+         facet instead:\n{}",
+        offenders.join("\n")
+    );
+}

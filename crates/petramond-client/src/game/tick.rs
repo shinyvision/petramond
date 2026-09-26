@@ -192,8 +192,7 @@ impl Game {
         self.tick_mining_dust(dt);
         let digging = self.tick_mob_digging(dt);
         self.tick_entities(dt);
-        self.advance_chest_lids(dt);
-        self.advance_panel_swings(dt);
+        self.advance_block_animations(dt);
         self.tick_mesh_budget();
 
         let mut out = self.assemble_game_events(events, dt);

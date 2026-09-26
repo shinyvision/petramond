@@ -205,7 +205,8 @@ impl TestGame {
     /// Mirror of what the next batch's `TickUpdate.open_chests` does, for
     /// tests that drive `chest_viewers` directly (no frame pump).
     pub(super) fn sync_open_chests_for_test(&mut self) {
-        self.game.open_chests = self.server.chest_viewers.keys().copied().collect();
+        let open = self.server.chest_viewers.keys().copied().collect();
+        self.game.set_open_chests(open);
     }
 
     /// Mirror of what the next frame's `PlayerUpdate` does with the rotation

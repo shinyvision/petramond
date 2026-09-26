@@ -292,8 +292,8 @@ mod shape_kind {
     /// The per-id collision table ([`Block::static_collision_boxes`]) is only
     /// sound while every kind flagged [`ShapeKindDef::collision_state_free`]
     /// really answers the same boxes with and without a cell to read. A family
-    /// that grows a per-cell `collision_boxes` override must leave
-    /// `families::collision_is_state_free` — and this is what says so.
+    /// that grows a per-cell `collision_boxes` override must stop answering
+    /// `ShapeSim::collision_state_free` — and this is what says so.
     #[test]
     fn collision_state_free_kinds_resolve_identically() {
         use petramond_world::block::Block;

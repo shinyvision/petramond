@@ -41,7 +41,7 @@ fn overlaid_saved_section_keeps_its_block_entities_live() {
     world.apply_pending_overlays();
 
     let mut out = Vec::new();
-    world.collect_chests(&mut out);
+    world.collect_animated_blocks(&mut out);
     assert_eq!(out.len(), 1, "the overlaid chest must be collected");
 }
 

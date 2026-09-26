@@ -576,7 +576,7 @@ pub(crate) fn cell_seals_face(
     // fern, a hemp stalk) are transparent crosses with no box form at all.
     let tint_for = |_: petramond_world::tile::Tile| [1.0f32; 3];
     snow_bed_boxes(nb, pos, block, &tint_for, boxes);
-    // Dense flags first: the shape-kind row behind `resolves_to_boxes` is a
+    // Dense flags first: the shape-kind row behind `mesh_emitter` is a
     // big-table load, and almost every cell asked here is rejected.
     if block.has_box_shape() && !block.is_transparent() && !block.is_translucent() {
         let k = block.shape_kind_def();

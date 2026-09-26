@@ -38,6 +38,9 @@ pub use shape::{
 pub use shape_kind::ConnectionRule;
 pub use shape_kind::ItemRender;
 pub use shape_kind::{face_uv_turns, BlockShapeKind, ShapeFamily, ShapeKindDef};
+pub use shape_kind::{MeshEmitter, PlantPlanes};
+/// Family identity for the state codecs each shape family's cells carry.
+pub use shape_kind::families as shape_kind_families;
 pub use shape_kind::{
     full_face_at, rests_flat_on_floor, CellCodec, CellView, FullFace, NoNeighborhood, ShapeCtx,
     ShapeNeighborhood, ShapeState, NO_PART_TINT, SHAPE_STATE_MAX,

@@ -6,11 +6,10 @@ pub(crate) mod animation_inputs;
 pub(crate) mod animator_claims;
 pub mod atlas;
 pub mod block_draw;
+pub mod block_entity_model;
 pub mod break_overlay;
 pub mod camera;
-pub mod chest_model;
 pub mod crosshair;
-pub mod door_model;
 pub mod effect_icons;
 pub mod entity_shadow;
 pub(crate) mod first_person;
@@ -38,7 +37,6 @@ pub mod scene;
 pub mod selection;
 mod selection_highlight;
 pub mod shader_pack;
-pub mod trapdoor_model;
 pub mod ui;
 pub mod uniforms;
 
@@ -524,74 +522,26 @@ pub struct RemotePlayerRender {
     pub animator: AnimatorRanges,
 }
 
-/// A placed chest to draw in the world this frame: an inset body box plus a lid
-/// hinged open by `lid01` (`0` closed .. `1` fully open), oriented to `facing` at the
-/// block `pos` (the block's min corner). The game fills a slice of these from the
-/// loaded chunks' chest block-entities; the renderer frustum-culls + bakes them with
-/// [`chest_model::build_chests`].
+/// A placed ANIMATED block to draw in the world this frame — a chest, a door, a
+/// trapdoor, any row with an animated model: its block (which names the model
+/// and supplies the row tiles), the variant and facing its cell's state poses
+/// it in, and how far open it has eased (`0` closed .. `1` fully open). The
+/// game fills a slice of these from the loaded chunks' animated blocks; the
+/// renderer frustum-culls + bakes them all with
+/// [`block_entity_model::push_block_entities`].
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct ChestInstance {
-    /// The chest's cell.
+pub struct BlockEntityInstance {
+    /// The block's cell (a compound's anchor — a door's lower half).
     pos: petramond_math::math::IVec3,
-    /// Placement orientation (which way the front + latch face).
+    /// The row drawn; its animated model is the geometry.
+    block: petramond_world::block::Block,
+    /// The direction the model's canonical `+Z` front is turned to.
     facing: petramond_math::facing::Facing,
-    /// Lid open fraction: `0.0` closed, `1.0` fully open.
-    lid01: f32,
-    /// 6-bit skylight sampled from the world at the chest's cell.
-    skylight: u8,
-    /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
-    blocklight: petramond_world::light::BlockLight6,
-}
-
-/// A placed door to draw in the world this frame: a 2-tall thin slab on the `facing`
-/// edge of cell `pos` (the lower cell's min corner), swung open by `open01`
-/// (`0` closed .. `1` fully open). The game fills a slice of these from the loaded
-/// chunks' door state; the renderer frustum-culls + bakes them with
-/// [`door_model::build_doors`]. The two halves carry different art (`bottom_tile` /
-/// `top_tile`).
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct DoorInstance {
-    /// The door's lower cell.
-    pos: petramond_math::math::IVec3,
-    /// The edge the CLOSED door rests on (its outward normal); see [`petramond_world::door`].
-    facing: petramond_math::facing::Facing,
-    /// Swing fraction: `0.0` closed, `1.0` fully open onto the adjacent edge.
+    /// Which of the model's variants is drawn.
+    variant: u8,
+    /// Eased open fraction: `0.0` closed, `1.0` fully open.
     open01: f32,
-    /// Atlas tile for the lower half's front/back (door art).
-    bottom_tile: petramond_world::tile::Tile,
-    /// Atlas tile for the upper half's front/back (door art).
-    top_tile: petramond_world::tile::Tile,
-    /// Atlas tile for the four thin EDGE faces (the door's side — distinct from the
-    /// front art, e.g. a plank strip).
-    side_tile: petramond_world::tile::Tile,
-    /// 6-bit skylight sampled from the world at the door's lower cell.
-    skylight: u8,
-    /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
-    blocklight: petramond_world::light::BlockLight6,
-}
-
-/// A placed trapdoor to draw in the world this frame: a thin panel across cell
-/// `pos`, lying on its floor (or, when `top`, its ceiling) and swung up onto
-/// the `facing` edge by `open01` (`0` closed .. `1` fully open). The game fills
-/// a slice of these from the loaded chunks' trapdoor state; the renderer
-/// frustum-culls + bakes them alongside the doors.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct TrapdoorInstance {
-    /// The trapdoor's cell.
-    pos: petramond_math::math::IVec3,
-    /// The edge the panel is hinged on — and stands on when open.
-    facing: petramond_math::facing::Facing,
-    /// The closed panel lies against the cell's ceiling rather than its floor.
-    top: bool,
-    /// Swing fraction: `0.0` lying flat, `1.0` standing on the hinged edge.
-    open01: f32,
-    /// Atlas tile for the panel's upper wide face.
-    top_tile: petramond_world::tile::Tile,
-    /// Atlas tile for the panel's under wide face.
-    bottom_tile: petramond_world::tile::Tile,
-    /// Atlas tile for the four thin EDGE faces (a plank strip).
-    side_tile: petramond_world::tile::Tile,
-    /// 6-bit skylight sampled from the world at the panel's cell.
+    /// 6-bit skylight sampled from the world at the cell.
     skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
     blocklight: petramond_world::light::BlockLight6,

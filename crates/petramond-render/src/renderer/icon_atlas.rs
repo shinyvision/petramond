@@ -38,12 +38,10 @@ use crate::ui::icon::{flat_icon_mvp, iso_icon_mvp, model_icon_mvp};
 use petramond::gui::SlotRect;
 use petramond_world::item::{ItemRenderKind, ItemType};
 
-use super::super::chest_model::push_chest_item_full;
 use super::super::item_cube::{push_billboard_quad, push_block_item_cube};
 use super::super::item_model::{build_block_model_icon, ItemVertex};
 use glam::Vec3;
 use petramond_mesh::Vertex;
-use petramond_world::block::Block;
 
 /// Cells per atlas row.
 const COLS: u32 = 16;
@@ -254,22 +252,13 @@ pub(super) fn bake(
         match item.render_kind() {
             ItemRenderKind::BlockCube(block) => {
                 let index_start = cube_indices.len() as u32;
-                if block == Block::Chest {
-                    push_chest_item_full(
-                        &mut cube_verts,
-                        &mut cube_indices,
-                        Vec3::splat(-0.5),
-                        1.0,
-                    );
-                } else {
-                    push_block_item_cube(
-                        &mut cube_verts,
-                        &mut cube_indices,
-                        block,
-                        Vec3::splat(-0.5),
-                        1.0,
-                    );
-                }
+                push_block_item_cube(
+                    &mut cube_verts,
+                    &mut cube_indices,
+                    block,
+                    Vec3::splat(-0.5),
+                    1.0,
+                );
                 let mvp_offset = cube_mvps.len() as u32;
                 let mvp = iso_icon_mvp(screen, cell_rect);
                 cube_mvps.extend_from_slice(mvp_slot_bytes(&mvp).as_slice());
@@ -284,22 +273,13 @@ pub(super) fn bake(
                 // model3d samples the dye-base tiles into the twin cell.
                 let dyed_start = cube_indices.len() as u32;
                 let vert_start = cube_verts.len();
-                if block == Block::Chest {
-                    push_chest_item_full(
-                        &mut cube_verts,
-                        &mut cube_indices,
-                        Vec3::splat(-0.5),
-                        1.0,
-                    );
-                } else {
-                    push_block_item_cube(
-                        &mut cube_verts,
-                        &mut cube_indices,
-                        block,
-                        Vec3::splat(-0.5),
-                        1.0,
-                    );
-                }
+                push_block_item_cube(
+                    &mut cube_verts,
+                    &mut cube_indices,
+                    block,
+                    Vec3::splat(-0.5),
+                    1.0,
+                );
                 for v in cube_verts[vert_start..].iter_mut() {
                     v.packed2 |= petramond_mesh::DYED_FLAG2;
                 }

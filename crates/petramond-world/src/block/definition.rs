@@ -102,6 +102,10 @@ pub(super) struct BlockDef {
     /// block-id save/replication lanes and never touches the entity-facing
     /// map. `Some` exactly on `shape == ladder` rows (load-enforced).
     pub panel_facing: Option<Facing>,
+    /// The animated block model this row draws outside the chunk mesh (see
+    /// [`crate::animated_model`]), posed per cell by its shape family. `None`
+    /// for a row with no moving parts.
+    pub animated_model: Option<&'static crate::animated_model::AnimatedModelDef>,
     /// Facing → sibling-row map ([`Facing`] discriminant order: N, S, W, E)
     /// for the PLACEABLE (item-linked) row of a wall-panel family: placement
     /// commits the sibling whose `panel_facing` matches the clicked face's
@@ -536,7 +540,7 @@ impl BlockFlags {
     /// row. The player physics probes the support block's grip every sub-step,
     /// same rationale as [`CLIMBABLE`](Self::CLIMBABLE).
     pub const SLIPPERY: BlockFlags = BlockFlags(1 << 7);
-    /// Derived by the loader from the shape kind's `resolves_to_boxes`, never
+    /// Derived by the loader from the shape kind's box `mesh_emitter`, never
     /// listed in a data row: this block's form is a BOX SET, so a consumer
     /// that cares about sub-cell geometry must ask the shape instead of
     /// reading the cell as whole-or-empty. The mesher's AO ring gathers test

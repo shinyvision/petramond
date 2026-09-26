@@ -5,15 +5,14 @@
 //! A door spans two stacked cells, each holding its own [`DoorState`] in the chunk
 //! door map (the upper carries `top = true`). Placement/break/toggle all operate over
 //! the pair so the door behaves as one object — mirroring how `model` treats a
-//! bbmodel block's footprint. The door is NOT chunk-meshed (it is drawn dynamically,
-//! see `render::door_model`), and its collision is read live from the door state, so a
+//! bbmodel block's footprint. The door is NOT chunk-meshed (it is drawn as its
+//! animated block model), and its collision is read live from the door state, so a
 //! toggle needs no remesh — only the placement/break edits relight + remesh neighbours.
 
 use petramond_math::facing::Facing;
 use petramond_math::math::IVec3;
-use petramond_world::block::{Block, ShapeFamily};
+use petramond_world::block::{Block, CellView};
 use petramond_world::door::DoorState;
-use petramond_world::tile::Tile;
 
 use super::store::World;
 use petramond_world::world::query::door_support;
@@ -45,53 +44,6 @@ impl crate::world::engine_behavior::EngineBlockBehavior for Door {
 pub static DOOR: Door = Door;
 
 impl World {
-    /// Gather the doors to draw this frame: one entry per door (its LOWER cell), as
-    /// `(lower world pos, state, [bottom_art, top_art, side], skylight)`. The upper cell
-    /// is skipped (the renderer builds both halves from the lower entry). Mirrors
-    /// [`collect_chests`](Self::collect_chests); the swing angle is paired in later from
-    /// `Game::door_swing_angle`.
-    pub fn collect_doors(
-        &self,
-        out: &mut Vec<(
-            IVec3,
-            DoorState,
-            [Tile; 3],
-            u8,
-            petramond_world::light::BlockLight6,
-        )>,
-    ) {
-        out.clear();
-        for sp in &self.block_entity_sections {
-            let Some(section) = self.sections.get(sp) else {
-                continue;
-            };
-            if section.cell_states().is_empty() {
-                continue;
-            }
-            let (ox, oy, oz) = section.origin_world();
-            for &key in section.cell_states().keys() {
-                let (lx, ly, lz) = petramond_world::chunk::section_local(key as usize);
-                // The gated wrapper answers `None` for every non-door state
-                // sharing the unified map (stairs, torch mounts, fronts).
-                let Some(state) = section.door_state(lx, ly, lz) else {
-                    continue;
-                };
-                if state.top {
-                    continue; // emit once per door, from its lower cell
-                }
-                // The door BlockDef row's [top, bottom, side] tiles: front-face art for
-                // each half, plus the distinct edge tile.
-                let [top, bottom, side] = Block::from_id(section.block_raw(lx, ly, lz)).tiles();
-                let pos = IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32);
-                let sky = self.skylight6_at_world(pos.x, pos.y, pos.z);
-                let block = petramond_world::light::BlockLight6::from_x2(
-                    self.blocklight_rgb_at_world(pos.x, pos.y, pos.z),
-                );
-                out.push((pos, state, [bottom, top, side], sky, block));
-            }
-        }
-    }
-
     /// The door state (facing + open + which-half) at world `pos`, or `None` when no
     /// door is recorded there or the cell is unloaded. Read by the position-aware
     /// collision/selection (see `collision_boxes_at`) and
@@ -132,7 +84,7 @@ impl World {
         };
         let block = Block::from_id(self.chunk_block(lower.x, lower.y, lower.z));
         self.note_block_destroyed(lower, block);
-        self.remove_door(pos);
+        self.remove_compound(pos);
     }
 
     /// Place a 2-tall `block` door with its lower cell at `base`, on `facing`'s edge.
@@ -141,7 +93,7 @@ impl World {
     /// chunk-meshed, but its neighbours are). Assumes the footprint was gated clear.
     /// Returns false if `block` isn't a door or a cell is unloaded.
     pub fn place_door(&mut self, base: IVec3, block: Block, facing: Facing) -> bool {
-        if block.shape_family() != ShapeFamily::Door {
+        if !DoorState::owns(block) {
             return false;
         }
         let upper = base + UP;
@@ -190,22 +142,6 @@ impl World {
         } else {
             (pos, pos + UP)
         })
-    }
-
-    /// Break the whole door `pos` belongs to: set both cells to air (clearing their
-    /// door state) and relight + remesh. Returns the removed cells (so the caller can
-    /// spawn ONE drop + a burst), or `None` if `pos` isn't a door cell.
-    pub fn remove_door(&mut self, pos: IVec3) -> Option<Vec<IVec3>> {
-        let (lower, upper) = self.door_cells(pos)?;
-        for c in [lower, upper] {
-            if let Some((chunk, lx, ly, lz)) = self.chunk_at_world_mut(c.x, c.y, c.z) {
-                chunk.set_block(lx, ly, lz, Block::Air); // also clears the door state
-                chunk.modified = true;
-            }
-            self.note_block_entity_change(c);
-        }
-        self.refresh_region(&[lower, upper]);
-        Some(vec![lower, upper])
     }
 
     /// Toggle a door open/closed: flip `open` on BOTH cells. Collision follows the
@@ -379,7 +315,7 @@ mod tests {
         }
 
         // Breaking either cell clears the whole door.
-        let removed = w.remove_door(base).unwrap();
+        let removed = w.remove_compound(base).unwrap();
         assert_eq!(removed.len(), 2);
         for c in removed {
             assert_eq!(Block::from_id(w.chunk_block(c.x, c.y, c.z)), Block::Air);

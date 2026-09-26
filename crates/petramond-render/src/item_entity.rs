@@ -215,12 +215,6 @@ pub fn build_item_entities(
         // big count never bakes a wall of geometry. Always at least one layer.
         let layers = layers(inst);
         match inst.item.render_kind() {
-            ItemRenderKind::BlockCube(Block::Chest) => {
-                // A dropped chest spins as its full inset 3D model, not a plain cube.
-                for &offset in &STACK_LAYER_OFFSETS[..layers] {
-                    push_posed_chest(verts, indices, inst, render_origin, offset);
-                }
-            }
             ItemRenderKind::BlockCube(block) => {
                 for &offset in &STACK_LAYER_OFFSETS[..layers] {
                     push_posed_cube(verts, indices, inst, render_origin, block, offset);
@@ -387,27 +381,6 @@ fn push_posed_cube(
     );
     // Instance-data tint (`petramond:tint`): one multiply over the fresh verts.
     super::item_model::dye_block_verts(&mut verts[start..], inst.variant);
-    place_into_world(verts, start, inst, render_origin, offset);
-}
-
-/// Like [`push_posed_cube`] but bakes the chest's full inset 3D model (body + lid
-/// + latch) instead of a cube, so a dropped chest reads as a tiny chest.
-fn push_posed_chest(
-    verts: &mut Vec<Vertex>,
-    indices: &mut Vec<u32>,
-    inst: &ItemEntityInstance,
-    render_origin: glam::IVec3,
-    offset: Vec3,
-) {
-    let half = ITEM_CUBE_SIZE * 0.5;
-    let start = verts.len();
-    super::chest_model::push_chest_item(
-        verts,
-        indices,
-        Vec3::splat(-half),
-        ITEM_CUBE_SIZE,
-        inst_light(inst),
-    );
     place_into_world(verts, start, inst, render_origin, offset);
 }
 

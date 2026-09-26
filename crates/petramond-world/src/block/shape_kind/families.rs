@@ -5,15 +5,20 @@
 //! reading the world ONLY through the primitive [`ShapeNeighborhood`] seam.
 //! A [`ShapeKindDef`](super::ShapeKindDef) row binds the singleton for its
 //! family; adding a family is one struct here plus a [`singletons`] arm — not
-//! an edit to every consumer.
+//! an edit to every consumer. Everything else a consumer might ask about a
+//! family (its mesher emitter, whether it refines, whether its collision is
+//! state-free, its row rules) is a facet method the family's own file answers.
 
 use crate::mathh::IVec3;
 use crate::world::data::WorldData;
 
 use super::super::{Aabb, Block, ShapeBox};
-use super::facets::{union_box as union, ItemRender, ShapeCtx, ShapeMount, ShapeRender, ShapeSim};
+use super::facets::{
+    union_box as union, ItemRender, MeshEmitter, PlantPlanes, RowFacts, ShapeCtx, ShapeMount,
+    ShapeRender, ShapeSim,
+};
 use super::neighborhood::{ShapeNeighborhood, ShapeState};
-use super::{ConnectionParams, ItemForm, ShapeFamily, ShapeParams};
+use super::{BlockShapeKind, ConnectionParams, ItemForm, ShapeFamily, ShapeParams};
 use crate::block_state::{EntityFront, SlabState, StairState};
 use crate::facing::Facing;
 use crate::torch::TorchPlacement;
@@ -107,13 +112,13 @@ pub fn resolve_connection_mask(
     nb: &dyn ShapeNeighborhood,
     pos: IVec3,
     rule: super::ConnectionRule,
-    family: ShapeFamily,
+    kind: BlockShapeKind,
 ) -> u8 {
     crate::connect::resolved_mask(
         pos,
         |q| nb.block(q),
         |q, (dx, dz)| super::facets::full_face_at(nb, q, IVec3::new(-dx, 0, -dz)),
-        |b, dir, ff| crate::connect::connects(rule, family, b, dir, ff),
+        |b, dir, ff| crate::connect::connects(rule, kind, b, dir, ff),
     )
 }
 
@@ -123,7 +128,6 @@ fn connection_boxes(
     nb: &dyn ShapeNeighborhood,
     pos: IVec3,
     c: &ConnectionParams,
-    _family: ShapeFamily,
 ) -> &'static [Aabb] {
     crate::connect::boxes_for_mask(
         c.boxes,
@@ -137,9 +141,9 @@ fn hypothetical_connection_boxes(
     nb: &dyn ShapeNeighborhood,
     pos: IVec3,
     c: &ConnectionParams,
-    family: ShapeFamily,
+    kind: BlockShapeKind,
 ) -> &'static [Aabb] {
-    crate::connect::boxes_for_mask(c.boxes, resolve_connection_mask(nb, pos, c.rule, family))
+    crate::connect::boxes_for_mask(c.boxes, resolve_connection_mask(nb, pos, c.rule, kind))
 }
 
 /// The connection params of a fence/pane shape kind — a family invariant, so an
@@ -194,6 +198,13 @@ use slab::SlabFamily;
 use stair::StairFamily;
 use torch::TorchFamily;
 use trapdoor::TrapdoorFamily;
+
+// Family identity, for the state codecs each family's cells carry: a codec
+// owns exactly the rows of its family, and only this module names one.
+pub use door::is_door;
+pub use stair::is_stair;
+pub use torch::is_torch;
+pub use trapdoor::is_trapdoor;
 
 /// The box list of a box-set kind — a family invariant, so an absence is a
 /// loader bug.
@@ -348,20 +359,21 @@ fn connection_placement(
     w: &WorldData,
     block: Block,
     p: IVec3,
-    family: ShapeFamily,
     occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
 ) -> PlacementOutcome {
     if !w.placement_cell_open(p) {
         return PlacementOutcome::Refused;
     }
     let c = conn(&block.shape_kind_def().params);
-    if occupied(p, hypothetical_connection_boxes(w, p, c, family)) {
+    if occupied(p, hypothetical_connection_boxes(w, p, c, block.shape_kind())) {
         return PlacementOutcome::Refused;
     }
     // A plain block write: the refine cascade stores the resolved mask.
     PlacementOutcome::Plan(PlacementPlan::single(p, block, ShapeState::NONE))
 }
 
+/// The facet singletons of `family` — the ONE per-family table; a new family
+/// is a file under `families/` plus an arm here.
 pub fn singletons(
     family: ShapeFamily,
 ) -> (
@@ -384,55 +396,5 @@ pub fn singletons(
         ShapeFamily::Door => (&DOOR, &DOOR, &DOOR),
         ShapeFamily::Trapdoor => (&TRAPDOOR, &TRAPDOOR, &TRAPDOOR),
         ShapeFamily::Custom => (&CUSTOM, &CUSTOM, &CUSTOM),
-    }
-}
-
-/// Whether a family answers [`ShapeRender::boxes`] — the mesher's cheap
-/// per-cell gate, mirrored onto [`ShapeKindDef::resolves_to_boxes`] so the hot
-/// loop is a field read. Adding a box family means adding it HERE and
-/// implementing `boxes`, nothing else in the mesher.
-pub(super) fn resolves_to_boxes(family: ShapeFamily) -> bool {
-    matches!(
-        family,
-        ShapeFamily::BoxSet
-            | ShapeFamily::Stair
-            | ShapeFamily::Slab
-            | ShapeFamily::Pane
-            | ShapeFamily::Fence
-            | ShapeFamily::Ladder
-            | ShapeFamily::Custom
-    )
-}
-
-/// Whether a family's CELL COLLISION is fully determined by the block id —
-/// i.e. it does NOT override [`ShapeSim::collision_boxes`], so the trait
-/// default (the row's position-less boxes) is the whole answer. Mirrored onto
-/// [`ShapeKindDef::collision_state_free`] so the per-id collision table can be
-/// baked once and every cell probe skips the virtual resolve.
-///
-/// SAFE BY DEFAULT: a family listed here that later grows a per-cell
-/// `collision_boxes` override must be removed from this list, and
-/// `collision_state_free_kinds_resolve_identically` fails until it is.
-pub(super) fn collision_is_state_free(family: ShapeFamily) -> bool {
-    matches!(
-        family,
-        ShapeFamily::Cube | ShapeFamily::Cross | ShapeFamily::Crop | ShapeFamily::Torch
-    )
-}
-
-/// Whether a family overrides [`ShapeSim::refine_state`] — mirrored onto
-/// [`ShapeKindDef::refines`] so the edit cascade's per-cell gate is a field
-/// read. Adding a neighbour-refined family means adding it HERE and
-/// implementing `refine_state`, nothing in the cascade.
-pub(super) fn refines(family: ShapeFamily, params: &ShapeParams) -> bool {
-    match family {
-        ShapeFamily::Stair | ShapeFamily::Pane | ShapeFamily::Fence => true,
-        // Per KIND, not per family: only a box set that actually declares a
-        // connect group has anything to refine, so farmland and the snow layer
-        // keep the cascade's cheap "nothing shaped nearby" path.
-        ShapeFamily::BoxSet => params
-            .box_set()
-            .is_some_and(|s| s.refine != super::BoxSetRefine::None),
-        _ => false,
     }
 }

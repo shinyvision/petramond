@@ -1,6 +1,6 @@
 //! Stair shape and orientation shared by placement, collision, selection, and meshing.
 
-use crate::block::{Aabb, Block, ShapeFamily};
+use crate::block::{Aabb, Block};
 use crate::block_state::{StairHalf, StairState};
 use crate::facing::Facing;
 use crate::mathh::IVec3;
@@ -183,7 +183,7 @@ pub fn shape_half_cell_occupied(shape: StairShape, ix: usize, iy: usize, iz: usi
 
 #[inline]
 pub fn is_stair(block: Block) -> bool {
-    block.shape_family() == ShapeFamily::Stair
+    crate::block::shape_kind_families::is_stair(block)
 }
 
 const fn make_shapes() -> [Shape; 16] {

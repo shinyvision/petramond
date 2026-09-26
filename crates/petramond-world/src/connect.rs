@@ -10,7 +10,7 @@
 //! parameters here, so a family is its dimensions + its `connects`
 //! predicate, not a copy of this module.
 
-use crate::block::{Aabb, Block, BlockTag, ConnectionRule, FullFace, ShapeFamily};
+use crate::block::{Aabb, Block, BlockShapeKind, BlockTag, ConnectionRule, FullFace};
 use crate::mathh::{IVec3, Vec3, MAX_SELECTION_BOXES};
 
 /// A connection shape's REFINED 4-bit mask as cell state — written by the
@@ -73,7 +73,7 @@ where
     mask
 }
 
-/// Whether a connection shape of `self_family` under `rule` grows an arm toward
+/// Whether a connection shape of kind `self_kind` under `rule` grows an arm toward
 /// neighbour `nb` in outgoing direction `(dx, dz)`. Same-family shapes join
 /// under every rule but [`Never`](ConnectionRule::Never); everything else asks
 /// the neighbour FAMILY for its face (`full_face`, lazy) and applies the
@@ -84,7 +84,7 @@ where
 /// joins with no engine edit.
 pub fn connects(
     rule: ConnectionRule,
-    self_family: ShapeFamily,
+    self_kind: BlockShapeKind,
     nb: Block,
     (_dx, _dz): (i32, i32),
     full_face: &mut dyn FnMut() -> Option<FullFace>,
@@ -93,7 +93,7 @@ pub fn connects(
         return false;
     }
     // Same family (any params) joins — a wall to a wall, a fence to a fence.
-    if nb.shape_family() == self_family {
+    if nb.shape_kind().same_family(self_kind) {
         return true;
     }
     match rule {
@@ -224,14 +224,15 @@ pub fn local_boxes(boxes: &[Aabb]) -> ([(Vec3, Vec3); MAX_SELECTION_BOXES], u8) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::Block;
+    use crate::block::{Block, ShapeFamily};
     use crate::block_state::{StairHalf, StairState};
     use crate::facing::Facing;
 
-    /// Resolve a one-neighbour-to-the-east mask under `rule`/`family`.
+    /// Resolve a one-neighbour-to-the-east mask under `rule` for a shape of
+    /// `kind`.
     fn east_mask(
         rule: ConnectionRule,
-        family: ShapeFamily,
+        kind: BlockShapeKind,
         neighbour: impl Fn(IVec3) -> Block,
     ) -> u8 {
         resolved_mask(
@@ -242,7 +243,7 @@ mod tests {
                 // answer is a full CUBE face (material gates then apply).
                 (neighbour(q).shape_family() == ShapeFamily::Cube).then_some(FullFace::Cube)
             },
-            |nb, dir, ff| connects(rule, family, nb, dir, ff),
+            |nb, dir, ff| connects(rule, kind, nb, dir, ff),
         )
     }
 
@@ -250,7 +251,7 @@ mod tests {
 
     #[test]
     fn opaque_rule_joins_opaque_cubes_and_same_family_not_transparent() {
-        let (r, f) = (ConnectionRule::OpaqueOrSame, ShapeFamily::Fence);
+        let (r, f) = (ConnectionRule::OpaqueOrSame, Block::OakFence.shape_kind());
         let east = |b| move |p| if p == EAST_CELL { b } else { Block::Air };
         assert_eq!(east_mask(r, f, east(Block::OakFence)), EAST, "same family");
         assert_eq!(east_mask(r, f, east(Block::Stone)), EAST, "opaque cube");
@@ -264,7 +265,7 @@ mod tests {
 
     #[test]
     fn solid_rule_joins_glass_but_no_pane_connect_opts_out() {
-        let (r, f) = (ConnectionRule::SolidOrSame, ShapeFamily::Pane);
+        let (r, f) = (ConnectionRule::SolidOrSame, Block::GlassPane.shape_kind());
         let east = |b| move |p| if p == EAST_CELL { b } else { Block::Air };
         assert_eq!(east_mask(r, f, east(Block::GlassPane)), EAST, "same family");
         assert_eq!(
@@ -283,7 +284,7 @@ mod tests {
 
     #[test]
     fn same_only_and_never_rules() {
-        let f = ShapeFamily::Fence;
+        let f = Block::OakFence.shape_kind();
         let east = |b| move |p| if p == EAST_CELL { b } else { Block::Air };
         assert_eq!(
             east_mask(ConnectionRule::SameOnly, f, east(Block::OakFence)),
@@ -329,7 +330,7 @@ mod tests {
                 |nb, dir, ff| {
                     connects(
                         ConnectionRule::OpaqueOrSame,
-                        ShapeFamily::Fence,
+                        Block::OakFence.shape_kind(),
                         nb,
                         dir,
                         ff,

@@ -9,7 +9,7 @@ use crate::events::{BlockPlacePre, Outcome, PostEvent, SimCtx};
 use crate::net::protocol::TargetRef;
 use petramond_math::facing::Facing;
 use petramond_math::math::{IVec3, Vec3};
-use petramond_world::block::{Aabb, Block, CellPart, ShapeFamily};
+use petramond_world::block::{Aabb, Block, CellPart};
 
 impl ServerGame {
     /// Ordinary placement of the held item's block, with the shared
@@ -154,7 +154,7 @@ impl ServerGame {
         // not the engine ladder. A pack with no reachable owner (disabled /
         // trapped) falls through to the ordinary ladder so its cells still
         // place as a plain cube — the block id stays load-bearing.
-        if block.shape_family() == ShapeFamily::Custom {
+        if block.is_custom_shape() {
             if let Some(landed) = self.try_place_custom_shape(s, block, &inputs, events) {
                 return landed;
             }

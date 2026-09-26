@@ -15,7 +15,7 @@ use super::MAX_MODEL_PARTS;
 /// the low ids in the frozen const order below; mod packs register additional
 /// kinds through namespaced `models.json` rows (see [`crate::registry`]) and
 /// reference them from a block row's `shape` field (`{"model": "<key>"}`, the
-/// [`Model`](crate::block::ShapeFamily::Model) shape family). A model block
+/// model shape family). A model block
 /// names its kind there; an ITEM-ONLY model item (no block, e.g. the bucket)
 /// names its kind via `ItemType::render_kind` instead, so its
 /// placement/collision machinery simply never runs.

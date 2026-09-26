@@ -6,7 +6,8 @@
 //! placement installs both, breaking's generic container scatter empties the
 //! slots (the facing falls to the generic
 //! [`forget_block_entity_records`](super::store::World) sweep), and the
-//! render collection walks the facings of chest cells.
+//! lidded model is gathered like every animated block
+//! ([`collect_animated_blocks`](super::store::World::collect_animated_blocks)).
 
 use petramond_math::facing::Facing;
 use petramond_math::math::IVec3;
@@ -32,47 +33,11 @@ impl World {
     /// (chest, furnace) — the replica-side mirror of the server's placement
     /// state write, WITHOUT fabricating a local block-entity: containers and
     /// furnace machine state are server-owned and arrive with the delta. The
-    /// index refresh makes the dynamic chest render collect the cell at once.
+    /// index refresh makes the animated-block gather collect the cell at once.
     pub fn insert_entity_facing(&mut self, pos: IVec3, facing: Facing) {
         if let Some((c, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
             c.insert_entity_facing(lx, ly, lz, facing);
             self.note_block_entity_change(pos);
-        }
-    }
-
-    /// Append the render data — world position, facing, and sampled light — of
-    /// every loaded chest to `out` (cleared first). The transient lid open angle is
-    /// filled in by the caller (it's client-side animation, not world state). Visits
-    /// only the block-entity section index, not every loaded section.
-    pub fn collect_chests(
-        &self,
-        out: &mut Vec<(IVec3, Facing, u8, petramond_world::light::BlockLight6)>,
-    ) {
-        out.clear();
-        for sp in &self.block_entity_sections {
-            let Some(section) = self.sections.get(sp) else {
-                continue;
-            };
-            if section.cell_states().is_empty() {
-                continue;
-            }
-            let (ox, oy, oz) = section.origin_world();
-            for &key in section.cell_states().keys() {
-                // Facing state is shared by every directional block-entity
-                // (furnaces too) — only chest cells get the dynamic chest
-                // model, so gate on the block before decoding.
-                let (lx, ly, lz) = petramond_world::chunk::section_local(key as usize);
-                if section.block(lx, ly, lz) != petramond_world::block::Block::Chest {
-                    continue;
-                }
-                let facing = section.entity_facing(lx, ly, lz);
-                let pos = IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32);
-                let sky = self.skylight6_at_world(pos.x, pos.y, pos.z);
-                let block = petramond_world::light::BlockLight6::from_x2(
-                    self.blocklight_rgb_at_world(pos.x, pos.y, pos.z),
-                );
-                out.push((pos, facing, sky, block));
-            }
         }
     }
 }

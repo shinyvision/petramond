@@ -85,26 +85,16 @@ impl Renderer {
                 match kind {
                     ItemRenderKind::BlockCube(block) => {
                         let first = hv.len();
-                        if block == petramond_world::block::Block::Chest {
-                            crate::chest_model::push_chest_item(
-                                &mut hv,
-                                &mut hi,
-                                glam::Vec3::splat(-0.5),
-                                1.0,
-                                light,
-                            );
-                        } else {
-                            crate::item_cube::push_block_item_cube_lit_with_state(
-                                &mut hv,
-                                &mut hi,
-                                block,
-                                view.block_state,
-                                glam::Vec3::splat(-0.5),
-                                1.0,
-                                light,
-                                false,
-                            );
-                        }
+                        crate::item_cube::push_block_item_cube_lit_with_state(
+                            &mut hv,
+                            &mut hi,
+                            block,
+                            view.block_state,
+                            glam::Vec3::splat(-0.5),
+                            1.0,
+                            light,
+                            false,
+                        );
                         crate::item_model::dye_block_verts(&mut hv[first..], view.variant);
                         transform_positions(hv[first..].iter_mut().map(|v| &mut v.pos), at);
                     }

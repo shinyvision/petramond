@@ -2,7 +2,7 @@ use super::World;
 use crate::schematic::{CellData, ResolvedCell, Schematic, SchematicBuilder, SelectionBox};
 use petramond_math::math::IVec3;
 use petramond_world::{
-    block::{Block, CellView, ShapeFamily, ShapeState},
+    block::{Block, ShapeState},
     chunk::{section_idx, SectionPos, SECTION_MAX_CY, SECTION_MIN_CY},
     section::Section,
 };
@@ -215,21 +215,11 @@ impl SnapshotSection {
 
 fn footprint(p: [i32; 3], data: &ResolvedCell) -> Vec<[i32; 3]> {
     // Compound ownership must follow the captured state, not later live-world edits.
-    let pos = IVec3::from_array(p);
-    if let Some(kind) = data.block.model_kind() {
-        let state = petramond_world::block_model::ModelCellState::from_cell(data.state);
-        let base =
-            petramond_world::block_model::base_from_cell(pos, kind, state.offset, state.facing);
-        petramond_world::block_model::oriented_footprint_cells(base, kind, state.facing)
-            .into_iter()
-            .map(|(p, _)| p.to_array())
-            .collect()
-    } else if data.block.shape_family() == ShapeFamily::Door {
-        let door = petramond_world::door::DoorState::from_cell(data.state);
-        vec![(pos + if door.top { -IVec3::Y } else { IVec3::Y }).to_array()]
-    } else {
-        Vec::new()
-    }
+    data.block
+        .compound_members(IVec3::from_array(p), data.state)
+        .map_or_else(Vec::new, |members| {
+            members.into_iter().map(|(cell, _)| cell.to_array()).collect()
+        })
 }
 
 #[cfg(test)]

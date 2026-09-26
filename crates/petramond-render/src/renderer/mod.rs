@@ -47,9 +47,8 @@ pub use offscreen::new_offscreen_renderer;
 pub use offscreen::RenderedFrame;
 
 use super::break_overlay::build_break_overlays;
-use super::chest_model::build_chests;
+use super::block_entity_model::push_block_entities;
 use super::crosshair::crosshair_vertices;
-use super::door_model::push_doors;
 use super::entity_shadow::{build_entity_shadows, ShadowVertex};
 use super::item_entity::build_item_entities;
 use super::item_model::ItemVertex;
@@ -61,13 +60,12 @@ use super::resources::{
     upload_column_mesh, ColumnOrigins, ColumnUploadScratch, GpuSectionMesh,
 };
 use super::selection::outline_vertices;
-use super::trapdoor_model::push_trapdoors;
 use super::ui::{build_ui, UiBuild, UiVertex};
 use super::uniforms::Uniforms;
 use super::{
-    BreakOverlayView, ChestInstance, DoorInstance, EntityShadow, HeldItemFrame, HeldItemView,
+    BlockEntityInstance, BreakOverlayView, EntityShadow, HeldItemFrame, HeldItemView,
     ItemEntityInstance, MobRenderInstance, ParticleEmitterInstance, ParticleInstance,
-    PlayerRenderInstance, RemotePlayerRender, SolidParticleInstance, TrapdoorInstance, UiFrame,
+    PlayerRenderInstance, RemotePlayerRender, SolidParticleInstance, UiFrame,
 };
 use petramond::gui::{UiSnapshot, UiViewport};
 use petramond_world::bbmodel::Model;
@@ -215,7 +213,7 @@ impl ParticlePass {
 /// CPU staging each bake fills.
 struct ItemEntityPass {
     /// Item-entity dynamic draw (drawn by the EXISTING opaque pipeline — a cloned
-    /// handle — over its OWN fixed-size buffers, sized separately from chests).
+    /// handle — over its OWN buffers, sized separately from animated blocks).
     draw: DynamicDraw,
     verts: Vec<petramond_mesh::Vertex>,
     indices: Vec<u32>,
@@ -277,54 +275,34 @@ impl ShadowPass {
     }
 }
 
-/// The block-entity pass: placed blocks drawn as animated models rather than
-/// chunk geometry (chest lids, door swings), each with its own draw caps so a
-/// wall of one cannot starve the other.
+/// The block-entity pass: every placed animated block (a chest's lid, a
+/// door's or trapdoor's swing, a pack's own) drawn from its animated model
+/// rather than chunk geometry — one stream, one cull, one bake.
 struct BlockEntityPass {
-    chest_draw: DynamicDraw,
-    /// Placed chests to draw in the world this frame.
-    chests: Vec<ChestInstance>,
-    /// Reusable scratch for the frustum-visible subset of `chests`.
-    chest_visible: Vec<ChestInstance>,
-    /// ONE stream for every hinged panel: doors and trapdoors share a
-    /// pipeline, an atlas bind and a bake, so they share the buffers too.
-    panel_draw: DynamicDraw,
-    /// Placed doors to draw in the world this frame.
-    doors: Vec<DoorInstance>,
-    /// Reusable scratch for the frustum-visible subset of `doors`.
-    door_visible: Vec<DoorInstance>,
-    /// Placed trapdoors to draw in the world this frame.
-    trapdoors: Vec<TrapdoorInstance>,
-    /// Reusable scratch for the frustum-visible subset of `trapdoors`.
-    trapdoor_visible: Vec<TrapdoorInstance>,
-    /// The visible sets the live GPU buffers were baked from, and the render
+    draw: DynamicDraw,
+    /// Animated blocks to draw in the world this frame.
+    instances: Vec<BlockEntityInstance>,
+    /// Reusable scratch for the frustum-visible subset of `instances`.
+    visible: Vec<BlockEntityInstance>,
+    /// The visible set the live GPU buffers were baked from, and the render
     /// origin their vertices are relative to.
     ///
-    /// Unlike every other dynamic subsystem, these two do not move: a chest or
-    /// a door changes only when it opens, its light changes, or it comes into
-    /// view. Everything that can alter a vertex is in the instance or in the
-    /// origin, so an unchanged visible set means the buffers already hold this
-    /// frame's geometry and the whole build-and-upload is dead work.
-    chest_baked: Vec<ChestInstance>,
-    door_baked: Vec<DoorInstance>,
-    trapdoor_baked: Vec<TrapdoorInstance>,
+    /// Unlike every other dynamic subsystem, this one does not move: an
+    /// animated block changes only when it swings, its light changes, or it
+    /// comes into view. Everything that can alter a vertex is in the instance
+    /// or in the origin, so an unchanged visible set means the buffers already
+    /// hold this frame's geometry and the whole build-and-upload is dead work.
+    baked: Vec<BlockEntityInstance>,
     baked_origin: glam::IVec3,
 }
 
 impl BlockEntityPass {
     fn clear_world(&mut self) {
-        self.chest_draw.index_count = 0;
-        self.panel_draw.index_count = 0;
-        self.chests.clear();
-        self.chest_visible.clear();
-        self.doors.clear();
-        self.door_visible.clear();
-        self.trapdoors.clear();
-        self.trapdoor_visible.clear();
+        self.draw.index_count = 0;
+        self.instances.clear();
+        self.visible.clear();
         // The buffers no longer describe anything: the next frame must bake.
-        self.chest_baked.clear();
-        self.door_baked.clear();
-        self.trapdoor_baked.clear();
+        self.baked.clear();
         self.baked_origin = glam::IVec3::MIN;
     }
 }

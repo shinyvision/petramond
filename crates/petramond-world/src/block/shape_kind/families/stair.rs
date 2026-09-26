@@ -9,6 +9,14 @@ use super::*;
 pub struct StairFamily;
 
 impl ShapeSim for StairFamily {
+    fn refines(&self, _p: &ShapeParams) -> bool {
+        true
+    }
+
+    fn accepts_row_uv_rotation(&self) -> bool {
+        true
+    }
+
     fn rotate_y(&self, block: Block, state: ShapeState) -> crate::block::rotation::CellRotation {
         let placed = StairState::from_cell(state);
         let mut bytes = state.bytes().to_vec();
@@ -98,6 +106,10 @@ impl ShapeSim for StairFamily {
 }
 
 impl ShapeRender for StairFamily {
+    fn mesh_emitter(&self, _p: &ShapeParams) -> MeshEmitter {
+        MeshEmitter::Boxes
+    }
+
     fn item_boxes(
         &self,
         _p: &ShapeParams,
@@ -149,6 +161,23 @@ impl ShapeRender for StairFamily {
 }
 
 impl ShapePlacement for StairFamily {
+    /// The R key flips a held stair upside down.
+    fn held_rotations(&self) -> u8 {
+        2
+    }
+
+    fn held_state(
+        &self,
+        _block: Block,
+        rotation: &crate::world::placement::HeldRotation,
+        selected: Option<crate::item::ItemType>,
+    ) -> Option<crate::block_state::HeldBlockState> {
+        Some(crate::block_state::HeldBlockState::Stair(StairState::new(
+            crate::block_model::DEFAULT_MODEL_FACING,
+            rotation.stair_half(selected),
+        )))
+    }
+
     fn authored_plan(
         &self,
         block: Block,
@@ -186,4 +215,10 @@ impl ShapePlacement for StairFamily {
         // The placed bits only; the refine cascade appends the corner byte.
         PlacementOutcome::Plan(PlacementPlan::single(p, block, state.to_cell()))
     }
+}
+
+/// Whether `block` is a stair-shaped row — the ownership test of the stair
+/// cell state.
+pub fn is_stair(block: Block) -> bool {
+    block.shape_family() == ShapeFamily::Stair
 }

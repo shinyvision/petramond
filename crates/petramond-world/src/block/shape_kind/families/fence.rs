@@ -10,6 +10,10 @@ use super::*;
 pub struct FenceFamily;
 
 impl ShapeSim for FenceFamily {
+    fn refines(&self, _p: &ShapeParams) -> bool {
+        true
+    }
+
     fn rotate_y(&self, block: Block, state: ShapeState) -> crate::block::rotation::CellRotation {
         crate::block::rotation::connection(block, state)
     }
@@ -25,7 +29,7 @@ impl ShapeSim for FenceFamily {
         pos: IVec3,
         _b: Block,
     ) -> &'static [Aabb] {
-        connection_boxes(nb, pos, conn(p), ShapeFamily::Fence)
+        connection_boxes(nb, pos, conn(p))
     }
 
     fn refine_state(
@@ -33,16 +37,11 @@ impl ShapeSim for FenceFamily {
         p: &ShapeParams,
         nb: &dyn ShapeNeighborhood,
         pos: IVec3,
-        _b: Block,
+        b: Block,
         _state: ShapeState,
     ) -> ShapeState {
-        crate::connect::ConnectionMask(resolve_connection_mask(
-            nb,
-            pos,
-            conn(p).rule,
-            ShapeFamily::Fence,
-        ))
-        .to_cell()
+        let mask = resolve_connection_mask(nb, pos, conn(p).rule, b.shape_kind());
+        crate::connect::ConnectionMask(mask).to_cell()
     }
 
     fn full_face(
@@ -77,6 +76,10 @@ impl ShapeSim for FenceFamily {
 }
 
 impl ShapeRender for FenceFamily {
+    fn mesh_emitter(&self, _p: &ShapeParams) -> MeshEmitter {
+        MeshEmitter::Boxes
+    }
+
     fn item_boxes(
         &self,
         p: &ShapeParams,
@@ -134,7 +137,7 @@ impl ShapeRender for FenceFamily {
         pos: IVec3,
         _b: Block,
     ) -> Option<([f32; 3], [f32; 3])> {
-        union(connection_boxes(nb, pos, conn(p), ShapeFamily::Fence))
+        union(connection_boxes(nb, pos, conn(p)))
     }
     fn item_render(&self, p: &ShapeParams, block: Block) -> ItemRender {
         item_from_form(conn(p).item_form, block)
@@ -149,6 +152,6 @@ impl ShapePlacement for FenceFamily {
         inputs: &PlaceInputs,
         occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
     ) -> PlacementOutcome {
-        connection_placement(w, block, inputs.place_pos, ShapeFamily::Fence, occupied)
+        connection_placement(w, block, inputs.place_pos, occupied)
     }
 }

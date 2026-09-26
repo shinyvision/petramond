@@ -206,8 +206,8 @@ pub fn map_rgb(tile: Tile) -> [u8; 3] {
         .unwrap_or([32, 32, 32])
 }
 
-/// Tiles the ENGINE itself references (the custom chest model, the grass-side
-/// compositing, the break-overlay stages) — resolved once at registry load.
+/// Tiles the ENGINE itself references (the grass-side compositing, the
+/// break-overlay stages) — resolved once at registry load.
 /// Content tiles flow through block/item data rows instead (a fluid's still and
 /// flow strips are its row's `tiles` and `flow_tile`); a tile belongs here only
 /// when engine CODE, not data, needs it.
@@ -218,14 +218,6 @@ pub struct EngineTiles {
     pub grass_side: Tile,
     pub grass_side_overlay: Tile,
     pub dirt: Tile,
-    /// The custom inset chest model's face set (see `render::chest_model`).
-    pub chest_top: Tile,
-    pub chest_front: Tile,
-    pub chest_side: Tile,
-    pub chest_lid_front: Tile,
-    pub chest_lid_side: Tile,
-    pub chest_inside: Tile,
-    pub chest_latch: Tile,
     /// Break-progress crack overlays, stage 0 (first crack) to 9 (shattering).
     pub destroy_stages: [Tile; 10],
     /// The flat white the streak behind a fast-flying item samples (the
@@ -498,13 +490,6 @@ fn build(manifests: &[&str]) -> Result<TileData, String> {
         grass_side: need("grass_side")?,
         grass_side_overlay: need("grass_side_overlay")?,
         dirt: need("dirt")?,
-        chest_top: need("chest_top")?,
-        chest_front: need("chest_front")?,
-        chest_side: need("chest_side")?,
-        chest_lid_front: need("chest_lid_front")?,
-        chest_lid_side: need("chest_lid_side")?,
-        chest_inside: need("chest_inside")?,
-        chest_latch: need("chest_latch")?,
         destroy_stages,
         item_trail: need("item_trail")?,
     };

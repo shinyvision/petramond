@@ -10,14 +10,14 @@
 
 use std::sync::LazyLock;
 
-use petramond_world::block::{Block, ShapeFamily};
+use petramond_world::block::{Block, MeshEmitter, PlantPlanes};
 
-/// Air, chest and door cells emit nothing here (chests and doors are dynamic
-/// render entities).
+/// Air, invisible rows, and every row drawn outside the chunk mesh by its
+/// animated block model emit nothing here.
 pub(super) const SKIP: u8 = 1 << 0;
-/// The `Cross` plant family (double-sided diagonal planes).
+/// The cross plant planes (double-sided diagonal planes).
 pub(super) const CROSS: u8 = 1 << 1;
-/// The `Crop` plant family (inset, dropped planes).
+/// The crop plant planes (inset, dropped planes).
 pub(super) const CROP: u8 = 1 << 2;
 pub(super) const TORCH: u8 = 1 << 3;
 /// Resolves through the unified box-set emitter (may still fall through to the
@@ -82,26 +82,18 @@ pub(super) fn cell_classes() -> &'static [u8] {
         Block::all()
             .iter()
             .map(|&block| {
-                let family = block.shape_family();
-                let mut c = if block == Block::Air
-                    || block.flags().invisible()
-                    || block == Block::Chest
-                    || family == ShapeFamily::Door
-                    || family == ShapeFamily::Trapdoor
-                {
+                let mut c = if block == Block::Air || block.flags().invisible() {
                     SKIP
-                } else if family == ShapeFamily::Cross {
-                    CROSS
-                } else if family == ShapeFamily::Crop {
-                    CROP
-                } else if family == ShapeFamily::Torch {
-                    TORCH
-                } else if block.has_box_shape() {
-                    BOXES
-                } else if family == ShapeFamily::Model {
-                    MODEL
                 } else {
-                    0
+                    match block.mesh_emitter() {
+                        MeshEmitter::Nothing => SKIP,
+                        MeshEmitter::Plant(PlantPlanes::Cross) => CROSS,
+                        MeshEmitter::Plant(PlantPlanes::Crop) => CROP,
+                        MeshEmitter::Pole => TORCH,
+                        MeshEmitter::Boxes => BOXES,
+                        MeshEmitter::Model => MODEL,
+                        MeshEmitter::Cube => 0,
+                    }
                 };
                 // A cell the scan skips outright is never a cube candidate either.
                 // Air's row IS the cube family, so without this it would enter the
@@ -120,19 +112,18 @@ pub(super) fn cell_classes() -> &'static [u8] {
     &CLASSES
 }
 
-/// Whether a cube-family block may take the exposure-mask fast path.
+/// Whether a cube-drawn block may take the exposure-mask fast path.
 ///
 /// A block that merges with itself (glass, ice) stays on the per-face path:
 /// that same-block cull isn't representable in the opaque-rows exposure masks.
 /// Translucent blocks also need the alpha-blended buffer, which the fast path
-/// does not emit. Sub-cell shapes never reach here at all — they are not the
-/// cube family.
+/// does not emit. Sub-cell shapes never reach here at all — they do not draw
+/// through the cube emitter.
 fn fast_cube_candidate(block: Block) -> bool {
     !block.is_fluid()
         && !block.merges_with_self()
         && !block.is_translucent()
-        && block.shape_family() == ShapeFamily::Cube
-        && block != Block::Chest
+        && block.mesh_emitter() == MeshEmitter::Cube
 }
 
 /// A class-table read at a RAW id. The tables cover the loaded registry, and

@@ -24,7 +24,7 @@
 //! picks the first set, in name order, that gives the face a donor).
 
 use crate::{
-    block::{Block, ShapeFamily},
+    block::Block,
     tile::{Tile, TileTint},
 };
 use serde::Deserialize;
@@ -254,7 +254,7 @@ fn block_named(name: &str) -> Result<Block, String> {
 fn faces_of(block: Block, name: &str) -> Result<[FaceMaterial; 3], String> {
     if !block.is_opaque()
         || block.is_fluid()
-        || block.shape_family() != ShapeFamily::Cube
+        || !block.is_cube_shaped()
         || block.is_log()
         || block.front_tile().is_some()
     {

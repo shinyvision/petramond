@@ -18,6 +18,56 @@ use crate::block::shape_kind::RunRoot;
 pub struct BoxSetFamily;
 
 impl ShapeSim for BoxSetFamily {
+    /// Per KIND, not per family: only a box set that declares a neighbour
+    /// rule has anything to refine, so farmland and the snow layer keep the
+    /// cascade's cheap "nothing shaped nearby" path.
+    fn refines(&self, p: &ShapeParams) -> bool {
+        box_set(p).refine != super::super::BoxSetRefine::None
+    }
+
+    fn nav_follows_row(&self) -> bool {
+        true
+    }
+
+    fn validate_row(&self, p: &ShapeParams, row: &RowFacts) -> Result<(), String> {
+        // A corner is a meeting of two facings; without a stored facing the
+        // rule never fires and the flag is dead data.
+        if row.corners && !row.flags.is_directional_view() {
+            return Err("'corners' requires the 'directional_view' flag".into());
+        }
+        // A run resolves along the vertical axis alone; a stored facing would
+        // turn forms that were never authored for a turn.
+        if box_set(p).run().is_some() && row.flags.is_directional_view() {
+            return Err("a 'run' row cannot carry the 'directional_view' flag".into());
+        }
+        // A sub-cell shape must not claim to be an opaque full cube: neighbours
+        // would cull the faces toward it and open an x-ray slit over its gaps.
+        if row.flags.is_opaque() {
+            return Err("a 'boxes' row must not carry the 'opaque' flag".into());
+        }
+        // Whole-cell AO would override the shape's own per-pocket answer and
+        // shadow neighbours as if the gaps were filled.
+        if row.flags.occludes_ao() {
+            return Err(
+                "a 'boxes' row must not carry the 'ao_occluder' flag — its shape answers \
+                        occlusion per box"
+                    .into(),
+            );
+        }
+        // The SHAPE is the geometry: the box list already says what collides
+        // (per box), so an authored box could only restate or contradict it.
+        // Same contract as every other box-shaped family.
+        if row.authored_collision {
+            return Err(
+                "a 'boxes' row derives its collision from the shape; author \
+                        \"collision\": [] and set \"collides\": false on any box that should be \
+                        walked through"
+                    .into(),
+            );
+        }
+        Ok(())
+    }
+
     fn collision_boxes(
         &self,
         p: &ShapeParams,
@@ -167,6 +217,10 @@ impl ShapeSim for BoxSetFamily {
 }
 
 impl ShapeRender for BoxSetFamily {
+    fn mesh_emitter(&self, _p: &ShapeParams) -> MeshEmitter {
+        MeshEmitter::Boxes
+    }
+
     fn item_boxes(
         &self,
         p: &ShapeParams,
