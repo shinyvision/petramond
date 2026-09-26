@@ -83,7 +83,7 @@ fn max_config_reach() -> i32 {
 /// materialiser and the reach bound so they can never drift apart.
 #[inline]
 fn blob_base_radius(size: i32) -> f32 {
-    ((size as f32) * 3.0 / (4.0 * std::f32::consts::PI)).cbrt()
+    petramond_math::detmath::cbrtf((size as f32) * 3.0 / (4.0 * std::f32::consts::PI))
 }
 
 const fn blob(

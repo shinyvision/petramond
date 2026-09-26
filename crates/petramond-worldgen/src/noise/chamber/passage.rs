@@ -1,4 +1,5 @@
 use crate::{data::excavations::Connections, rng::FeatureRng};
+use petramond_math::detmath;
 
 const SEGMENTS: usize = 8;
 
@@ -40,8 +41,8 @@ impl Passage {
             points[i] = std::array::from_fn(|axis| {
                 (1.0 - t).powi(2) * a[axis] + 2.0 * t * (1.0 - t) * control[axis] + t * t * b[axis]
             });
-            radii[i] =
-                narrow + (wide - narrow) * (0.5 + 0.5 * (phase + t * std::f64::consts::TAU).sin());
+            let wave = detmath::sin(phase + t * std::f64::consts::TAU);
+            radii[i] = narrow + (wide - narrow) * (0.5 + 0.5 * wave);
         }
         let pad = [
             wide + shape.feather,

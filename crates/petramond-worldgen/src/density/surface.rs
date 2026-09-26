@@ -7,11 +7,11 @@
 
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
-use petramond_world::chunk::{section_idx, CHUNK_SY, SEA_LEVEL, SECTION_SIZE};
+use petramond_world::chunk::{section_idx, SEA_LEVEL, SECTION_SIZE, WORLD_MAX_Y};
 use petramond_world::section::Section;
 
 use super::lattice::{DensityLattice, DensityLatticeBounds, DensityLatticeCellSize};
-use super::terrain::{channels, TerrainDensityGraph, TerrainDensitySpec};
+use super::terrain::{channels, FloorDensitySpec, TerrainDensityGraph, TerrainDensitySpec};
 
 use crate::biome::climate::{
     BiomeClimateIndex, ClimateAxis, ClimateSampleCell, ClimateSampler, CLIMATE_SAMPLE_CELL_X,
@@ -107,8 +107,8 @@ impl SurfaceDensitySystem {
     /// Solid voxels take their skin material, non-solid voxels at or below sea level
     /// take water, the rest stay air — byte-identical to walking the density lattice
     /// (pinned by `section_fill_matches_the_lattice_reference`). Works for ANY `cy`
-    /// (incl. below y=0, where the lattice cannot be built): there, every voxel is
-    /// far below the surface and resolves through the deep fast path.
+    /// (incl. below the surface search floor): there, every voxel is far below
+    /// the surface and resolves through the deep fast path.
     pub fn fill_section(&self, section: &mut Section, biomes: &[u8], surf: &[i32]) {
         let (ox, oy, oz) = section.origin_world();
         let section_top = oy + SECTION_SIZE as i32 - 1;
@@ -298,13 +298,21 @@ impl SurfaceDensitySystem {
     }
 }
 
-/// The lowest surface a column reports: the search starts at y 0, and a
-/// column with no solid cell there answers one below it. Every cell under it
-/// is filled, whatever the landform.
-pub(crate) const SURFACE_FLOOR_Y: i32 = -1;
+/// The world Y range a column's surface is searched in, bottom inclusive and
+/// top exclusive: from the terrain density's floor — at and under which the
+/// density is solid by construction, so no surface lies lower — to the top of
+/// the cubic world. A deeper or taller world moves these bounds, nothing else.
+pub(crate) const SURFACE_SEARCH_Y: std::ops::Range<i32> =
+    FloorDensitySpec::default_surface().floor_y as i32..WORLD_MAX_Y;
 
-/// The highest solid density cell of each column, `z * w + x`: the surface
-/// the terrain fill lays everything at or under, and air or the sea above.
+/// The lowest surface a column reports: one below the search range, for a
+/// column with no solid cell in it. Every cell under it is filled, whatever
+/// the landform.
+pub(crate) const SURFACE_FLOOR_Y: i32 = SURFACE_SEARCH_Y.start - 1;
+
+/// The highest solid density cell of each column, `z * w + x`, within
+/// [`SURFACE_SEARCH_Y`]: the surface the terrain fill lays everything at or
+/// under, and air or the sea above.
 pub(crate) fn surface_heights(
     density: &TerrainDensityGraph,
     x0: i32,
@@ -312,7 +320,8 @@ pub(crate) fn surface_heights(
     w: usize,
     h: usize,
 ) -> Vec<i32> {
-    let bounds = DensityLatticeBounds::new(x0, 0, z0, w, CHUNK_SY, h);
+    let (bottom, height) = (SURFACE_SEARCH_Y.start, SURFACE_SEARCH_Y.len());
+    let bounds = DensityLatticeBounds::new(x0, bottom, z0, w, height, h);
     master_density_lattice(density, bounds)
         .top_solid_surfaces()
         .into_iter()

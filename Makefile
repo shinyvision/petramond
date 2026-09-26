@@ -15,6 +15,7 @@
 #   make smoke           -- exercise threaded, TCP, UI-connect, and headless lifecycles
 #   make test            -- the full debug-safe suite (TEST_GROUPS="core client" for a subset)
 #   make check           -- fmt-check, clippy, source-audit, test: what CI gates on
+#   make genparity       -- assert worldgen output matches its checked-in hash
 #
 # Override vars:
 #   SEED=0x12345678 RD=12 make run
@@ -45,7 +46,7 @@ RD    ?=
 NV_OFFLOAD ?=
 TEST_GROUPS ?=
 
-.PHONY: run run-native run-release run-server dev build build-native clean sweep gui-builder gui-builder-dev mods test fmt fmt-check clippy source-audit validate-assets profile smoke check
+.PHONY: run run-native run-release run-server dev build build-native clean sweep gui-builder gui-builder-dev mods test fmt fmt-check clippy source-audit validate-assets genparity profile smoke check
 
 # `run` uses the `playtest` profile: release opt-level but incremental with
 # parallel codegen units and no LTO, so the edit→playtest loop rebuilds in
@@ -150,6 +151,17 @@ source-audit:
 validate-assets:
 	CARGO_CMD="$(CARGO)" bash scripts/with-test-mods.sh bash scripts/validate-assets.sh
 
+# Worldgen byte-parity gate: the production section pipeline's hash over a
+# fixed sample must equal EXPECTED_COMBINED in
+# crates/petramond-worldgen/src/parity.rs. Release-speed codegen, and an empty
+# mods root so no installed pack can shape the terrain it hashes. A change
+# meant to alter generation updates that constant in the same commit.
+GENPARITY_MODS := $(CURDIR)/target/genparity-mods
+genparity:
+	mkdir -p "$(GENPARITY_MODS)"
+	PETRAMOND_MODS="$(GENPARITY_MODS)" \
+		$(CARGO) run --quiet --profile playtest -p petramond-worldgen --bin genparity
+
 # Manual measurement targets are intentionally outside `check`: profile
 # numbers are machine/load dependent, and smoke duplicates full-suite coverage.
 profile:
@@ -158,4 +170,4 @@ profile:
 smoke:
 	CARGO_CMD="$(CARGO)" bash scripts/with-test-mods.sh bash scripts/smoke.sh
 
-check: fmt-check clippy source-audit test
+check: fmt-check clippy source-audit test genparity

@@ -532,7 +532,7 @@ fn apply(
         Op::Max => a.max(b),
         Op::Abs => a.abs(),
         Op::Sqrt => a.sqrt(),
-        Op::Pow => a.powf(b),
+        Op::Pow => petramond_math::detmath::pow(a, b),
         Op::Trunc => a.trunc(),
         Op::Ceil => a.ceil(),
         Op::Round => (a + 0.5).floor(),

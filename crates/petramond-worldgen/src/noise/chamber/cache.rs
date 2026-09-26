@@ -1,25 +1,20 @@
-use super::{Excavation, Room, UndergroundBiomes};
-use crate::cache::{inline, CacheBudget, Memo, MemoSpec, MemoStats, Scaling};
+use super::{Excavation, Room};
+use crate::cache::{inline, CacheBudget, GenContext, Memo, MemoSpec, MemoStats, Scaling};
 
+/// A candidate room's identity: the context of the catalogs it was rolled
+/// under, its excavation row by salt, and the placement cell.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct Key {
-    seed: u32,
-    table: usize,
-    excavation: usize,
+    context: GenContext,
+    excavation: u64,
     cell: [i32; 2],
 }
 
 impl Key {
-    pub(super) fn new(
-        table: &UndergroundBiomes,
-        excavation: &Excavation,
-        seed: u32,
-        cell: [i32; 2],
-    ) -> Self {
+    pub(super) fn new(context: GenContext, excavation: &Excavation, cell: [i32; 2]) -> Self {
         Self {
-            seed,
-            table: table as *const _ as usize,
-            excavation: excavation as *const _ as usize,
+            context,
+            excavation: excavation.salt,
             cell,
         }
     }

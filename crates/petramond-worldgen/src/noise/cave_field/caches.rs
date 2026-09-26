@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use super::fluid_falls::ChunkFalls;
 use super::CaveLattice;
-use crate::cache::{inline, memo_group, pointee, slice, CacheBudget, MemoStats};
+use crate::cache::{inline, memo_group, pointee, slice, CacheBudget, GenContext, MemoStats};
 use crate::data::underground::ClimatePoint;
 use crate::noise::cave_density::Sample;
 use crate::noise::cave_walk::WalkMemos;
@@ -18,7 +18,7 @@ memo_group! {
         source: super::source::Key => Sample =
             ("cave.source", 262_144, Frontier, inline),
         /// The climate channels of one cave lattice column.
-        climate_columns: (u32, i32, i32) => ClimatePoint =
+        climate_columns: (GenContext, [i32; 2]) => ClimatePoint =
             ("cave.climate_columns", 32_768, Frontier, inline),
         /// Openness answers to repeated positional query batches.
         carved: super::query_cache::Key<Box<[super::query_cache::Query]>> => Vec<bool> =
@@ -28,7 +28,7 @@ memo_group! {
             ("cave.filled_queries", 512, Fixed, |v: &Vec<Option<u16>>| v.capacity() * 4),
         /// A 16×16 chunk's density surfaces (before caves and features): the
         /// cave model's sky line, and the terrain height queries' answer.
-        density_surfaces: (u32, [i32; 2]) => Arc<[i32]> =
+        density_surfaces: (GenContext, [i32; 2]) => Arc<[i32]> =
             ("cave.density_surfaces", 4096, Frontier, slice),
         /// The fluid falls sourced in one chunk.
         falls: super::fluid_falls::Key => Arc<ChunkFalls> =

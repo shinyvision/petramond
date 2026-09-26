@@ -3,12 +3,12 @@
 
 use super::{CaveField, Fields};
 use crate::cache::local::{self, LocalTable};
+use crate::cache::GenContext;
 use crate::noise::cave_density::Sample;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct Key {
-    seed: u32,
-    tables: [usize; 2],
+    context: GenContext,
     position: [i32; 3],
     depth: u64,
     interior: bool,
@@ -27,15 +27,11 @@ impl CaveField {
         excavation: impl FnOnce() -> (f64, f64),
     ) -> Sample {
         let key = Key {
-            seed: self.seed,
-            tables: [
-                std::ptr::from_ref(self.underground) as usize,
-                if fields.excavations {
-                    std::ptr::from_ref(self.excavations) as usize
-                } else {
-                    0
-                },
-            ],
+            context: if fields.excavations {
+                self.context()
+            } else {
+                self.context().without_excavations()
+            },
             position,
             depth: depth.to_bits(),
             interior: fields.interior,

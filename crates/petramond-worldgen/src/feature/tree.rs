@@ -9,6 +9,7 @@
 //! engines model complex trees. It still reuses the shared `shapes`
 //! primitives and the same `FeatureCtx` predicates.
 
+use petramond_math::detmath;
 use petramond_world::block::Block;
 use petramond_world::mathh::IVec3;
 
@@ -238,9 +239,9 @@ impl Feature for CanopyTreeFeature {
             let angle = base_angle + i as f32 * GOLDEN_ANGLE;
             let reach = sample_height(self.reach, rng);
             let tip = IVec3::new(
-                crown.x + (angle.cos() * reach as f32).round() as i32,
+                crown.x + (detmath::cosf(angle) * reach as f32).round() as i32,
                 top + sample_height(self.tip_height, rng),
-                crown.z + (angle.sin() * reach as f32).round() as i32,
+                crown.z + (detmath::sinf(angle) * reach as f32).round() as i32,
             );
             let tip_r = sample_height(self.tip_radius, rng);
             let node = trunk_at(node_y.min(tip.y) - y);
@@ -301,9 +302,9 @@ fn log_disc(ctx: &mut FeatureCtx, center: IVec3, radius: f32, log: Block) {
 
 fn redwood_trunk_radius(level: i32, height: i32) -> f32 {
     let t = level as f32 / (height - 1).max(1) as f32;
-    let stem = 0.80 + 2.35 * (1.0 - t).powf(0.85);
+    let stem = 0.80 + 2.35 * detmath::powf(1.0 - t, 0.85);
     let flare = if t < 0.22 {
-        1.45 * (1.0 - t / 0.22).powf(1.7)
+        1.45 * detmath::powf(1.0 - t / 0.22, 1.7)
     } else {
         0.0
     };
@@ -348,9 +349,9 @@ impl Feature for RedwoodFeature {
             let reach_base = 7.0 - 4.5 * t;
             let reach = (reach_base.round() as i32 + rng.next_i32(-1, 1)).clamp(2, 7);
             let tip = IVec3::new(
-                x + (angle.cos() * reach as f32).round() as i32,
+                x + (detmath::cosf(angle) * reach as f32).round() as i32,
                 node_y + rng.next_i32(-1, 1) + if t > 0.72 { 1 } else { 0 },
-                z + (angle.sin() * reach as f32).round() as i32,
+                z + (detmath::sinf(angle) * reach as f32).round() as i32,
             );
             log_line(ctx, IVec3::new(x, node_y, z), tip, self.log);
             shapes::leaf_blob_rounded(

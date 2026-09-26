@@ -1,6 +1,8 @@
 use super::*;
 use crate::feature::placers::shapes::connected_line;
 
+use petramond_math::detmath;
+
 /// A tapered stem with rising side limbs distributed through a vertical band.
 /// Each limb tip and the stem top is an independent foliage attachment.
 #[derive(serde::Deserialize)]
@@ -102,9 +104,9 @@ impl TrunkPlacer for WhorledTrunk {
             let reach = sample_height(self.reach, rng) as f32;
             let tip = origin
                 + IVec3::new(
-                    (direction.cos() * reach).round() as i32,
+                    (detmath::cosf(direction) * reach).round() as i32,
                     (y + sample_height(self.rise, rng)).min(height - 1),
-                    (direction.sin() * reach).round() as i32,
+                    (detmath::sinf(direction) * reach).round() as i32,
                 );
             let root = origin + IVec3::Y * y;
             let elbow = root

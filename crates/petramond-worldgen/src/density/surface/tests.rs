@@ -1,5 +1,5 @@
 use super::*;
-use petramond_world::chunk::{idx, CHUNK_SX, CHUNK_SZ};
+use petramond_world::chunk::{idx, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 use crate::biome::climate::{AxisRange, BiomeClimateEntry, ClimateRect, SurfaceClimate};
 use crate::graph::{Channel, SamplePoint, SampledScalarField};
 use petramond_world::chunk::Chunk;
@@ -356,4 +356,21 @@ fn climate_classification_uses_variance_derived_ridge() {
         index.classify_surface(SurfaceClimate::new(0.0, 0.0, 0.0, 0.0, 0.25)),
         Some(Biome::Plains)
     );
+}
+
+/// Surfaces are searched from the terrain density's floor to the top of the
+/// cubic world — no 0..256 column of its own — and every column finds its
+/// surface inside that range.
+#[test]
+fn surfaces_are_searched_from_the_density_floor_to_the_world_top() {
+    assert_eq!(SURFACE_SEARCH_Y.end, WORLD_MAX_Y);
+    assert_eq!(
+        SURFACE_SEARCH_Y.start,
+        FloorDensitySpec::default_surface().floor_y as i32
+    );
+    assert_eq!(SURFACE_FLOOR_Y, SURFACE_SEARCH_Y.start - 1);
+    let system = SurfaceDensitySystem::new(0x5EA_0013);
+    let heights = surface_heights(&system.density, -40, 25, 24, 24);
+    assert_eq!(heights.len(), 24 * 24);
+    assert!(heights.iter().all(|h| SURFACE_SEARCH_Y.contains(h)));
 }

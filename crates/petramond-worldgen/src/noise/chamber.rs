@@ -11,6 +11,7 @@
 use crate::data::excavations::{Chamber, Excavation, Excavations};
 use crate::data::underground::UndergroundBiomes;
 use crate::rng::FeatureRng;
+use petramond_math::detmath;
 
 use super::settings::CAVE_LATTICE_STEP;
 
@@ -258,8 +259,9 @@ impl ChamberField {
             rooms: Vec::new(),
             passages: Vec::new(),
         };
+        let context = crate::cache::GenContext::new(seed, table, excavations);
         let candidate = |excavation: &Excavation, cx, cz| {
-            let key = cache::Key::new(table, excavation, seed, [cx, cz]);
+            let key = cache::Key::new(context, excavation, [cx, cz]);
             cache.get_or_compute(key, || {
                 let eligible = |x, z| {
                     roll_room(excavation, seed, x, z).filter(|room| {
@@ -431,7 +433,7 @@ fn roll_lobes(rng: &mut FeatureRng, ch: &Chamber, rx: i32) -> ([Lobe; MAX_LOBES]
         let stretch =
             ch.stretch.0 + (ch.stretch.1 - ch.stretch.0) * rng.next_i32(0, 1000) as f64 / 1000.0;
         let yaw = rng.next_i32(0, 65535) as f64 * std::f64::consts::TAU / 65536.0;
-        (stretch, [yaw.cos(), yaw.sin()])
+        (stretch, [detmath::cos(yaw), detmath::sin(yaw)])
     };
     let mut lobes = [Lobe::default(); MAX_LOBES];
     // Sills are filled in once the centre is rolled; see `roll_room`.

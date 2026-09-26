@@ -1,6 +1,6 @@
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
-use petramond_world::chunk::{CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL};
+use petramond_world::chunk::{CHUNK_SX, CHUNK_SZ, SEA_LEVEL, WORLD_MAX_Y};
 use petramond_world::mathh::IVec3;
 #[cfg(test)]
 use petramond_world::section::Section;
@@ -154,7 +154,9 @@ impl TreeCandidates {
         }
 
         let profile = trees::profile(biome);
-        if anchor < 1 || anchor + profile.height_clearance >= CHUNK_SY as i32 {
+        // The anchor is above the sea already; the crown must fit under the
+        // top of the world.
+        if anchor + profile.height_clearance >= WORLD_MAX_Y {
             return None;
         }
 

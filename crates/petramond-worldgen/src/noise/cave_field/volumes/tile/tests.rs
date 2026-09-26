@@ -280,3 +280,77 @@ fn projected_columns_find_anchors_outside_the_section_and_preserve_materials() {
         );
     }
 }
+
+/// Two anchor columns of one rule reaching the same target through opposite
+/// offsets, with materials that differ because each reads its own column's
+/// surface, settle on the later source column in every tile that paints the
+/// target — never on whichever the tile happened to visit last.
+#[test]
+fn opposite_projections_onto_one_cell_settle_on_the_later_source_column() {
+    let biomes = underground::test_table(&[]);
+    let table = excavations::test_table(
+        &[r#"{"excavations":[{
+        "excavation":"test:projection_tie", "placement":{"spacing":64,"y":[0,0]},
+        "field":{"radius":[24,24],"height":[32,32],"bound_radius":32,
+            "y":[-60,80],"grid_step":16,"separation":32,
+            "cut":["and",["lt",["abs",["sub","x","center_x"]],6],["and",["le",-20,"y"],["le","y",-10]]],
+            "material":0,"palette":["petramond:air"],
+            "projections":[{"from":["petramond:air"],"offsets":[[1,0,0],[-1,0,0]],
+                "when":["eq","y",-20],"range":[-25,-21],"material":["gt","surface",0],
+                "palette":["petramond:dirt","petramond:gravel"]}]
+        }
+    }]}"#],
+        biomes,
+    );
+    let field = CaveField::with_tables(123, biomes, table);
+    let row = &table.rows[0];
+    let shape = row.field().unwrap();
+    let site = (-2..2)
+        .flat_map(|z| (-2..2).map(move |x| [x, z]))
+        .find_map(|cell| site(&field, row, shape, cell))
+        .expect("a placed site");
+    let [cx, _, cz] = site.center;
+    let plans = [Plan {
+        site,
+        row,
+        shape,
+        biome: 7,
+        salt: 0,
+    }];
+    let (tile_x, oz) = (cx.div_euclid(16) * 16, cz.div_euclid(16) * 16);
+    let mut painted = 0;
+    for ox in [tile_x - 16, tile_x, tile_x + 16] {
+        let mut draft = Draft::new([ox, -32, oz], padding(shape));
+        // The column east of the target stands above zero, so its anchor
+        // paints gravel; every other column paints dirt.
+        let surfaces: Vec<i32> = (0..draft.side[0] * draft.side[2])
+            .map(|column| {
+                let x = draft.lo[0] + (column % draft.side[0]) as i32;
+                if x == cx + 1 {
+                    5
+                } else {
+                    -3
+                }
+            })
+            .collect();
+        carve(&mut draft, &plans, &surfaces, 123);
+        projection::apply(&mut draft, &plans, &surfaces, &field);
+        for y in -25..=-21 {
+            // A tile whose halo holds only one of the two anchors cannot
+            // see the tie; it publishes the target from its interior only.
+            let (Some(i), Some(_), Some(_)) = (
+                draft.index([cx, y, cz]),
+                draft.index([cx - 1, y, cz]),
+                draft.index([cx + 1, y, cz]),
+            ) else {
+                continue;
+            };
+            let Cell::Fill(Fill { block, .. }) = draft.cells[i].cell else {
+                panic!("the target at y={y} is painted");
+            };
+            assert_eq!(block, Block::Gravel.id(), "tile {ox}: target y={y}");
+            painted += 1;
+        }
+    }
+    assert!(painted > 0, "no tile reached the target");
+}

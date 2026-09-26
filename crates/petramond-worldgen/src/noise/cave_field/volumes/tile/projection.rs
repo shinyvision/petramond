@@ -1,9 +1,10 @@
 use super::{shift, site, CaveField, Draft, Excavation, FieldShape, Plan, Site};
+use crate::cache::GenContext;
 use crate::data::excavations::effects::Projection;
 use crate::formula::{BatchScan, Scan};
 use petramond_world::block::Block;
 use petramond_world::chunk::{SEA_LEVEL, WORLD_MAX_Y, WORLD_MIN_Y};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 /// Per rule, the scans its stages reuse across every target.
@@ -29,8 +30,9 @@ fn terrain_guess(y: i32, surface: i32) -> u16 {
 
 /// What stands at one height across a 16×16 chunk once the field has cut:
 /// the union of every site's cut on the margin lattice, its material where
-/// it cuts and the terrain guess elsewhere. A probe reads this plane.
-pub(in crate::noise::cave_field) type PlaneKey = (u32, [usize; 2], [i32; 2], usize, i32);
+/// it cuts and the terrain guess elsewhere. A probe reads this plane. Keyed
+/// by the context, the excavation row's salt, the chunk and the height.
+pub(in crate::noise::cave_field) type PlaneKey = (GenContext, u64, [i32; 2], i32);
 
 /// The sites of `row` whose bounds reach the chunk within the shape's
 /// height range, in placement order.
@@ -82,13 +84,7 @@ fn probe_plane(
     chunk: [i32; 2],
     y: i32,
 ) -> Arc<[u16; 256]> {
-    let key = (
-        field.seed,
-        field.table_identities(),
-        chunk,
-        std::ptr::from_ref(shape) as usize,
-        y,
-    );
+    let key = (field.context(), row.salt, chunk, y);
     field.memos().planes.get_or_insert(key, || {
         let origin = [chunk[0] * 16, chunk[1] * 16];
         let heights = field.density_surface_tile(chunk);
@@ -207,7 +203,9 @@ fn probe_passes(
     !rule.probe.contains(&block)
 }
 
-pub(in crate::noise::cave_field) type AnchorKey = (u32, [usize; 2], [i32; 2], usize);
+/// A rule's chunk anchors: the context, the excavation row's salt, the
+/// rule's index among the row's projections and the chunk.
+pub(in crate::noise::cave_field) type AnchorKey = (GenContext, u64, usize, [i32; 2]);
 /// Per column of a 16×16 chunk, the site owning the rule's anchor there and
 /// its height: the lowest cell the site cuts with one of the rule's source
 /// materials, found on the cut margin's lattice and refined cell by cell.
@@ -227,12 +225,7 @@ fn chunk_anchors(
     chunk: [i32; 2],
 ) -> ChunkAnchors {
     let rule = &shape.projections[rule_index];
-    let key = (
-        field.seed,
-        field.table_identities(),
-        chunk,
-        rule as *const _ as usize,
-    );
+    let key = (field.context(), row.salt, rule_index, chunk);
     field.memos().anchors.get_or_insert(key, || {
         let origin = [chunk[0] * 16, chunk[1] * 16];
         let heights = field.density_surface_tile(chunk);
@@ -354,8 +347,10 @@ pub(super) fn apply(
 ) {
     let mut writes = Vec::new();
     // The anchor of every (owner, rule, column) the chunk memo names an
-    // owner for that this tile knows as a plan.
-    let mut anchors: HashMap<(usize, usize, usize), i32> = HashMap::new();
+    // owner for that this tile knows as a plan, visited in key order: two
+    // anchor columns can reach one target through opposite offsets, and the
+    // order they write in must not depend on a hasher.
+    let mut anchors: BTreeMap<(usize, usize, usize), i32> = BTreeMap::new();
     let mut chunks: HashMap<([i32; 2], usize), ChunkAnchors> = HashMap::new();
     let mut probe_scan: HashMap<usize, Scan<'_>> = HashMap::new();
     let mut probe_out: Vec<[f64; 1]> = Vec::new();
@@ -408,7 +403,7 @@ pub(super) fn apply(
                 .map(|p| p.when.scan(field.seed))
                 .collect(),
         });
-        for &offset in &rule.offsets {
+        for (offset_index, &offset) in rule.offsets.iter().enumerate() {
             let target = shift([x, anchor, z], offset);
             let Some(column_of_target) = draft.index([target[0], draft.lo[1], target[2]]) else {
                 continue;
@@ -470,14 +465,20 @@ pub(super) fn apply(
                     .iter()
                     .find(|p| p[0] == prior)
                     .map_or(fill.block, |p| p[1]);
-                writes.push((owner, rule_index, pos, block, plan.biome));
+                writes.push((
+                    (owner, rule_index, pos, column, offset_index),
+                    block,
+                    plan.biome,
+                ));
             }
         }
     }
-    // Writes in a fixed order — later placements and later rules win — so
-    // overlapping mounts settle the same way whichever tile asks.
-    writes.sort_by_key(|&(owner, rule, pos, _, _)| (owner, rule, pos));
-    for (owner, _, pos, block, biome) in writes {
+    // Writes in a fixed order — later placements, later rules and, where
+    // anchors of one rule reach the same cell, later source columns and
+    // offsets win — so overlapping mounts settle the same way whichever tile
+    // asks. The key is total: no two writes share it.
+    writes.sort_unstable_by_key(|&(key, _, _)| key);
+    for ((owner, _, pos, _, _), block, biome) in writes {
         draft.write(pos, block, biome, owner);
     }
 }

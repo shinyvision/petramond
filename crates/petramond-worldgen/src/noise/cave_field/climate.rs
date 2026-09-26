@@ -1,10 +1,11 @@
 use super::*;
 use crate::cache::local::{self, LocalTable};
+use crate::cache::GenContext;
 use crate::data::underground::ClimatePoint;
 
 thread_local! {
     /// The last component is surface height until the caller supplies Y.
-    static HORIZONTAL: LocalTable<(u32, [i32; 2]), ClimatePoint> =
+    static HORIZONTAL: LocalTable<(GenContext, [i32; 2]), ClimatePoint> =
         LocalTable::new(&local::CAVE_CLIMATE);
 }
 
@@ -12,10 +13,11 @@ impl CaveField {
     pub(super) fn climate_column(&self, x: i32, z: i32) -> ClimatePoint {
         let hash = (x as u32 as u64) ^ (z as u32 as u64).rotate_left(31) ^ self.seed as u64;
         HORIZONTAL.with(|table| {
-            table.get_or_insert_with(local::spread(hash), (self.seed, [x, z]), || {
+            let key = (self.context(), [x, z]);
+            table.get_or_insert_with(local::spread(hash), key, || {
                 self.memos()
                     .climate_columns
-                    .get_or_compute_unlocked((self.seed, x, z), || self.sample_climate_column(x, z))
+                    .get_or_compute_unlocked(key, || self.sample_climate_column(x, z))
             })
         })
     }

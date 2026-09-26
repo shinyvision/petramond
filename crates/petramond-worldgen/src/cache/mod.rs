@@ -7,8 +7,9 @@
 //! census), and is emptied when the world closes ([`GenCaches::clear`]). The
 //! world [`install`]s it; every generator built afterwards captures it
 //! ([`installed`]) and hands it down to the stages, the way the mod hook
-//! config travels. Keys carry the seed and the identity of the data tables a
-//! value derives from, so a memo never answers across worlds or packs.
+//! config travels. Every shared key starts with a [`GenContext`] — the seed
+//! and the content fingerprints of the catalogs a value derives from — so a
+//! memo never answers across worlds or packs, and never by table address.
 //!
 //! Three tiers:
 //! - shared memos (`memo::Memo`) inside [`GenCaches`] — the positional
@@ -19,6 +20,7 @@
 //! - process tables (`ProcessCaches`) — seed-derived noise generators,
 //!   bounded by the number of formulas, not by where anyone has walked.
 
+mod context;
 pub(crate) mod local;
 pub(crate) mod memo;
 
@@ -27,6 +29,7 @@ use std::sync::{Arc, LazyLock, PoisonError, RwLock};
 
 use petramond_world::section::BlockCube;
 
+pub use context::GenContext;
 pub(crate) use memo::{Memo, MemoSpec};
 
 /// How a memo's capacity follows the [`CacheBudget`].

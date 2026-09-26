@@ -6,7 +6,7 @@
 //! overriding its row; the engine's own biomes state theirs the same way.
 
 use petramond_world::biome::Biome;
-use petramond_world::chunk::CHUNK_SY;
+use petramond_world::chunk::{WORLD_MAX_Y, WORLD_MIN_Y};
 
 use crate::data::bounds::{unit, unit_range, within};
 use crate::feature::ConfiguredFeature;
@@ -228,7 +228,7 @@ impl TreeProfile {
         within(
             "height_clearance",
             self.height_clearance,
-            1..=CHUNK_SY as i32 - 1,
+            1..=WORLD_MAX_Y - WORLD_MIN_Y - 1,
         )?;
         if self.density > 0.0 && self.species.is_none() {
             return Err("species: a profile with density above zero needs a species table".into());

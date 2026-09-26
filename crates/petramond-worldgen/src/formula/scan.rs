@@ -319,7 +319,7 @@ pub(super) fn vertical_op(
                 Op::Max => binary!(|x, y| x.max(y)),
                 Op::Abs => unary!(|x| x.abs()),
                 Op::Sqrt => unary!(|x| x.sqrt()),
-                Op::Pow => binary!(|x, y| x.powf(y)),
+                Op::Pow => binary!(|x, y| petramond_math::detmath::pow(x, y)),
                 Op::Trunc => unary!(|x| x.trunc()),
                 Op::Ceil => unary!(|x| x.ceil()),
                 Op::Round => unary!(|x| (x + 0.5).floor()),

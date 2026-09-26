@@ -71,6 +71,9 @@ impl CaveCut {
 /// Immutable world sources; caches only memoize positional results.
 pub struct CaveField {
     seed: u32,
+    /// The seed and catalog fingerprints every memo key of this field
+    /// carries (see `crate::cache::GenContext`).
+    context: crate::cache::GenContext,
     /// The world's memos (see `crate::cache`), captured at construction.
     caches: std::sync::Arc<crate::cache::GenCaches>,
     natural: CaveDensity,
@@ -186,6 +189,7 @@ impl CaveField {
     ) -> Self {
         Self {
             seed,
+            context: crate::cache::GenContext::new(seed, underground, excavations),
             caches: crate::cache::installed(),
             underground,
             chamber_y_span: excavations.y_span,
@@ -220,13 +224,10 @@ impl CaveField {
         &self.caches.caves.memos
     }
 
-    /// The addresses of the loaded habitat and excavation catalogs: the
-    /// identity every memo of a carve result carries beside the seed.
-    pub(crate) fn table_identities(&self) -> [usize; 2] {
-        [
-            std::ptr::from_ref(self.underground) as usize,
-            std::ptr::from_ref(self.excavations) as usize,
-        ]
+    /// The seed and the content of the loaded habitat and excavation
+    /// catalogs: what every memo key of this field starts with.
+    pub(crate) fn context(&self) -> crate::cache::GenContext {
+        self.context
     }
 
     fn natural_open(&self, [x, y, z]: [i32; 3]) -> bool {

@@ -1,12 +1,11 @@
 use super::CaveField;
-use crate::cache::Memo;
+use crate::cache::{GenContext, Memo};
 
 pub(super) type Query = ([i32; 3], i32);
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(super) struct Key<Q> {
-    seed: u32,
-    tables: [usize; 2],
+    context: GenContext,
     queries: Q,
 }
 
@@ -26,14 +25,11 @@ impl CaveField {
             return;
         }
         let key = Key {
-            seed: self.seed,
-            tables: self.table_identities(),
+            context: self.context(),
             queries,
         };
         if let Some(answers) = memo.find(&key, |saved| {
-            saved.seed == key.seed
-                && saved.tables == key.tables
-                && saved.queries.as_ref() == queries
+            saved.context == key.context && saved.queries.as_ref() == queries
         }) {
             *out = answers;
             return;
@@ -41,8 +37,7 @@ impl CaveField {
         evaluate(out);
         memo.insert(
             Key {
-                seed: key.seed,
-                tables: key.tables,
+                context: key.context,
                 queries: queries.into(),
             },
             out.clone(),

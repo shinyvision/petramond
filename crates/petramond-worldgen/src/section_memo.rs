@@ -5,6 +5,11 @@
 //! stream, or dressing a section just after, otherwise paid the fill and the
 //! carve twice. Solidity is kept separately and longer than the blocks: it is
 //! sixteen times smaller and is what the queries read.
+//!
+//! A cube is a function of its key alone: the column's biomes and raw density
+//! surfaces it fills from are read from the same context's surface tile, never
+//! taken from the caller, so no caller can file a cube computed from other
+//! inputs under the key.
 
 use std::sync::Arc;
 
@@ -12,13 +17,13 @@ use petramond_world::block::Block;
 use petramond_world::chunk::{section_idx, SectionPos, SECTION_SIZE};
 use petramond_world::section::{BlockCube, Section};
 
+use crate::cache::GenContext;
 use crate::density::surface::SurfaceDensitySystem;
 use crate::noise::cave_field::{CaveField, FallCell};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct Key {
-    seed: u32,
-    tables: [usize; 2],
+    context: GenContext,
     pos: [i32; 3],
 }
 
@@ -72,29 +77,26 @@ pub(crate) fn space_of(id: u16) -> mod_api::TerrainSpace {
     }
 }
 
-fn key(caves: &CaveField, seed: u32, sp: SectionPos) -> Key {
+fn key(caves: &CaveField, sp: SectionPos) -> Key {
     Key {
-        seed,
-        tables: caves.table_identities(),
+        context: caves.context(),
         pos: [sp.cx, sp.cy, sp.cz],
     }
 }
 
-/// The section's filled and carved blocks. `biomes` and `surf` are the
-/// column's per-cell biome ids and raw density surfaces, `z*16 + x`.
+/// The section's filled and carved blocks. `surface` must be the density
+/// system of the cave field's seed — a generator's own pair of sources.
 pub(crate) fn terrain_cube(
     surface: &SurfaceDensitySystem,
     caves: &CaveField,
-    seed: u32,
     sp: SectionPos,
-    biomes: &[u8],
-    surf: &[i32],
 ) -> BlockCube {
     let cubes = &caves.caches().terrain.section_cubes;
-    cubes.get_or_compute_unlocked(key(caves, seed, sp), || {
+    cubes.get_or_compute_unlocked(key(caves, sp), || {
+        let (surf, biomes) = crate::feature::cached_tile_raw(surface, caves, sp.cx, sp.cz);
         let mut section = Section::new(sp.cx, sp.cy, sp.cz);
-        surface.fill_section(&mut section, biomes, surf);
-        caves.carve_section(&mut section, surf);
+        surface.fill_section(&mut section, &biomes.map(|b| b.id()), &surf);
+        caves.carve_section(&mut section, &surf);
         section.blocks().clone()
     })
 }
@@ -139,14 +141,11 @@ pub(crate) fn stamp_falls(caves: &CaveField, sp: SectionPos, section: &mut Secti
 pub(crate) fn space_mask(
     surface: &SurfaceDensitySystem,
     caves: &CaveField,
-    seed: u32,
     sp: SectionPos,
-    biomes: &[u8],
-    surf: &[i32],
 ) -> Arc<SpaceMask> {
     let spaces = &caves.caches().terrain.section_spaces;
-    spaces.get_or_insert(key(caves, seed, sp), || {
-        let cube = terrain_cube(surface, caves, seed, sp, biomes, surf);
+    spaces.get_or_insert(key(caves, sp), || {
+        let cube = terrain_cube(surface, caves, sp);
         let mut mask = SpaceMask {
             solid: [0; 64],
             fluid: [0; 64],
@@ -164,10 +163,6 @@ pub(crate) fn space_mask(
 }
 
 /// The mask when it is already known, without computing a section for it.
-pub(crate) fn space_mask_if_memoized(
-    caves: &CaveField,
-    seed: u32,
-    sp: SectionPos,
-) -> Option<Arc<SpaceMask>> {
-    caves.caches().terrain.section_spaces.get(&key(caves, seed, sp))
+pub(crate) fn space_mask_if_memoized(caves: &CaveField, sp: SectionPos) -> Option<Arc<SpaceMask>> {
+    caves.caches().terrain.section_spaces.get(&key(caves, sp))
 }

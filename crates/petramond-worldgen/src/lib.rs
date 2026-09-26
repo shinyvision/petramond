@@ -28,6 +28,7 @@ pub use terrain_query::section_blocks as terrain_section_at;
 pub mod graph;
 pub mod hooks;
 mod noise;
+pub mod parity;
 pub mod preview;
 pub mod region;
 pub mod rng;
@@ -73,9 +74,9 @@ pub fn underground_biomes_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u8> {
     out
 }
 
-/// The key of a memoized [`underground_biomes_in_box`] answer: seed, cave
-/// tables, and the normalized box.
-pub(crate) type UndergroundBoxKey = (u32, [usize; 2], [i32; 3], [i32; 3]);
+/// The key of a memoized [`underground_biomes_in_box`] answer: the cave
+/// field's context and the normalized box.
+pub(crate) type UndergroundBoxKey = (cache::GenContext, [i32; 3], [i32; 3]);
 
 /// The conservative set of underground biome ids that can own a cell inside the
 /// inclusive world box — the engine side of the mod ABI's
@@ -90,7 +91,7 @@ pub fn underground_biomes_in_box(seed: u32, lo: [i32; 3], hi: [i32; 3]) -> Vec<u
     let box_hi = std::array::from_fn(|a| lo[a].max(hi[a]));
     let generator = driver::ChunkGenerator::shared(seed);
     let (_, field) = generator.sources();
-    let key = (seed, field.table_identities(), box_lo, box_hi);
+    let key = (field.context(), box_lo, box_hi);
     field
         .caches()
         .terrain
@@ -146,14 +147,13 @@ pub fn terrain_space_at(seed: u32, positions: &[[i32; 3]]) -> Vec<TerrainSpace> 
 fn terrain_samples(seed: u32, positions: &[[i32; 3]]) -> Vec<([i32; 3], i32, TerrainSpace)> {
     let generator = driver::ChunkGenerator::shared(seed);
     let (surface, caves) = generator.sources();
-    terrain_samples_in(caves, surface, seed, positions)
+    terrain_samples_in(caves, surface, positions)
 }
 
 /// [`terrain_samples`] over explicit generation sources.
 fn terrain_samples_in(
     caves: &noise::cave_field::CaveField,
     surface: &density::surface::SurfaceDensitySystem,
-    seed: u32,
     positions: &[[i32; 3]],
 ) -> Vec<([i32; 3], i32, TerrainSpace)> {
     use petramond_world::chunk::{SectionPos, SECTION_SIZE};
@@ -182,7 +182,6 @@ fn terrain_samples_in(
             let (_, raw) = feature::cached_feature_region(
                 surface,
                 caves,
-                seed,
                 tcx * TILE,
                 tcz * TILE,
                 TILE as usize,
@@ -212,21 +211,9 @@ fn terrain_samples_in(
     for (sp, idx) in groups {
         let sp = SectionPos::new(sp[0], sp[1], sp[2]);
         let mask = if idx.len() >= SECTION_MASK_MIN {
-            let (region, raw) = feature::cached_feature_region(
-                surface,
-                caves,
-                seed,
-                sp.cx * TILE,
-                sp.cz * TILE,
-                TILE as usize,
-                TILE as usize,
-            );
-            let biomes: Vec<u8> = region.biomes.iter().map(|b| b.id()).collect();
-            Some(section_memo::space_mask(
-                surface, caves, seed, sp, &biomes, &raw,
-            ))
+            Some(section_memo::space_mask(surface, caves, sp))
         } else {
-            section_memo::space_mask_if_memoized(caves, seed, sp)
+            section_memo::space_mask_if_memoized(caves, sp)
         };
         match mask {
             Some(mask) => {
@@ -328,7 +315,7 @@ pub fn surface_biome_at(seed: u32, columns: &[[i32; 2]]) -> Vec<u8> {
         if !matches!(&tile, Some((k, _)) if *k == at) {
             tile = Some((
                 at,
-                feature::cached_tile_biomes(&surface, &caves, seed, at.0, at.1),
+                feature::cached_tile_biomes(&surface, &caves, at.0, at.1),
             ));
         }
         let biomes = &tile.as_ref().expect("tile just filled").1;
@@ -375,7 +362,8 @@ mod tests {
         use petramond_world::chunk::SectionPos;
         use petramond_world::chunk::SECTION_SIZE;
 
-        // A seed of its own: the feature tile memo is keyed on the seed alone.
+        // The synthetic table is a context of its own: every memo key names
+        // its content, so it shares no entry with the shipped table's worlds.
         let seed = 0x0E58_1001;
         const ALWAYS: &str = r#"{"fluid_falls":[{"fluid_fall":"test:always","fluid":"petramond:lava",
             "chance":1.0,"y":[-38,-11],"min_surface":45}]}"#;
@@ -387,7 +375,7 @@ mod tests {
         );
         let (surface, caves) = gen.sources();
         let space_at = |positions: &[[i32; 3]]| -> Vec<TerrainSpace> {
-            terrain_samples_in(caves, surface, seed, positions)
+            terrain_samples_in(caves, surface, positions)
                 .into_iter()
                 .map(|(_, _, space)| space)
                 .collect()
@@ -666,7 +654,7 @@ mod tests {
         let (surface, caves) = generator.sources();
         for (cx, cz) in [(0, 0), (-3, 2)] {
             let region = surface.region(cx * 16, cz * 16, 16, 16);
-            let (raw, biomes) = feature::cached_tile_raw(surface, caves, seed, cx, cz);
+            let (raw, biomes) = feature::cached_tile_raw(surface, caves, cx, cz);
             assert_eq!(raw.as_slice(), region.surf.as_slice());
             assert_eq!(biomes.as_slice(), region.biomes.as_slice());
         }

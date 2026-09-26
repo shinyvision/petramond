@@ -20,7 +20,7 @@ impl CaveField {
         let sec = SECTION_SIZE as i32;
         self.memos()
             .density_surfaces
-            .get_or_insert((self.seed, chunk), || {
+            .get_or_insert((self.context(), chunk), || {
                 crate::density::surface::surface_heights(
                     &self.terrain,
                     chunk[0] * sec,

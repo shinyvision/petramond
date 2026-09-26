@@ -3,8 +3,9 @@
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use crate::cache::{memo_group, pointee};
+use crate::cache::{memo_group, pointee, GenContext};
 use crate::rng::FeatureRng;
+use petramond_math::detmath;
 
 mod index;
 use index::Index;
@@ -90,12 +91,14 @@ impl Cut {
 const FIELD_PAD: i32 = 32;
 
 memo_group! {
-    /// The branching walks' memos, keyed by `(seed, column cell)`.
+    /// The branching walks' memos, keyed by `(context, column cell)`.
     pub(super) struct WalkMemos {
         /// One cell's planned cuts.
-        plans: (u32, [i32; 2]) => Arc<WalkField> = ("cave.walk_plans", 1024, Frontier, pointee),
+        plans: (GenContext, [i32; 2]) => Arc<WalkField> =
+            ("cave.walk_plans", 1024, Frontier, pointee),
         /// Every cut reaching one padded cell.
-        fields: (u32, [i32; 2]) => Arc<WalkField> = ("cave.walk_fields", 512, Frontier, pointee),
+        fields: (GenContext, [i32; 2]) => Arc<WalkField> =
+            ("cave.walk_fields", 512, Frontier, pointee),
     }
 }
 
@@ -105,15 +108,15 @@ pub(super) struct WalkField {
 }
 
 impl WalkField {
-    pub(super) fn gather(memos: &WalkMemos, seed: u32, bounds: [[i32; 3]; 2]) -> Self {
+    pub(super) fn gather(memos: &WalkMemos, context: GenContext, bounds: [[i32; 3]; 2]) -> Self {
         let [lo, hi] = bounds;
         let cell = [lo[0].div_euclid(CELL), lo[2].div_euclid(CELL)];
         let fits = |axis: usize, c: i32| hi[axis] <= c * CELL + CELL - 1 + FIELD_PAD;
         if fits(0, cell[0]) && fits(2, cell[1]) {
-            let field = memos.fields.get_or_insert((seed, cell), || {
+            let field = memos.fields.get_or_insert((context, cell), || {
                 Arc::new(Self::gather_direct(
                     memos,
-                    seed,
+                    context,
                     [
                         [
                             cell[0] * CELL - FIELD_PAD,
@@ -132,7 +135,7 @@ impl WalkField {
             // index over the cuts that can reach it rather than the cell's.
             return field.restrict(bounds);
         }
-        Self::gather_direct(memos, seed, bounds)
+        Self::gather_direct(memos, context, bounds)
     }
 
     fn restrict(&self, bounds: [[i32; 3]; 2]) -> Self {
@@ -144,13 +147,13 @@ impl WalkField {
         Self::from_cuts(out)
     }
 
-    fn gather_direct(memos: &WalkMemos, seed: u32, bounds: [[i32; 3]; 2]) -> Self {
+    fn gather_direct(memos: &WalkMemos, context: GenContext, bounds: [[i32; 3]; 2]) -> Self {
         let [lo, hi] = bounds;
         let mut out = Vec::new();
         for z in (lo[2] - REACH).div_euclid(CELL)..=(hi[2] + REACH).div_euclid(CELL) {
             for x in (lo[0] - REACH).div_euclid(CELL)..=(hi[0] + REACH).div_euclid(CELL) {
-                let field = memos.plans.get_or_insert((seed, [x, z]), || {
-                    Arc::new(Self::from_cuts(plan(seed, [x, z])))
+                let field = memos.plans.get_or_insert((context, [x, z]), || {
+                    Arc::new(Self::from_cuts(plan(context.seed(), [x, z])))
                 });
                 let _ = field.index.visit(&field.cuts, bounds, |cut| {
                     out.push(cut);
@@ -212,11 +215,13 @@ fn walk(
     let (mut turn, mut rise) = (0.0, 0.0);
     for step in 0..length {
         let t = step as f64 / length as f64;
-        let radius = 2.2 + (t * std::f64::consts::PI).sin() * width;
+        let radius = 2.2 + detmath::sin(t * std::f64::consts::PI) * width;
         out.push(Cut::new(p, radius, profile));
-        p[0] += yaw.cos() * pitch.cos();
-        p[2] += yaw.sin() * pitch.cos();
-        p[1] += pitch.sin();
+        let (yaw_sin, yaw_cos) = detmath::sin_cos(yaw);
+        let (pitch_sin, pitch_cos) = detmath::sin_cos(pitch);
+        p[0] += yaw_cos * pitch_cos;
+        p[2] += yaw_sin * pitch_cos;
+        p[1] += pitch_sin;
         turn = turn * 0.75 + (rng.next_f32() - rng.next_f32()) as f64 * 0.35;
         rise = rise * 0.8 + (rng.next_f32() - rng.next_f32()) as f64 * 0.15;
         yaw += turn;

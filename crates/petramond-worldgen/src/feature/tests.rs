@@ -330,7 +330,7 @@ fn cached_feature_windows_match_the_uncached_region() {
             feature_region_bounds(ox, oz),
         ] {
             let reference = surface.region(x0, z0, w, h);
-            let (cached, raw) = cached_feature_region(&surface, &caves, seed, x0, z0, w, h);
+            let (cached, raw) = cached_feature_region(&surface, &caves, x0, z0, w, h);
             assert_eq!(raw, reference.surf, "raw surfaces differ at ({cx},{cz})");
             assert_eq!(cached.biomes, reference.biomes, "biomes differ at ({cx},{cz})");
             for (i, (&adjusted, &s)) in cached.surf.iter().zip(&reference.surf).enumerate() {

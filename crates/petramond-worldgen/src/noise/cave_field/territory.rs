@@ -37,12 +37,11 @@ const LEAVES: usize = (GRID * GRID * GRID) as usize;
 /// in here as much as the seed does: the set is a fact about a table's bands,
 /// and the seed alone does not name one — a second table can be interned in the
 /// same process (a test bench, a re-layered pack) and would otherwise read the
-/// first one's answers out of these slots. The table is `&'static`, so its
-/// address is its identity.
+/// first one's answers out of these slots. The context names the table by
+/// its content; excavations are not part of a grid.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct Key {
-    seed: u32,
-    table: usize,
+    context: crate::cache::GenContext,
     pos: [i32; 3],
 }
 
@@ -92,8 +91,7 @@ impl CaveField {
 
     fn grid(&self, gp: [i32; 3]) -> Arc<Grid> {
         let key = Key {
-            seed: self.seed,
-            table: std::ptr::from_ref(self.underground) as usize,
+            context: self.context().without_excavations(),
             pos: gp,
         };
         let hash = (gp[0] as u32 as u64)

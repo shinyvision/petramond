@@ -4,6 +4,7 @@
 //! world is. Everything above may depend on this crate; this crate depends on
 //! nothing internal.
 
+pub mod detmath;
 pub mod face;
 pub mod facing;
 pub mod math;

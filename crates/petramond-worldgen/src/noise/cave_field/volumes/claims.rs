@@ -10,7 +10,7 @@ pub(in crate::noise::cave_field) struct Claim {
     biome: u8,
     y: [i32; 2],
 }
-pub(in crate::noise::cave_field) type Key = (u32, [usize; 2], [i32; 2]);
+pub(in crate::noise::cave_field) type Key = (crate::cache::GenContext, [i32; 2]);
 pub(in crate::noise::cave_field) type Claims = Arc<[Claim]>;
 
 #[derive(Default)]
@@ -88,7 +88,7 @@ pub(in crate::noise::cave_field) fn include(
 }
 
 fn column(field: &CaveField, pos: [i32; 2]) -> Claims {
-    let key = (field.seed, field.table_identities(), pos);
+    let key = (field.context(), pos);
     field.memos().claims.get_or_insert(key, || {
         let origin = pos.map(|v| v * 16);
         let mut out = Vec::new();

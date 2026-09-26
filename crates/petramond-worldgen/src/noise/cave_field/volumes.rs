@@ -13,8 +13,10 @@ mod tile;
 use tile::build_tile;
 pub(super) use tile::{AnchorKey, ChunkAnchors, PlaneKey};
 
-pub(super) type SiteKey = (u32, usize, usize, [i32; 2]);
-pub(super) type TileKey = (u32, [usize; 2], [i32; 3]);
+/// A placement site's identity: the context, the excavation row by its salt
+/// (the hash of its unique name) and the spacing cell.
+pub(super) type SiteKey = (crate::cache::GenContext, u64, [i32; 2]);
+pub(super) type TileKey = (crate::cache::GenContext, [i32; 3]);
 
 #[derive(Clone, Copy)]
 pub(super) struct Site {
@@ -126,7 +128,7 @@ impl Tiles {
                 for x in origin[0]..=end[0] {
                     let pos = [x, y, z];
                     let tile = field.memos().volume_tiles.get_or_insert(
-                        (field.seed, field.table_identities(), pos),
+                        (field.context(), pos),
                         || Arc::new(build_tile(field, pos)),
                     );
                     any |= tile.cells.is_some();
@@ -219,12 +221,7 @@ impl Tiles {
 }
 
 fn site(field: &CaveField, row: &Excavation, profile: &FieldShape, cell: [i32; 2]) -> Option<Site> {
-    let key = (
-        field.seed,
-        field.underground as *const _ as usize,
-        row as *const _ as usize,
-        cell,
-    );
+    let key = (field.context(), row.salt, cell);
     field.memos().volume_sites.get_or_insert(key, || {
         let p = &row.placement;
         let mut rng = FeatureRng::positional(field.seed, row.salt, cell[0], 0, cell[1]);
@@ -306,9 +303,7 @@ pub(super) fn space_at(field: &CaveField, pos: [i32; 3]) -> Option<mod_api::Terr
     let tile = field
         .memos()
         .volume_tiles
-        .get_or_insert((field.seed, field.table_identities(), cell), || {
-            Arc::new(build_tile(field, cell))
-        });
+        .get_or_insert((field.context(), cell), || Arc::new(build_tile(field, cell)));
     let cells = tile.cells.as_ref()?;
     let p = pos.map(|v| v.rem_euclid(16) as usize);
     match cells[(p[1] * 16 + p[2]) * 16 + p[0]] {

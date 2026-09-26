@@ -2,9 +2,13 @@
 //! axis grid. The one transform every consumer of a posed box goes through
 //! (mesh corners, the item form, the crack overlay, targeting, occupancy),
 //! so a box cannot render where it is not aimed or shadow where it is not
-//! drawn.
+//! drawn. Its trigonometry goes through [`crate::detmath`], so a pose — and
+//! every collision and targeting answer read off it — is the same on every
+//! platform.
 
 use glam::{Quat, Vec3};
+
+use crate::detmath;
 
 /// A rotation `rotation` about the cell-local point `origin`. Applied to a
 /// box authored axis-aligned, it yields an oriented box (OBB) whose faces
@@ -15,18 +19,15 @@ pub struct BoxPose {
     pub origin: Vec3,
 }
 
-/// The cell centre a quarter turn about Y pivots on.
-const CELL_CENTRE: Vec3 = Vec3::new(0.5, 0.5, 0.5);
-
 impl BoxPose {
     /// A rotation from Blockbench-style euler DEGREES, composed X first, then
     /// Y, then Z — the outliner-node order every `.bbmodel` cube uses, so a
     /// cube transcribed from a model file poses identically here.
     pub fn from_euler_degrees(deg: [f32; 3], origin: [f32; 3]) -> Self {
         BoxPose {
-            rotation: Quat::from_rotation_z(deg[2].to_radians())
-                * Quat::from_rotation_y(deg[1].to_radians())
-                * Quat::from_rotation_x(deg[0].to_radians()),
+            rotation: detmath::quat_rotation_z(deg[2].to_radians())
+                * detmath::quat_rotation_y(deg[1].to_radians())
+                * detmath::quat_rotation_x(deg[0].to_radians()),
             origin: Vec3::from(origin),
         }
     }
@@ -53,12 +54,12 @@ impl BoxPose {
     /// centre, in the same sense a box set's `turned()` takes its axis-aligned
     /// boxes: `(x, z) -> (1 - z, x)`. The turn composes onto the rotation and
     /// carries the pivot, so a posed box in a turned shape lands exactly where
-    /// turning its posed corners would put it.
+    /// turning its posed corners would put it. The pivot moves by the exact
+    /// cell map, not through the (rounded) quaternion.
     pub fn turned(&self) -> Self {
-        let turn = Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2);
         BoxPose {
-            rotation: turn * self.rotation,
-            origin: CELL_CENTRE + turn * (self.origin - CELL_CENTRE),
+            rotation: detmath::QUARTER_TURN_Y * self.rotation,
+            origin: Vec3::new(1.0 - self.origin.z, self.origin.y, self.origin.x),
         }
     }
 
@@ -216,6 +217,12 @@ mod tests {
         let four = pose.turned().turned().turned().turned();
         let p = Vec3::new(0.3, 0.6, 0.8);
         assert!(close(four.apply(p), pose.apply(p)));
+        // The pivot moves by the exact cell map: a grid-aligned pivot comes
+        // back bit for bit.
+        let pivot = BoxPose::from_euler_degrees([0.0, 30.0, 0.0], [0.25, 0.5, 0.75]);
+        assert_eq!(pivot.turned().origin, Vec3::new(0.25, 0.5, 0.25));
+        let back = pivot.turned().turned().turned().turned();
+        assert_eq!(back.origin, pivot.origin);
     }
 
     /// The SAT overlap: a tilted plane through the cell centre meets a

@@ -28,9 +28,11 @@ pub(crate) struct RegionTile {
     biomes: [Biome; 256],
 }
 
-/// A tile's identity: the seed, the cave tables the adjusted surfaces read,
-/// and the tile's chunk coordinates.
-pub(crate) type TileKey = (u32, [usize; 2], [i32; 2]);
+/// A tile's identity: the cave field's context (the seed, and the catalogs
+/// the adjusted surfaces read) and the tile's chunk coordinates. `surface`
+/// is always the density system of that seed — a generator's own pair of
+/// sources — so the key names every input.
+pub(crate) type TileKey = (crate::cache::GenContext, [i32; 2]);
 
 /// One memo tile, derived once for every worker that needs it (the world's
 /// `terrain.surface_tiles` memo is single-flight): tiles are pure functions of
@@ -40,12 +42,11 @@ pub(crate) type TileKey = (u32, [usize; 2], [i32; 2]);
 fn cached_tile(
     surface: &SurfaceDensitySystem,
     caves: &crate::noise::cave_field::CaveField,
-    seed: u32,
     tcx: i32,
     tcz: i32,
 ) -> Arc<RegionTile> {
     const T: i32 = CHUNK_SX as i32;
-    let key = (seed, caves.table_identities(), [tcx, tcz]);
+    let key = (caves.context(), [tcx, tcz]);
     caves.caches().terrain.surface_tiles.get_or_insert(key, || {
         let (tx0, tz0) = (tcx * T, tcz * T);
         let bulk = surface.region(tx0, tz0, T as usize, T as usize);
@@ -67,11 +68,10 @@ fn cached_tile(
 pub(crate) fn cached_tile_raw(
     surface: &SurfaceDensitySystem,
     caves: &crate::noise::cave_field::CaveField,
-    seed: u32,
     tcx: i32,
     tcz: i32,
 ) -> ([i32; 256], [Biome; 256]) {
-    let tile = cached_tile(surface, caves, seed, tcx, tcz);
+    let tile = cached_tile(surface, caves, tcx, tcz);
     (tile.raw, tile.biomes)
 }
 
@@ -81,11 +81,10 @@ pub(crate) fn cached_tile_raw(
 pub fn cached_tile_biomes(
     surface: &SurfaceDensitySystem,
     caves: &crate::noise::cave_field::CaveField,
-    seed: u32,
     tcx: i32,
     tcz: i32,
 ) -> [Biome; 256] {
-    cached_tile(surface, caves, seed, tcx, tcz).biomes
+    cached_tile(surface, caves, tcx, tcz).biomes
 }
 
 /// The feature window for `(x0,z0,w,h)`: cave-adjusted surfaces + biomes in
@@ -99,7 +98,7 @@ pub fn cached_tile_biomes(
 /// recomputation).
 ///
 /// Byte-identical by construction: a tile is keyed by exact
-/// `(seed, cave tables, tile coords)` and every value is a pure world-anchored
+/// `(context, tile coords)` and every value is a pure world-anchored
 /// function of that key (the density lattice's corner grid is world-anchored,
 /// so region bounds don't affect per-column results) — the memo can only
 /// dedupe work.
@@ -108,7 +107,6 @@ pub fn cached_tile_biomes(
 pub fn cached_feature_region(
     surface: &SurfaceDensitySystem,
     caves: &crate::noise::cave_field::CaveField,
-    seed: u32,
     x0: i32,
     z0: i32,
     w: usize,
@@ -121,7 +119,7 @@ pub fn cached_feature_region(
 
     for tcz in z0.div_euclid(T)..=(z1 - 1).div_euclid(T) {
         for tcx in x0.div_euclid(T)..=(x1 - 1).div_euclid(T) {
-            let tile = cached_tile(surface, caves, seed, tcx, tcz);
+            let tile = cached_tile(surface, caves, tcx, tcz);
             // Copy the tile ∩ window intersection.
             let (ix0, ix1) = (x0.max(tcx * T), x1.min(tcx * T + T));
             let (iz0, iz1) = (z0.max(tcz * T), z1.min(tcz * T + T));

@@ -6,9 +6,6 @@ use petramond_world::chunk::{section_idx, SectionPos};
 use petramond_world::section::BlockCube;
 use std::collections::BTreeMap;
 
-use crate::density::surface::SurfaceDensitySystem;
-use crate::noise::cave_field::CaveField;
-
 /// Highest solid density cell before caves and feature placement.
 pub fn heights_at(seed: u32, columns: &[[i32; 2]]) -> Vec<i32> {
     let generator = crate::driver::ChunkGenerator::shared(seed);
@@ -78,14 +75,10 @@ pub fn section_blocks(seed: u32, section: [i32; 3]) -> Vec<u16> {
     }
     let generator = crate::driver::ChunkGenerator::shared(seed);
     let (surface, caves) = generator.sources();
-    let (biomes, raw) = column_inputs(surface, caves, seed, [section[0], section[2]]);
     super::section_memo::terrain_cube(
         surface,
         caves,
-        seed,
         SectionPos::new(section[0], section[1], section[2]),
-        &biomes,
-        &raw,
     )
     .iter()
     .collect()
@@ -95,19 +88,14 @@ pub fn blocks_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u16> {
     let generator = crate::driver::ChunkGenerator::shared(seed);
     let (surface, caves) = generator.sources();
     if let Some(cell) = whole_section(positions) {
-        let (biomes, raw) = column_inputs(surface, caves, seed, [cell[0], cell[2]]);
         return super::section_memo::terrain_cube(
             surface,
             caves,
-            seed,
             SectionPos::new(cell[0], cell[1], cell[2]),
-            &biomes,
-            &raw,
         )
         .iter()
         .collect();
     }
-    let mut columns = BTreeMap::new();
     let mut cubes: BTreeMap<[i32; 3], BlockCube> = BTreeMap::new();
     positions
         .iter()
@@ -115,16 +103,10 @@ pub fn blocks_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u16> {
             let [x, y, z] = super::clamp_query(pos);
             let cell = [x, y, z].map(|v| v.div_euclid(16));
             let cube = cubes.entry(cell).or_insert_with(|| {
-                let (biomes, raw) = columns
-                    .entry([cell[0], cell[2]])
-                    .or_insert_with(|| column_inputs(surface, caves, seed, [cell[0], cell[2]]));
                 super::section_memo::terrain_cube(
                     surface,
                     caves,
-                    seed,
                     SectionPos::new(cell[0], cell[1], cell[2]),
-                    biomes,
-                    raw,
                 )
             });
             cube.get(section_idx(
@@ -136,14 +118,3 @@ pub fn blocks_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u16> {
         .collect()
 }
 
-/// A column's biome ids and raw density surfaces, `z*16 + x` — the terrain
-/// fill's inputs — from the shared surface tile.
-fn column_inputs(
-    surface: &SurfaceDensitySystem,
-    caves: &CaveField,
-    seed: u32,
-    cell: [i32; 2],
-) -> (Vec<u8>, [i32; 256]) {
-    let (raw, biomes) = crate::feature::cached_tile_raw(surface, caves, seed, cell[0], cell[1]);
-    (biomes.iter().map(|b| b.id()).collect(), raw)
-}

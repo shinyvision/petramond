@@ -21,15 +21,14 @@ use petramond_world::chunk::{ChunkPos, SECTION_SIZE};
 /// Disposable generation cache format. Version 11 rebalances natural cavern density.
 pub const VERSION: u8 = 11;
 
-/// Fingerprint of habitat and excavation catalogs, stamped beside the seed.
-/// A version byte only catches ENGINE drift; installing, removing, or retuning
-/// a pack that reshapes caves changes no version but does change `top_surf`,
-/// and without this the cache would happily serve the stale columns.
-fn table_fingerprint() -> u64 {
-    crate::data::underground::table()
-        .fingerprint
-        .rotate_left(17)
-        ^ crate::data::excavations::table().fingerprint
+/// Fingerprint of the loaded catalogs, stamped beside the seed — the same
+/// content identity every in-memory memo keys on
+/// ([`GenContext`](crate::cache::GenContext)). A version byte only catches
+/// ENGINE drift; installing, removing, or retuning a pack that reshapes caves
+/// changes no version but does change `top_surf`, and without this the cache
+/// would happily serve the stale columns.
+fn table_fingerprint(seed: u32) -> u64 {
+    crate::cache::GenContext::installed(seed).tables()
 }
 const CELLS: usize = SECTION_SIZE * SECTION_SIZE;
 const MESH_BIOME_SIDE: usize = SECTION_SIZE + 4;
@@ -91,7 +90,7 @@ pub fn encode_record(rec: &ColumnGenRecord) -> Vec<u8> {
     let mut payload = Vec::with_capacity(1 + 12 + CELLS * 9 + MESH_BIOME_CELLS + 20);
     put_u8(&mut payload, VERSION);
     put_u32(&mut payload, rec.seed);
-    put_u64(&mut payload, table_fingerprint());
+    put_u64(&mut payload, table_fingerprint(rec.seed));
     payload.extend_from_slice(&rec.biome);
     payload.extend_from_slice(&rec.mesh_biome);
     for &v in rec.surf.iter().chain(rec.top_surf.iter()) {
@@ -115,7 +114,7 @@ pub fn encode_record(rec: &ColumnGenRecord) -> Vec<u8> {
 pub fn decode_record(pos: ChunkPos, seed: u32, blob: &[u8]) -> Option<ColumnGenRecord> {
     let payload = inflate(blob)?;
     let mut r = Reader::new(&payload);
-    if r.u8()? != VERSION || r.u32()? != seed || r.u64()? != table_fingerprint() {
+    if r.u8()? != VERSION || r.u32()? != seed || r.u64()? != table_fingerprint(seed) {
         return None;
     }
     let biome: Box<[u8]> = r.bytes(CELLS)?.into();

@@ -137,7 +137,7 @@ pub(super) fn apply(op: Op, [a, b, c, _]: [Interval; 4]) -> Interval {
         }
         Op::Pow => {
             if a.is_point() && b.is_point() {
-                I::point(a.lo.powf(b.lo))
+                I::point(petramond_math::detmath::pow(a.lo, b.lo))
             } else {
                 I::UNKNOWN
             }

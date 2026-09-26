@@ -1,3 +1,4 @@
+use petramond_math::detmath;
 use petramond_world::{block::Block, mathh::IVec3};
 
 use super::posture::{connected_branch, TrunkPosture};
@@ -457,8 +458,8 @@ impl BlockyOakFeature {
             let angle = TAU * i as f32 / root_count as f32
                 + (rng.next_f32() * 2.0 - 1.0) * ROOT_ANGLE_JITTER;
             let len = rng.next_i32((root_reach - 3).max(MIN_ROOT_REACH), root_reach);
-            let ex = sx + (angle.cos() * len as f32).round() as i32;
-            let ez = sz + (angle.sin() * len as f32).round() as i32;
+            let ex = sx + (detmath::cosf(angle) * len as f32).round() as i32;
+            let ez = sz + (detmath::sinf(angle) * len as f32).round() as i32;
             let path = grid_line_2d(sx, sz, ex, ez);
             let last = (path.len() - 1).max(1);
             for (step, &(px, pz)) in path.iter().enumerate() {

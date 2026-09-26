@@ -47,7 +47,7 @@ impl Column {
     }
 }
 
-pub(super) type Key = (u32, usize, [i32; 2]);
+pub(super) type Key = (crate::cache::GenContext, [i32; 2]);
 pub(super) type Tile = [Column; 16];
 thread_local! {
     static LOCAL: LocalTable<Key, Arc<Tile>> = LocalTable::new(&local::CAVE_REGIONS);
@@ -95,7 +95,8 @@ impl CaveField {
             return Column::default();
         }
         let pos = [x, z].map(|v| v.div_euclid(16));
-        let key = (self.seed, self.table_identities()[0], pos);
+        // A habitat region reads no excavation.
+        let key = (self.context().without_excavations(), pos);
         let hash =
             (pos[0] as u32 as u64) ^ (pos[1] as u32 as u64).rotate_left(32) ^ self.seed as u64;
         let tile = LOCAL.with(|table| {

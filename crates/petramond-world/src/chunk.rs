@@ -7,7 +7,7 @@
 //! - **Worldgen transfer format**: `worldgen::generate_chunk` assembles a whole
 //!   column (blocks, heightmap, biome — never block entities) from the
 //!   per-section pipeline, consumed by the worldgen bins/audit tooling
-//!   (`genmap`, `genparity`, `genfeature`) and by worldgen tests.
+//!   (`genmap`, `genfeature`) and by worldgen tests.
 //! - **Test fixture**: column-era tests hand-build a `Chunk` and install it via
 //!   `World::insert_chunk_for_test`, which splits it into sections like the old
 //!   streamer did (`world::stream::split_generated_column`); `mesh`'s legacy

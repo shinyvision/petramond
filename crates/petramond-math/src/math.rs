@@ -49,15 +49,17 @@ impl Tilt {
         }
     }
 
-    /// The rotation inside the yaw: `Rx(pitch) · Rz(roll)`.
+    /// The rotation inside the yaw: `Rx(pitch) · Rz(roll)`. Built through
+    /// [`crate::detmath`], like [`body_frame`](Self::body_frame): a
+    /// replicated frame must be the same matrix on every peer.
     pub fn rotation(self) -> Mat4 {
-        Mat4::from_rotation_x(self.pitch) * Mat4::from_rotation_z(self.roll)
+        crate::detmath::mat4_rotation_x(self.pitch) * crate::detmath::mat4_rotation_z(self.roll)
     }
 
     /// The whole body frame for a mob-convention `yaw` (`0` faces `-Z`):
     /// `Ry(yaw) · Rx(pitch) · Rz(roll)`.
     pub fn body_frame(self, yaw: f32) -> Mat4 {
-        Mat4::from_rotation_y(yaw) * self.rotation()
+        crate::detmath::mat4_rotation_y(yaw) * self.rotation()
     }
 }
 

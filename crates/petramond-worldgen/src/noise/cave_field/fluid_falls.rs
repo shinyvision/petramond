@@ -14,7 +14,7 @@ use crate::rng::FeatureRng;
 use mod_api::TerrainSpace;
 use petramond_world::fluid_math::FALLING;
 
-pub(super) type Key = (u32, [usize; 2], [i32; 2]);
+pub(super) type Key = (crate::cache::GenContext, [i32; 2]);
 
 struct Fall {
     fluid: u16,
@@ -94,7 +94,7 @@ const SIDES: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 impl CaveField {
     /// The falls whose sources lie in chunk `(cx, cz)`.
     pub(crate) fn chunk_falls(&self, cx: i32, cz: i32) -> Arc<ChunkFalls> {
-        let key = (self.seed, self.table_identities(), [cx, cz]);
+        let key = (self.context(), [cx, cz]);
         self.memos()
             .falls
             .get_or_insert(key, || Arc::new(self.derive_falls(cx, cz)))

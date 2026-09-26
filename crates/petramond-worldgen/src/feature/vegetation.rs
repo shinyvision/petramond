@@ -15,7 +15,7 @@ use crate::surface::rule::SurfaceCtx;
 use crate::surface::SurfaceSystem;
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
-use petramond_world::chunk::{SEA_LEVEL, SECTION_SIZE, WORLD_MAX_Y};
+use petramond_world::chunk::{SEA_LEVEL, SECTION_SIZE, WORLD_MAX_Y, WORLD_MIN_Y};
 use petramond_world::mathh::smoothstep;
 use petramond_world::section::Section;
 
@@ -110,7 +110,9 @@ pub fn place_vegetation_section(
                 continue;
             }
             let anchor = top[i];
-            if anchor < 1 || anchor + 1 >= WORLD_MAX_Y {
+            // A plant roots above the world's floor layer and fits under its
+            // top, wherever in the cubic range a cave mouth drops the ground.
+            if anchor <= WORLD_MIN_Y || anchor + 1 >= WORLD_MAX_Y {
                 continue;
             }
             let plant_y = anchor + 1;

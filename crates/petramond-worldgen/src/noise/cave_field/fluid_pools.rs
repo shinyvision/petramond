@@ -22,12 +22,12 @@ use crate::data::underground::{FluidPool, POOL_CELL};
 use crate::density::surface::SURFACE_FLOOR_Y;
 use crate::rng::FeatureRng;
 
-pub(super) type PoolKey = (u32, [usize; 2], u16, [i32; 3]);
+pub(super) type PoolKey = (crate::cache::GenContext, u16, [i32; 3]);
 
 /// The cave model over one pool cell, as the floor search, the descent and
 /// the flood read it. A flood spans a dozen cells its neighbours' floods
 /// cross too, so the cells are shared rather than built per pool.
-pub(super) type TileKey = (u32, [usize; 2], [i32; 3]);
+pub(super) type TileKey = (crate::cache::GenContext, [i32; 3]);
 
 /// One pool's filled cells, as a bitset over its own bounding box.
 pub(super) struct Pool {
@@ -210,10 +210,10 @@ fn pool_at(field: &CaveField, row: usize, g: [i32; 3]) -> Option<Arc<Pool>> {
     let def = &field.underground.pools[row];
     let mut rng = FeatureRng::positional(field.seed, def.salt, g[0], g[1], g[2]);
     let height = (g[1] * POOL_CELL + POOL_CELL / 2 - def.anchor_y).max(0) as f32;
-    if !rng.chance(def.chance * (-height / def.height_scale).exp()) {
+    if !rng.chance(def.chance * petramond_math::detmath::expf(-height / def.height_scale)) {
         return None;
     }
-    let key = (field.seed, field.table_identities(), row as u16, g);
+    let key = (field.context(), row as u16, g);
     field
         .memos()
         .pools
@@ -352,7 +352,7 @@ impl Tiles {
     fn lattice(&mut self, field: &CaveField, pos: [i32; 3]) -> &CaveLattice {
         let tile = pos.map(|v| v.div_euclid(POOL_CELL));
         if !matches!(&self.last, Some((at, _)) if *at == tile) {
-            let key = (field.seed, field.table_identities(), tile);
+            let key = (field.context(), tile);
             let lattice = field.memos().pool_tiles.get_or_insert(key, || {
                 let lo = tile.map(|v| v * POOL_CELL);
                 let hi = lo.map(|v| v + POOL_CELL - 1);

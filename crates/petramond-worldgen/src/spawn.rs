@@ -31,6 +31,7 @@
 //! sampling somehow comes up empty (e.g. a tiny island where almost every random
 //! point lands in water).
 
+use petramond_math::detmath;
 use petramond_world::chunk::SEA_LEVEL;
 use petramond_world::mathh::IVec3;
 
@@ -90,7 +91,6 @@ fn find_spawn_rng(world: &SpawnWorld, rng_seed: u64) -> IVec3 {
 }
 
 struct SpawnWorld {
-    seed: u32,
     surface: SurfaceDensitySystem,
     caves: CaveField,
 }
@@ -98,7 +98,6 @@ struct SpawnWorld {
 impl SpawnWorld {
     fn new(seed: u32) -> Self {
         Self {
-            seed,
             surface: SurfaceDensitySystem::new(seed),
             caves: CaveField::new(seed),
         }
@@ -112,7 +111,6 @@ impl SpawnWorld {
         let (region, raw) = cached_feature_region(
             &self.surface,
             &self.caves,
-            self.seed,
             cx * CHUNK,
             cz * CHUNK,
             16,
@@ -137,8 +135,8 @@ fn sample_dry_land(world: &SpawnWorld, (cx, cz): (i32, i32), rng: &mut Rng) -> O
         // instead of clustering them near the centre.
         let radius = r * rng.next_f32().sqrt();
         let theta = std::f32::consts::TAU * rng.next_f32();
-        let wx = cx + (radius * theta.cos()).round() as i32;
-        let wz = cz + (radius * theta.sin()).round() as i32;
+        let wx = cx + (radius * detmath::cosf(theta)).round() as i32;
+        let wz = cz + (radius * detmath::sinf(theta)).round() as i32;
         let (dx, dz) = ((wx - cx) as i64, (wz - cz) as i64);
         if dx * dx + dz * dz > r_sq {
             continue; // rounding nudged it just outside the radius — retry.

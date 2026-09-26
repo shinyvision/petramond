@@ -406,7 +406,7 @@ impl ChunkGenerator {
     }
 
     /// Warm one 16×16 world tile of the shared feature-window memo — a pure
-    /// cache fill (the memo is keyed by `(seed, tile)`, so any thread's
+    /// cache fill (the memo is keyed by `(context, tile)`, so any thread's
     /// computation serves every later reader). Session bootstrap fans the
     /// spawn area's tiles across the pool with this so the first column jobs
     /// find them hot instead of computing them serially inside one job.
@@ -414,7 +414,6 @@ impl ChunkGenerator {
         let _ = cached_feature_region(
             &self.surface_density,
             &self.caves,
-            self.seed,
             tcx * CHUNK_SX as i32,
             tcz * CHUNK_SZ as i32,
             CHUNK_SX,
@@ -443,7 +442,6 @@ impl ChunkGenerator {
         let (candidates, raw_surf) = cached_feature_region(
             &self.surface_density,
             &self.caves,
-            self.seed,
             cx0,
             cz0,
             cw,
@@ -543,7 +541,6 @@ impl ChunkGenerator {
         let (candidates, _raw) = cached_feature_region(
             &self.surface_density,
             &self.caves,
-            self.seed,
             cx0,
             cz0,
             cw,
@@ -571,7 +568,6 @@ impl ChunkGenerator {
             let (region, _raw) = cached_feature_region(
                 &self.surface_density,
                 &self.caves,
-                self.seed,
                 sx0,
                 sz0,
                 sw,
@@ -751,14 +747,8 @@ impl ChunkGenerator {
                 true
             }
             None => {
-                *section.blocks_mut() = crate::section_memo::terrain_cube(
-                    &self.surface_density,
-                    &self.caves,
-                    self.seed,
-                    sp,
-                    &col.biome,
-                    &col.surf,
-                );
+                *section.blocks_mut() =
+                    crate::section_memo::terrain_cube(&self.surface_density, &self.caves, sp);
                 true
             }
         };

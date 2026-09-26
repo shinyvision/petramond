@@ -9,7 +9,7 @@ use super::*;
 /// padded cell restricts that field to its own box.
 const CHAMBER_CELL: i32 = 64;
 const CHAMBER_PAD: i32 = 32;
-pub(super) type ChamberKey = (u32, usize, usize, [i32; 2]);
+pub(super) type ChamberKey = (crate::cache::GenContext, [i32; 2]);
 
 impl CaveField {
     /// The excavation terms reaching `bounds`: restricted from the shared
@@ -41,12 +41,7 @@ impl CaveField {
         if !(fits(0, cell[0]) && fits(2, cell[1])) {
             return gather(lo, hi);
         }
-        let key = (
-            self.seed,
-            std::ptr::from_ref(self.underground) as usize,
-            std::ptr::from_ref(self.excavations) as usize,
-            cell,
-        );
+        let key = (self.context(), cell);
         self.memos()
             .chamber_fields
             .get_or_insert(key, || {
@@ -204,7 +199,7 @@ impl CaveField {
         lat.walks = fields.carve.then(|| {
             WalkField::gather(
                 &self.caches.caves.walks,
-                self.seed,
+                self.context(),
                 [
                     [lx0 * LATTICE_STEP, ly0 * LATTICE_STEP, lz0 * LATTICE_STEP],
                     [

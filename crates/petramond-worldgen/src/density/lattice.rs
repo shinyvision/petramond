@@ -8,10 +8,13 @@
 //! `surface_detection` graph channel remains only a placeholder; this module's
 //! pure scan derives top solid surfaces from interpolated density sign
 //! (`> 0.0` solid, `<= 0.0` air) without writing blocks.
+//!
+//! Bounds are world-anchored boxes on every axis alike: Y may start below
+//! zero and end anywhere, so a lattice covers whatever vertical range its
+//! caller searches — the cubic world's, not a 0..256 column.
 
-use petramond_world::chunk::CHUNK_SY;
 #[cfg(test)]
-use petramond_world::chunk::{CHUNK_SX, CHUNK_SZ};
+use petramond_world::chunk::{CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 
 use super::super::graph::{SamplePoint, ScalarGraph};
 
@@ -85,15 +88,6 @@ impl DensityLatticeBounds {
         assert!(size_x > 0, "density lattice X bounds must be non-empty");
         assert!(size_y > 0, "density lattice Y bounds must be non-empty");
         assert!(size_z > 0, "density lattice Z bounds must be non-empty");
-        assert!(
-            origin_y >= 0,
-            "density lattice voxel bounds must stay within world Y 0..255"
-        );
-        let end_y = axis_end(origin_y, size_y, "density lattice Y bounds");
-        assert!(
-            end_y <= CHUNK_SY as i32,
-            "density lattice voxel bounds must stay within world Y 0..255"
-        );
 
         Self {
             origin_x,
@@ -271,8 +265,8 @@ impl DensityLattice {
     }
 
     #[cfg(test)]
-    /// Last sampled lattice corner. Full-height chunk lattices end at Y 256,
-    /// while voxel density queries remain bounded to world Y 0..255.
+    /// Last sampled lattice corner: one cell past the last voxel's cell, so a
+    /// 0..256 chunk lattice ends at Y 256 while its voxels end at 255.
     pub fn sample_world_max(&self) -> (i32, i32, i32) {
         (
             self.sample_x.last_coord(),
@@ -946,5 +940,27 @@ mod tests {
         let negative = DensityLattice::sample_chunk(&graph, CHANNEL, -1, -1).unwrap();
         assert_eq!(negative.sample_world_origin(), (-16, 0, -16));
         assert_eq!(negative.sample_world_max(), (0, CHUNK_SY as i32, 0));
+    }
+
+    /// Y is an axis like any other: a lattice reaching below zero samples
+    /// world-anchored corners there and finds a surface that lies below zero.
+    #[test]
+    fn bounds_below_zero_find_surfaces_below_zero() {
+        let graph = graph_with(PlaneField { surface_y: -37.0 });
+        let bounds = DensityLatticeBounds::new(-8, -64, 4, 16, 320, 16);
+        let lattice = DensityLattice::sample_channel(
+            &graph,
+            CHANNEL,
+            bounds,
+            DensityLatticeCellSize::default(),
+        )
+        .unwrap();
+        assert_eq!(lattice.sample_world_origin(), (-8, -64, 4));
+        assert_eq!(lattice.sample_world_max(), (8, 256, 20));
+        assert!(lattice.solid_at_local(0, 0, 0));
+        assert!(!lattice.solid_at_local(0, 319, 0));
+        let surfaces = lattice.top_solid_surfaces();
+        assert!(surfaces.iter().all(|surface| *surface == Some(-38)));
+        assert_eq!(lattice.top_solid_surface(5, 9), Some(-38));
     }
 }
