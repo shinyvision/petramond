@@ -75,6 +75,10 @@ impl Job {
 #[derive(Default)]
 pub struct Jobs {
     pub map: BTreeMap<ProjectId, Job>,
+    /// Which job each golem was last found working for. A memo, checked
+    /// against the job's crew before it is trusted, so a crew change never
+    /// has to report here.
+    mobs: HashMap<u64, ProjectId>,
 }
 
 impl Jobs {
@@ -99,10 +103,27 @@ impl Jobs {
         Some(job)
     }
 
+    /// The job `mob` works (or last worked) for.
     pub fn by_mob(&mut self, mob: u64) -> Option<&mut Job> {
+        let works = |j: &Job| j.crew.mob == Some(mob) || j.crew.last_mob == Some(mob);
+        let id = match self.mobs.get(&mob) {
+            Some(id) if self.map.get(id).is_some_and(works) => *id,
+            _ => {
+                let id = self.map.values().find(|j| works(j))?.id;
+                self.mobs.insert(mob, id);
+                id
+            }
+        };
+        self.map.get_mut(&id)
+    }
+
+    /// Drop the jobs nobody has attended for [`FORGET_AFTER`] ticks and that
+    /// have no golem out, with what the memo remembers of them.
+    fn forget_idle(&mut self, now: u64) {
         self.map
-            .values_mut()
-            .find(|j| j.crew.mob == Some(mob) || j.crew.last_mob == Some(mob))
+            .retain(|_, j| now < j.seen + FORGET_AFTER || j.crew.mob.is_some());
+        let map = &self.map;
+        self.mobs.retain(|_, id| map.contains_key(id));
     }
 }
 
@@ -199,9 +220,7 @@ impl Builder {
                 }
             }
         }
-        self.jobs
-            .map
-            .retain(|_, j| now < j.seen + FORGET_AFTER || j.crew.mob.is_some());
+        self.jobs.forget_idle(now);
         self.ghosts
             .sync(&self.content, &mut self.projects, &live, now);
         if ROUTE_SWEEP.due(now, 0) {

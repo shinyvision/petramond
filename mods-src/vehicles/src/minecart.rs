@@ -476,11 +476,3 @@ fn read_speed(mob_id: u64) -> f32 {
 fn write_speed(mob_id: u64, speed: f32) {
     mob_tag_set(mob_id, SPEED_TAG, MobTagValue::F64(speed as f64));
 }
-
-fn cell_of(pos: [f64; 3]) -> [i32; 3] {
-    [
-        pos[0].floor() as i32,
-        pos[1].floor() as i32,
-        pos[2].floor() as i32,
-    ]
-}

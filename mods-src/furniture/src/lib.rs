@@ -197,11 +197,9 @@ struct Furniture {
     lanterns: Option<Lanterns>,
     /// The cauldron family (`None`: pack content didn't load).
     cauldron: Option<Cauldron>,
-    /// The engine water bucket (`None`: base content missing) — the item the
-    /// cauldron fill consumes.
-    water_bucket: Option<ItemId>,
-    /// The empty wooden bucket — the item the scoop-out consumes.
-    wooden_bucket: Option<ItemId>,
+    /// The engine bucket pair (`None`: base content missing) — the items the
+    /// cauldron fill and scoop-out trade in.
+    buckets: Option<WaterBuckets>,
     /// Every item declaring `furniture:dyeable`, with its registry name
     /// (see `cauldron::load_dyeables`).
     dyeables: Vec<(ItemId, String)>,
@@ -226,8 +224,7 @@ impl Mod for Furniture {
         self.chains = resolve_chains();
         self.lanterns = resolve_lanterns();
         self.cauldron = resolve_cauldron();
-        self.water_bucket = resolve_item(keys::WATER_BUCKET);
-        self.wooden_bucket = resolve_item(keys::WOODEN_BUCKET);
+        self.buckets = WaterBuckets::resolve();
         self.dyeables = cauldron::load_dyeables();
         self.pigments = cauldron::load_pigments();
         register_event_handler(EventKind::InteractAttempt, 0, ON_INTERACT);
@@ -416,21 +413,6 @@ impl Furniture {
         }
         Vec::new()
     }
-}
-
-/// Whether the held item places a block (its row carries a `block` link) —
-/// the gate the sneak-defer rule reads. Registry-only, legal on any
-/// instance; an unresolvable id reads as "not a block".
-fn held_places_a_block(held: Option<ItemId>) -> bool {
-    let Some(id) = held else {
-        return false;
-    };
-    item_names(vec![id])
-        .into_iter()
-        .next()
-        .flatten()
-        .and_then(|name| item_info(&name))
-        .is_some_and(|info| info.block.is_some())
 }
 
 mod_sdk::register_mod!(Furniture);

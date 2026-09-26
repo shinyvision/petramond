@@ -110,3 +110,14 @@ fn a_migrated_record_is_rewritten_by_its_next_update() {
     assert_eq!(held.bytes, versioned(&Widened(7)));
     assert_eq!(held.edit(|w| w.0), (7, false));
 }
+
+/// A standalone blob is framed exactly like a stored record, so the same
+/// upgrade chain lifts it.
+#[test]
+fn a_standalone_blob_carries_the_record_framing() {
+    let bytes = encode_versioned(&Widened(300));
+    assert_eq!(bytes, versioned(&Widened(300)));
+    assert_eq!(decode_versioned::<Widened>(&bytes), Ok(Widened(300)));
+    assert_eq!(decode_versioned::<Widened>(&[2, 44, 1]), Ok(Widened(300)));
+    assert_eq!(decode_versioned::<Widened>(&[]), Err(RecordError::Empty));
+}

@@ -12,12 +12,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bytemuck"
-version = "1.25.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
-
-[[package]]
 name = "cobs"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -52,7 +46,6 @@ version = "0.1.0"
 dependencies = [
  "mod-sdk",
  "pack-check",
- "petramond-math",
  "serde",
  "serde_json",
 ]
@@ -84,16 +77,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "glam"
-version = "0.29.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8babf46d4c1c9d92deac9f7be466f76dfc4482b6452fc5024b5e8daf6ffeb3ee"
-dependencies = [
- "bytemuck",
- "serde",
-]
-
-[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -107,12 +90,6 @@ dependencies = [
  "mod-sdk",
  "pack-check",
 ]
-
-[[package]]
-name = "libm"
-version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "machine-core"
@@ -165,15 +142,6 @@ name = "pack-check"
 version = "0.1.0"
 dependencies = [
  "mod-sdk",
-]
-
-[[package]]
-name = "petramond-math"
-version = "0.4.0"
-dependencies = [
- "glam",
- "libm",
- "serde",
 ]
 
 [[package]]

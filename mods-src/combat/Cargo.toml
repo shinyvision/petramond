@@ -1,15 +1,15 @@
 [package]
 name = "combat"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Combat: a weapons workbench and the shield you craft on it. Hold the use button with one in either hand to raise it — frontal monster melee is blocked, the body slows to half speed, and both hands are committed. Every rule is authored here, on the engine's generic body seams."
-license = "MIT"
+license.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-mod-sdk = { path = "../../mod-sdk" }
+mod-sdk.workspace = true
 
 [dev-dependencies]
-pack-check = { path = "../pack-check" }
+pack-check.workspace = true

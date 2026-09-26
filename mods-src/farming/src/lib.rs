@@ -116,6 +116,8 @@ struct Farming {
     /// Armed growth attempts (crop cell → due tick). Session-scoped by
     /// design: lost scheduling re-arms from random ticks (see [`crops`]).
     growth: Growth,
+    /// Areas sitting out crop attraction (see [`rest`]).
+    rests: rest::Rests,
     /// The latest weather field heard on its channel. Hydration reads it as
     /// published: every reader runs before core day/night moves the clock,
     /// so the published row IS the sky at the clock those readers see.
@@ -301,7 +303,14 @@ impl Mod for Farming {
         };
         let sky = self.weather.params();
         match callback_id {
-            HOOK_CROP => crops::on_hook(content, &mut self.growth, sky.as_ref(), kind, pos),
+            HOOK_CROP => crops::on_hook(
+                content,
+                &mut self.growth,
+                &mut self.rests,
+                sky.as_ref(),
+                kind,
+                pos,
+            ),
             HOOK_FARMLAND => farmland::on_hook(content, sky.as_ref(), kind, pos),
             HOOK_SPREAD => spread::on_hook(content, kind, pos),
             _ => {}

@@ -22,7 +22,7 @@
 
 use mod_sdk::*;
 
-use super::{held_places_a_block, keys, Furniture};
+use super::{keys, Furniture};
 
 /// One sit-able furniture piece: its block, the model footprint (mirror of
 /// the pack's `models.json` `cells`), and its seats in unrotated footprint
@@ -71,7 +71,7 @@ impl Furniture {
     /// never mispredicts a placement. One PASS: a sneak click holding a
     /// placeable block defers to the placement consumer (sneak-to-build).
     pub(super) fn try_sit(&self, pos: [i32; 3], player: PlayerId, actor: &PlayerSnapshot) -> bool {
-        if actor.sneak && held_places_a_block(actor.held) {
+        if actor.sneak && held_item_places_block(actor.held) {
             return false;
         }
         let Some(piece) = get_block(pos).and_then(|b| self.piece_for(b)) else {
@@ -108,7 +108,7 @@ impl Furniture {
     /// from the same sneak+placeable pass the authoritative gate applies. A
     /// `None` replica cell never produces a claim.
     pub(super) fn predict_sit(&self, pos: [i32; 3], actor: &PlayerSnapshot) -> bool {
-        if actor.sneak && held_places_a_block(actor.held) {
+        if actor.sneak && held_item_places_block(actor.held) {
             return false;
         }
         client_blocks_at(vec![pos])

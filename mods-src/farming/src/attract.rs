@@ -16,7 +16,7 @@
 //! Four gates stand between the roll and a mob, and each exists because
 //! skipping it produces a specific bad spawn:
 //!
-//! - the AREA REST ([`rest`]) — once a field has drawn one in, its whole
+//! - the AREA REST ([`crate::rest`]) — once a field has drawn one in, its whole
 //!   neighbourhood sits out attraction for an hour; without it the field is
 //!   a faucet the player runs by leaving and coming back.
 //! - the PLAYER BAND ([`MIN_PLAYER_DIST`]) — an animal must never pop into
@@ -30,7 +30,7 @@
 use mod_sdk::*;
 
 use crate::content::Content;
-use crate::rest;
+use crate::rest::Rests;
 
 /// One in this many random ticks on an attracting crop rolls an attempt.
 /// A random tick reaches one given cell about every 70 s, so a modest field
@@ -55,7 +55,7 @@ const NEAR_RADIUS: f32 = 16.0;
 const NEAR_MAX: usize = 2;
 
 /// One random tick on a cultivated crop: roll for a visitor.
-pub fn on_random_tick(content: &Content, pos: [i32; 3], block: BlockId) {
+pub fn on_random_tick(content: &Content, rests: &mut Rests, pos: [i32; 3], block: BlockId) {
     let Some((def, _)) = content.crop_stage(block) else {
         return;
     };
@@ -65,7 +65,7 @@ pub fn on_random_tick(content: &Content, pos: [i32; 3], block: BlockId) {
     if !rng_u64(&def.attract_key).is_multiple_of(ATTRACT_CHANCE_IN) {
         return;
     }
-    if rest::resting(pos) {
+    if rests.resting(pos) {
         return;
     }
     let field = [pos[0] as f64 + 0.5, pos[1] as f64, pos[2] as f64 + 0.5];
@@ -110,7 +110,7 @@ pub fn on_random_tick(content: &Content, pos: [i32; 3], block: BlockId) {
         if spawn_mob_checked(species, at, yaw).is_some() {
             // The rest covers the same neighbourhood the headcount judges,
             // so a field straddling a column line is one area, not two.
-            rest::begin(pos, NEAR_RADIUS as i32);
+            rests.begin(pos, NEAR_RADIUS as i32);
             return;
         }
     }

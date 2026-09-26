@@ -36,9 +36,10 @@ const HANDLER_PLACED: u32 = 4;
 /// mod never re-implements the engine's selection noise.
 pub(crate) use keys::MUSHROOM_CAVERN as BIOME_KEY;
 
-/// Top of the depth band that row declares (`"y": [-64, 96]`). Nothing this
-/// pack places can be rooted above it, so worldgen derives its altitude gate
-/// from here — retuning the band moves this one value with the JSON.
+/// Top of the depth band the mushroom_cavern row declares (`"y": [-64, 96]`).
+/// Nothing this pack places can be rooted above it, so worldgen derives its
+/// altitude gate from here; `keys::tests` pins it to the row, so retuning the
+/// band in data fails that test until this value follows.
 pub const BIOME_TOP_Y: i32 = 96;
 
 #[derive(Default)]

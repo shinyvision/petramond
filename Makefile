@@ -11,6 +11,7 @@
 #   make gui-builder     -- build (release) & run the GUI builder tool
 #   make gui-builder-dev -- build (debug) & run the GUI builder tool
 #   make mods            -- build mods-src (wasm32) & install packs into mods/
+#   make mod ID=<name>   -- build & install one mod from mods-src/
 #   make profile         -- run repeatable join + map perf harnesses in scratch data
 #   make smoke           -- exercise threaded, TCP, UI-connect, and headless lifecycles
 #   make test            -- the full debug-safe suite (TEST_GROUPS="core client" for a subset)
@@ -19,6 +20,7 @@
 #
 # Override vars:
 #   SEED=0x12345678 RD=12 make run
+#   MOD_PROFILE=release make mods   -- fat-LTO guests (release packaging)
 #   TEST_GROUPS=worldgen make test  -- groups are listed in scripts/test-all.sh
 #
 # RD is only exported when set explicitly: the client normally reads the view
@@ -45,8 +47,10 @@ RD    ?=
 # run-release), e.g. a PRIME render-offload selection. Empty by default.
 NV_OFFLOAD ?=
 TEST_GROUPS ?=
+# Cargo profile for the wasm guests `make mods` / `make mod` build.
+MOD_PROFILE ?= wasm-dev
 
-.PHONY: run run-native run-release run-server dev build build-native clean sweep gui-builder gui-builder-dev mods test fmt fmt-check clippy source-audit validate-assets genparity profile smoke check
+.PHONY: run run-native run-release run-server dev build build-native clean sweep gui-builder gui-builder-dev mods mod test fmt fmt-check clippy source-audit validate-assets genparity profile smoke check
 
 # `run` uses the `playtest` profile: release opt-level but incremental with
 # parallel codegen units and no LTO, so the edit→playtest loop rebuilds in
@@ -95,26 +99,16 @@ gui-builder-dev:
 
 # Build every mod crate in mods-src/ (its own wasm32 workspace) and install
 # each one that ships a pack/ dir into mods/<id>/ (pack files + mod.wasm),
-# where the game discovers it. Convention: crate name == directory name == the
-# mod id in pack/pack.json. Crates without a pack/ dir (test fixtures) are
-# built but not installed. A pack with no compiled wasm installs as
-# content-only, which the mod API supports.
+# where the game discovers it; only files that changed are copied. See
+# scripts/install-mods.sh for the conventions. MOD_PROFILE=wasm-dev (default)
+# is the fast iteration build; release packaging uses MOD_PROFILE=release.
+# `make mod ID=<name>` builds and installs a single mod.
 mods:
-	$(CARGO) build --manifest-path mods-src/Cargo.toml --target-dir target \
-		--release --target wasm32-unknown-unknown
-	@set -e; for d in mods-src/*/; do \
-		id=$$(basename $$d); \
-		wasm_id=$$(printf '%s' "$$id" | tr '-' '_'); \
-		[ -f "$$d/pack/pack.json" ] || continue; \
-		mkdir -p mods/$$id; \
-		cp -r $$d/pack/. mods/$$id/; \
-		if [ -f target/wasm32-unknown-unknown/release/$$wasm_id.wasm ]; then \
-			cp target/wasm32-unknown-unknown/release/$$wasm_id.wasm mods/$$id/mod.wasm; \
-			echo "installed mods/$$id"; \
-		else \
-			echo "installed mods/$$id (content only, no wasm)"; \
-		fi; \
-	done
+	CARGO_CMD="$(CARGO)" MOD_PROFILE="$(MOD_PROFILE)" bash scripts/install-mods.sh mods
+
+mod:
+	@[ -n "$(ID)" ] || { echo "usage: make mod ID=<mod-id>" >&2; exit 2; }
+	CARGO_CMD="$(CARGO)" MOD_PROFILE="$(MOD_PROFILE)" bash scripts/install-mods.sh mods $(ID)
 
 # The canonical suite builds bundled WASM guests into target/, installs their
 # packs into an isolated temporary root, and runs every workspace with debug

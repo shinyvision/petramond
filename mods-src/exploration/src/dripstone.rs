@@ -24,8 +24,9 @@ pub mod behavior;
 pub mod gen;
 pub mod hazard;
 
-/// Top of the depth band that row declares (`"y": [-64, 96]`); worldgen
-/// derives its altitude gate from here.
+/// Top of the depth band the dripstone_caves row declares (`"y": [-64, 96]`);
+/// worldgen derives its altitude gate from here. The value is data, so
+/// `keys::tests` pins it to the row.
 pub const BIOME_TOP_Y: i32 = 96;
 /// Longest run growth builds. Worldgen places shorter ones.
 pub const MAX_RUN: i32 = 7;
@@ -108,7 +109,7 @@ impl Dripstone {
             stalagmite: resolve_block_logged(keys::STALAGMITE)?,
             water: resolve_block_logged(keys::WATER)?,
             fluids,
-            air: BlockId(0),
+            air: BlockId::AIR,
             vessels,
             biome: resolve_underground_biome(keys::DRIPSTONE_CAVES),
         })

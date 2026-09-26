@@ -1,13 +1,15 @@
 [package]
 name = "minimap"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+description = "Client-side rotating terrain minimap, explored world map, and persistent personal waypoints."
+license.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-mod-sdk = { path = "../../mod-sdk" }
+mod-sdk.workspace = true
 
 [dev-dependencies]
-pack-check = { path = "../pack-check" }
+pack-check.workspace = true

@@ -265,11 +265,12 @@ fn the_newest_finished_project_stays_as_its_tables_report() {
         .collect();
     finish(&mut projects, ids[0]);
     finish(&mut projects, ids[1]);
-    assert_eq!(projects.at_table(table, |_| true), Some(ids[1]), "drafts are no report");
-    assert_eq!(projects.at_table(table, |p| p.phase().active()), None);
-    assert_eq!(projects.at_table([9, 9, 9], |_| true), None);
+    assert_eq!(projects.report_at(table), Some(ids[1]), "drafts are no report");
+    assert_eq!(projects.active_at(table), None);
+    assert_eq!(projects.report_at([9, 9, 9]), None);
     projects.update(ids[2], |p| p.summon(table));
-    assert_eq!(projects.at_table(table, |p| p.phase().active()), Some(ids[2]));
+    assert_eq!(projects.active_at(table), Some(ids[2]));
+    assert_eq!(projects.report_at(table), Some(ids[1]), "the report stands");
 
     projects.sweep();
     assert!(ids.iter().all(|id| projects.peek(*id).is_some()), "all asked about");
@@ -281,4 +282,19 @@ fn the_newest_finished_project_stays_as_its_tables_report() {
         Some(Phase::Complete),
         "read again when asked"
     );
+}
+
+#[test]
+fn a_tables_report_is_found_after_a_reload() {
+    let _session = crate::testing::Session::flat(1);
+    let mut projects = Projects::load();
+    let table = [3, 0, -2];
+    let older = projects.create("ada".into(), table);
+    let newer = projects.create("ada".into(), table);
+    finish(&mut projects, newer);
+    finish(&mut projects, older);
+    let reloaded = Projects::load();
+    assert!(reloaded.peek(newer).is_none(), "nothing is read yet");
+    assert_eq!(reloaded.report_at(table), Some(newer), "the newest, not the last");
+    assert_eq!(reloaded.report_at([0, 0, 0]), None);
 }

@@ -77,7 +77,9 @@ To build and install the sample mods:
 
 ```sh
 rustup target add wasm32-unknown-unknown
-make mods
+make mods                  # every mod, fast iteration build
+make mod ID=farming        # just one mod
+MOD_PROFILE=release make mods   # the fat-LTO build release bundles ship
 ```
 
 ## Controls

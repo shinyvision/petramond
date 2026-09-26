@@ -207,10 +207,8 @@ pub struct Content {
     /// Everything carrying the `farming:compostable` item tag — any pack may
     /// opt its own scraps into the barrel by listing the tag on a row.
     pub compostable: Vec<ItemId>,
-    /// Empty wooden bucket.
-    pub wooden_bucket: ItemId,
-    /// Water-filled wooden bucket.
-    pub water_bucket: ItemId,
+    /// The engine's bucket pair — the trough's fill/drain items.
+    pub buckets: WaterBuckets,
     /// Species carrying the husbandry consumer-data entry.
     pub husbandry: Vec<HusbandryDef>,
     /// The pack's rabbit — the hop gait's species (see [`crate::hop`]).
@@ -311,8 +309,7 @@ impl Content {
             fertilizer: item(keys::FERTILIZER)?,
             wheat_item: item(keys::WHEAT)?,
             compostable: items_by_tag(keys::COMPOSTABLE_TAG),
-            wooden_bucket: item(keys::WOODEN_BUCKET)?,
-            water_bucket: item(keys::WATER_BUCKET)?,
+            buckets: WaterBuckets::resolve()?,
             husbandry,
             rabbit: resolve_mob_logged(keys::RABBIT)?,
         })

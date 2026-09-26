@@ -116,7 +116,7 @@ impl Content {
             water: resolve_block_logged(keys::WATER)?,
             fluids,
             silt: resolve_block_logged(keys::CAVE_SILT)?,
-            air: BlockId(0),
+            air: BlockId::AIR,
             species,
         })
     }

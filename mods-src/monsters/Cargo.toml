@@ -1,19 +1,19 @@
 [package]
 name = "monsters"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Hostile-monster mod: light-based zombie spawning driven by petramond time, sunburn, data-driven mob sounds, and chase + melee combat."
-license = "MIT"
+license.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-mod-sdk = { path = "../../mod-sdk" }
+mod-sdk.workspace = true
 # The shared field crate only — NOT a dependency on the weather mod. The field
 # row arrives on its session channel (`feed`); without a weather mod nothing is
 # heard, the sky is clear, and sunburn behaves exactly as it does standalone.
-weather-core = { path = "../weather-core", features = ["sdk"] }
+weather-core = { workspace = true, features = ["sdk"] }
 
 [dev-dependencies]
-pack-check = { path = "../pack-check" }
+pack-check.workspace = true

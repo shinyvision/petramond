@@ -31,7 +31,7 @@ use std::collections::HashMap;
 
 use mod_sdk::*;
 
-use super::{held_places_a_block, keys, Furniture};
+use super::{keys, Furniture};
 
 /// Helper for the box tables: a [`ShapeAabb`] from authored 16ths.
 const fn px(min: [f32; 3], max: [f32; 3]) -> ShapeAabb {
@@ -271,12 +271,11 @@ enum CauldronSwap {
     /// Water bucket on a pot already holding water or dye: claim with no
     /// effect but suppressing the engine pour ray.
     Absorb,
-    /// Water bucket on the empty pot: fill.
-    Fill,
-    /// Empty wooden bucket on the water pot: scoop the water back out. (Dye
-    /// is not scoopable — there is no dye bucket; it belongs to the dyeing
-    /// follow-ups.)
-    Scoop,
+    /// A bucket exchange: a water bucket fills the empty pot
+    /// ([`BucketSwap::Pour`]), an empty bucket scoops the water pot back out
+    /// ([`BucketSwap::Scoop`]). (Dye is not scoopable — there is no dye
+    /// bucket; it belongs to the dyeing follow-ups.)
+    Bucket(BucketSwap),
     /// A pigment flower on a water or dye pot: stir the pigment in. Carries
     /// the flower's item (the consume), its pigment, and whether it dilutes
     /// (the white flowers) instead of staining.
@@ -292,14 +291,6 @@ enum CauldronSwap {
 /// color (a foreign or truncated value reads as absent — the stale-pot path).
 fn parse_dye(v: Vec<u8>) -> Option<[u8; 3]> {
     <[u8; 3]>::try_from(v.as_slice()).ok()
-}
-
-fn cell_center(pos: [i32; 3]) -> [f64; 3] {
-    [
-        pos[0] as f64 + 0.5,
-        pos[1] as f64 + 0.5,
-        pos[2] as f64 + 0.5,
-    ]
 }
 
 /// Resolve the cauldron family at init: the shape kind and its fill-state
@@ -345,22 +336,24 @@ impl Furniture {
             // consume would fail.
             return CauldronSwap::None;
         }
-        if Some(held) == self.water_bucket {
-            if block == cauldron.empty {
-                return CauldronSwap::Fill;
-            }
-            if block == cauldron.water || block == cauldron.dye {
+        if let Some(buckets) = &self.buckets {
+            if held == buckets.full && (block == cauldron.water || block == cauldron.dye) {
                 return CauldronSwap::Absorb;
             }
-        }
-        if Some(held) == self.wooden_bucket && block == cauldron.water {
-            return CauldronSwap::Scoop;
+            let vessel_full = match block {
+                b if b == cauldron.empty => Some(false),
+                b if b == cauldron.water => Some(true),
+                _ => None,
+            };
+            if let Some(swap) = vessel_full.and_then(|full| buckets.swap_for(held, full)) {
+                return CauldronSwap::Bucket(swap);
+            }
         }
         let stale_dye_pot = block == cauldron.dye && dye.is_none();
         if (block == cauldron.water || block == cauldron.dye) && !stale_dye_pot {
             if let Some(&(_, pigment, dilute)) = self.pigments.iter().find(|(id, _, _)| *id == held)
             {
-                if actor.sneak && held_places_a_block(Some(held)) {
+                if actor.sneak && held_item_places_block(Some(held)) {
                     return CauldronSwap::None; // sneak-to-build against the pot
                 }
                 return CauldronSwap::Dye(held, pigment, dilute);
@@ -368,7 +361,7 @@ impl Furniture {
         }
         if block == cauldron.dye && !stale_dye_pot {
             if let Some(dyeable) = self.dyeables.iter().position(|(id, _)| *id == held) {
-                if actor.sneak && held_places_a_block(Some(held)) {
+                if actor.sneak && held_item_places_block(Some(held)) {
                     return CauldronSwap::None; // sneak-to-build against the pot
                 }
                 return CauldronSwap::DyeWool {
@@ -393,21 +386,16 @@ impl Furniture {
         match self.cauldron_action(cauldron, block, actor, dye) {
             CauldronSwap::None => false,
             CauldronSwap::Absorb => true, // keep the pour ray off the full pot
-            CauldronSwap::Fill => {
-                if !replace_held_one(self.water_bucket.unwrap(), keys::WOODEN_BUCKET) {
+            CauldronSwap::Bucket(swap) => {
+                // The classifier only offers a swap once the buckets resolved.
+                let Some(buckets) = &self.buckets else {
                     return false;
-                }
-                set_block(pos, cauldron.water);
-                emit_sound(keys::WATER_SPLASH_SMALL, Some(cell_center(pos)));
-                true
-            }
-            CauldronSwap::Scoop => {
-                if !replace_held_one(self.wooden_bucket.unwrap(), keys::WATER_BUCKET) {
-                    return false;
-                }
-                set_block(pos, cauldron.empty);
-                emit_sound(keys::WATER_SPLASH_SMALL, Some(cell_center(pos)));
-                true
+                };
+                let next = match swap {
+                    BucketSwap::Pour => cauldron.water,
+                    BucketSwap::Scoop => cauldron.empty,
+                };
+                buckets.perform(swap, pos, || set_block(pos, next))
             }
             CauldronSwap::Dye(flower, pigment, dilute) => {
                 if !consume_held(flower, 1) {
@@ -435,7 +423,7 @@ impl Furniture {
                 if block != cauldron.dye {
                     section_kv_set(pos, USES_KEY, vec![DYE_USES]);
                 }
-                emit_sound(keys::WATER_SPLASH_SMALL, Some(cell_center(pos)));
+                emit_sound(WATER_SPLASH_SOUND, Some(block_center(pos)));
                 true
             }
             CauldronSwap::DyeWool { dyeable, count } => {
@@ -460,7 +448,7 @@ impl Furniture {
                 } else {
                     section_kv_set(pos, USES_KEY, vec![uses - 1]);
                 }
-                emit_sound(keys::WATER_SPLASH_SMALL, Some(cell_center(pos)));
+                emit_sound(WATER_SPLASH_SOUND, Some(block_center(pos)));
                 true
             }
         }

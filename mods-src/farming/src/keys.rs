@@ -76,14 +76,11 @@ mod_sdk::pack_keys! {
     pub HEMP_SEEDS: Item = "farming:hemp_seeds";
     /// The engine's hemp: cultivated hemp's produce.
     pub HEMP: Item = "petramond:hemp";
-    pub WOODEN_BUCKET: Item = "petramond:wooden_bucket";
-    pub WATER_BUCKET: Item = "petramond:water_bucket";
 
     // --- mobs, sounds, bursts, effect, recipe ----------------------------
     pub RABBIT: Mob = "farming:rabbit";
     pub TILL_SOUND: Sound = "farming:till";
     pub HARVEST_SOUND: Sound = "farming:harvest";
-    pub SPLASH_SOUND: Sound = "petramond:water_splash_small";
     pub TILL_BURST: Emitter = "farming:till_burst";
     pub COMPOST_FILL: Emitter = "farming:compost_fill";
     pub FERTILIZE_BURST: Emitter = "farming:fertilize_burst";
@@ -120,6 +117,6 @@ pub const SAPLINGS: [[&str; 3]; 5] = [
 mod tests {
     #[test]
     fn every_declared_pack_id_is_shipped() {
-        pack_check::assert_declared(&[super::PACK_KEYS]);
+        pack_check::assert_declared(&[super::PACK_KEYS, mod_sdk::WATER_BUCKET_KEYS]);
     }
 }

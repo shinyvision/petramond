@@ -54,12 +54,12 @@ impl Tables {
 /// carries the blueprint), else the one its blueprint is bound to, else —
 /// with the slot empty — the last job that finished here, for its report.
 fn project_at(builder: &Builder, table: [i32; 3]) -> Option<ProjectId> {
-    if let Some(id) = builder.projects.at_table(table, |p| p.phase().active()) {
+    if let Some(id) = builder.projects.active_at(table) {
         return Some(id);
     }
     match blueprint_at(table) {
         Some(blueprint) => builder.projects.bound(&blueprint),
-        None => builder.projects.at_table(table, |p| p.phase().finished()),
+        None => builder.projects.report_at(table),
     }
 }
 

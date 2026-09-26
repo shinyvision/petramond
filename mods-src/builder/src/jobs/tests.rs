@@ -98,6 +98,9 @@ fn a_repositioned_draft_starts_its_design_afresh() {
     session.builder.jobs.map.get_mut(&id).unwrap().crew.last_mob = Some(55);
     assert_eq!(session.builder.jobs.by_mob(55).map(|j| j.id), Some(id));
     assert!(session.builder.jobs.by_mob(56).is_none());
+    session.builder.jobs.map.get_mut(&id).unwrap().crew.last_mob = Some(57);
+    assert!(session.builder.jobs.by_mob(55).is_none(), "the memo is checked");
+    assert_eq!(session.builder.jobs.by_mob(57).map(|j| j.id), Some(id));
 }
 
 #[test]

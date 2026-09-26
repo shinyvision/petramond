@@ -21,15 +21,16 @@
 //! survives a reload mid-crossing.
 
 mod keys;
+mod offset;
 
 use mod_sdk::*;
-use weather_core::{advance_offset, coverage, field_params, rain_from_coverage, wind, FieldParams};
+use weather_core::{coverage, field_params, rain_from_coverage, wind, FieldParams};
+
+use offset::Advection;
 
 /// The one tick system: advance + publish + accumulate.
 const TICK_WEATHER: u32 = 1;
 
-/// World-KV key persisting the advection offset (two LE f64).
-const KV_OFF: &str = "weather:off";
 /// Where earlier versions mirrored the field into the PERSISTENT world KV
 /// every tick; the row now travels on the `weather:field` session event, and
 /// init clears the leftover so saves stop carrying a frozen sky.
@@ -75,12 +76,9 @@ struct Weather {
     /// exactly), drawn once from a deterministic RNG stream.
     seed: u32,
     // --- server state ---------------------------------------------------
-    /// Advection offset accumulated in f64 (wrapped into [0, WRAP)); the
-    /// params carry it as f32.
-    off: [f64; 2],
-    /// Clock value at the last tick — a frozen `petramond:clock` freezes the
-    /// advection too ("frozen time = frozen weather").
-    last_clock: Option<u64>,
+    /// Advection offset accumulated in f64 (wrapped into [0, WRAP)), and the
+    /// clock it last followed; the params carry the offset as f32.
+    advection: Advection,
     snow_layer: Option<BlockId>,
     /// Bare-ice invariant: worldgen deliberately keeps sea/pond ice snowless
     /// (`frozen_ponds_carry_bare_sea_ice_without_a_snow_layer`); accumulation
@@ -126,15 +124,13 @@ impl Weather {
     fn server_tick(&mut self) {
         let clock = self.clock();
         let w = wind(clock, self.seed);
-        // Advance only while the clock does: `time freeze` freezes the whole
-        // sky, not just the storm phase ("frozen time = frozen weather").
-        // The FIRST tick after load only latches the clock — advancing on it
-        // would leak one step of drift into a frozen world.
-        if self.last_clock.is_some() && self.last_clock != Some(clock) {
-            self.off = advance_offset(self.off, clock, self.seed);
+        // Advance only while the clock does ("frozen time = frozen weather"),
+        // persisting whenever the deck moved: it moves up to 0.3 blocks a
+        // tick, and a reload must not visibly rewind it.
+        if self.advection.step(clock, self.seed) {
+            self.advection.store();
         }
-        self.last_clock = Some(clock);
-        let params = field_params(self.off, clock, self.seed);
+        let params = field_params(self.advection.off, clock, self.seed);
 
         // The replicated visual/param state: everything the shader and every
         // client instance needs to evaluate the field locally.
@@ -164,14 +160,6 @@ impl Weather {
             wind: w,
             clock,
         });
-
-        // Persist every tick: the offset moves up to 0.3 blocks/tick, and a
-        // reload must not visibly rewind the deck (world KV rides the normal
-        // save path; this is one small buffered write).
-        let mut bytes = Vec::with_capacity(16);
-        bytes.extend_from_slice(&self.off[0].to_le_bytes());
-        bytes.extend_from_slice(&self.off[1].to_le_bytes());
-        world_kv_set(KV_OFF, bytes);
 
         self.accumulate_snow(&params);
     }
@@ -409,14 +397,7 @@ impl Mod for Weather {
         self.packed_ice = resolve_block_logged(keys::PACKED_ICE);
         self.water = resolve_block_logged(keys::WATER);
         world_kv_delete(LEGACY_KV_FIELD);
-        if let Some(bytes) = world_kv_get(KV_OFF) {
-            if bytes.len() == 16 {
-                self.off = [
-                    f64::from_le_bytes(bytes[0..8].try_into().unwrap()),
-                    f64::from_le_bytes(bytes[8..16].try_into().unwrap()),
-                ];
-            }
-        }
+        self.advection = Advection::new(offset::load());
     }
 
     fn tick_system(&mut self, system_id: u32) {

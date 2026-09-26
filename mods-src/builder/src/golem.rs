@@ -67,9 +67,8 @@ pub fn publish(builder: &mut Builder, now: u64, viewers: &[GuiViewerData]) {
 fn describe(builder: &mut Builder, mob: u64, now: u64) -> GolemPanel {
     let told = builder
         .jobs
-        .map
-        .values()
-        .find(|job| job.crew.mob == Some(mob))
+        .by_mob(mob)
+        .filter(|job| job.crew.mob == Some(mob))
         .and_then(|job| {
             let project = builder.projects.get(job.id)?;
             let trouble = trouble::of(project, &job.crew, now);

@@ -15,6 +15,12 @@
 //! reach, or malformed — is a [`RecordError`], never "absent": it is logged
 //! once, the store never writes over it through [`RecordStore::update`], and
 //! the world keeps its bytes for a build that can read them.
+//!
+//! The same versioning serves any single persisted value that is not one of
+//! many records — a machine's cell-KV state, one world-KV row, a client
+//! storage blob: [`encode_versioned`] / [`decode_versioned`] frame a
+//! [`KvRecord`] exactly as the store does, and [`world_kv_load`] /
+//! [`world_kv_store`] do it for one world-KV key.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -106,6 +112,31 @@ fn versioned<T: KvRecord>(value: &T) -> Vec<u8> {
     let mut bytes = vec![T::VERSION];
     bytes.extend(value.encode());
     bytes
+}
+
+/// `value` as stored: its version byte, then its own encoding.
+pub fn encode_versioned<T: KvRecord>(value: &T) -> Vec<u8> {
+    versioned(value)
+}
+
+/// Decode a value stored by [`encode_versioned`], lifting an older version
+/// through [`KvRecord::upgrade`] first. An error is never "absent": the
+/// caller decides whether to keep the bytes or reset.
+pub fn decode_versioned<T: KvRecord>(bytes: &[u8]) -> Result<T, RecordError> {
+    unversioned(bytes)
+}
+
+/// Read one versioned world-KV value: `Ok(None)` when the key is absent, an
+/// error when it holds bytes this build cannot read.
+pub fn world_kv_load<T: KvRecord>(key: &str) -> Result<Option<T>, RecordError> {
+    world_kv_get(key)
+        .map(|bytes| unversioned(&bytes))
+        .transpose()
+}
+
+/// Write one versioned world-KV value.
+pub fn world_kv_store<T: KvRecord>(key: &str, value: &T) {
+    world_kv_set(key, versioned(value));
 }
 
 /// Decode a stored value, lifting an older version through the upgrade

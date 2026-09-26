@@ -1,9 +1,9 @@
 [package]
 name = "pack-check"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Host-side test support for the bundled mods: indexes every shipped pack's JSON (and the engine's assets) and asserts that each id a mod declares through `mod_sdk::pack_keys!` names a real declaration."
-license = "MIT"
+license.workspace = true
 
 [dependencies]
-mod-sdk = { path = "../../mod-sdk" }
+mod-sdk.workspace = true

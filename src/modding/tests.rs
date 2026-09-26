@@ -18,6 +18,7 @@ use petramond_math::world_pos::WorldPos;
 
 mod abi;
 mod conditions;
+mod guest_features;
 
 /// A player-less simulation: the contract tests below exercise the host's
 /// failure policy, not any player's state.

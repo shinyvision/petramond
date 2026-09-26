@@ -25,26 +25,18 @@ pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) ->
         return Outcome::Continue;
     };
 
-    if block == content.trough && item == content.water_bucket {
-        if !replace_held_one(content.water_bucket, keys::WOODEN_BUCKET) {
-            return Outcome::Continue;
-        }
-        swap_block(pos, content.trough_filled);
-        // Fresh water holds fresh sips (cell KV rides the swap).
-        crate::husbandry::clear_sips(content, pos);
-        emit_sound(keys::SPLASH_SOUND, Some(center(pos)));
-        return Outcome::Cancel;
-    }
-
-    if block == content.trough_filled && item == content.wooden_bucket {
-        if !replace_held_one(content.wooden_bucket, keys::WATER_BUCKET) {
-            return Outcome::Continue;
-        }
-        swap_block(pos, content.trough);
-        // Collected water can't leave a stale sip count behind.
-        crate::husbandry::clear_sips(content, pos);
-        emit_sound(keys::SPLASH_SOUND, Some(center(pos)));
-        return Outcome::Cancel;
+    if let Some((swap, next)) = bucket_swap(content, block, item) {
+        let swapped = content.buckets.perform(swap, pos, || {
+            swap_block(pos, next);
+            // Cell KV rides the swap: fresh water holds fresh sips, and
+            // collected water can't leave a stale sip count behind.
+            crate::husbandry::clear_sips(content, pos);
+        });
+        return if swapped {
+            Outcome::Cancel
+        } else {
+            Outcome::Continue
+        };
     }
 
     // Wheat on the EMPTY trough packs it with feed — but only a full bundle
@@ -56,7 +48,7 @@ pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) ->
             return Outcome::Continue;
         }
         swap_block(pos, content.trough_wheat);
-        emit_sound(keys::HARVEST_SOUND, Some(center(pos)));
+        emit_sound(keys::HARVEST_SOUND, Some(block_center(pos)));
         return Outcome::Cancel;
     }
 
@@ -87,16 +79,22 @@ pub fn on_interact(
     // The swap carries cell KV across — an emptied trough must not bank a
     // stale meal count (the sip pattern).
     crate::husbandry::clear_meals(content, pos);
-    emit_sound(keys::HARVEST_SOUND, Some(center(pos)));
+    emit_sound(keys::HARVEST_SOUND, Some(block_center(pos)));
     Outcome::Cancel
 }
 
-fn center(pos: [i32; 3]) -> [f64; 3] {
-    [
-        pos[0] as f64 + 0.5,
-        pos[1] as f64 + 0.5,
-        pos[2] as f64 + 0.5,
-    ]
+/// The bucket swap `item` offers on trough cell `block`, with the block the
+/// trough becomes: a water bucket fills the empty trough, an empty bucket
+/// drains the filled one.
+fn bucket_swap(content: &Content, block: BlockId, item: ItemId) -> Option<(BucketSwap, BlockId)> {
+    let (full, next) = if block == content.trough {
+        (false, content.trough_filled)
+    } else if block == content.trough_filled {
+        (true, content.trough)
+    } else {
+        return None;
+    };
+    Some((content.buckets.swap_for(item, full)?, next))
 }
 
 /// CLIENT prediction mirror of [`on_item_use`]'s gates (bucket swaps + the
@@ -107,8 +105,7 @@ pub fn predict_item_use(
     block: BlockId,
     held_count: u8,
 ) -> Outcome {
-    let claims = (block == content.trough && item == content.water_bucket)
-        || (block == content.trough_filled && item == content.wooden_bucket)
+    let claims = bucket_swap(content, block, item).is_some()
         || (block == content.trough
             && item == content.wheat_item
             && u32::from(held_count) >= FILL_WHEAT);

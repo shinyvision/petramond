@@ -26,6 +26,7 @@ use weather_core::FieldParams;
 use crate::content::{Content, CropDef};
 use crate::farmland::{self, Hydration};
 use crate::keys;
+use crate::rest::Rests;
 
 /// Stage delay: 120–180 s at 20 TPS, jittered per (position, stage) so a
 /// field planted in one sweep ripens staggered, not as one synchronized wave.
@@ -110,24 +111,9 @@ pub fn predict_place_pre(content: &Content, pos: [i32; 3], block: BlockId) -> Ou
 /// placeable block (deferred to placement) — is inspected and passed.
 pub fn predict_interact(content: &Content, block: BlockId, actor: &PlayerSnapshot) -> Outcome {
     match content.crop_stage(block) {
-        Some((_, 3)) if !(actor.sneak && held_places_a_block(actor.held)) => Outcome::Cancel,
+        Some((_, 3)) if !(actor.sneak && held_item_places_block(actor.held)) => Outcome::Cancel,
         _ => Outcome::Continue,
     }
-}
-
-/// Whether the held item places a block (its row carries a `block` link) —
-/// the gate the sneak-defer rule reads. Registry-only, legal on any
-/// instance; an unresolvable id reads as "not a block".
-fn held_places_a_block(held: Option<ItemId>) -> bool {
-    let Some(id) = held else {
-        return false;
-    };
-    item_names(vec![id])
-        .into_iter()
-        .next()
-        .flatten()
-        .and_then(|name| item_info(&name))
-        .is_some_and(|info| info.block.is_some())
 }
 
 /// Whether the crop cell is too dark to live (see [`MIN_GROW_LIGHT`]). Raw
@@ -174,7 +160,7 @@ pub fn on_interact(
     if stage < 3 {
         return Outcome::Continue;
     }
-    if sneaking && held_places_a_block(held) {
+    if sneaking && held_item_places_block(held) {
         return Outcome::Continue;
     }
     let center = [
@@ -299,13 +285,14 @@ pub fn on_block_broken(content: &Content, pos: [i32; 3], block: BlockId, harvest
 pub fn on_hook(
     content: &Content,
     growth: &mut Growth,
+    rests: &mut Rests,
     sky: Option<&FieldParams>,
     kind: BlockHookKind,
     pos: [i32; 3],
 ) {
     match kind {
         BlockHookKind::ScheduledTick => attempt(content, growth, sky, pos),
-        BlockHookKind::RandomTick => rearm_if_lost(content, growth, pos),
+        BlockHookKind::RandomTick => rearm_if_lost(content, growth, rests, pos),
         BlockHookKind::NeighborUpdate => support_check(content, growth, pos),
     }
 }
@@ -360,7 +347,7 @@ fn attempt(content: &Content, growth: &mut Growth, sky: Option<&FieldParams>, po
 /// Otherwise they are the re-arm heartbeat: an unarmed or long-overdue
 /// growable crop (its scheduled attempt died with an unload) schedules a
 /// fresh attempt. Armed-and-not-yet-due crops are left alone.
-fn rearm_if_lost(content: &Content, growth: &mut Growth, pos: [i32; 3]) {
+fn rearm_if_lost(content: &Content, growth: &mut Growth, rests: &mut Rests, pos: [i32; 3]) {
     let Some(block) = get_block(pos) else {
         return;
     };
@@ -373,7 +360,7 @@ fn rearm_if_lost(content: &Content, growth: &mut Growth, pos: [i32; 3]) {
     }
     // A stand that survived the darkness check is a stand a pest could smell:
     // the same heartbeat carries the attraction roll (see `attract`).
-    crate::attract::on_random_tick(content, pos, block);
+    crate::attract::on_random_tick(content, rests, pos, block);
     if let Some(&due) = growth.pending.get(&pos) {
         if current_tick() <= due + REARM_GRACE {
             return;

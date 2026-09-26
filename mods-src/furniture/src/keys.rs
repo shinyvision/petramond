@@ -38,17 +38,12 @@ mod_sdk::pack_keys! {
     pub(crate) CABINET_GUI: GuiKind = "furniture:cabinet";
     #[cfg(test)]
     pub(crate) COUNTER_CABINET_GUI: GuiKind = "furniture:counter_cabinet";
-
-    /// Engine rows the bucket interactions trade in.
-    pub(crate) WATER_BUCKET: Item = "petramond:water_bucket";
-    pub(crate) WOODEN_BUCKET: Item = "petramond:wooden_bucket";
-    pub(crate) WATER_SPLASH_SMALL: Sound = "petramond:water_splash_small";
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn every_declared_pack_id_is_shipped() {
-        pack_check::assert_declared(&[super::PACK_KEYS]);
+        pack_check::assert_declared(&[super::PACK_KEYS, mod_sdk::WATER_BUCKET_KEYS]);
     }
 }

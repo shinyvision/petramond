@@ -5,11 +5,22 @@ use crate::host::prelude::*;
 
 use crate::content::PROJECT_DATA;
 use crate::fx::HashMap;
-use crate::project::{Phase, Project, ProjectId, RECORD_PREFIX};
+use crate::project::{Project, ProjectId, RECORD_PREFIX};
 
 const NONCE_KEY: &str = "builder:nonce";
 const NEXT_KEY: &str = "builder:next_project";
 const INDEX_PREFIX: &str = "builder:live";
+/// Per table, the newest project that finished there: the table's report,
+/// found again after the record has left memory.
+const REPORT_PREFIX: &str = "builder:report";
+
+fn report_key(table: [i32; 3]) -> String {
+    format!("{REPORT_PREFIX}/{}/{}/{}", table[0], table[1], table[2])
+}
+
+fn read_id(bytes: Vec<u8>) -> Option<ProjectId> {
+    Some(u64::from_le_bytes(bytes.try_into().ok()?))
+}
 
 pub struct Projects {
     nonce: u64,
@@ -58,12 +69,15 @@ impl Projects {
     }
 
     pub fn update<R>(&mut self, id: ProjectId, f: impl FnOnce(&mut Project) -> R) -> Option<R> {
-        let ((out, finished), changed) = self.records.update(id, |p| {
+        let ((out, finished, table), changed) = self.records.update(id, |p| {
             let out = f(p);
-            (out, p.phase().finished())
+            (out, p.phase().finished(), p.table)
         })?;
         if changed {
             self.live.set(id, !finished);
+            if finished {
+                file_report(table, id);
+            }
         }
         Some(out)
     }
@@ -78,18 +92,33 @@ impl Projects {
         id
     }
 
-    /// The newest started, loaded project at `table` that `wanted` accepts.
-    /// Found by position, not slot: a golem carries its blueprint away.
-    pub fn at_table(
-        &self,
-        table: [i32; 3],
-        wanted: impl Fn(&Project) -> bool,
-    ) -> Option<ProjectId> {
-        self.records
-            .loaded()
-            .filter(|(_, p)| p.table == table && p.phase() != Phase::Draft && wanted(p))
-            .map(|(id, _)| id)
+    /// The newest project at `table` with a golem out. Found by position,
+    /// not slot: a golem carries its blueprint away. Only live projects can
+    /// be active, and the tick reads every live record, so the live index
+    /// over the session's records is the whole answer.
+    pub fn active_at(&self, table: [i32; 3]) -> Option<ProjectId> {
+        self.live
+            .iter()
+            .filter(|id| {
+                self.records
+                    .peek(*id)
+                    .is_some_and(|p| p.table == table && p.phase().active())
+            })
             .max()
+    }
+
+    /// The newest finished project at `table` — its report. The filed
+    /// pointer finds it after a sweep or a reload; a loaded record finished
+    /// before reports were filed still counts.
+    pub fn report_at(&self, table: [i32; 3]) -> Option<ProjectId> {
+        let filed = world_kv_get(&report_key(table)).and_then(read_id);
+        let loaded = self
+            .records
+            .loaded()
+            .filter(|(_, p)| p.table == table && p.phase().finished())
+            .map(|(id, _)| id)
+            .max();
+        filed.max(loaded)
     }
 
     /// Let go of finished projects nobody has asked about since the last
@@ -119,4 +148,13 @@ impl Projects {
         bytes.extend(id.to_le_bytes());
         bytes
     }
+}
+
+/// File `id` as `table`'s report unless a newer project already is.
+fn file_report(table: [i32; 3], id: ProjectId) {
+    let key = report_key(table);
+    if world_kv_get(&key).and_then(read_id).is_some_and(|filed| filed >= id) {
+        return;
+    }
+    world_kv_set(&key, id.to_le_bytes().to_vec());
 }

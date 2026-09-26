@@ -350,7 +350,7 @@ fn test_content() -> Content {
         water: BlockId(203),
         fluids: crate::fluids::Fluids::of(&[BlockId(203), BlockId(205)]),
         silt: BlockId(204),
-        air: BlockId(0),
+        air: BlockId::AIR,
         species: (0..4)
             .map(|i| Species {
                 cap: BlockId(210 + i),

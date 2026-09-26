@@ -388,14 +388,6 @@ impl Monsters {
     }
 }
 
-fn cell_of(pos: [f64; 3]) -> [i32; 3] {
-    [
-        pos[0].floor() as i32,
-        pos[1].floor() as i32,
-        pos[2].floor() as i32,
-    ]
-}
-
 /// Raw sky light at the cell; `None` while the section is unloaded or its
 /// streamed content is not final (`light_at` carries the gate itself).
 fn sky_light(cell: [i32; 3]) -> Option<f32> {

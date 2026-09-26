@@ -257,7 +257,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::{Mutex, OnceLock};
 
-    const AIR: BlockId = BlockId(0);
+    const AIR: BlockId = BlockId::AIR;
     const STALACTITE: BlockId = BlockId(101);
     const STALACTITE_WET: BlockId = BlockId(103);
     const STALAGMITE: BlockId = BlockId(102);
