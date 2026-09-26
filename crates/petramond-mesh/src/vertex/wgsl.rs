@@ -13,11 +13,10 @@ use std::fmt::Write;
 use super::transition::UV_MODE_TRANSITION;
 use super::{
     AO_SHIFT, BLOCK_LIGHT_MASK, CELL_UV_MASK, CELL_UV_U_SHIFT, CELL_UV_V_SHIFT, CHROMA_HI_MASK,
-    CHROMA_HI_SHIFT, CHROMA_LO_BITS, CORNER_SHIFT, DYED_FLAG2, FLUID_FLOW_FLAG2,
-    FLUID_MEDIUM_MASK, FLUID_MEDIUM_SHIFT, NORMAL_CODE_MASK, NORMAL_CODE_SHIFT, OVERLAY_FLAG,
-    OVERLAY_MASK, OVERLAY_SHIFT2, SHADE_SHIFT, SKY_SHIFT, TILE_MASK, UV_MODE_CELL_LOCAL,
-    UV_MODE_NONE, UV_MODE_SHIFT, UV_MODE_THIN_U, UV_MODE_THIN_V, UV_TURN_HI_FLAG2,
-    UV_TURN_LO_FLAG,
+    CHROMA_HI_SHIFT, CHROMA_LO_BITS, CORNER_SHIFT, DYED_FLAG2, FLUID_FLOW_FLAG2, FLUID_MEDIUM_MASK,
+    FLUID_MEDIUM_SHIFT, NORMAL_CODE_MASK, NORMAL_CODE_SHIFT, OVERLAY_FLAG, OVERLAY_MASK,
+    OVERLAY_SHIFT2, SHADE_SHIFT, SKY_SHIFT, TILE_MASK, UV_MODE_CELL_LOCAL, UV_MODE_NONE,
+    UV_MODE_SHIFT, UV_MODE_THIN_U, UV_MODE_THIN_V, UV_TURN_HI_FLAG2, UV_TURN_LO_FLAG,
 };
 use crate::face::{Face, FaceShading};
 
@@ -110,7 +109,13 @@ fn lane_decoders() -> String {
     lane(&mut text, "vtx_shade", "packed", SHADE_SHIFT, TWO_BITS);
     lane(&mut text, "vtx_ao", "packed", AO_SHIFT, TWO_BITS);
     lane(&mut text, "vtx_sky", "packed", SKY_SHIFT, LIGHT_BITS);
-    lane(&mut text, "vtx_uv_mode", "packed", UV_MODE_SHIFT, UV_MODE_MASK);
+    lane(
+        &mut text,
+        "vtx_uv_mode",
+        "packed",
+        UV_MODE_SHIFT,
+        UV_MODE_MASK,
+    );
     lane(
         &mut text,
         "vtx_overlay_flag",
@@ -127,8 +132,20 @@ fn lane_decoders() -> String {
     );
     // `packed2`.
     lane(&mut text, "vtx_block_red", "packed2", 0, BLOCK_LIGHT_MASK);
-    lane(&mut text, "vtx_cell_u", "packed2", CELL_UV_U_SHIFT, CELL_UV_MASK);
-    lane(&mut text, "vtx_cell_v", "packed2", CELL_UV_V_SHIFT, CELL_UV_MASK);
+    lane(
+        &mut text,
+        "vtx_cell_u",
+        "packed2",
+        CELL_UV_U_SHIFT,
+        CELL_UV_MASK,
+    );
+    lane(
+        &mut text,
+        "vtx_cell_v",
+        "packed2",
+        CELL_UV_V_SHIFT,
+        CELL_UV_MASK,
+    );
     lane(
         &mut text,
         "vtx_fluid_medium",

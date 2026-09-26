@@ -329,7 +329,10 @@ fn step_noise_defaults_on_and_a_row_can_silence_it() {
     let defs = parse_layers(&[&base(), &layer]).expect("rows load").defs;
     let noisy = |name: &str| defs.iter().find(|d| d.name == name).unwrap().step_noise;
     assert!(noisy("mymod:walker"), "an unspecified row is heard walking");
-    assert!(!noisy("mymod:cart"), "a silenced row never makes step noise");
+    assert!(
+        !noisy("mymod:cart"),
+        "a silenced row never makes step noise"
+    );
     assert!(
         defs.iter()
             .filter(|d| (d.mob.0 as usize) < ENGINE_MOB_NAMES.len())
@@ -628,7 +631,7 @@ fn dynamic_pack_mob_inner(save: &std::path::Path) {
         .to_string(),
     )
     .unwrap();
-    let p = crate::save::palette::load_or_create(&save, &Default::default()).unwrap();
+    let p = crate::save::palette::load_or_create(save, &Default::default()).unwrap();
     for &m in Mob::all() {
         let disk = p.mob_to_disk(m.id()).expect("every enabled species pins");
         assert_eq!(
@@ -757,7 +760,11 @@ fn spawn_chances_resolve_aligned_and_bad_rows_fail_the_load() {
         0.25,
         "unmapped listed biome"
     );
-    assert_eq!(spawn.chance_in(Biome::REDWOOD_FOREST), 0.125, "both applied");
+    assert_eq!(
+        spawn.chance_in(Biome::REDWOOD_FOREST),
+        0.125,
+        "both applied"
+    );
     assert_eq!(spawn.chance_in(Biome::DESERT), 0.0, "unlisted biome");
 
     let bad = parse_layers(&[&owl_with(|row| {

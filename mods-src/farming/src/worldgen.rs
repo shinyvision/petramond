@@ -70,7 +70,10 @@ pub(crate) fn resolve_specs() -> Vec<WildCropSpec> {
         .into_iter()
         .filter_map(|(block, row)| {
             let Some(salt) = u64::from_str_radix(row.salt.trim_start_matches("0x"), 16).ok() else {
-                log(&format!("farming: invalid wild-patch salt '{}' for {block:?}", row.salt));
+                log(&format!(
+                    "farming: invalid wild-patch salt '{}' for {block:?}",
+                    row.salt
+                ));
                 return None;
             };
             if row.patch.0 < 1 || row.patch.0 > row.patch.1 {
@@ -80,7 +83,10 @@ pub(crate) fn resolve_specs() -> Vec<WildCropSpec> {
             let mut chances = Vec::new();
             for entry in row.biomes {
                 let Some(biome) = biome::by_name(&entry.biome) else {
-                    log(&format!("farming: unknown wild-patch biome '{}'", entry.biome));
+                    log(&format!(
+                        "farming: unknown wild-patch biome '{}'",
+                        entry.biome
+                    ));
                     return None;
                 };
                 if entry.chance_denominator == 0 {
@@ -89,7 +95,15 @@ pub(crate) fn resolve_specs() -> Vec<WildCropSpec> {
                 }
                 chances.push((biome, 1.0 / entry.chance_denominator as f32));
             }
-            Some((row.priority, WildCropSpec { salt, patch: row.patch, block, chances }))
+            Some((
+                row.priority,
+                WildCropSpec {
+                    salt,
+                    patch: row.patch,
+                    block,
+                    chances,
+                },
+            ))
         })
         .collect::<Vec<_>>();
     rows.sort_by_key(|(priority, _)| *priority);
@@ -121,7 +135,10 @@ pub fn wild_patches(content: &Content, ctx: &GenCtx) -> Vec<GenWrite> {
         };
         // First spec whose biome gate + patch membership hit owns the cell.
         let Some(spec) = specs.iter().find(|spec| {
-            spec.chances.iter().find(|(id, _)| *id == biome).map(|(_, chance)| *chance)
+            spec.chances
+                .iter()
+                .find(|(id, _)| *id == biome)
+                .map(|(_, chance)| *chance)
                 .is_some_and(|chance| in_patch(ctx.seed(), spec.salt, chance, spec.patch, wx, wz))
         }) else {
             return;
@@ -199,7 +216,11 @@ mod row_tests {
             assert!(u64::from_str_radix(row.salt.trim_start_matches("0x"), 16).is_ok());
             assert!(!row.biomes.is_empty());
             for entry in row.biomes {
-                assert!(biome::by_name(&entry.biome).is_some(), "{name}: {}", entry.biome);
+                assert!(
+                    biome::by_name(&entry.biome).is_some(),
+                    "{name}: {}",
+                    entry.biome
+                );
                 assert!(entry.chance_denominator > 0);
             }
         }

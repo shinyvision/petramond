@@ -22,8 +22,9 @@ use petramond_world::section::{Section, SectionSummary};
 
 use super::density::surface::SurfaceDensitySystem;
 use super::feature::{
-    apply_gen_plan, cached_feature_region, feature_candidate_bounds, feature_region_bounds, scatter,
-    vegetation, ColumnFeatureField, FeaturePlan, SurfaceHeights, MAX_TREE_REACH_ABOVE, TREELINE,
+    apply_gen_plan, cached_feature_region, feature_candidate_bounds, feature_region_bounds,
+    scatter, vegetation, ColumnFeatureField, FeaturePlan, SurfaceHeights, MAX_TREE_REACH_ABOVE,
+    TREELINE,
 };
 use super::noise::cave_field::CaveField;
 use super::region::RegionCells;
@@ -416,14 +417,8 @@ impl ChunkGenerator {
         // Served by the per-thread window memo; `raw_surf` carries the
         // pre-cave-adjustment surfaces the column core stores.
         let (cx0, cz0, cw, ch) = feature_candidate_bounds(ox, oz);
-        let (candidates, raw_surf) = cached_feature_region(
-            &self.surface_density,
-            &self.caves,
-            cx0,
-            cz0,
-            cw,
-            ch,
-        );
+        let (candidates, raw_surf) =
+            cached_feature_region(&self.surface_density, &self.caves, cx0, cz0, cw, ch);
 
         let radius = MESH_BIOME_RADIUS as i32;
         let mut biome = vec![0u8; SECTION_SIZE * SECTION_SIZE].into_boxed_slice();
@@ -512,14 +507,8 @@ impl ChunkGenerator {
     fn build_feature_windows(&self, cx: i32, cz: i32) -> FeatureWindows {
         let (ox, oz) = (cx * CHUNK_SX as i32, cz * CHUNK_SZ as i32);
         let (cx0, cz0, cw, ch) = feature_candidate_bounds(ox, oz);
-        let (candidates, _raw) = cached_feature_region(
-            &self.surface_density,
-            &self.caves,
-            cx0,
-            cz0,
-            cw,
-            ch,
-        );
+        let (candidates, _raw) =
+            cached_feature_region(&self.surface_density, &self.caves, cx0, cz0, cw, ch);
         self.finish_feature_windows(ox, oz, candidates)
     }
 
@@ -539,14 +528,8 @@ impl ChunkGenerator {
         let support = needs_support.then(|| {
             let (sx0, sz0, sw, sh) = feature_region_bounds(ox, oz);
             debug_assert_eq!(sw, sh);
-            let (region, _raw) = cached_feature_region(
-                &self.surface_density,
-                &self.caves,
-                sx0,
-                sz0,
-                sw,
-                sh,
-            );
+            let (region, _raw) =
+                cached_feature_region(&self.surface_density, &self.caves, sx0, sz0, sw, sh);
             SurfaceHeights::new(sx0, sz0, sw, region.surf)
         });
 
@@ -627,7 +610,10 @@ impl ChunkGenerator {
             let sp = pending.sp;
             let first_feature = match pending.resume {
                 Resume::Stage => {
-                    if self.run_stage(stage, sp, &mut pending.section, col).is_err() {
+                    if self
+                        .run_stage(stage, sp, &mut pending.section, col)
+                        .is_err()
+                    {
                         return SectionGen::Deferred(pending);
                     }
                     0

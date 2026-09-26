@@ -5,7 +5,6 @@ use super::sealing::{cutting, strands};
 use super::verdict::{settle_verdict, viability, waits_there, Viable};
 use super::{defer_task, places, task_cells, walk_via, Flow, Round};
 use crate::geometry::{feet_of, manhattan, offset, reaches};
-use crate::worker::Job;
 use crate::project::Projects;
 use crate::worker::route::{self, Hubs};
 use crate::worker::tuning::patience::NOWHERE_STANDS;
@@ -14,6 +13,7 @@ use crate::worker::tuning::reach::PILLAR_SPAN;
 use crate::worker::tuning::waits::{SEALED_WAIT, STRANDING_STANCE};
 use crate::worker::tuning::window::{FOCUS_REACH, SEARCHES, SPOTS, STANCE_NEARBY, STANCE_SEARCHES};
 use crate::worker::waiting::{Probe, Waiting};
+use crate::worker::Job;
 use crate::worker::{pillar, sight, stance, Body, Ctx, Task, Then};
 
 /// Somewhere to stand for `task`, the first leg of the walk there, and what

@@ -25,8 +25,8 @@
 use super::foliage_tint::{self, FaceMaterial};
 use super::lighting::{self, DynLight};
 use petramond_math::face::Face;
-use petramond_mesh::face::FaceShading;
 use petramond_math::facing::Facing;
+use petramond_mesh::face::FaceShading;
 use petramond_mesh::vertex::BlockLightVertexExt;
 use petramond_mesh::{
     pack_cell_uv, pack_tint, Vertex, UV_MODE_CELL_LOCAL, UV_MODE_SHIFT, UV_MODE_THIN_U,

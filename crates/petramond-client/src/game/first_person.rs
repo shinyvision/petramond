@@ -46,7 +46,7 @@ impl Game {
         let vel = player.vel;
         let forward = glam::Vec3::new(yaw.sin(), 0.0, yaw.cos());
         let right = glam::Vec3::new(-yaw.cos(), 0.0, yaw.sin());
-        let medium = movement_medium(&self.replica.world, player.pos);
+        let medium = movement_medium(self.replica.world.data(), player.pos);
         let (stride, stride_weight) = self.local.camera_rig.stride();
         let target = if self.local.targeted_mob.is_some() || self.local.targeted_player.is_some() {
             AimTarget::Creature

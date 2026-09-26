@@ -6,9 +6,9 @@ use crate::host::prelude::*;
 use super::tuning::hands::{AIM_SETTLE_TICKS, AIM_TICKS, TURN_PER_TICK};
 use super::{hands, sight, Body, Ctx, Step, Task};
 use crate::geometry::FACES;
-use crate::worker::Job;
 use crate::project::Projects;
 use crate::survey::Known;
+use crate::worker::Job;
 
 pub const JAB: &str = "jab";
 

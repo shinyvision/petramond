@@ -375,7 +375,11 @@ mod tests {
     fn input_char_capacity_matches_font_advance() {
         let font = Font::builtin();
         assert_eq!(input_visible_chars(&font, 0), 0);
-        assert_eq!(input_visible_chars(&font, 1), 1, "a sliver still shows the caret glyph");
+        assert_eq!(
+            input_visible_chars(&font, 1),
+            1,
+            "a sliver still shows the caret glyph"
+        );
         // The window depends only on the box, so it cannot shrink as the
         // text changes — that is what stranded the caret on the last glyph.
         let six = font.max_advance() * 6;

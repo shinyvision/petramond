@@ -229,11 +229,8 @@ fn mesh_lit(
             dyed: &|wx, wy, wz| {
                 in_section(wx, wy, wz)
                     && dyed.contains_key(
-                        &(petramond_world::chunk::section_idx(
-                            wx as usize,
-                            wy as usize,
-                            wz as usize,
-                        ) as u16),
+                        &(petramond_world::chunk::section_idx(wx as usize, wy as usize, wz as usize)
+                            as u16),
                     )
             },
         },

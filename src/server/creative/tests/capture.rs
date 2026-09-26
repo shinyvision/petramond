@@ -10,7 +10,8 @@ fn capture_completes_asynchronously_without_reading_later_world_edits() {
         .set_block_world(pos.x, pos.y, pos.z, Block::Stone);
     let expected = CellData::capture(&server.world.snapshot_cell(pos).unwrap());
     server.sessions[0]
-        .sim.creative
+        .sim
+        .creative
         .pending
         .push_back(Pending::Action(CreativeAction::Capture {
             name: "Snapshot".into(),
@@ -83,11 +84,13 @@ fn a_paste_names_its_design_and_holds_its_place_while_the_archive_arrives() {
     server.request_placement(0, digest, pos.to_array(), 0);
     // An edit asked for after the paste waits behind it.
     server.sessions[0]
-        .sim.creative
+        .sim
+        .creative
         .try_enqueue(Pending::Action(CreativeAction::Undo));
     assert!(
         server.sessions[0]
-            .sim.schematic
+            .sim
+            .schematic
             .take_notices()
             .contains(&SchematicNotice::Want { digest }),
         "the world lacks the design, so the server asks for it"

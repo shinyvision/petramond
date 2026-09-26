@@ -42,7 +42,10 @@ impl Game {
     /// and the torch channel keeps it lit at night.
     pub(super) fn held_item_light(&self) -> (u8, petramond_world::light::BlockLight6) {
         let c = self.local.cam.pos.block();
-        self.replica.world.data().dynamic_light_at_world(c.x, c.y, c.z)
+        self.replica
+            .world
+            .data()
+            .dynamic_light_at_world(c.x, c.y, c.z)
     }
 
     pub(super) fn tick_mesh_budget(&mut self) {

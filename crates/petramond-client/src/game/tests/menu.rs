@@ -134,25 +134,15 @@ fn collect_to_cursor_tops_up_from_hotbar_and_grid() {
     game.collect_to_cursor();
 
     // 5 + 20 + 30 = 55 onto the cursor, both dirt sources emptied.
-    assert_eq!(
-        game.server_player()
-            .inventory
-            .cursor()
-            .unwrap()
-            .count,
-        55
-    );
+    assert_eq!(game.server_player().inventory.cursor().unwrap().count, 55);
     assert!(game.server_player().inventory.slot(2).is_none());
-    assert!(game.server_player()
+    assert!(game
+        .server_player()
         .inventory
         .slot(petramond_world::inventory::HOTBAR_LEN)
         .is_none());
     assert_eq!(
-        game.server_player()
-            .inventory
-            .slot(5)
-            .unwrap()
-            .item,
+        game.server_player().inventory.slot(5).unwrap().item,
         ItemType::Stone
     );
 }
@@ -174,7 +164,7 @@ fn widget_clicks_latch_then_dispatch_to_the_owning_mod_on_the_tick() {
 
     // Stale values from before the session must not survive the open.
     petramond_world::gui_state::gui_state_set(
-        &mut game.session_mut().gui_state,
+        &mut game.session_mut().sim_mut().gui_state,
         "modtest:stale".into(),
         GuiValue::I32(9),
     );
@@ -184,10 +174,7 @@ fn widget_clicks_latch_then_dispatch_to_the_owning_mod_on_the_tick() {
         Some(petramond_math::math::IVec3::new(1, 2, 3).into()),
     );
     assert!(
-        game.session()
-            .gui_state
-            .get("modtest:stale")
-            .is_none(),
+        game.session().gui_state().get("modtest:stale").is_none(),
         "opening a mod GUI clears the session state map"
     );
 
@@ -223,16 +210,13 @@ fn widget_clicks_latch_then_dispatch_to_the_owning_mod_on_the_tick() {
     // Closing the session clears the map and drops the target. The close
     // message latches and applies on the tick (like play).
     petramond_world::gui_state::gui_state_set(
-        &mut game.session_mut().gui_state,
+        &mut game.session_mut().sim_mut().gui_state,
         "modtest:mid".into(),
         GuiValue::F32(0.5),
     );
     game.close_open_menu();
     game.apply_latched_actions_for_test();
-    assert!(game.session()
-        .gui_state
-        .get("modtest:mid")
-        .is_none());
+    assert!(game.session().gui_state().get("modtest:mid").is_none());
 
     // With no mod GUI session open, a stray widget click dispatches nothing.
     game.menu_click(
@@ -251,7 +235,8 @@ fn chest_lids_follow_the_viewer_count_not_the_local_menu() {
     use petramond_world::block::Block;
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(8, 64, 8);
-    game.server_world_mut().set_block_world(8, 64, 8, Block::Chest);
+    game.server_world_mut()
+        .set_block_world(8, 64, 8, Block::Chest);
     game.server_world_mut()
         .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
     // The lid animates the chest the REPLICA holds; mirror what the deltas
@@ -266,24 +251,26 @@ fn chest_lids_follow_the_viewer_count_not_the_local_menu() {
 
     let mut ev = petramond::events::tick::TickEvents::default();
     game.sim_mut().open_chest_screen_for(0, pos, &mut ev);
-    assert_eq!(game.sim().chest_viewers.get(&pos), Some(&1));
+    assert_eq!(game.sim().chest_viewers(pos), 1);
     // Re-opening without a close never leaks a viewer slot.
     game.sim_mut().open_chest_screen_for(0, pos, &mut ev);
-    assert_eq!(game.sim().chest_viewers.get(&pos), Some(&1));
+    assert_eq!(game.sim().chest_viewers(pos), 1);
 
     // A second player looking inside keeps the lid up after the first leaves.
-    *game.sim_mut().chest_viewers.entry(pos).or_insert(0) += 1;
+    game.sim_mut().set_chest_viewed_for_test(pos, true, &mut ev);
     game.sim_mut().close_open_menu_for(0, &mut ev);
     assert_eq!(
-        game.sim().chest_viewers.get(&pos),
-        Some(&1),
+        game.sim().chest_viewers(pos),
+        1,
         "one viewer remains after the local player closes"
     );
     // The lid animation reads the REPLICATED open-chest set; mirror what the
     // next batch would ship.
     game.sync_open_chests_for_test();
     for _ in 0..30 {
-        game.game.fx.advance_block_animations(&game.game.replica.world, 0.05);
+        game.game
+            .fx
+            .advance_block_animations(&game.game.replica.world, 0.05);
     }
     assert!(
         game.game.fx.block_open_progress(pos, false) > 0.9,
@@ -291,10 +278,13 @@ fn chest_lids_follow_the_viewer_count_not_the_local_menu() {
     );
 
     // The last viewer leaving drops the lid.
-    game.sim_mut().chest_viewers.remove(&pos);
+    game.sim_mut()
+        .set_chest_viewed_for_test(pos, false, &mut ev);
     game.sync_open_chests_for_test();
     for _ in 0..60 {
-        game.game.fx.advance_block_animations(&game.game.replica.world, 0.05);
+        game.game
+            .fx
+            .advance_block_animations(&game.game.replica.world, 0.05);
     }
     assert!(
         game.game.fx.block_open_progress(pos, false) < 0.05,

@@ -10,8 +10,6 @@
 
 use crate::world::{World, WorldSide};
 
-
-
 impl<S: WorldSide> World<S> {
     /// Store a cell KV entry; marks the section modified so the data persists.
     /// `false` = the owning section is unloaded / out of range / not

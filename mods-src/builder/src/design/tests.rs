@@ -199,7 +199,10 @@ fn a_block_items_cannot_build_stays_in_the_design_as_unsupported() {
         ASSET,
         "Pond",
         [2, 1, 1],
-        &[([0, 0, 0], "petramond:stone"), ([1, 0, 0], "petramond:water")],
+        &[
+            ([0, 0, 0], "petramond:stone"),
+            ([1, 0, 0], "petramond:water"),
+        ],
         64,
     );
     let mut design = Design::new(ASSET, [0, 0, 0], 0);

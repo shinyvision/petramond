@@ -11,8 +11,8 @@ mod load;
 mod placement;
 mod schema;
 
-pub(crate) use load::CATALOG;
 pub use load::by_key;
+pub(crate) use load::CATALOG;
 pub use placement::Placement;
 
 #[cfg(test)]

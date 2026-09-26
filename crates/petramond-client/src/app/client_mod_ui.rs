@@ -582,30 +582,26 @@ mod tests {
             pending_scroll: 0.0,
         });
 
-        assert!(client_gui_open_permitted(
-            AppScreen::Game,
-            "map",
-            &no_canvas
-        ));
+        assert!(client_gui_open_permitted(AppScreen::Game, "map", no_canvas));
         assert!(client_gui_open_permitted(
             AppScreen::ClientModGui(map),
             "map",
-            &no_canvas,
+            no_canvas,
         ));
         assert!(!client_gui_open_permitted(
             AppScreen::ClientModGui(other),
             "map",
-            &no_canvas,
+            no_canvas,
         ));
         assert!(client_gui_open_permitted(
             AppScreen::ClientCanvas,
             "map",
-            &canvas,
+            canvas.as_ref(),
         ));
         assert!(!client_gui_open_permitted(
             AppScreen::ClientCanvas,
             "other",
-            &canvas,
+            canvas.as_ref(),
         ));
         for screen in [
             AppScreen::Pause,
@@ -614,7 +610,7 @@ mod tests {
             AppScreen::Dead,
         ] {
             assert!(
-                !client_gui_open_permitted(screen, "map", &no_canvas),
+                !client_gui_open_permitted(screen, "map", no_canvas),
                 "{screen:?}"
             );
         }

@@ -21,7 +21,14 @@ impl<'a> PaintCtx<'a> {
         }
     }
 
-    pub(super) fn label(&self, n: &Here<'a>, wrap: bool, scale: u32, small: bool, p: &mut Painter<'_>) {
+    pub(super) fn label(
+        &self,
+        n: &Here<'a>,
+        wrap: bool,
+        scale: u32,
+        small: bool,
+        p: &mut Painter<'_>,
+    ) {
         let inst = n.inst;
         let text = inst.text.as_deref().unwrap_or("");
         // A bound palette entry outranks the style — the colour IS state —
@@ -171,7 +178,11 @@ impl<'a> PaintCtx<'a> {
         let icon_part = icon.and_then(|k| self.theme.part(k));
         let (icon_w, icon_h) = icon_part.map(Part::natural).unwrap_or((0, 0));
         let text_w = self.theme.ui_font().width(text);
-        let gap = if icon_w > 0 && text_w > 0 { ICON_GAP } else { 0 };
+        let gap = if icon_w > 0 && text_w > 0 {
+            ICON_GAP
+        } else {
+            0
+        };
         let mut x = cell.x + (cell.w - (icon_w + gap + text_w)) / 2;
         if let Some(face) = icon_part.and_then(|part| part.face(FaceState::Default)) {
             let at = RectI {

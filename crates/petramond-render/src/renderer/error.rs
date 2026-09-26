@@ -44,7 +44,10 @@ impl fmt::Display for RenderInitError {
                 f.write_str("the GPU adapter cannot present to this window's surface")
             }
             Self::UnreadableFormat(format) => {
-                write!(f, "offscreen colour format {format:?} is not readable as 8-bit RGBA")
+                write!(
+                    f,
+                    "offscreen colour format {format:?} is not readable as 8-bit RGBA"
+                )
             }
             Self::PassGraph(e) => write!(f, "invalid render pass graph: {e}"),
             Self::ContentLimits(e) => {

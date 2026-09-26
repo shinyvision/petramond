@@ -17,7 +17,10 @@ fn a_trip_is_its_walk_climb_and_mount_per_block_laid() {
     let key = trip(Some(10), 3, 2, 1).key();
     assert_eq!(key, (10 + 3 * LEVEL_MOVES + MOUNT_MOVES) * 64 / (4 * 2 + 1));
     // Nothing laid still divides by a block's worth, never by nothing.
-    assert_eq!(trip(Some(10), 3, 0, 0).key(), (10 + 3 * LEVEL_MOVES + MOUNT_MOVES) * 64 / 4);
+    assert_eq!(
+        trip(Some(10), 3, 0, 0).key(),
+        (10 + 3 * LEVEL_MOVES + MOUNT_MOVES) * 64 / 4
+    );
 }
 
 #[test]
@@ -37,7 +40,10 @@ fn a_foot_no_flood_reaches_is_dear_and_dearer_on_the_design() {
     let walked = trip(Some(8), 2, 1, 0);
     assert!(walked.key() < ground.key());
     assert!(ground.key() < course.key());
-    assert_eq!(ground.key(), (UNWALKED + 2 * LEVEL_MOVES + MOUNT_MOVES) * 64 / 4);
+    assert_eq!(
+        ground.key(),
+        (UNWALKED + 2 * LEVEL_MOVES + MOUNT_MOVES) * 64 / 4
+    );
 }
 
 #[test]

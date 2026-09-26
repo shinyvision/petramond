@@ -122,7 +122,8 @@ fn segment_meets_box(from: Vec3, motion: Vec3, lo: Vec3, hi: Vec3) -> bool {
     }
     let length = motion.length();
     length > 1e-6
-        && petramond_world::world::raycast::ray_vs_aabb(from, motion / length, lo, hi).is_some_and(|t| t <= length)
+        && petramond_world::world::raycast::ray_vs_aabb(from, motion / length, lo, hi)
+            .is_some_and(|t| t <= length)
 }
 
 impl DroppedItem {

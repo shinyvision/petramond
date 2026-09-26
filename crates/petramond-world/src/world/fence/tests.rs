@@ -71,7 +71,11 @@ fn fence_connects_to_a_full_slab_stack_but_not_a_single_slab() {
         index,
     };
     assert!(w.place_slab_layer(n, Block::OakSlab, slot(0)));
-    assert_eq!(w.data.fence_mask_at(p), 0, "a single slab is not a full face");
+    assert_eq!(
+        w.data.fence_mask_at(p),
+        0,
+        "a single slab is not a full face"
+    );
     assert!(w.place_slab_layer(n, Block::OakSlab, slot(1)));
     assert_eq!(w.data.fence_mask_at(p), crate::pane::NORTH);
 }

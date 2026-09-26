@@ -31,10 +31,11 @@ impl Flight {
     /// Wait until the deriving worker publishes its value or unwinds.
     fn wait(&self) {
         let done = self.done.lock().unwrap_or_else(PoisonError::into_inner);
-        let _ = self
-            .ready
-            .wait_while(done, |done| !*done)
-            .unwrap_or_else(PoisonError::into_inner);
+        drop(
+            self.ready
+                .wait_while(done, |done| !*done)
+                .unwrap_or_else(PoisonError::into_inner),
+        );
     }
 
     fn finish(&self) {
@@ -565,7 +566,11 @@ mod tests {
         assert_eq!(stats.capacity, 64);
         assert_eq!(stats.entries, 10);
         assert_eq!((stats.hits, stats.misses), (1, 11));
-        assert!(stats.bytes >= 1000, "values' heap is billed: {}", stats.bytes);
+        assert!(
+            stats.bytes >= 1000,
+            "values' heap is billed: {}",
+            stats.bytes
+        );
         memo.clear();
         let cleared = memo.stats();
         assert_eq!(cleared.entries, 0);

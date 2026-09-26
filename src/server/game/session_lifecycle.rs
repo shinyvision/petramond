@@ -74,7 +74,8 @@ impl ServerGame {
         // A real join carries the whole unlocked list in the handshake, so
         // the pump has nothing to catch this session up on — mirror that, or
         // fixtures see a `RecipesUnlocked` message no real session would get.
-        self.sessions[s].replication.sent_unlock_count = self.sessions[s].player.progression.unlocked().len();
+        self.sessions[s].replication.sent_unlock_count =
+            self.sessions[s].player.progression.unlocked().len();
     }
 
     /// Persist everything: flush modified chunks to the save thread, then write
@@ -113,7 +114,8 @@ impl ServerGame {
                     return None;
                 };
                 let complete = session
-                    .sim.menu
+                    .sim
+                    .menu
                     .unpersisted_items()
                     .into_iter()
                     .flatten()

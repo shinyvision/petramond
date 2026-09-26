@@ -16,7 +16,6 @@ use petramond_math::math::IVec3;
 use petramond_world::block::{Aabb, Block};
 use petramond_world::chunk::SectionPos;
 
-
 pub struct SectionCursor<'w> {
     world: &'w ServerWorld,
     cells: petramond_world::world::SectionCursor<'w>,

@@ -41,7 +41,7 @@ fn off_hand_places_when_the_main_hand_cannot_act() {
         Some(ItemStack::new(stick(), 1)),
         Some(ItemStack::new(ItemType::Dirt, 2)),
     );
-    game.session_mut().look = Some(hit(floor, IVec3::Y));
+    game.session_mut().input_mut().look = Some(hit(floor, IVec3::Y));
     game.sim_mut().queue_place_click_for_test(0);
 
     let mut events = TickEvents::default();
@@ -49,7 +49,11 @@ fn off_hand_places_when_the_main_hand_cannot_act() {
 
     let above = floor + IVec3::Y;
     assert_eq!(
-        Block::from_id(game.server_world().chunk_block(above.x, above.y, above.z)),
+        Block::from_id(
+            game.server_world()
+                .data()
+                .chunk_block(above.x, above.y, above.z)
+        ),
         Block::Dirt,
         "the ladder's second pass places the off-hand block"
     );
@@ -82,7 +86,7 @@ fn the_main_hand_wins_when_both_hands_can_place() {
         Some(ItemStack::new(ItemType::Dirt, 2)),
         Some(ItemStack::new(ItemType::Stone, 2)),
     );
-    game.session_mut().look = Some(hit(floor, IVec3::Y));
+    game.session_mut().input_mut().look = Some(hit(floor, IVec3::Y));
     game.sim_mut().queue_place_click_for_test(0);
 
     let mut events = TickEvents::default();
@@ -90,7 +94,11 @@ fn the_main_hand_wins_when_both_hands_can_place() {
 
     let above = floor + IVec3::Y;
     assert_eq!(
-        Block::from_id(game.server_world().chunk_block(above.x, above.y, above.z)),
+        Block::from_id(
+            game.server_world()
+                .data()
+                .chunk_block(above.x, above.y, above.z)
+        ),
         Block::Dirt,
         "the main hand acts whenever it can"
     );
@@ -111,7 +119,7 @@ fn an_empty_off_hand_never_runs_a_second_pass() {
     game.server_world_mut()
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone);
     game.server_player_mut().inventory = hands(Some(ItemStack::new(stick(), 1)), None);
-    game.session_mut().look = Some(hit(floor, IVec3::Y));
+    game.session_mut().input_mut().look = Some(hit(floor, IVec3::Y));
     game.sim_mut().queue_place_click_for_test(0);
 
     let mut events = TickEvents::default();
@@ -120,7 +128,11 @@ fn an_empty_off_hand_never_runs_a_second_pass() {
     let p = events.player_at(0);
     assert!(p.placed_block.is_none() && !p.interacted && !p.used_item);
     assert_eq!(
-        Block::from_id(game.server_world().chunk_block(floor.x, floor.y + 1, floor.z)),
+        Block::from_id(
+            game.server_world()
+                .data()
+                .chunk_block(floor.x, floor.y + 1, floor.z)
+        ),
         Block::Air,
         "an inert click with an empty off-hand does nothing"
     );
@@ -139,25 +151,25 @@ fn an_off_hand_change_after_receipt_denies_the_click() {
         Some(ItemStack::new(stick(), 1)),
         Some(ItemStack::new(ItemType::Dirt, 2)),
     );
-    game.session_mut().look = Some(hit(floor, IVec3::Y));
+    game.session_mut().input_mut().look = Some(hit(floor, IVec3::Y));
     game.sim_mut().queue_place_click_for_test(0);
 
     // The off-hand item changes before the tick consumes the click.
-    *game.server_player_mut().inventory.off_hand_mut() =
-        Some(ItemStack::new(ItemType::Stone, 2));
+    *game.server_player_mut().inventory.off_hand_mut() = Some(ItemStack::new(ItemType::Stone, 2));
     let mut events = TickEvents::default();
     game.sim_mut().tick_place(0, &mut events);
 
     assert_eq!(
-        Block::from_id(game.server_world().chunk_block(floor.x, floor.y + 1, floor.z)),
+        Block::from_id(
+            game.server_world()
+                .data()
+                .chunk_block(floor.x, floor.y + 1, floor.z)
+        ),
         Block::Air,
         "the superseded click must not act on an item it never aimed"
     );
     assert_eq!(
-        game.server_player()
-            .inventory
-            .off_hand()
-            .map(|s| s.count),
+        game.server_player().inventory.off_hand().map(|s| s.count),
         Some(2)
     );
 }
@@ -199,7 +211,8 @@ fn the_click_verdict_falls_through_to_the_off_hand() {
     let floor = IVec3::new(8, 63, 8);
     assert!(game
         .game
-        .replica.world
+        .replica
+        .world
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
     // Park the body clear of the place cell so the body gate cannot refuse.
     game.game.local.player.pos = WorldPos::new(100.0, 64.0, 100.0);
@@ -228,7 +241,13 @@ fn the_click_verdict_falls_through_to_the_off_hand() {
     );
     let above = floor + IVec3::Y;
     assert_eq!(
-        Block::from_id(game.game.replica.world.chunk_block(above.x, above.y, above.z)),
+        Block::from_id(
+            game.game
+                .replica
+                .world
+                .data()
+                .chunk_block(above.x, above.y, above.z)
+        ),
         Block::Dirt,
         "the ghost writes the replica like any predicted place"
     );
@@ -237,13 +256,15 @@ fn the_click_verdict_falls_through_to_the_off_hand() {
 #[test]
 fn the_off_hand_menu_cell_clicks_like_a_plain_slot_on_both_mirrors() {
     let mut game = game();
-    game.server_player_mut().inventory =
-        hands(None, Some(ItemStack::new(ItemType::Stone, 7)));
+    game.server_player_mut().inventory = hands(None, Some(ItemStack::new(ItemType::Stone, 7)));
     game.sync_self_view_for_test();
 
     game.menu_click(MenuSlot::OffHand, PointerButton::Primary, false, false);
     // Predicted pickup onto the cursor…
-    assert_eq!(game.replica.self_view.inventory.cursor().map(|s| s.count), Some(7));
+    assert_eq!(
+        game.replica.self_view.inventory.cursor().map(|s| s.count),
+        Some(7)
+    );
     assert!(game.replica.self_view.inventory.off_hand().is_none());
     // …and the authoritative decode agrees.
     game.apply_latched_actions_for_test();
@@ -284,8 +305,7 @@ fn pickup_refills_a_matching_off_hand_before_the_grid() {
     use petramond::world::ITEM_PICKUP_DELAY_TICKS;
 
     let mut game = game();
-    game.server_player_mut().inventory =
-        hands(None, Some(ItemStack::new(ItemType::Dirt, 60)));
+    game.server_player_mut().inventory = hands(None, Some(ItemStack::new(ItemType::Dirt, 60)));
     let centre = game.server_player().body_center();
     let mut drop = DroppedItem::new(centre, ItemStack::new(ItemType::Dirt, 10), 1);
     drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
@@ -302,8 +322,7 @@ fn pickup_refills_a_matching_off_hand_before_the_grid() {
 
     // A different item routes past the off-hand entirely.
     let mut game = super::common::game();
-    game.server_player_mut().inventory =
-        hands(None, Some(ItemStack::new(ItemType::Stone, 1)));
+    game.server_player_mut().inventory = hands(None, Some(ItemStack::new(ItemType::Stone, 1)));
     let centre = game.server_player().body_center();
     let mut drop = DroppedItem::new(centre, ItemStack::new(ItemType::Dirt, 3), 1);
     drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
@@ -354,7 +373,8 @@ fn menu_f_swap_respects_container_slot_specs() {
     // Chest: a plain cell swaps whole, on both mirrors.
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
-    game.server_world_mut().set_block_world(3, 64, 3, Block::Chest);
+    game.server_world_mut()
+        .set_block_world(3, 64, 3, Block::Chest);
     game.server_world_mut()
         .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
     game.server_player_mut().inventory = hands(None, Some(ItemStack::new(ItemType::Dirt, 5)));
@@ -379,16 +399,14 @@ fn menu_f_swap_respects_container_slot_specs() {
         Some(5),
         "the authoritative chest cell agrees"
     );
-    assert!(game.server_player()
-        .inventory
-        .off_hand()
-        .is_none());
+    assert!(game.server_player().inventory.off_hand().is_none());
 
     // Furnace: the fuel filter and the take-only output refuse the deposit
     // half, so the WHOLE swap refuses.
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
-    game.server_world_mut().set_block_world(3, 64, 3, Block::Furnace);
+    game.server_world_mut()
+        .set_block_world(3, 64, 3, Block::Furnace);
     game.server_world_mut()
         .insert_furnace(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
     game.server_player_mut().inventory = hands(None, Some(ItemStack::new(ItemType::Dirt, 5)));
@@ -408,10 +426,7 @@ fn menu_f_swap_respects_container_slot_specs() {
         );
         game.apply_latched_actions_for_test();
         assert_eq!(
-            game.server_player()
-                .inventory
-                .off_hand()
-                .map(|s| s.count),
+            game.server_player().inventory.off_hand().map(|s| s.count),
             Some(5),
             "cell {cell}: the authority refuses identically"
         );
@@ -438,10 +453,7 @@ fn death_spills_the_off_hand_with_the_rest() {
         None,
         &mut events,
     ));
-    assert!(game.server_player()
-        .inventory
-        .off_hand()
-        .is_none());
+    assert!(game.server_player().inventory.off_hand().is_none());
     let spilled: u32 = game
         .server_world()
         .item_entities()
@@ -471,11 +483,13 @@ fn a_food_click_jabs_for_the_block_that_claims_it_and_otherwise_eats_without_one
     let floor = IVec3::new(4, 63, 4);
     assert!(game
         .game
-        .replica.world
+        .replica
+        .world
         .set_block_world(chest.x, chest.y, chest.z, Block::Chest));
     assert!(game
         .game
-        .replica.world
+        .replica
+        .world
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
     game.game.local.player.pos = WorldPos::new(100.0, 64.0, 100.0);
     game.server_player_mut().inventory = hands(

@@ -6,7 +6,9 @@ use mod_api::{ContainerCall, HostRet};
 
 use crate::events::SimCtx;
 
-use super::guards::{batch_guard, item_by_name, item_stack_data, key_owned_by_namespace, sim_query};
+use super::guards::{
+    batch_guard, item_by_name, item_stack_data, key_owned_by_namespace, sim_query,
+};
 
 mod access;
 
@@ -61,9 +63,9 @@ pub(super) fn handle_container_call(mod_id: &str, call: ContainerCall) -> HostRe
                 .push_action(crate::events::DeferredAction::ContainerHold { mob_id, pos, open });
             HostRet::Bool(true)
         }),
-        ContainerCall::ContainerTake { at, slot, count } => sim_query(|ctx| {
-            HostRet::ItemStack(take(ctx, at, slot, count).map(item_stack_data))
-        }),
+        ContainerCall::ContainerTake { at, slot, count } => {
+            sim_query(|ctx| HostRet::ItemStack(take(ctx, at, slot, count).map(item_stack_data)))
+        }
         ContainerCall::ContainerTransfer {
             from,
             slot,

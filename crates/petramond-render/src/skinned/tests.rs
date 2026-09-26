@@ -6,7 +6,10 @@ use petramond_world::bbmodel::clips;
 use petramond_world::light::BlockLight6;
 
 fn model(name: &str) -> Model {
-    let path = format!("{}/../../assets/models/{name}.bbmodel", env!("CARGO_MANIFEST_DIR"));
+    let path = format!(
+        "{}/../../assets/models/{name}.bbmodel",
+        env!("CARGO_MANIFEST_DIR")
+    );
     Model::load(&std::fs::read_to_string(&path).expect("model source")).expect("model parses")
 }
 

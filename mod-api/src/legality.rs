@@ -127,7 +127,11 @@ pub(crate) mod prelude {
     pub(crate) const SERVER_CLIENT: Sides = Sides::SERVER_CLIENT;
     pub(crate) const EVERY: Sides = Sides::EVERY;
 
-    pub(crate) const fn legal(sides: Sides, scope: super::Scope, access: super::Access) -> Legality {
+    pub(crate) const fn legal(
+        sides: Sides,
+        scope: super::Scope,
+        access: super::Access,
+    ) -> Legality {
         Legality::new(sides, scope, access)
     }
 }
@@ -143,7 +147,11 @@ mod tests {
         assert!(!Sides::SERVER.allows(RuntimeSide::Worldgen));
         assert!(Sides::SERVER_CLIENT.allows(RuntimeSide::Client));
         assert!(!Sides::SERVER_CLIENT.allows(RuntimeSide::Worldgen));
-        for side in [RuntimeSide::Server, RuntimeSide::Worldgen, RuntimeSide::Client] {
+        for side in [
+            RuntimeSide::Server,
+            RuntimeSide::Worldgen,
+            RuntimeSide::Client,
+        ] {
             assert!(Sides::EVERY.allows(side));
             assert!(Sides::of(side).allows(side));
         }

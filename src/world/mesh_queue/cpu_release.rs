@@ -1,5 +1,5 @@
-use crate::world::ReplicaWorld;
 use crate::world::store::for_each_column_cy;
+use crate::world::ReplicaWorld;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
 use super::{MESH_RELEASE_DELAY_FRAMES, MESH_RELEASE_SWEEP_INTERVAL};
@@ -14,7 +14,8 @@ impl ReplicaWorld {
     /// "settled" verdict costs remesh work, never visible terrain.
     pub(super) fn release_settled_column_meshes(&mut self) {
         if !self
-            .side.terrain
+            .side
+            .terrain
             .mesh_pump_frame
             .is_multiple_of(MESH_RELEASE_SWEEP_INTERVAL)
             || self.side.terrain.mesh_release_after.is_empty()
@@ -23,7 +24,8 @@ impl ReplicaWorld {
         }
         let frame = self.side.terrain.mesh_pump_frame;
         let ripe: Vec<ChunkPos> = self
-            .side.terrain
+            .side
+            .terrain
             .mesh_release_after
             .iter()
             .filter(|&(_, &after)| frame >= after)
@@ -37,7 +39,8 @@ impl ReplicaWorld {
             // Bounded cost: (2·ring+1)² columns per anchor stay at full size;
             // the re-armed timer releases them once the anchor moves away.
             if self.column_near_load_center(pos) {
-                self.side.terrain
+                self.side
+                    .terrain
                     .mesh_release_after
                     .insert(pos, frame + MESH_RELEASE_DELAY_FRAMES);
                 continue;
@@ -65,7 +68,8 @@ impl ReplicaWorld {
             }
             for_each_column_cy(bits, |cy| {
                 if let Some(mesh) = self
-                    .side.terrain
+                    .side
+                    .terrain
                     .meshes
                     .get_mut(&SectionPos::new(pos.cx, cy, pos.cz))
                 {

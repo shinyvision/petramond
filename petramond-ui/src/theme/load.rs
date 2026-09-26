@@ -175,8 +175,8 @@ impl Theme {
                     .atlas
                     .as_deref()
                     .ok_or_else(|| at("defines parts but names no `atlas`".into()))?;
-                let page = u16::try_from(pages.len())
-                    .map_err(|_| at("too many atlas pages".into()))?;
+                let page =
+                    u16::try_from(pages.len()).map_err(|_| at("too many atlas pages".into()))?;
                 pages.push(load_png(atlas, layer.read).map_err(|e| at(e.0))?);
                 for (key, pj) in t.parts {
                     let part = pj.into_part(&key, page).map_err(|e| at(e.0))?;

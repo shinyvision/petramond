@@ -4,9 +4,9 @@ use crate::host::prelude::*;
 
 use crate::fx::HashSet;
 use crate::geometry::{offset, SIDES};
-use crate::worker::Job;
 use crate::survey::Known;
 use crate::worker::tuning::window::SCAN;
+use crate::worker::Job;
 
 /// The open panels (panes, railings) whose gap is a way through as the world
 /// stands: standing room level with it or a step down on two opposite sides.

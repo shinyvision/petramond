@@ -14,8 +14,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use petramond_region::{REGION_SHIFT, REGION_SIZE};
 use petramond_persist::bytecodec::{deflate, inflate, put_u32, put_u64, put_u8, Reader};
+use petramond_region::{REGION_SHIFT, REGION_SIZE};
 use petramond_world::chunk::{ChunkPos, SECTION_SIZE};
 
 /// Layout of an encoded record. Bump it when [`ColumnCore`]'s fields or
@@ -106,7 +106,13 @@ impl ColumnCore {
         for &v in surf.iter().chain(top_surf.iter()) {
             put_u32(out, v as u32);
         }
-        for &v in [surf_min, surf_max, cand_surf_min, cand_surf_max, content_top] {
+        for &v in [
+            surf_min,
+            surf_max,
+            cand_surf_min,
+            cand_surf_max,
+            content_top,
+        ] {
             put_u32(out, v as u32);
         }
     }
@@ -116,8 +122,9 @@ impl ColumnCore {
     fn decode(r: &mut Reader) -> Option<Self> {
         let biome: Box<[u8]> = r.bytes(CELLS)?.into();
         let mesh_biome: Arc<[u8]> = Arc::from(r.bytes(MESH_BIOME_CELLS)?);
-        let mut i32s =
-            |n: usize| -> Option<Box<[i32]>> { (0..n).map(|_| r.u32().map(|v| v as i32)).collect() };
+        let mut i32s = |n: usize| -> Option<Box<[i32]>> {
+            (0..n).map(|_| r.u32().map(|v| v as i32)).collect()
+        };
         let surf = i32s(CELLS)?;
         let top_surf = i32s(CELLS)?;
         let mut scalar = || -> Option<i32> { Some(r.u32()? as i32) };

@@ -6,7 +6,6 @@ use crate::host::prelude::*;
 use super::Pillar;
 use crate::content::GOLEM;
 use crate::geometry::{feet_of, manhattan, offset, reaches, SIDES};
-use crate::worker::Job;
 use crate::project::Project;
 use crate::worker::route::{self, Hubs};
 use crate::worker::stance::Search;
@@ -14,6 +13,7 @@ use crate::worker::step::Task;
 use crate::worker::tuning::price::{LEVEL_MOVES, MOUNT_MOVES, UNWALKED};
 use crate::worker::tuning::reach::{COLUMNS, MAX_HEIGHT, PILLAR_ROUTES};
 use crate::worker::tuning::window::WEIGHED;
+use crate::worker::Job;
 use crate::worker::{open_block, plan, sight, Body, Ctx};
 
 /// How many blocks of the `open` work the golem would lay from each of
@@ -73,7 +73,11 @@ pub fn find(
     // few places on the list go to columns beside it.
     perches.sort_by_key(|p| {
         let away = manhattan([p[0], 0, p[2]], [body.cell[0], 0, body.cell[2]]);
-        (away * 2 - covers(*p, open), job.design.contains_column(p[0], p[2]), -p[1])
+        (
+            away * 2 - covers(*p, open),
+            job.design.contains_column(p[0], p[2]),
+            -p[1],
+        )
     });
     let viable = viable(ctx, job, project, body, task, cells, perches);
     let viable = by_trip(ctx, job, body, open, low, viable);
@@ -117,7 +121,9 @@ fn perches_for(job: &Job, task: Task, cells: &[[i32; 3]], low: [i32; 3]) -> Vec<
 
 /// How many of the `open` cells a perch reaches.
 fn covers(perch: [i32; 3], open: &[[i32; 3]]) -> i32 {
-    open.iter().filter(|c| reaches(feet_of(perch), &[**c])).count() as i32
+    open.iter()
+        .filter(|c| reaches(feet_of(perch), &[**c]))
+        .count() as i32
 }
 
 /// The first few `perches`, in order, that see the work and have a column

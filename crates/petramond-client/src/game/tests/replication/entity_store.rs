@@ -51,7 +51,10 @@ fn fire_body_light_composes_and_survives_the_ragdoll_transition() {
     for dead in [false, true] {
         row.dead = dead;
         row.ragdoll = dead.then(|| vec![([0.0; 3], [0.0, 0.0, 0.0, 1.0])]);
-        game.replica.entities.mobs_mut().apply_snapshot(&[row.clone()]);
+        game.replica
+            .entities
+            .mobs_mut()
+            .apply_snapshot(&[row.clone()]);
         let presentation = scratch.snapshot(&game, 0.0, &view);
         assert!(presentation.particle_emitters.is_empty());
         assert_eq!(presentation.mobs[0].emitter_self_lit, expected);
@@ -127,30 +130,56 @@ fn burst_before_a_boundary_does_not_shift_the_committed_pair() {
     let mut game = game();
     let update = |tick: u64, x: f32| TickUpdate {
         tick,
-        mobs: vec![mob_row(7, WorldPos::new(f64::from(x), 70.0, 0.0), 0.0)].into(),
-        ..Default::default()
+        clock: 0,
+        sections: vec![petramond::net::protocol::TickSection::Mobs(
+            vec![mob_row(7, WorldPos::new(f64::from(x), 70.0, 0.0), 0.0)].into(),
+        )],
     };
 
     game.game.apply_tick_update(Box::new(update(1, 1.0)));
-    let mob = game.game.replica.entities.mobs().get(7).expect("bootstrapped");
+    let mob = game
+        .game
+        .replica
+        .entities
+        .mobs()
+        .get(7)
+        .expect("bootstrapped");
     assert_eq!(
         (mob.prev.pos.x, mob.curr.pos.x),
         (1.0, 1.0),
         "the first batch seeds both pair slots"
     );
 
-    game.game.replica.entities.clock_mut().advance(TICK_DT * 0.4);
+    game.game
+        .replica
+        .entities
+        .clock_mut()
+        .advance(TICK_DT * 0.4);
     game.game.apply_tick_update(Box::new(update(2, 2.0)));
     game.game.apply_tick_update(Box::new(update(3, 3.0)));
-    assert_eq!(game.game.replica.entities.staged().len(), 2, "the burst queues FIFO");
-    let mob = game.game.replica.entities.mobs().get(7).expect("still committed");
+    assert_eq!(
+        game.game.replica.entities.staged().len(),
+        2,
+        "the burst queues FIFO"
+    );
+    let mob = game
+        .game
+        .replica
+        .entities
+        .mobs()
+        .get(7)
+        .expect("still committed");
     assert_eq!(
         (mob.prev.pos.x, mob.curr.pos.x),
         (1.0, 1.0),
         "arrivals alone never turn the live interpolation window"
     );
 
-    game.game.replica.entities.clock_mut().advance(TICK_DT * 0.59);
+    game.game
+        .replica
+        .entities
+        .clock_mut()
+        .advance(TICK_DT * 0.59);
     game.game.advance_interp_window();
     assert_eq!(
         game.game.replica.entities.mobs().get(7).unwrap().curr.pos.x,
@@ -158,7 +187,11 @@ fn burst_before_a_boundary_does_not_shift_the_committed_pair() {
         "the pair stays fixed immediately before the boundary"
     );
 
-    game.game.replica.entities.clock_mut().advance(TICK_DT * 0.02);
+    game.game
+        .replica
+        .entities
+        .clock_mut()
+        .advance(TICK_DT * 0.02);
     game.game.advance_interp_window();
     let mob = game.game.replica.entities.mobs().get(7).unwrap();
     assert_eq!((mob.prev.pos.x, mob.curr.pos.x), (1.0, 2.0));
@@ -190,51 +223,61 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
         let x = tick as f32;
         TickUpdate {
             tick,
-            mobs: vec![mob_row(7, WorldPos::new(f64::from(x), 70.0, 0.0), 0.0)].into(),
-            items: vec![ItemStateRow {
-                id: 9,
-                item_id: ItemType::Dirt.0,
-                count: 1,
-                data: None,
-                pos: WorldPos::new(f64::from(x), 69.0, 0.0),
-                spin: 0.0,
-                flight: None,
-            }]
-            .into(),
-            players: vec![PlayerStateRow {
-                conditions: Vec::new(),
-                id: remote_id,
-                transform: petramond::net::protocol::Transform {
-                    pos: WorldPos::new(f64::from(x), 68.0, 0.0),
-                    vel: Vec3::ZERO,
-                    yaw: 0.0,
-                    pitch: 0.0,
-                },
-                on_ground: true,
-                sneaking: false,
-                sleeping: false,
-                sleep_yaw: None,
-                alive: true,
-                visible: true,
-                held_item: None,
-                held_data: None,
-                off_hand_item: None,
-                off_hand_data: None,
-                mining: None,
-                eating: false,
-                eating_off_hand: false,
-                held_pose_main: None,
-                held_pose_off: None,
-                held_display: [None; 2],
-                bone_poses: Vec::new(),
-                animator: Default::default(),
-                hurt_recent: false,
-                snap: false,
-                mount: None,
-            }]
-            .into(),
-            player_actions: action.into_iter().map(|kind| (remote_id, kind)).collect(),
-            ..Default::default()
+            clock: 0,
+            sections: vec![
+                petramond::net::protocol::TickSection::Mobs(
+                    vec![mob_row(7, WorldPos::new(f64::from(x), 70.0, 0.0), 0.0)].into(),
+                ),
+                petramond::net::protocol::TickSection::Items(
+                    vec![ItemStateRow {
+                        id: 9,
+                        item_id: ItemType::Dirt.0,
+                        count: 1,
+                        data: None,
+                        pos: WorldPos::new(f64::from(x), 69.0, 0.0),
+                        spin: 0.0,
+                        flight: None,
+                    }]
+                    .into(),
+                ),
+                petramond::net::protocol::TickSection::Players(
+                    vec![PlayerStateRow {
+                        conditions: Vec::new(),
+                        id: remote_id,
+                        transform: petramond::net::protocol::Transform {
+                            pos: WorldPos::new(f64::from(x), 68.0, 0.0),
+                            vel: Vec3::ZERO,
+                            yaw: 0.0,
+                            pitch: 0.0,
+                        },
+                        on_ground: true,
+                        sneaking: false,
+                        sleeping: false,
+                        sleep_yaw: None,
+                        alive: true,
+                        visible: true,
+                        held_item: None,
+                        held_data: None,
+                        off_hand_item: None,
+                        off_hand_data: None,
+                        mining: None,
+                        eating: false,
+                        eating_off_hand: false,
+                        held_pose_main: None,
+                        held_pose_off: None,
+                        held_display: [None; 2],
+                        bone_poses: Vec::new(),
+                        animator: Default::default(),
+                        hurt_recent: false,
+                        snap: false,
+                        mount: None,
+                    }]
+                    .into(),
+                ),
+                petramond::net::protocol::TickSection::PlayerActions(
+                    action.into_iter().map(|kind| (remote_id, kind)).collect(),
+                ),
+            ],
         }
     };
 
@@ -295,10 +338,21 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
         "overflow itself does not mutate the live pair"
     );
 
-    game.game.replica.entities.clock_mut().advance(TICK_DT * 0.99);
+    game.game
+        .replica
+        .entities
+        .clock_mut()
+        .advance(TICK_DT * 0.99);
     game.game.advance_interp_window();
-    assert_eq!(game.game.replica.entities.mobs().get(7).unwrap().curr.pos.x, 1.0);
-    game.game.replica.entities.clock_mut().advance(TICK_DT * 0.02);
+    assert_eq!(
+        game.game.replica.entities.mobs().get(7).unwrap().curr.pos.x,
+        1.0
+    );
+    game.game
+        .replica
+        .entities
+        .clock_mut()
+        .advance(TICK_DT * 0.02);
     game.game.advance_interp_window();
 
     let mob = game.game.replica.entities.mobs().get(7).unwrap();
@@ -317,7 +371,11 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
         .apply_tick_update(Box::new(update(next_tick, None)));
     game.game
         .apply_tick_update(Box::new(update(next_tick + 1, None)));
-    game.game.replica.entities.clock_mut().advance(TICK_DT * 2.0);
+    game.game
+        .replica
+        .entities
+        .clock_mut()
+        .advance(TICK_DT * 2.0);
     game.game.advance_interp_window();
     let mob = game.game.replica.entities.mobs().get(7).unwrap();
     assert_eq!(
@@ -373,13 +431,15 @@ fn staged_window_renders_uniform_motion_across_frame_aliased_batches() {
             applied += 1;
             let update = TickUpdate {
                 tick: applied,
-                mobs: vec![mob_row(
-                    7,
-                    WorldPos::new(f64::from(applied as f32 * speed), 70.0, 0.0),
-                    0.0,
-                )]
-                .into(),
-                ..Default::default()
+                clock: 0,
+                sections: vec![petramond::net::protocol::TickSection::Mobs(
+                    vec![mob_row(
+                        7,
+                        WorldPos::new(f64::from(applied as f32 * speed), 70.0, 0.0),
+                        0.0,
+                    )]
+                    .into(),
+                )],
             };
             game.game.apply_tick_update(Box::new(update));
         }
@@ -417,7 +477,8 @@ fn pumped_mob_batches_become_interpolated_presentation_rows() {
 
     let batch1 = pump_one_tick(&mut game);
     let row1 = batch1
-        .mobs
+        .mobs()
+        .expect("mobs section")
         .iter()
         .find(|m| m.id == id)
         .cloned()
@@ -427,7 +488,8 @@ fn pumped_mob_batches_become_interpolated_presentation_rows() {
 
     let batch2 = pump_one_tick(&mut game);
     let row2 = batch2
-        .mobs
+        .mobs()
+        .expect("mobs section")
         .iter()
         .find(|m| m.id == id)
         .cloned()
@@ -469,12 +531,7 @@ fn a_despawned_mob_drops_from_the_store_on_the_next_batch() {
     game.commit_replication_window_for_test();
     assert!(game.replica.entities.mobs().iter().any(|e| e.curr.id == id));
 
-    let index = game
-        .server_world()
-        .mobs()
-        .index_of_id(id)
-        .expect("still alive server-side");
-    assert!(game.server_world_mut().mobs_mut().remove(index));
+    assert!(game.server_world_mut().mobs_mut().remove(id));
     let batch = pump_one_tick(&mut game);
     game.apply_tick_update(batch);
     game.commit_replication_window_for_test();
@@ -514,7 +571,8 @@ fn dropped_items_replicate_with_stable_ids_into_presentation() {
 
     let batch1 = pump_one_tick(&mut game);
     let row1 = batch1
-        .items
+        .items()
+        .expect("items section")
         .iter()
         .find(|i| i.id == id)
         .expect("the drop replicates")
@@ -526,7 +584,8 @@ fn dropped_items_replicate_with_stable_ids_into_presentation() {
 
     let batch2 = pump_one_tick(&mut game);
     let row2 = batch2
-        .items
+        .items()
+        .expect("items section")
         .iter()
         .find(|i| i.id == id)
         .expect("still replicating")
@@ -575,9 +634,15 @@ fn a_mob_draw_set_follows_the_interpolated_body_and_clears() {
     };
     let mut row = mob_row(7, WorldPos::new(4.25, 65.0, 4.0), 0.0);
     row.draw = worn.clone();
-    game.replica.entities.mobs_mut().apply_snapshot(&[row.clone()]);
+    game.replica
+        .entities
+        .mobs_mut()
+        .apply_snapshot(&[row.clone()]);
     row.pos = WorldPos::new(5.25, 65.0, 4.0);
-    game.replica.entities.mobs_mut().apply_snapshot(&[row.clone()]);
+    game.replica
+        .entities
+        .mobs_mut()
+        .apply_snapshot(&[row.clone()]);
 
     let presentation = scratch.snapshot(&game, 0.5, &view);
     let [draw] = presentation.block_draws else {
@@ -585,7 +650,8 @@ fn a_mob_draw_set_follows_the_interpolated_body_and_clears() {
     };
     let feet = draw.frame.to_world(Vec3::ZERO);
     let (body, _) = game
-        .replica.entities
+        .replica
+        .entities
         .mobs()
         .iter()
         .next()

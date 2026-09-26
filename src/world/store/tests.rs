@@ -10,7 +10,6 @@ use petramond_world::chunk::{
 use petramond_world::section::Section;
 use petramond_worldgen::ChunkGenerator;
 
-
 fn install_column_summary(world: &mut ServerWorld, generator: &ChunkGenerator, pos: ChunkPos) {
     world.data.ensure_column(pos);
     world.set_column_gen(pos, Arc::new(generator.generate_column_gen(pos.cx, pos.cz)));
@@ -75,7 +74,10 @@ fn edits_in_total_darkness_skip_light_invalidation_entirely() {
     }
     // The fixture insert demands a bake; only the edits below are under test.
     world.data.relight_demand.clear();
-    assert!(!world.data.sections[&pos].light_dirty, "fixture: settled dark");
+    assert!(
+        !world.data.sections[&pos].light_dirty,
+        "fixture: settled dark"
+    );
 
     assert!(world.set_block_world(8, 8, 8, Block::Air));
     assert!(
@@ -85,7 +87,9 @@ fn edits_in_total_darkness_skip_light_invalidation_entirely() {
     assert!(world.data.relight_demand.is_empty());
 
     // Control: the same break beside cached light must invalidate.
-    world.data.section_mut(pos)
+    world
+        .data
+        .section_mut(pos)
         .unwrap()
         .set_skylight(vec![petramond_world::chunk::SKY_FULL; SECTION_VOLUME].into());
     assert!(world.set_block_world(8, 4, 8, Block::Air));
@@ -363,7 +367,10 @@ fn heightmap_recompute_preserves_loaded_dug_shaft_below_generated_surface() {
         z,
         Block::Stone,
     );
-    world.data.sections.insert(lower_sp, Arc::new(lower_section));
+    world
+        .data
+        .sections
+        .insert(lower_sp, Arc::new(lower_section));
     world.note_section_loaded(lower_sp);
 
     world.recompute_column_heightmaps(cp);

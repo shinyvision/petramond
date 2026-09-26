@@ -70,9 +70,18 @@ fn only_bodies_the_view_sees_are_posed_each_into_its_own_range() {
     let mut animation = PlayerAnimation::default();
     open_frame(&mut animation);
     animation.frame.clear();
-    animation.frame.remotes.push(remote(1, WorldPos::new(4.0, 0.0, 4.0)));
-    animation.frame.remotes.push(remote(2, WorldPos::new(200.0, 0.0, 0.0)));
-    animation.frame.remotes.push(remote(3, WorldPos::new(-3.0, 0.0, 2.0)));
+    animation
+        .frame
+        .remotes
+        .push(remote(1, WorldPos::new(4.0, 0.0, 4.0)));
+    animation
+        .frame
+        .remotes
+        .push(remote(2, WorldPos::new(200.0, 0.0, 0.0)));
+    animation
+        .frame
+        .remotes
+        .push(remote(3, WorldPos::new(-3.0, 0.0, 2.0)));
     animation.pose_bodies(&view_within(16.0));
 
     let bodies = animation.bodies();
@@ -102,14 +111,20 @@ fn the_local_body_is_posed_first_and_carries_the_frames_hurt_flash() {
         1.0 / 60.0,
     );
     animation.frame.clear();
-    animation.frame.remotes.push(remote(9, WorldPos::new(1.0, 0.0, 0.0)));
+    animation
+        .frame
+        .remotes
+        .push(remote(9, WorldPos::new(1.0, 0.0, 0.0)));
     animation.frame.local = Some(body_at(WorldPos::new(0.0, 0.0, 1.0)));
     animation.pose_bodies(&ViewVolume::unbounded());
 
     let bodies = animation.bodies();
     assert_eq!(bodies.len(), 2);
     assert_eq!(bodies[0].body.pos, WorldPos::new(0.0, 0.0, 1.0));
-    assert_eq!(bodies[0].body.hurt, 0.75, "the app's envelope flashes the body");
+    assert_eq!(
+        bodies[0].body.hurt, 0.75,
+        "the app's envelope flashes the body"
+    );
     assert_eq!(bodies[1].body.hurt, 0.0);
 }
 
@@ -117,7 +132,10 @@ fn the_local_body_is_posed_first_and_carries_the_frames_hurt_flash() {
 fn clearing_for_a_new_world_drops_every_posed_row() {
     let mut animation = PlayerAnimation::default();
     open_frame(&mut animation);
-    animation.frame.remotes.push(remote(1, WorldPos::new(2.0, 0.0, 2.0)));
+    animation
+        .frame
+        .remotes
+        .push(remote(1, WorldPos::new(2.0, 0.0, 2.0)));
     animation.pose_bodies(&ViewVolume::unbounded());
     assert!(!animation.bodies().is_empty());
 

@@ -120,7 +120,8 @@ fn app() -> TestApp {
 
 fn app_with_render_dist(render_dist: i32) -> TestApp {
     ensure_test_data_dir();
-    let (server, bootstrap) = crate::game::tests::bootstrap::build_session_inline("", 1, render_dist);
+    let (server, bootstrap) =
+        crate::game::tests::bootstrap::build_session_inline("", 1, render_dist);
     let (handle, pipe) = petramond::net::handle::ServerHandle::loopback();
     let game = Game::assemble(
         Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0),

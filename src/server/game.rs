@@ -39,8 +39,8 @@ mod tests;
 
 use clock::FrameClock;
 pub use interest::EntityInterest;
-use replication::Broadcast;
 pub use replication::wire_world_events;
+use replication::Broadcast;
 
 /// Most fixed ticks run in a single frame before the leftover is dropped. Caps
 /// catch-up after a stall so the sim never spirals trying to replay lost time.

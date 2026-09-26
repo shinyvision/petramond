@@ -1,6 +1,6 @@
-use crate::world::ServerWorld;
 use super::*;
 use crate::worker::JobPool;
+use crate::world::ServerWorld;
 
 #[test]
 fn moving_an_anchor_admits_near_columns_even_with_a_full_generation_queue() {

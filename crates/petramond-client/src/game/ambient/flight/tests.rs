@@ -251,7 +251,8 @@ fn an_admitted_flier_survives_its_whole_orbit_over_steps_and_density_borders() {
                 wing.pos - right + up,
             ] {
                 let floor = world
-                    .data().precipitation_ceiling_y(corner.x.floor() as i32, corner.z.floor() as i32)
+                    .data()
+                    .precipitation_ceiling_y(corner.x.floor() as i32, corner.z.floor() as i32)
                     .unwrap();
                 assert!(
                     corner.y > floor as f64 + 1.0,
@@ -278,8 +279,9 @@ fn roofs_and_overhangs_reject_flights_even_above_a_ground_floor() {
     let flight = flight_of(&spec);
     let mut world = habitat();
     let act = activation(1.0, &everywhere);
-    let ground =
-        |world: &ReplicaWorld, x: f32| orbit_ground(&spec, flight, &act, world, f64::from(x), 8.5, 0.0);
+    let ground = |world: &ReplicaWorld, x: f32| {
+        orbit_ground(&spec, flight, &act, world, f64::from(x), 8.5, 0.0)
+    };
     assert!(ground(&world, 0.5).is_some());
     for roof in [Block::OakPlanks, Block::Glass, Block::StoneSlab] {
         assert!(world.set_block_world(0, 70, 8, roof));
@@ -310,8 +312,9 @@ fn canopies_reject_ground_flights_instead_of_lifting_them_to_the_treetop() {
     let flight = flight_of(&spec);
     let mut world = habitat();
     let act = activation(1.0, &everywhere);
-    let ground =
-        |world: &ReplicaWorld, x: f32| orbit_ground(&spec, flight, &act, world, f64::from(x), 8.5, 0.0);
+    let ground = |world: &ReplicaWorld, x: f32| {
+        orbit_ground(&spec, flight, &act, world, f64::from(x), 8.5, 0.0)
+    };
     let original = ground(&world, 0.5);
     assert!(original.is_some());
     for canopy_y in [67, 75] {

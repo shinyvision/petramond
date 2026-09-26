@@ -11,7 +11,6 @@
 //! (`petramond::rules::item_use`, `builtin_claims_at`) evaluated against the
 //! replica and the predicted body. Nothing here restates a server rule.
 
-use petramond_world::world::raycast;
 use super::prediction;
 use super::tick::{PlacePrediction, WorldEvent};
 use super::Game;
@@ -91,9 +90,9 @@ impl UseClickConsumers for ClientConsumers<'_> {
             ConsumerKind::Registered => game.predict_interact_claim(sneak, use_mob),
             ConsumerKind::Shear => game.predicts_shear(use_mob),
             // Shears aimed at a chest still open it; food opens a door.
-            ConsumerKind::BuiltinBlock => game
-                .local.look
-                .is_some_and(|l| use_click::builtin_claims_at(game.replica.world.data(), l.block, sneak)),
+            ConsumerKind::BuiltinBlock => game.local.look.is_some_and(|l| {
+                use_click::builtin_claims_at(game.replica.world.data(), l.block, sneak)
+            }),
             ConsumerKind::ContextualPlace => {
                 return if game.holds_contextual_placeable() {
                     place_claim(game.try_predict_place_ghost(sneak))
@@ -126,7 +125,10 @@ impl Game {
     /// dispatch context the two-pass verdict sets; outside a click it is
     /// `Main`, so this is the selected hotbar stack).
     pub(super) fn predicted_held(&self) -> Option<&petramond_world::item::ItemStack> {
-        self.replica.self_view.inventory.held_in(self.local.player.acting_hand)
+        self.replica
+            .self_view
+            .inventory
+            .held_in(self.local.player.acting_hand)
     }
 
     /// The acting player's snapshot for a client-mod PREDICTION dispatch —
@@ -164,7 +166,8 @@ impl Game {
             // The literal off-hand slot (the client twin of the server's
             // snapshot field), so a predictor sees both hands at once.
             off_held: self
-                .replica.self_view
+                .replica
+                .self_view
                 .inventory
                 .off_hand()
                 .map(|st| mod_api::ItemId(st.item.id())),
@@ -198,8 +201,12 @@ impl Game {
         payload: mod_api::EventPayload,
     ) -> bool {
         let actor = self.client_actor_snapshot(sneak, Default::default());
-        self.client_mods
-            .predict_claim(&self.replica.world, &actor, &self.replica.self_view.inventory, &payload)
+        self.client_mods.predict_claim(
+            &self.replica.world,
+            &actor,
+            &self.replica.self_view.inventory,
+            &payload,
+        )
     }
 
     /// The predicted acting body for the shared item-use rules.
@@ -346,7 +353,7 @@ impl Game {
                     // Initial prediction blocks on the complete exact light ->
                     // mesh footprint so the click exposes no stale shading.
                     self.replica.world.present_predicted_edit(&cells);
-                    self.pending_events.world.push(WorldEvent::BlockBroken {
+                    self.replica.events.world.push(WorldEvent::BlockBroken {
                         pos,
                         block,
                         normal,
@@ -363,8 +370,14 @@ impl Game {
         };
         // No duration claim rides the wire: the server validates the finish
         // against ITS OWN observed mining window (breaking.rs).
-        let tool_item_id = self.replica.self_view.inventory.selected().map(|st| st.item.0);
-        self.net.queue(ClientToServer::Action(PlayerAction::BreakFinished {
+        let tool_item_id = self
+            .replica
+            .self_view
+            .inventory
+            .selected()
+            .map(|st| st.item.0);
+        self.net
+            .queue(ClientToServer::Action(PlayerAction::BreakFinished {
                 request_id,
                 pos,
                 tool_item_id,
@@ -472,17 +485,19 @@ impl Game {
         // (the furniture chair) gets the same footprint/body-gate refusal
         // prediction a bed or workbench does.
         if !block.is_engine() {
-            let looked_at = petramond_world::block::Block::from_id(self.replica.world.data().chunk_block(
-                look.block.x,
-                look.block.y,
-                look.block.z,
-            ));
+            let looked_at = petramond_world::block::Block::from_id(
+                self.replica
+                    .world
+                    .data()
+                    .chunk_block(look.block.x, look.block.y, look.block.z),
+            );
             // The server's pre-event position rule (minus slab stacking,
             // which no mod row participates in): the shared build-position
             // rule, so this cannot drift from the authority.
             let pre_pos =
                 petramond::world::placement::build_position(looked_at, look.block, look.normal);
-            let facing = petramond::rules::placement::facing_from_forward(self.local.player.forward());
+            let facing =
+                petramond::rules::placement::facing_from_forward(self.local.player.forward());
             let payload = mod_api::EventPayload::BlockPlacePre {
                 pos: pre_pos.to_array(),
                 block: mod_api::BlockId(block.id()),
@@ -492,7 +507,9 @@ impl Game {
                     petramond_math::facing::Facing::West => mod_api::Facing::West,
                     petramond_math::facing::Facing::East => mod_api::Facing::East,
                 },
-                actor: mod_api::EntityRef::Player(mod_api::PlayerId(self.replica.entities.self_id().0)),
+                actor: mod_api::EntityRef::Player(mod_api::PlayerId(
+                    self.replica.entities.self_id().0,
+                )),
             };
             if self.predict_mod_claim(sneak, payload) {
                 return PlacePrediction::No;
@@ -522,7 +539,9 @@ impl Game {
         let place_pos = look.block + look.normal;
         let prev = self
             .replica
-            .data().chunk_block(place_pos.x, place_pos.y, place_pos.z);
+            .world
+            .data()
+            .chunk_block(place_pos.x, place_pos.y, place_pos.z);
         if prev != petramond_world::block::Block::Air.0 {
             return PlacePrediction::No;
         }
@@ -550,7 +569,8 @@ impl Game {
             held,
         };
         let plan = self
-            .replica.world
+            .replica
+            .world
             .placement_plan(block, &inputs, &mut |cell, boxes| {
                 self.placement_blocked_by_body(cell, boxes)
             });
@@ -606,7 +626,7 @@ impl Game {
         }
         self.hand.latch_place(block, hand);
         self.prediction.mark_presented(place_pos);
-        self.pending_events.world.push(WorldEvent::BlockPlaced {
+        self.replica.events.world.push(WorldEvent::BlockPlaced {
             pos: place_pos,
             block,
         });
@@ -636,8 +656,9 @@ impl Game {
             hit: look.block.to_array(),
             normal: look.normal.to_array(),
             place_pos: place_pos.to_array(),
-            player_facing: petramond::rules::placement::facing_from_forward(self.local.player.forward())
-                as u8,
+            player_facing: petramond::rules::placement::facing_from_forward(
+                self.local.player.forward(),
+            ) as u8,
         };
         let actor = self.client_actor_snapshot(sneak, Default::default());
         let result = self.client_mods.placement_plan(
@@ -660,14 +681,22 @@ impl Game {
         // unread replica cell reads as air — optimistic, and a stale read
         // rolls back like any engine ghost.
         let cur = petramond_world::block::Block::from_id(
-            self.replica.world.data().chunk_block(anchor.x, anchor.y, anchor.z),
+            self.replica
+                .world
+                .data()
+                .chunk_block(anchor.x, anchor.y, anchor.z),
         );
         if !cur.is_replaceable() || cur == write_block {
             return Some(PlacePrediction::No);
         }
         // The written row's SUPPORT gate — the server's twin, run against the
         // replica so the ghost refuses exactly what the server will refuse.
-        if !self.replica.world.data().placement_support_ok(write_block, anchor) {
+        if !self
+            .replica
+            .world
+            .data()
+            .placement_support_ok(write_block, anchor)
+        {
             return Some(PlacePrediction::No);
         }
         // The body-occupancy gate, fed by the shape's own bake of the
@@ -681,19 +710,25 @@ impl Game {
             // will write (absent before commit, so the ghost bakes from
             // neighbours + the default, then re-bakes on the authoritative
             // state delta).
-            let input = self.replica.world.data().bake_cell_input(anchor, write_block);
+            let input = self
+                .replica
+                .world
+                .data()
+                .bake_cell_input(anchor, write_block);
             let Self {
                 client_mods,
                 replica,
                 ..
             } = self;
-            client_mods.bake_placement_geometry(replica, shape_key, shape_kind, input)
+            client_mods.bake_placement_geometry(&replica.world, shape_key, shape_kind, input)
         };
         let boxes: &[petramond_world::block::Aabb] = match &sim_boxes {
             Some(b) => b,
             None => self
                 .replica
-                .data().custom_shape_boxes(anchor)
+                .world
+                .data()
+                .custom_shape_boxes(anchor)
                 .unwrap_or_else(|| write_block.collision_boxes()),
         };
         if self.placement_blocked_by_body(anchor, boxes) {
@@ -740,7 +775,7 @@ impl Game {
         }
         self.hand.latch_place(write_block, hand);
         self.prediction.mark_presented(anchor);
-        self.pending_events.world.push(WorldEvent::BlockPlaced {
+        self.replica.events.world.push(WorldEvent::BlockPlaced {
             pos: anchor,
             block: write_block,
         });
@@ -761,7 +796,8 @@ impl Game {
             feet: self.local.player.pos,
         });
         let mobs = self
-            .replica.entities
+            .replica
+            .entities
             .mobs()
             .iter()
             .filter(|e| !e.curr.dead)
@@ -772,7 +808,8 @@ impl Game {
             });
         // `visible` is false exactly for spectators and the dead.
         let players = self
-            .replica.entities
+            .replica
+            .entities
             .players()
             .iter()
             .filter(|p| player_occupies(false, p.curr.alive, !p.curr.visible))

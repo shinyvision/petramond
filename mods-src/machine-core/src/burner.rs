@@ -108,15 +108,27 @@ mod tests {
         let mut caches = caches();
         let mut fuel = coal(2);
         let mut fire = Burner::default();
-        assert!(!fire.relight(false, &mut fuel, &mut caches), "idle fuel burned");
+        assert!(
+            !fire.relight(false, &mut fuel, &mut caches),
+            "idle fuel burned"
+        );
         assert_eq!(fuel, coal(2));
 
         assert!(fire.relight(true, &mut fuel, &mut caches));
-        assert_eq!(fire, Burner { remaining: 80, max: 80 });
+        assert_eq!(
+            fire,
+            Burner {
+                remaining: 80,
+                max: 80
+            }
+        );
         assert_eq!(fuel, coal(1), "one item per relight");
 
         fire.tick();
-        assert!(!fire.relight(true, &mut fuel, &mut caches), "relit while burning");
+        assert!(
+            !fire.relight(true, &mut fuel, &mut caches),
+            "relit while burning"
+        );
         assert_eq!(fuel, coal(1));
         assert_eq!(fire.gauge01(), 79.0 / 80.0);
     }

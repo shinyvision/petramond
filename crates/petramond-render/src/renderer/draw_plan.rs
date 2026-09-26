@@ -99,14 +99,17 @@ impl Renderer {
         }
         terrain.cull_index.clear();
         terrain.cull_index.reserve(terrain.columns.len());
-        terrain
-            .cull_index
-            .extend(terrain.columns.iter().map(|(pos, slot, column)| ColumnCull {
-                pos,
-                slot,
-                min_cy: column.cy_span.0,
-                max_cy: column.cy_span.1,
-            }));
+        terrain.cull_index.extend(
+            terrain
+                .columns
+                .iter()
+                .map(|(pos, slot, column)| ColumnCull {
+                    pos,
+                    slot,
+                    min_cy: column.cy_span.0,
+                    max_cy: column.cy_span.1,
+                }),
+        );
         group_cull_regions(&mut terrain.cull_index, &mut terrain.cull_regions);
         // The occlusion flood's graph follows the column set too.
         terrain.occlusion.clear();
@@ -189,8 +192,7 @@ impl Renderer {
                     if !Self::section_visible(section, frustum, render_origin, cam, fog, enclosed)
                         || (occluding && !occlusion.is_visible(*pos))
                     {
-                        visible.hidden_opaque |=
-                            !section.span(SectionStream::OpaqueFar).is_empty();
+                        visible.hidden_opaque |= !section.span(SectionStream::OpaqueFar).is_empty();
                         continue;
                     }
                     let (ox, oy, oz) = section.origin;
@@ -240,13 +242,16 @@ impl Renderer {
                     batch_hidden,
                 );
                 if let Some(far) = batch.opaque {
-                    plan.opaque_columns.push((column_dist_sq, column_pos, entry.slot, far));
+                    plan.opaque_columns
+                        .push((column_dist_sq, column_pos, entry.slot, far));
                 }
                 if batch.model {
-                    plan.model_columns.push((column_dist_sq, column_pos, entry.slot));
+                    plan.model_columns
+                        .push((column_dist_sq, column_pos, entry.slot));
                 }
                 if batch.contact {
-                    plan.contact_columns.push((column_dist_sq, column_pos, entry.slot));
+                    plan.contact_columns
+                        .push((column_dist_sq, column_pos, entry.slot));
                 }
                 retain_uncovered(&mut plan.sections, first_section, batch);
             }
@@ -257,7 +262,12 @@ impl Renderer {
             &mut terrain.sorted_scratch,
         );
         sort_columns(plan);
-        build_terrain_draws(&mut terrain.draws, &terrain.geometry, &terrain.columns, plan);
+        build_terrain_draws(
+            &mut terrain.draws,
+            &terrain.geometry,
+            &terrain.columns,
+            plan,
+        );
         terrain.draws.finish(device, queue);
         terrain.planned_gpu_revision = terrain.gpu_revision;
         terrain.planned_view_key = Some(terrain.view_key);
@@ -313,9 +323,12 @@ fn region_visible(
     let span = (CULL_REGION_COLUMNS * 16) as f32;
     let margin = glam::Vec3::splat(petramond_mesh::FOLIAGE_OVERHANG);
     let min = (corner - render_origin).as_vec3() - margin;
-    let max = min
-        + glam::Vec3::new(span, ((region.max_cy - region.min_cy + 1) * 16) as f32, span)
-        + margin * 2.0;
+    let max =
+        min + glam::Vec3::new(
+            span,
+            ((region.max_cy - region.min_cy + 1) * 16) as f32,
+            span,
+        ) + margin * 2.0;
     let containment = frustum.aabb_containment(min, max);
     if containment == Containment::Outside || aabb_distance_sq(cam, min, max) > fog * fog {
         return None;
@@ -381,11 +394,7 @@ struct ColumnBatch {
 /// section. A whole-column draw also covers culled sections, so it is taken
 /// only when none holds opaque geometry — unless `batch_hidden` (every draw
 /// is a CPU call on this device, and one column draw beats many).
-fn batch_column(
-    visible: VisibleColumn,
-    streams: ColumnStreams,
-    batch_hidden: bool,
-) -> ColumnBatch {
+fn batch_column(visible: VisibleColumn, streams: ColumnStreams, batch_hidden: bool) -> ColumnBatch {
     let batchable = visible.has_opaque && (batch_hidden || !visible.hidden_opaque);
     let detailed = batchable && !visible.any_far_lod && streams.opaque_quads > 0;
     let far = batchable
@@ -473,7 +482,8 @@ fn sort_columns(plan: &mut TerrainPlan) {
     let by_dist_then_pos = |a: &(f32, ChunkPos, ColumnSlot), b: &(f32, ChunkPos, ColumnSlot)| {
         a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1))
     };
-    plan.opaque_columns.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    plan.opaque_columns
+        .sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
     plan.model_columns.sort_unstable_by(by_dist_then_pos);
     plan.contact_columns.sort_unstable_by(by_dist_then_pos);
 }
@@ -504,7 +514,12 @@ fn build_terrain_draws(
     }
     for item in plan.sections.iter().filter(|item| !item.opaque_batched) {
         let column = columns.at(item.column_slot);
-        opaque.push_span(arenas, column, QuadLayer::Opaque, item.span(SectionStream::OpaqueFar));
+        opaque.push_span(
+            arenas,
+            column,
+            QuadLayer::Opaque,
+            item.span(SectionStream::OpaqueFar),
+        );
         if !item.use_far_leaf_lod {
             opaque.push_span(
                 arenas,

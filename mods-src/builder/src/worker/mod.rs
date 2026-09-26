@@ -58,8 +58,8 @@ use crate::supplies::Supplies;
 
 pub use act::acted;
 pub use body::Body;
-pub use job::Job;
 pub use crew::Crew;
+pub use job::Job;
 pub use lifecycle::summon;
 pub use pillar::Pillar;
 pub use route::{Regions, Routes};

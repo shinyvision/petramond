@@ -74,7 +74,11 @@ pub(super) fn frame_graph() -> Result<FrameGraph<Node>, GraphError> {
         PassNode::new(Node::Opaque, "opaque pass", Phase::Opaque)
             .color(World, Clear)
             .depth(Depth, Clear),
-        world(Node::ContactShadow, "contact shadow pass", Phase::GroundDecal),
+        world(
+            Node::ContactShadow,
+            "contact shadow pass",
+            Phase::GroundDecal,
+        ),
         world(Node::EntityShadow, "entity shadow pass", Phase::GroundDecal),
         world(Node::Sky, "sky pass", Phase::Sky),
         world(Node::TerrainModels, "model pass", Phase::Solid),
@@ -82,15 +86,23 @@ pub(super) fn frame_graph() -> Result<FrameGraph<Node>, GraphError> {
         world(Node::ItemEntities, "item entity pass", Phase::Solid),
         world(Node::BlockEntities, "block entity pass", Phase::Solid),
         world(Node::Actors, "mob pass", Phase::Solid),
-        world(Node::TranslucentBlocks, "translucent block pass", Phase::Translucent),
+        world(
+            Node::TranslucentBlocks,
+            "translucent block pass",
+            Phase::Translucent,
+        ),
         world(Node::ModelBlend, "model blend pass", Phase::Translucent),
         world(Node::ModelBreak, "model break pass", Phase::BreakDecal),
         world(Node::BreakOverlay, "break overlay pass", Phase::BreakDecal),
         world(Node::Particles, "particle pass", Phase::Cutout),
         world(Node::Fluid, "transparent pass", Phase::Fluid),
-        PassNode::new(Node::EnvDownsample, "env depth downsample", Phase::Environment)
-            .depth(EnvDepth, Clear)
-            .sampling(&[Sampled::Depth]),
+        PassNode::new(
+            Node::EnvDownsample,
+            "env depth downsample",
+            Phase::Environment,
+        )
+        .depth(EnvDepth, Clear)
+        .sampling(&[Sampled::Depth]),
         PassNode::new(Node::Environment, "environment pass", Phase::Environment)
             .color(EnvColor, Clear)
             .sampling(&[Sampled::EnvDepth]),
@@ -98,7 +110,11 @@ pub(super) fn frame_graph() -> Result<FrameGraph<Node>, GraphError> {
         PassNode::new(Node::EnvComposite, "env composite pass", Phase::Environment)
             .color(World, Load)
             .sampling(&[Sampled::EnvColor, Sampled::EnvDepth, Sampled::Depth]),
-        world(Node::EmitterParticles, "emitter particle pass", Phase::Emitter),
+        world(
+            Node::EmitterParticles,
+            "emitter particle pass",
+            Phase::Emitter,
+        ),
         world(Node::Outline, "outline pass", Phase::Highlight),
         world(Node::Ghosts, "ghosts and selection", Phase::Highlight),
         // Clearing depth gives the hand its own depth space: it stays on top
@@ -178,7 +194,9 @@ impl Renderer {
             Node::Actors => self.actor.record(pass, ctx),
             Node::TranslucentBlocks => self.terrain.record_translucent(pass, ctx, stats),
             Node::ModelBlend => self.terrain.record_model_blend(pass, ctx),
-            Node::ModelBreak => self.terrain.record_model_break(pass, ctx, &self.model_break),
+            Node::ModelBreak => self
+                .terrain
+                .record_model_break(pass, ctx, &self.model_break),
             Node::BreakOverlay => self.hand.record_break_overlay(pass, ctx),
             Node::Particles => self.particle.record_cutout(pass, ctx),
             Node::Fluid => self.terrain.record_fluid(pass, ctx, stats),

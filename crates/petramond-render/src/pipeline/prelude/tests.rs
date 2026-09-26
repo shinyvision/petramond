@@ -127,7 +127,12 @@ fn composed_engine_shaders_validate() {
         ),
         (
             "contact",
-            [cel, atmosphere, include_str!("../../../shaders/contact.wgsl")].concat(),
+            [
+                cel,
+                atmosphere,
+                include_str!("../../../shaders/contact.wgsl"),
+            ]
+            .concat(),
         ),
         (
             "entity shadow",

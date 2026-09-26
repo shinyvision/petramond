@@ -27,6 +27,7 @@ pub fn on_projectile_hit(payload: &mut EventPayload) -> Outcome {
         pos,
         vel,
         fate,
+        ..
     } = payload
     else {
         return Outcome::Continue;

@@ -3,19 +3,18 @@
 //! using a clicked block's own capability. Runs on the fixed tick, dispatched from
 //! `tick_place` after block interaction and before placement.
 
-use petramond_world::world::raycast;
 use super::game::ServerGame;
 use crate::entity::DroppedItem;
 use crate::events::tick::TickEvents;
 use crate::events::{BlockPlacePre, ItemUseEvent, ItemUsePre, Outcome, PostEvent};
 use crate::mob::ShearDrop;
 use crate::net::protocol::TargetRef;
-use crate::player::Player;
 use crate::rules::item_use::{self as rules, EngineItemUse};
 use crate::rules::placement::facing_from_forward;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_world::block::Block;
 use petramond_world::item::{ItemStack, ItemType};
+use petramond_world::world::raycast;
 
 /// The in-progress eat: which hand and food item are being eaten and for how
 /// many ticks the button has been held on it. Session-owned (one per player);
@@ -224,7 +223,8 @@ impl ServerGame {
         // bucket counterpart) ride the row, so a pack bucket transitions
         // within its own item pair. `Shear` acts at the earlier shear stage;
         // mod items react to use through the `item_use_pre` event above.
-        let used = match rules::resolve_engine_item_use(&self.sessions[s].player, self.world.data()) {
+        let used = match rules::resolve_engine_item_use(&self.sessions[s].player, self.world.data())
+        {
             Some(EngineItemUse::Fill { source, becomes }) => self.fill_bucket(s, source, becomes),
             Some(EngineItemUse::Pour {
                 cell,

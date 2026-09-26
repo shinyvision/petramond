@@ -12,7 +12,7 @@ use super::side::{ReplicaSide, ServerSide, WorldSide};
 
 // Moved halves, re-exported under their historical `store::` paths.
 pub use petramond_world::world::column_heightmaps::SkyCoverChange;
-pub use petramond_world::world::data::{ContentState, WorldData};
+pub use petramond_world::world::data::WorldData;
 pub use petramond_world::world::load_targets::{
     LoadAnchor, LoadTarget, RENDER_DIST, VERTICAL_LOAD_RADIUS,
 };
@@ -43,7 +43,8 @@ pub(in crate::world) struct DrawStore {
     /// bound per section. Every consumer of this store is section-shaped (a
     /// section payload, an eviction, a frame's view cull), and each of them
     /// walked the whole map before this index existed.
-    pub(in crate::world) block_draw_sections: FxHashMap<SectionPos, crate::world::draw::SectionDraws>,
+    pub(in crate::world) block_draw_sections:
+        FxHashMap<SectionPos, crate::world::draw::SectionDraws>,
 }
 
 /// The cubic voxel world: a sparse 3D grid of 16³ [`Section`]s plus a sparse 2D
@@ -260,6 +261,7 @@ impl ServerWorld {
 
     /// Rebuild `stream_nonfinal` wholesale from the three in-flight sets —
     /// the bulk (`clear`) counterpart of the per-section maintainers.
+    #[cfg(test)]
     pub(super) fn rebuild_stream_nonfinal(&mut self) {
         let gen = &self.side.gen;
         self.data.stream_nonfinal = gen

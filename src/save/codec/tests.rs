@@ -555,7 +555,10 @@ fn the_record_block_cube_carries_ids_past_one_byte() {
 fn an_item_slot_stores_a_two_byte_id() {
     use crate::save::wire::{from_bytes, to_bytes};
     let pal = palette::Palette::identity();
-    let slot = to_bytes(&DiskSlot::of(Some(ItemStack::new(ItemType::Stone, 5)), &pal));
+    let slot = to_bytes(&DiskSlot::of(
+        Some(ItemStack::new(ItemType::Stone, 5)),
+        &pal,
+    ));
     assert_eq!(slot.len(), 5, "u16 id + u8 count + u16 blob length");
     let back = from_bytes::<DiskSlot>(&slot)
         .expect("decodes")
@@ -651,8 +654,14 @@ fn sparse_state_encodes_identically_whatever_the_insertion_order() {
     assert_eq!(forward.furnaces().len(), CELLS.div_ceil(5));
 
     let blob = encode_snapshot(&SectionSnapshot::from_section(&forward));
-    assert_eq!(blob, encode_snapshot(&SectionSnapshot::from_section(&reverse)));
-    assert_eq!(blob, encode_snapshot(&SectionSnapshot::from_section(&scattered)));
+    assert_eq!(
+        blob,
+        encode_snapshot(&SectionSnapshot::from_section(&reverse))
+    );
+    assert_eq!(
+        blob,
+        encode_snapshot(&SectionSnapshot::from_section(&scattered))
+    );
 
     let (loaded, ..) = decode_section(SectionPos::new(3, 4, -2), &blob).expect("decodes");
     assert_eq!(
@@ -706,7 +715,11 @@ fn a_block_whose_mod_is_gone_is_kept_and_returns_with_its_mod() {
     assert_eq!(loaded.block_raw(1, 1, 1), 0, "air stands in");
     assert!(loaded.cell_states().is_empty(), "no live state for it");
     let resaved = super::encode_snapshot(&SectionSnapshot::from_section(&loaded), &without);
-    assert_eq!(inflate(&resaved), inflate(&original), "written back exactly");
+    assert_eq!(
+        inflate(&resaved),
+        inflate(&original),
+        "written back exactly"
+    );
 
     let back = super::decode_section(pos, &resaved, &with_mod)
         .expect("decodes")
@@ -722,7 +735,11 @@ fn a_block_whose_mod_is_gone_is_kept_and_returns_with_its_mod() {
     let back = super::decode_section(pos, &built, &without)
         .expect("decodes")
         .section;
-    assert_eq!(back.block_raw(1, 1, 1), Block::Stone.id(), "building replaced it");
+    assert_eq!(
+        back.block_raw(1, 1, 1),
+        Block::Stone.id(),
+        "building replaced it"
+    );
     assert_eq!(
         super::decode_section(pos, &built, &with_mod)
             .expect("decodes")
@@ -755,7 +772,10 @@ fn light_never_persists_across_a_kept_block() {
     assert!(snap.skylight.is_some());
     let resaved = super::encode_snapshot(&snap, &without);
     let back = decode_section(pos, &resaved).expect("decodes").0;
-    assert!(!back.has_baked_light(), "a bake around a kept block is withheld");
+    assert!(
+        !back.has_baked_light(),
+        "a bake around a kept block is withheld"
+    );
 }
 
 /// A chest item whose mod is gone loads as an empty slot and goes back into
@@ -780,7 +800,11 @@ fn a_container_item_whose_mod_is_gone_is_kept_in_its_slot() {
         "the item cannot be used without its mod"
     );
     let resaved = super::encode_snapshot(&SectionSnapshot::from_section(&loaded), &without);
-    assert_eq!(inflate(&resaved), inflate(&original), "written back exactly");
+    assert_eq!(
+        inflate(&resaved),
+        inflate(&original),
+        "written back exactly"
+    );
     let back = super::decode_section(pos, &resaved, &with_mod)
         .expect("decodes")
         .section;
@@ -803,8 +827,8 @@ fn kept_mobs_are_written_back_with_the_section() {
     };
     snap.kept.mobs.push(stranger.clone());
     let record = encode_snapshot(&snap);
-    let decoded = super::decode_section(pos, &record, &palette::Palette::identity())
-        .expect("decodes");
+    let decoded =
+        super::decode_section(pos, &record, &palette::Palette::identity()).expect("decodes");
     assert!(decoded.mobs.is_empty(), "no registered species 200");
     assert_eq!(decoded.kept.mobs, [stranger]);
 }

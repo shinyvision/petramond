@@ -21,7 +21,6 @@
 //! namespaced key, placed after the engine rows in load order — so pack ores
 //! only claim host cells the engine veins left, and never move them.
 
-
 use petramond_world::block::Block;
 use petramond_world::chunk::{WORLD_MAX_Y, WORLD_MIN_Y};
 use serde::Deserialize;
@@ -113,7 +112,8 @@ pub struct OreTable {
 struct RawOre {
     ore: String,
     block: Block,
-    salt: u64,
+    #[serde(default)]
+    salt: Option<u64>,
     count: i32,
     shape: VeinShape,
     y: (i32, i32),
@@ -169,7 +169,9 @@ impl RawOre {
         }
         Ok(OreVein {
             block: self.block,
-            salt: self.salt,
+            salt: self
+                .salt
+                .unwrap_or_else(|| crate::salts::named("ore", &self.ore)),
             count: self.count,
             shape: self.shape,
             y_min,
@@ -199,6 +201,7 @@ impl OreTable {
 }
 
 fn parse_layers(texts: &[&str]) -> Result<OreTable, String> {
+    let mut salt_owners = std::collections::HashMap::new();
     let catalog = petramond_world::registry::load_catalog(
         texts,
         |text| serde_json::from_str::<RawFile>(text).map(|f| f.ores),
@@ -207,7 +210,14 @@ fn parse_layers(texts: &[&str]) -> Result<OreTable, String> {
         "ore vein",
         |r, _, _| {
             let name = r.ore.clone();
-            r.resolve().map_err(|e| format!("ore vein '{name}': {e}"))
+            let vein = r.resolve().map_err(|e| format!("ore vein '{name}': {e}"))?;
+            if let Some(previous) = salt_owners.insert(vein.salt, name.clone()) {
+                return Err(format!(
+                    "ore veins '{previous}' and '{name}' share salt {}",
+                    vein.salt
+                ));
+            }
+            Ok(vein)
         },
     )?;
     Ok(OreTable::new(catalog.rows()))

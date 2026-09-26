@@ -76,7 +76,7 @@ fn a_mob_this_build_cannot_spawn_is_kept_and_written_back() {
         ],
         unknown: UnknownFields::new(),
     };
-    let bytes = encode(&[owl(1.0), owl(3.0)], &[stranger.clone()]);
+    let bytes = encode(&[owl(1.0), owl(3.0)], std::slice::from_ref(&stranger));
     let got = decode(&bytes).expect("decodes despite the stranger");
     assert_eq!(got.live.len(), 2, "the known mobs spawn");
     assert_eq!(
@@ -104,8 +104,7 @@ fn a_known_mob_with_unresolvable_content_is_kept_whole() {
     });
     let mut newer = DiskMob::of(&owl(2.0), Mob::Owl.id(), &pal);
     newer.unknown.insert(99, vec![7]);
-    let got =
-        decode(&encode(&[], &[unknown_item.clone(), newer.clone()])).expect("decodes");
+    let got = decode(&encode(&[], &[unknown_item.clone(), newer.clone()])).expect("decodes");
     assert!(got.live.is_empty());
     assert_eq!(got.kept, [unknown_item, newer]);
 }

@@ -182,7 +182,12 @@ impl GamePresentationScratch {
                 skylight: m.skylight,
                 blocklight: m.blocklight,
             };
-            append_emitters(&mut self.particle_emitters, ids.iter().copied(), &body, view);
+            append_emitters(
+                &mut self.particle_emitters,
+                ids.iter().copied(),
+                &body,
+                view,
+            );
         }
     }
 
@@ -208,7 +213,8 @@ impl GamePresentationScratch {
             ),
             None => {
                 let (skylight, blocklight) = game.held_item_light();
-                let feet = game.local.player.pos + Vec3::new(0.0, game.local.camera_rig.step_y_offset(), 0.0);
+                let feet = game.local.player.pos
+                    + Vec3::new(0.0, game.local.camera_rig.step_y_offset(), 0.0);
                 EmitterBody::player(feet, local_body_yaw(game), skylight, blocklight, 0)
             }
         };

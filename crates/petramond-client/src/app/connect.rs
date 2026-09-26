@@ -18,11 +18,11 @@ use super::shell_docs::ShellCommand;
 use super::ui_runtime::AppUi;
 use super::{App, AppScreen};
 use crate::game::Game;
+use petramond::net::handle::ServerHandle;
 use petramond::net::handshake::{
     client_handshake, installed_mod_ids, HandshakeError, HandshakeJoin,
 };
 use petramond::net::protocol::ModEntry;
-use petramond::net::handle::ServerHandle;
 use petramond_render::camera::Camera;
 
 /// Per-step network deadline: the TCP connect and each handshake read.

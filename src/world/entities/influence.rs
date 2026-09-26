@@ -22,7 +22,9 @@ impl ServerWorld {
             return Vec::new();
         }
         let mut candidates: Vec<_> = self
-            .side.entities.dropped_items
+            .side
+            .entities
+            .dropped_items
             .items
             .iter()
             .filter_map(|item| {
@@ -50,7 +52,9 @@ impl ServerWorld {
         let requested: HashSet<_> = impulses.iter().map(|(id, _)| *id).collect();
         // Scan once; only requested entities need the terrain readiness probe.
         let eligible: HashMap<_, _> = self
-            .side.entities.dropped_items
+            .side
+            .entities
+            .dropped_items
             .items
             .iter()
             .enumerate()

@@ -8,9 +8,7 @@
 
 use std::collections::btree_map::{BTreeMap, Entry};
 
-use petramond::net::protocol::{
-    EntityLane, EntityRow, ItemStateRow, MobStateRow, PlayerStateRow,
-};
+use petramond::net::protocol::{EntityLane, EntityRow, ItemStateRow, MobStateRow, PlayerStateRow};
 
 /// How a lane's rows land on the entries they name.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

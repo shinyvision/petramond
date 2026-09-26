@@ -102,7 +102,9 @@ impl Tools {
             .collect::<Vec<_>>();
         let (mut families, refused) = Families::from_specs(specs);
         for (kind, reason) in refused {
-            log(&format!("[combat] the `{kind}` family is refused: {reason}"));
+            log(&format!(
+                "[combat] the `{kind}` family is refused: {reason}"
+            ));
         }
         for kind in families.resolve_impacts(animation_clip) {
             log(&format!(

@@ -163,7 +163,10 @@ mod tests {
         let (noon_time, noon_light) = sky_params(0.25, 0.0);
         assert_eq!(noon_time[0], 0.25);
         assert!(noon_time[1] > 0.99, "full daylight at noon: {noon_time:?}");
-        assert!(noon_light[0] > 0.99, "noon sky at full scale: {noon_light:?}");
+        assert!(
+            noon_light[0] > 0.99,
+            "noon sky at full scale: {noon_light:?}"
+        );
 
         let (midnight_time, light) = sky_params(1.75, 4.0);
         assert!(

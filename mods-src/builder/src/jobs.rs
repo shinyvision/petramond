@@ -152,7 +152,8 @@ impl Builder {
         let asked = crate::golem::asked(&viewers);
         let mut attended: Vec<(ProjectId, bool)> = watched.iter().map(|id| (*id, true)).collect();
         attended.extend(
-            self.projects.active()
+            self.projects
+                .active()
                 .filter(|id| !watched.contains(id))
                 .map(|id| (id, false)),
         );
@@ -203,8 +204,7 @@ impl Builder {
         }
         self.jobs.forget_idle(now);
         if refresh_ghosts {
-            self.ghosts
-                .sync(&self.content, &mut self.projects, &live);
+            self.ghosts.sync(&self.content, &mut self.projects, &live);
         }
         if ROUTE_SWEEP.due(now, 0) {
             self.routes.retain(|_, (_, at)| now < *at + ROUTE_TICKS);

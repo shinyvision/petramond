@@ -365,7 +365,10 @@ fn connection_placement(
         return PlacementOutcome::Refused;
     }
     let c = conn(&block.shape_kind_def().params);
-    if occupied(p, hypothetical_connection_boxes(w, p, c, block.shape_kind())) {
+    if occupied(
+        p,
+        hypothetical_connection_boxes(w, p, c, block.shape_kind()),
+    ) {
         return PlacementOutcome::Refused;
     }
     // A plain block write: the refine cascade stores the resolved mask.

@@ -63,7 +63,7 @@ fn derived_span_gates_the_same_sections_as_the_compiled_constant() {
     let table = parse_layers(&[&base()]).expect("shipped ores load");
     let overlaps = |(lo, hi): (i32, i32), cy: i32| {
         let sec_lo = cy * SECTION_SIZE as i32;
-        sec_lo <= hi && sec_lo + SECTION_SIZE as i32 - 1 >= lo
+        sec_lo <= hi && sec_lo + SECTION_SIZE as i32 > lo
     };
     for cy in SECTION_MIN_CY..=SECTION_MAX_CY {
         assert_eq!(
@@ -94,7 +94,10 @@ fn packs_add_ores_after_the_engine_rows_and_retune_engine_rows() {
     let table = parse_layers(&[&base(), pack]).expect("pack layer loads");
     let legacy = legacy_veins();
     assert_eq!(table.veins.len(), legacy.len() + 1);
-    assert_eq!(table.veins[3].count, 20, "the engine coal row is retuned in place");
+    assert_eq!(
+        table.veins[3].count, 20,
+        "the engine coal row is retuned in place"
+    );
     let added = table.veins.last().expect("pack row");
     assert_eq!(added.block, Block::GoldOre);
     assert_eq!(added.hosts, &[Block::Tuff, Block::Stone]);

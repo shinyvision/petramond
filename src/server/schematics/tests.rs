@@ -145,7 +145,12 @@ fn positioning_reports_only_the_open_request_within_reach() {
         turns: 0,
     };
     server.apply_schematic_request(0, far);
-    assert!(server.mods.bus_mut().queue_mut().take_events_for_test().is_empty());
+    assert!(server
+        .mods
+        .bus_mut()
+        .queue_mut()
+        .take_events_for_test()
+        .is_empty());
     server.apply_schematic_request(
         0,
         SchematicRequest::Positioned {
@@ -156,7 +161,12 @@ fn positioning_reports_only_the_open_request_within_reach() {
         },
     );
     assert!(matches!(
-        server.mods.bus_mut().queue_mut().take_events_for_test().as_slice(),
+        server
+            .mods
+            .bus_mut()
+            .queue_mut()
+            .take_events_for_test()
+            .as_slice(),
         [PostEvent::SchematicPositioned { turns: 1, .. }]
     ));
     server.apply_schematic_request(
@@ -169,7 +179,12 @@ fn positioning_reports_only_the_open_request_within_reach() {
         },
     );
     assert!(
-        server.mods.bus_mut().queue_mut().take_events_for_test().is_empty(),
+        server
+            .mods
+            .bus_mut()
+            .queue_mut()
+            .take_events_for_test()
+            .is_empty(),
         "one positioning answers once"
     );
 }

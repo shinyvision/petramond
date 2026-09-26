@@ -64,7 +64,8 @@ fn gather_touched_fluids(
                     let Some(above) = world.block_if_stream_final(x, y + 1, z) else {
                         return false;
                     };
-                    let height = fluid_height(world.data().fluid_meta_world(x, y, z), above, def.block);
+                    let height =
+                        fluid_height(world.data().fluid_meta_world(x, y, z), above, def.block);
                     if min[1] + CONTACT_EPS < f64::from(y) + f64::from(height) {
                         out.push(def);
                     }

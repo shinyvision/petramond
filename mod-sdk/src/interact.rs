@@ -146,13 +146,19 @@ mod tests {
 
     #[test]
     fn a_water_bucket_pours_only_into_an_empty_vessel() {
-        assert_eq!(BUCKETS.swap_for(BUCKETS.full, false), Some(BucketSwap::Pour));
+        assert_eq!(
+            BUCKETS.swap_for(BUCKETS.full, false),
+            Some(BucketSwap::Pour)
+        );
         assert_eq!(BUCKETS.swap_for(BUCKETS.full, true), None);
     }
 
     #[test]
     fn an_empty_bucket_scoops_only_from_a_full_vessel() {
-        assert_eq!(BUCKETS.swap_for(BUCKETS.empty, true), Some(BucketSwap::Scoop));
+        assert_eq!(
+            BUCKETS.swap_for(BUCKETS.empty, true),
+            Some(BucketSwap::Scoop)
+        );
         assert_eq!(BUCKETS.swap_for(BUCKETS.empty, false), None);
     }
 

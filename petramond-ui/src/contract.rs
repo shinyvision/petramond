@@ -130,11 +130,7 @@ pub const ENGINE_KINDS: &[EngineKind] = &[
     kind("petramond:options_sound", Screen, &[]),
     kind("petramond:options_controls", Screen, &[]),
     kind("petramond:options_graphics", Screen, &[]),
-    kind(
-        "petramond:creative",
-        Container,
-        &[("hotbar", HOTBAR_SLOTS)],
-    ),
+    kind("petramond:creative", Container, &[("hotbar", HOTBAR_SLOTS)]),
     kind("petramond:schematics", Screen, &[]),
     kind("petramond:chiseling_station", Container, &[]),
 ];
@@ -286,7 +282,11 @@ pub fn validate_for_engine(doc: &Document, check: &EngineCheck<'_>) -> Vec<DocIs
         }
     };
     issues.extend(doc.validate(check.styles, contract.as_ref()));
-    issues.extend(slot_semantics_issues(doc, check.catalog).into_iter().map(document_issue));
+    issues.extend(
+        slot_semantics_issues(doc, check.catalog)
+            .into_iter()
+            .map(document_issue),
+    );
     issues.extend(image_issues(doc, check.image_size));
     issues
 }

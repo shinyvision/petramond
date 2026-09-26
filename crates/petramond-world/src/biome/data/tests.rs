@@ -28,10 +28,17 @@ fn packs_may_override_engine_rows_and_add_biomes() {
     let table = parse_layers(&[&base, addition]).expect("a namespaced addition loads");
     assert_eq!(table.rows().len(), ENGINE_BIOME_COUNT + 1);
     let index = table.id("mymod:crystal_fields").expect("registered");
-    assert_eq!(usize::from(index), ENGINE_BIOME_COUNT, "after the engine range");
+    assert_eq!(
+        usize::from(index),
+        ENGINE_BIOME_COUNT,
+        "after the engine range"
+    );
     let added = &table.rows()[usize::from(index)];
     assert_eq!(added.biome.id() as usize, ENGINE_BIOME_COUNT + 1);
-    assert_eq!((added.key, added.name), ("mymod:crystal_fields", "mymod:crystal_fields"));
+    assert_eq!(
+        (added.key, added.name),
+        ("mymod:crystal_fields", "mymod:crystal_fields")
+    );
     assert_eq!(added.fog_color, [0.4, 0.5, 0.6]);
     assert!(added.generation.is_some());
 

@@ -48,7 +48,9 @@ impl<'a> Ground<'a> {
     }
 
     pub fn foothold(&self, cell: [i32; 3]) -> bool {
-        self.clear(cell) && self.clear(offset(cell, [0, 1, 0])) && self.floor(offset(cell, [0, -1, 0]))
+        self.clear(cell)
+            && self.clear(offset(cell, [0, 1, 0]))
+            && self.floor(offset(cell, [0, -1, 0]))
     }
 
     /// The footholds one move from `cell`: along, a step up with head room

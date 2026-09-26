@@ -454,7 +454,14 @@ mod snow_tests {
         let ice = BlockId(4);
         let packed_ice = BlockId(5);
         let allowed = |block, shape| {
-            snow_support(block, &[leaves], Some(water), Some(ice), Some(packed_ice), shape)
+            snow_support(
+                block,
+                &[leaves],
+                Some(water),
+                Some(ice),
+                Some(packed_ice),
+                shape,
+            )
         };
         assert!(allowed(leaves, None));
         assert!(allowed(rock, Some(CollisionShape::Full)));

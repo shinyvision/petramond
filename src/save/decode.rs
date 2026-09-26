@@ -4,13 +4,13 @@ use std::thread::JoinHandle;
 
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
+use super::codec::KeptContent;
 use super::format::{self, RecordError};
 use super::palette::Palette;
 use super::{
     codec, colgen, region, DecodedLoad, LoadedColumnGen, LoadedSection, SectionRecord,
     SectionStore, Unreadable,
 };
-use super::codec::KeptContent;
 
 /// Cores kept out of decoding: the save readers that feed the pool and the
 /// game thread that consumes what it publishes.

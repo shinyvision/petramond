@@ -1,5 +1,5 @@
-use crate::world::ServerWorld;
 use super::*;
+use crate::world::ServerWorld;
 
 use std::sync::Arc;
 
@@ -23,7 +23,10 @@ fn overlaid_saved_section_keeps_its_block_entities_live() {
     let sp = SectionPos::new(0, 4, 0);
     world.data.ensure_column(sp.chunk_pos());
     // The generated base the overlay replaces.
-    world.data.sections.insert(sp, Arc::new(Section::new(0, 4, 0)));
+    world
+        .data
+        .sections
+        .insert(sp, Arc::new(Section::new(0, 4, 0)));
     world.note_section_loaded(sp);
     // A saved section carrying a chest lands from disk.
     let mut saved = Section::new(0, 4, 0);
@@ -36,7 +39,8 @@ fn overlaid_saved_section_keeps_its_block_entities_live() {
     );
     saved.insert_entity_facing(0, 0, 0, petramond_math::facing::Facing::default());
     world
-        .side.gen
+        .side
+        .gen
         .pending_overlays
         .insert(sp, (saved, Vec::new(), Vec::new()));
     world.apply_pending_overlays();
@@ -196,7 +200,12 @@ fn multi_anchor_requests_and_keeps_both_neighbourhoods() {
         "anchor B's columns are requested"
     );
     assert!(
-        world.side.gen.pending.keys().all(|p| near(p, 0) || near(p, 40)),
+        world
+            .side
+            .gen
+            .pending
+            .keys()
+            .all(|p| near(p, 0) || near(p, 40)),
         "nothing outside the anchors' union is requested"
     );
 
@@ -229,7 +238,8 @@ fn settled_missing_scan_resumes_after_eviction() {
     );
     let victim = ChunkPos::new(0, 0);
     assert!(
-        world.side.gen.pending.contains_key(&victim) || world.side.gen.column_gen.contains_key(&victim),
+        world.side.gen.pending.contains_key(&victim)
+            || world.side.gen.column_gen.contains_key(&victim),
         "the player's own column is requested or loaded"
     );
 
@@ -365,7 +375,8 @@ fn first_bake_defers_until_generation_neighborhood_settles() {
         for dx in -1..=1 {
             let cp = ChunkPos::new(dx, dz);
             world
-                .side.gen
+                .side
+                .gen
                 .column_gen
                 .insert(cp, Arc::new(generator.generate_column_gen(dx, dz)));
             world.data.ensure_column(cp);
@@ -497,7 +508,8 @@ fn horizontal_move_requests_sections_for_newly_wanted_loaded_columns() {
 
     assert!(
         world
-            .side.gen
+            .side
+            .gen
             .pending_sections
             .iter()
             .any(|sp| sp.chunk_pos() == newly_wanted),
@@ -549,7 +561,10 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
     // materializes section (0,15,0) on write.
     let edit = IVec3::new(4, 250, 4);
     assert!(world.set_block_world(edit.x, edit.y, edit.z, Block::Stone));
-    assert_eq!(world.data.chunk_block(edit.x, edit.y, edit.z), Block::Stone.id());
+    assert_eq!(
+        world.data.chunk_block(edit.x, edit.y, edit.z),
+        Block::Stone.id()
+    );
 
     // Flush to disk, then wait for the save thread to drain by reading the section back
     // through a blocking load (the channel is ordered, so this trails the write).
@@ -643,7 +658,8 @@ fn explored_terrain_reloads_from_disk_without_generating() {
             world.poll();
             world.pump_light_bakes();
             let done = world
-                .data.sections
+                .data
+                .sections
                 .values()
                 .all(|s| !s.light_dirty || s.all_opaque());
             if done {
@@ -664,7 +680,12 @@ fn explored_terrain_reloads_from_disk_without_generating() {
     assert!(!first_sections.is_empty());
     let first_blocks: std::collections::HashMap<SectionPos, Vec<u16>> = first_sections
         .iter()
-        .map(|sp| (*sp, world.data.sections[sp].blocks_iter().collect::<Vec<_>>()))
+        .map(|sp| {
+            (
+                *sp,
+                world.data.sections[sp].blocks_iter().collect::<Vec<_>>(),
+            )
+        })
         .collect();
     world.flush_modified_chunks();
     {
@@ -705,7 +726,8 @@ fn explored_terrain_reloads_from_disk_without_generating() {
     assert!(loaded > 0, "sections came back from disk");
     for (sp, blocks) in &first_blocks {
         let section = world
-            .data.sections
+            .data
+            .sections
             .get(sp)
             .unwrap_or_else(|| panic!("section {sp:?} reloaded"));
         assert_eq!(
@@ -720,7 +742,8 @@ fn explored_terrain_reloads_from_disk_without_generating() {
     // reloaded world, so a single dirty section here would mean the load
     // path re-queued a bake (the exact work persistence exists to skip).
     let relit = world
-        .data.sections
+        .data
+        .sections
         .values()
         .filter(|s| s.light_dirty && !s.all_opaque())
         .count();
@@ -761,7 +784,9 @@ fn vertical_window_generates_near_the_player_not_the_whole_column() {
         assert!(Instant::now() < deadline, "the surface window streamed in");
     }
     assert!(
-        world.data.section_loaded_at(surface.0, surface.1, surface.2),
+        world
+            .data
+            .section_loaded_at(surface.0, surface.1, surface.2),
         "a surface section streamed in around the player"
     );
     assert!(

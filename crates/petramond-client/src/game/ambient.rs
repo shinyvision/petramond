@@ -352,7 +352,8 @@ fn column_info(
     *cache.entry(key).or_insert_with(|| {
         let biome = world.data().biome_at_world(key.0, key.1)?;
         let kill = world
-            .data().precipitation_ceiling_y(key.0, key.1)
+            .data()
+            .precipitation_ceiling_y(key.0, key.1)
             .map(|y| y as f32 + 1.0);
         Some((kill, biome))
     })
@@ -361,7 +362,12 @@ fn column_info(
 /// The kill height for a column that must have one — the precipitation path's
 /// original contract (`None` for unloaded columns AND for columns that block
 /// nothing).
-fn column_ceiling(world: &ReplicaWorld, cache: &mut ColumnInfoCache, x: f64, z: f64) -> Option<(f32, u8)> {
+fn column_ceiling(
+    world: &ReplicaWorld,
+    cache: &mut ColumnInfoCache,
+    x: f64,
+    z: f64,
+) -> Option<(f32, u8)> {
     let (kill, biome) = column_info(world, cache, x, z)?;
     Some((kill?, biome))
 }

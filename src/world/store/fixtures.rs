@@ -1,12 +1,17 @@
-use crate::world::{ServerWorld, World, WorldSide};
 use crate::world::WorldData;
+use crate::world::{ReplicaWorld, ServerWorld, World, WorldSide};
 use std::sync::Arc;
 
 use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_MAX_CY, SECTION_MIN_CY};
 use petramond_world::section::{Section, SectionSummary};
 
-
 impl<S: WorldSide> World<S> {
+    /// Clear pending fixture edits before exercising a separate update path.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn clear_update_notifications_for_test(&mut self) {
+        self.data.sim.update_queue.clear();
+        self.data.sim.update_set.clear();
+    }
     /// Test shorthand for `WorldData::is_fluid_source_world` on water.
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_water_source_world(&self, pos: petramond_math::math::IVec3) -> bool {
@@ -78,7 +83,8 @@ impl<S: WorldSide> World<S> {
         self.data.ensure_column(pos);
         for cy in WorldData::column_section_range() {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
-            self.data.sections
+            self.data
+                .sections
                 .insert(sp, Arc::new(Section::new(pos.cx, cy, pos.cz)));
             self.note_section_loaded(sp);
             self.refresh_particle_emitter_index(sp);
@@ -116,5 +122,13 @@ impl ServerWorld {
     pub fn mark_overlay_in_flight_for_test(&mut self, pos: SectionPos) {
         self.side.gen.awaited_overlays.insert(pos);
         self.note_stream_nonfinal(pos);
+    }
+}
+
+impl ReplicaWorld {
+    /// Mimic a replica section still awaiting its final streamed contents.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn mark_overlay_in_flight_for_test(&mut self, pos: SectionPos) {
+        self.data.stream_nonfinal.insert(pos);
     }
 }

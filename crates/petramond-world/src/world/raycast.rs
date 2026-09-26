@@ -155,8 +155,7 @@ pub fn with_dist(eye: WorldPos, dir: Vec3, world: &WorldData) -> Option<(Raycast
                 max: Vec3::from(mx),
             };
         }
-    } else if let Some((mn, mx)) = world.selection_box_at(hit.block.x, hit.block.y, hit.block.z)
-    {
+    } else if let Some((mn, mx)) = world.selection_box_at(hit.block.x, hit.block.y, hit.block.z) {
         // Everything else outlines its POSITION-AWARE box. The hit's own
         // default came from `Block::visual_aabb`, which is position-LESS
         // and so cannot see per-cell state: a door's swung slab, a ladder's

@@ -164,7 +164,8 @@ fn schematic_save_is_a_library_action_and_back_keeps_the_draft() {
     assert!(on_save_page(&app));
     app.sess_mut().library_form.name = "Draft".into();
     app.game_mut()
-        .tools.world
+        .tools
+        .world
         .selection
         .selection
         .region([1, 2, 3], [1, 2, 3], false)
@@ -234,7 +235,8 @@ fn schematic_deletion_waits_for_confirmation_and_keeps_the_confirmed_identity() 
     let start = std::time::Instant::now();
     while !app
         .game()
-        .tools.library
+        .tools
+        .library
         .entries()
         .iter()
         .any(|e| e.path == other)
@@ -260,7 +262,15 @@ fn schematic_deletion_waits_for_confirmation_and_keeps_the_confirmed_identity() 
     app.set_cursor_position(delete.0, delete.1);
     app.click_screen_for_test(screen, 0.0);
     assert!(path.is_file());
-    assert_eq!(app.sess_mut().library_form.pending_delete.as_ref().unwrap().path, path);
+    assert_eq!(
+        app.sess_mut()
+            .library_form
+            .pending_delete
+            .as_ref()
+            .unwrap()
+            .path,
+        path
+    );
     let cancel = cursor_over_widget(&mut app, screen, "cancel_delete", None);
     app.set_cursor_position(cancel.0, cancel.1);
     app.click_screen_for_test(screen, 0.5);
@@ -269,10 +279,7 @@ fn schematic_deletion_waits_for_confirmation_and_keeps_the_confirmed_identity() 
     let delete = cursor_over_widget(&mut app, screen, "delete_schematic", Some(target as u32));
     app.set_cursor_position(delete.0, delete.1);
     app.click_screen_for_test(screen, 1.0);
-    app.game_mut()
-        .tools.library
-        .entries_mut()
-        .reverse();
+    app.game_mut().tools.library.entries_mut().reverse();
     let confirm = cursor_over_widget(&mut app, screen, "confirm_delete", None);
     app.set_cursor_position(confirm.0, confirm.1);
     app.click_screen_for_test(screen, 1.5);
@@ -325,11 +332,13 @@ fn schematic_save_returns_to_the_library_only_after_success() {
         };
         let game = app.game_mut();
         let jobs = game.jobs().clone();
-        game.tools.library
+        game.tools
+            .library
             .start_save(&jobs, pending, move || thumbnail);
         game.poll_schematic_library();
         let saved = game
-            .tools.library
+            .tools
+            .library
             .entries()
             .iter()
             .find(|e| e.metadata.name == fixture.name)
@@ -368,7 +377,8 @@ fn creative_menu_visual_check() {
         screen.0,
         screen.1,
         wgpu::TextureFormat::Rgba8UnormSrgb,
-    ));
+    ))
+    .expect("offscreen renderer");
     let dir = std::path::PathBuf::from(
         std::env::var_os("PETRAMOND_CREATIVE_QA").expect("capture directory"),
     );
@@ -403,7 +413,8 @@ fn creative_menu_visual_check() {
     capture(&mut app, &mut renderer, "creative-drop.png");
     open_save_page(&mut app);
     app.game_mut()
-        .tools.world
+        .tools
+        .world
         .selection
         .selection
         .region([0, 0, 0], [4, 3, 4], false)
@@ -468,7 +479,8 @@ fn creative_menu_visual_check() {
         app.render(&mut renderer);
         if let Some(entry) = app
             .game()
-            .tools.library
+            .tools
+            .library
             .entries()
             .iter()
             .find(|e| e.metadata.name == saved.name)
@@ -501,7 +513,8 @@ fn creative_menu_visual_check() {
     open_library(&mut app);
     let selected = app
         .game()
-        .tools.library
+        .tools
+        .library
         .entries()
         .iter()
         .position(|e| e.metadata.name == "Townhouse")
@@ -514,7 +527,8 @@ fn creative_menu_visual_check() {
     let start = std::time::Instant::now();
     while app
         .game()
-        .tools.library
+        .tools
+        .library
         .thumbnail(&app.game().tools.library.entries()[selected])
         .is_none()
     {
@@ -647,7 +661,8 @@ fn asynchronous_schematic_loads_respect_replacement_and_menu_cancellation() {
     let start = std::time::Instant::now();
     while !app
         .game()
-        .tools.library
+        .tools
+        .library
         .entries()
         .iter()
         .any(|e| e.path == chosen)
@@ -659,7 +674,8 @@ fn asynchronous_schematic_loads_respect_replacement_and_menu_cancellation() {
     std::fs::write(&bad, b"damaged file").unwrap();
     let index = |app: &TestApp, path: &std::path::Path| {
         app.game()
-            .tools.library
+            .tools
+            .library
             .entries()
             .iter()
             .position(|e| e.path == path)
@@ -670,7 +686,8 @@ fn asynchronous_schematic_loads_respect_replacement_and_menu_cancellation() {
         let old = index(&app, path);
         let game = app.game_mut();
         game.cancel_world_tools();
-        game.tools.preview
+        game.tools
+            .preview
             .begin_paste(std::sync::Arc::new(fixture.clone()));
         assert!(game.raise_schematic_preview(7));
         game.begin_schematic_paste(old);
@@ -685,10 +702,7 @@ fn asynchronous_schematic_loads_respect_replacement_and_menu_cancellation() {
             );
             std::thread::yield_now();
         }
-        assert_eq!(
-            game.tools.preview.schematic().map(|s| &**s),
-            Some(&fixture)
-        );
+        assert_eq!(game.tools.preview.schematic().map(|s| &**s), Some(&fixture));
         assert_eq!(
             game.tools.preview.vertical_offset(),
             0,
@@ -723,7 +737,8 @@ fn ctrl_scroll_raises_and_lowers_the_preview_before_wand_or_hotbar_bindings() {
     let mut app = creative_app();
     app.close_screen();
     app.game_mut()
-        .tools.preview
+        .tools
+        .preview
         .begin_paste(std::sync::Arc::new(schematic_fixture()));
     app.set_modifiers(Modifiers {
         ctrl: true,

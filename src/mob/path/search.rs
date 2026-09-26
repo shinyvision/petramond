@@ -109,11 +109,6 @@ impl NavSearch {
         self.start
     }
 
-    /// The cell this search routes toward.
-    pub fn goal(&self) -> IVec3 {
-        self.goal
-    }
-
     /// Octile distance to the goal: the cheapest diagonal-then-straight route
     /// over flat ground, ignoring height (vertical moves cost ≥ `COST_FLAT`,
     /// so this stays admissible).

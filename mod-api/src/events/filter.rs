@@ -295,7 +295,9 @@ impl EventFilter {
     /// (it could never match), or an inverted region.
     pub fn check(&self, kind: EventKind) -> Result<(), String> {
         if let Some(lane) = self.lanes().find(|&lane| !kind.carries(lane)) {
-            return Err(format!("{kind:?} events carry no {lane:?} fact to filter on"));
+            return Err(format!(
+                "{kind:?} events carry no {lane:?} fact to filter on"
+            ));
         }
         if let Some(r) = self.region {
             if (0..3).any(|i| r.min[i] > r.max[i]) {
@@ -355,7 +357,11 @@ mod tests {
         assert!(f.is_empty());
         assert!(f.matches(&placed(3, [0, 0, 0])));
         assert!(f.matches(&EventPayload::PlayerDied));
-        for kind in [EventKind::PlayerDied, EventKind::ModEvent, EventKind::BlockPlaced] {
+        for kind in [
+            EventKind::PlayerDied,
+            EventKind::ModEvent,
+            EventKind::BlockPlaced,
+        ] {
             assert_eq!(f.check(kind), Ok(()));
         }
     }
@@ -434,7 +440,9 @@ mod tests {
         let blocks = EventFilter::blocks([BlockId(1)]);
         assert_eq!(blocks.check(EventKind::BlockPlaced), Ok(()));
         assert!(blocks.check(EventKind::ModEvent).is_err());
-        assert!(EventFilter::keys(["a:"]).check(EventKind::BlockBroken).is_err());
+        assert!(EventFilter::keys(["a:"])
+            .check(EventKind::BlockBroken)
+            .is_err());
         let inverted = EventFilter {
             region: Some(CellRegion {
                 min: [1, 0, 0],

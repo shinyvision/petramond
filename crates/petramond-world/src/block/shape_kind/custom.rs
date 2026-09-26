@@ -105,7 +105,7 @@ fn load(reg: &crate::content::ContentRegistry) -> Result<&'static [CustomShapeDe
 }
 
 fn defs() -> &'static [CustomShapeDef] {
-    *CUSTOM_SHAPES.current()
+    CUSTOM_SHAPES.current()
 }
 
 /// The custom shape declared under `key`, or `None` — used by the loader to

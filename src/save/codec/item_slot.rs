@@ -58,8 +58,10 @@ impl DiskSlot {
         let mut stack = ItemStack::new(ItemType::from_id(id), self.count);
         if !self.blob.0.is_empty() {
             match petramond_world::item::variant::intern_blob(&self.blob.0) {
-                Some(v) => stack.variant = v,
-                None => log::warn!("save slot: unreadable instance-data blob dropped"),
+                Ok(v) => stack.variant = v,
+                Err(error) => {
+                    log::warn!("save slot: unreadable instance-data blob dropped: {error}")
+                }
             }
         }
         Ok(Some(stack))

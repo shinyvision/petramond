@@ -98,7 +98,10 @@ impl DeferringHooks {
     fn plan(pos: [i32; 3], column: i32, block: Block) -> FeatureOutcome {
         let origin = pos.map(|v| v * SECTION_SIZE as i32);
         FeatureOutcome::Plan(crate::hooks::GenerationPlan {
-            blocks: vec![([origin[0] + column, origin[1] + 8, origin[2] + 3], block.id())],
+            blocks: vec![(
+                [origin[0] + column, origin[1] + 8, origin[2] + 3],
+                block.id(),
+            )],
             ..Default::default()
         })
     }
@@ -188,7 +191,11 @@ fn a_deferred_section_resumes_at_the_deferring_hook() {
         1,
         "resuming must not rerun the hooks before the deferral"
     );
-    assert_eq!(twice.waits.load(Ordering::SeqCst), 0, "the non-blocking path never waits");
+    assert_eq!(
+        twice.waits.load(Ordering::SeqCst),
+        0,
+        "the non-blocking path never waits"
+    );
     assert_eq!(blocks(&section), expected);
     assert!(section.dirty);
 }

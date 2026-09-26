@@ -2,7 +2,9 @@
 //! player's clicks meet, and asks where it would have to look to. Each request
 //! is judged here and re-proven at its turn in the tick (`server::actors`).
 
-use mod_api::{ActionRefusal, ActorCall, BlockRecord, DigProgress, EntityRef, HostRet, PlaceRequest};
+use mod_api::{
+    ActionRefusal, ActorCall, BlockRecord, DigProgress, EntityRef, HostRet, PlaceRequest,
+};
 use petramond_math::math::IVec3;
 use petramond_world::construction::Record;
 
@@ -36,9 +38,7 @@ pub(super) fn handle_actor_call(mod_id: &str, call: ActorCall) -> HostRet {
                 Ok(record) => record,
                 Err(refusal) => return HostRet::Place(PlaceRequest::Refused(refusal)),
             };
-            sim_query(|ctx| {
-                HostRet::Place(place(ctx, actor, IVec3::from_array(pos), record, pay))
-            })
+            sim_query(|ctx| HostRet::Place(place(ctx, actor, IVec3::from_array(pos), record, pay)))
         }
         ActorCall::ActorInteract { actor, pos } => sim_query(|ctx| {
             let EntityRef::Mob(mob_id) = actor else {

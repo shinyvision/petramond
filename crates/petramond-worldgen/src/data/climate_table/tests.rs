@@ -135,10 +135,22 @@ fn malformed_tables_are_refused() {
             ),
             "variance set twice",
         ),
-        (row(r#", "variance": "full", "biome": "petramond:nowhere""#), "unknown biome"),
-        (row(r#", "variance": "full", "biome": "plains""#), "bare biome key"),
-        (row(r#", "variance": "wide", "biome": "petramond:plains""#), "unknown band"),
-        (row(r#", "variance": "full", "biome": "petramond:plains", "tilt": 1"#), "unknown field"),
+        (
+            row(r#", "variance": "full", "biome": "petramond:nowhere""#),
+            "unknown biome",
+        ),
+        (
+            row(r#", "variance": "full", "biome": "plains""#),
+            "bare biome key",
+        ),
+        (
+            row(r#", "variance": "wide", "biome": "petramond:plains""#),
+            "unknown band",
+        ),
+        (
+            row(r#", "variance": "full", "biome": "petramond:plains", "tilt": 1"#),
+            "unknown field",
+        ),
         (
             with(
                 r#"{"grid": {"temperature": ["full"], "humidity": ["full"]},

@@ -37,8 +37,12 @@ impl Game {
             ..self.hand.take_swing_events()
         };
         let actor = self.client_actor_snapshot(self.local.predicted_input.sneak, swing);
-        self.client_mods
-            .frame(&self.replica.world, &actor, &self.replica.self_view.inventory, frame);
+        self.client_mods.frame(
+            &self.replica.world,
+            &actor,
+            &self.replica.self_view.inventory,
+            frame,
+        );
     }
 
     /// Deliver the mod cues this batch carried for us (`EmitEventTo`) into
@@ -56,7 +60,8 @@ impl Game {
         if events.is_empty() {
             return;
         }
-        let actor = self.client_actor_snapshot(self.local.predicted_input.sneak, Default::default());
+        let actor =
+            self.client_actor_snapshot(self.local.predicted_input.sneak, Default::default());
         for ev in events {
             self.client_mods.mod_event(
                 &self.replica.world,
@@ -78,7 +83,8 @@ impl Game {
     /// Dispatch a mod-registered bound action edge (`mod_id:action`) to its
     /// owning client mod.
     pub fn client_mod_action(&mut self, full_id: &str, pressed: bool) -> bool {
-        self.client_mods.action(&self.replica.world, full_id, pressed)
+        self.client_mods
+            .action(&self.replica.world, full_id, pressed)
     }
 
     /// The session's mod-registered remappable key actions, for the app's
@@ -105,7 +111,8 @@ impl Game {
     }
 
     pub fn client_mod_ui_event(&mut self, kind_key: &str, event: mod_api::ClientUiEvent) {
-        self.client_mods.ui_event(&self.replica.world, kind_key, event);
+        self.client_mods
+            .ui_event(&self.replica.world, kind_key, event);
     }
 
     pub fn client_mod_canvas_event(&mut self, canvas_key: &str, event: mod_api::ClientCanvasEvent) {

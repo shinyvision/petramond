@@ -14,9 +14,9 @@
 
 use std::time::{Duration, Instant};
 
+use petramond::worker::JobPool;
 use petramond::world::environment::ShaderParamMap;
 use petramond::world::{ReplicaMirror, ReplicaWorld, ServerWorld};
-use petramond::worker::JobPool;
 use petramond_math::math::{voxel_at, Vec3};
 use petramond_render::camera::Camera;
 use petramond_render::Renderer;
@@ -241,12 +241,13 @@ impl SceneCapture {
     /// exactly as the game's frame does.
     fn publish_camera(&mut self) {
         let eye = self.camera.pos;
-        let (fog, eye_fluid) = crate::game::environment::camera_fog(&self.replica, eye, |wx, wz| {
-            self.replica
-                .data()
-                .biome_at_world(wx, wz)
-                .map_or(Biome::PLAINS, Biome::from_id)
-        });
+        let (fog, eye_fluid) =
+            crate::game::environment::camera_fog(&self.replica, eye, |wx, wz| {
+                self.replica
+                    .data()
+                    .biome_at_world(wx, wz)
+                    .map_or(Biome::PLAINS, Biome::from_id)
+            });
         self.renderer.update_uniforms(
             &self.camera,
             fog,

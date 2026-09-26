@@ -25,7 +25,11 @@ impl ServerWorld {
             if surface_remaining == 0 && sky_remaining == 0 {
                 break;
             }
-            let Some(section) = self.data.sections.get(&SectionPos::new(cpos.cx, cy, cpos.cz)) else {
+            let Some(section) = self
+                .data
+                .sections
+                .get(&SectionPos::new(cpos.cx, cy, cpos.cz))
+            else {
                 continue;
             };
             let oy = cy * SECTION_SIZE as i32;

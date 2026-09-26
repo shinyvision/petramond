@@ -25,7 +25,9 @@ fn targeted_chat_reaches_only_listed_sessions() {
     let remote_s = server.add_session_for_test(player);
     let remote_id = server.sessions[remote_s].id;
 
-    server.chat.authored("only-remote", ChatTargets::Players(vec![remote_id]));
+    server
+        .chat
+        .authored("only-remote", ChatTargets::Players(vec![remote_id]));
     server.chat.authored("everyone", ChatTargets::All);
 
     let out = server.pump(0.0, &mut Vec::new());
@@ -119,23 +121,26 @@ fn a_cancelled_pre_damage_applies_neither_damage_nor_its_knockback() {
 
     // The handler cancels on a session-side intent — the class of predicate
     // that silently answered its default before the dispatch named its victim.
-    server.mods.bus_mut().on_player_damage_pre(0, move |ctx, _ev| {
-        let holding_use = ctx
-            .actor
-            .and_then(|id| {
-                ctx.world
-                    .player_roster()
-                    .iter()
-                    .find(|r| r.id == id.0)
-                    .map(|r| r.use_held)
-            })
-            .unwrap_or(false);
-        if holding_use {
-            Outcome::Cancel
-        } else {
-            Outcome::Continue
-        }
-    });
+    server
+        .mods
+        .bus_mut()
+        .on_player_damage_pre(0, move |ctx, _ev| {
+            let holding_use = ctx
+                .actor
+                .and_then(|id| {
+                    ctx.world
+                        .player_roster()
+                        .iter()
+                        .find(|r| r.id == id.0)
+                        .map(|r| r.use_held)
+                })
+                .unwrap_or(false);
+            if holding_use {
+                Outcome::Cancel
+            } else {
+                Outcome::Continue
+            }
+        });
 
     let before = server.sessions[0].player.pos;
     let hit = |server: &mut crate::server::game::ServerGame| {

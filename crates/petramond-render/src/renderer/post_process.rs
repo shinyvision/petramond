@@ -191,7 +191,8 @@ impl Renderer {
         );
         self.upload_post_process();
         let scene = self.scene_dims();
-        self.targets.recreate_views(&self.device, self.config.format, scene);
+        self.targets
+            .recreate_views(&self.device, self.config.format, scene);
         self.sky.recreate_env_targets(
             &self.device,
             &self.binds.uniform_buf,

@@ -1,5 +1,5 @@
-use crate::world::{ServerWorld, World, WorldSide};
 use crate::world::WorldData;
+use crate::world::{ServerWorld, World, WorldSide};
 use std::sync::Arc;
 
 use crate::world::replication::{
@@ -41,7 +41,11 @@ impl SectionPayloadExt for Section {
             skylight: self.skylight_arc().map(SectionBytes),
             blocklight: self.blocklight_arc().map(SectionLight),
             states: SectionStatesPayload {
-                cell_states: self.cell_states().iter().map(|(&cell, &s)| (cell, s)).collect(),
+                cell_states: self
+                    .cell_states()
+                    .iter()
+                    .map(|(&cell, &s)| (cell, s))
+                    .collect(),
                 cell_kv,
                 // Filled by `World::section_payload`: draw sets are world-level
                 // records (keyed at a machine's ANCHOR, which need not be in
@@ -78,7 +82,8 @@ impl ServerWorld {
         }
         let summaries = WorldData::column_section_range()
             .map(|cy| {
-                self.data.section_summary(SectionPos::new(pos.cx, cy, pos.cz))
+                self.data
+                    .section_summary(SectionPos::new(pos.cx, cy, pos.cz))
                     .to_u8()
             })
             .collect();

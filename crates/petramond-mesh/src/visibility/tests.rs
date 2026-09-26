@@ -81,7 +81,10 @@ fn a_floor_separates_above_from_below() {
     let v = SectionVisibility::of_section(&s);
     assert!(v.connects(Face::PosY, Face::PosX), "above the floor");
     assert!(v.connects(Face::NegY, Face::PosX), "below the floor");
-    assert!(!v.connects(Face::PosY, Face::NegY), "the floor seals top from bottom");
+    assert!(
+        !v.connects(Face::PosY, Face::NegY),
+        "the floor seals top from bottom"
+    );
 }
 
 /// Non-occluding blocks — leaves, glass, water — let sight through.

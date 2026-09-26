@@ -429,9 +429,10 @@ impl AppUi {
                     self.item_layers
                         .insert(names.to_owned(), parse_item_layers(names));
                 }
-                self.doc_hooks.extend(self.item_layers[names].iter().map(|&(item, dim)| {
-                    doc_hook(petramond::gui::DocHookKind::ItemView { item, dim }, 0)
-                }));
+                self.doc_hooks
+                    .extend(self.item_layers[names].iter().map(|&(item, dim)| {
+                        doc_hook(petramond::gui::DocHookKind::ItemView { item, dim }, 0)
+                    }));
                 continue;
             }
             // Only the grid cells are list stamps; the detail and tooltip

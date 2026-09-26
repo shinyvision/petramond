@@ -11,7 +11,6 @@ use super::{trace, Flow, Mode, Round};
 use crate::design::Design;
 use crate::fx::HashSet;
 use crate::geometry::{manhattan, offset, FACES};
-use crate::worker::Job;
 use crate::project::Projects;
 use crate::survey::{ItemKey, Known, Survey};
 use crate::worker::crew::{Crew, Stamped};
@@ -21,6 +20,7 @@ use crate::worker::tuning::patience::{BAND_PATIENCE, GLAZE_PATIENCE};
 use crate::worker::tuning::waits::OUT_OF_REACH;
 use crate::worker::tuning::window::{LAYER_BAND, PERCH_REACH, SCAN, STAY_REACH, WINDOW};
 use crate::worker::upkeep::open_block;
+use crate::worker::Job;
 use crate::worker::{cargo, support, Body, Ctx, Task};
 
 /// The open work a plan weighs.
@@ -112,7 +112,7 @@ pub(super) fn gather(
     offer_scaffolds(ctx, crew, body, project, &open_cells, &mut found);
     offer_reopens(&job.design, survey, crew, ctx.now, &mut found);
     offer_digs(ctx, crew, &mut found);
-    offer_trims(&job.design, crew, ctx.now, &mut found);
+    offer_trims(&mut job.design, crew, ctx.now, &mut found);
     found
 }
 
@@ -222,7 +222,15 @@ fn offer_units(
             found.waiting = true;
             continue;
         }
-        trace::passage(ctx, design, crew, i, known, judging.carried, judging.closing);
+        trace::passage(
+            ctx,
+            design,
+            crew,
+            i,
+            known,
+            judging.carried,
+            judging.closing,
+        );
         if crew.deferrals.deferred(Task::Unit(i), ctx.now) {
             found.waiting = true;
             continue;
@@ -300,7 +308,10 @@ fn offer_placement(
     }
     // Blocks neither the hands nor the chests hold wait, giving their place
     // in the window to work that can go up.
-    if judging.held.is_some_and(|held| !cargo::holds(held, missing)) {
+    if judging
+        .held
+        .is_some_and(|held| !cargo::holds(held, missing))
+    {
         found.wants_items = true;
         return false;
     }
@@ -377,8 +388,7 @@ fn offer_scaffolds(
         let task = Task::Scaffold(*cell);
         if crew.deferrals.deferred(task, ctx.now) {
             found.waiting = true;
-        } else if crew.scaffolding.urgent.contains(cell) || !support::props_up(*cell, open_cells)
-        {
+        } else if crew.scaffolding.urgent.contains(cell) || !support::props_up(*cell, open_cells) {
             found.list.push((task, *cell));
         }
     }
@@ -408,7 +418,11 @@ fn offer_reopens(
     reopen.dedup();
     for o in reopen {
         let task = Task::Reopen(o);
-        found.offer(crew.deferrals.deferred(task, now), task, design.units[o].pos);
+        found.offer(
+            crew.deferrals.deferred(task, now),
+            task,
+            design.units[o].pos,
+        );
     }
 }
 
@@ -436,7 +450,7 @@ fn offer_digs(ctx: &mut Ctx, crew: &mut Crew, found: &mut Candidates) {
 }
 
 /// Overgrowth to cut away around work nothing reaches, while it still grows.
-fn offer_trims(design: &Design, crew: &mut Crew, now: u64, found: &mut Candidates) {
+fn offer_trims(design: &mut Design, crew: &mut Crew, now: u64, found: &mut Candidates) {
     if crew.access.trims.is_empty() {
         return;
     }

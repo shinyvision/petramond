@@ -8,8 +8,10 @@
 //! [`Block`]'s own (position-less) accessors answer the authored-origin cell. See
 //! [`petramond_world::block_model`].
 
-use crate::world::{ServerWorld, World, WorldSide};
+#[cfg(test)]
+use crate::world::ServerWorld;
 use crate::world::WorldData;
+use crate::world::{World, WorldSide};
 use petramond_math::facing::Facing;
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
@@ -133,7 +135,9 @@ impl<S: WorldSide> World<S> {
         }
         let mut changes = Vec::with_capacity(new_cells.len());
         for &(c, off) in &new_cells {
-            let (chunk, lx, ly, lz) = self.data.chunk_at_world_mut(c.x, c.y, c.z)
+            let (chunk, lx, ly, lz) = self
+                .data
+                .chunk_at_world_mut(c.x, c.y, c.z)
                 .expect("cell resolution verified above");
             let old = chunk.block(lx, ly, lz);
             // `set_block` clears the cell's model state AND its mod cell KV
@@ -190,7 +194,8 @@ impl<S: WorldSide> World<S> {
         // change value. Self-healing that only heals the cell you asked about
         // is the bug it was built to prevent.
         let has = |c: IVec3, key: &str, want: &[u8]| {
-            self.data.cell_kv_get(c.x, c.y, c.z, key)
+            self.data
+                .cell_kv_get(c.x, c.y, c.z, key)
                 .is_some_and(|v| v == want)
         };
         let unchanged = cells.iter().all(|&c| {
@@ -254,7 +259,9 @@ mod tests {
     fn placing_a_multiblock_fills_its_whole_footprint_with_offsets() {
         let mut w = world_with_empty_chunk();
         let origin = IVec3::new(5, 64, 5);
-        assert!(w.data.model_footprint_clear(origin, BlockModelKind::FurnitureWorkbench));
+        assert!(w
+            .data
+            .model_footprint_clear(origin, BlockModelKind::FurnitureWorkbench));
         assert!(w.place_model_block(origin, WB));
 
         // Every occupied cell holds the block id, and the group resolves back to it.
@@ -263,7 +270,11 @@ mod tests {
         assert_eq!(found_origin, origin);
         assert_eq!(cells.len(), 4, "the 2×2×1 workbench fills four cells");
         for &c in &cells {
-            assert_eq!(Block::from_id(w.data.chunk_block(c.x, c.y, c.z)), WB, "{c:?}");
+            assert_eq!(
+                Block::from_id(w.data.chunk_block(c.x, c.y, c.z)),
+                WB,
+                "{c:?}"
+            );
             // A non-zero authored cell knows its offset; querying from it finds the same base.
             assert_eq!(w.model_group(c).unwrap().1, origin);
         }
@@ -273,7 +284,9 @@ mod tests {
             [1, 1, 0]
         );
         // Each cell has its own cell-local collision (per-cell split, not the whole box).
-        assert!(!w.data.collision_boxes_at(origin.x, origin.y, origin.z)
+        assert!(!w
+            .data
+            .collision_boxes_at(origin.x, origin.y, origin.z)
             .is_empty());
     }
 
@@ -320,7 +333,8 @@ mod tests {
         // Block one of the footprint cells (the +x neighbour) with stone.
         w.set_block_world(origin.x + 1, origin.y, origin.z, Block::Stone);
         assert!(
-            !w.data.model_footprint_clear(origin, BlockModelKind::FurnitureWorkbench),
+            !w.data
+                .model_footprint_clear(origin, BlockModelKind::FurnitureWorkbench),
             "an occupied footprint cell must fail the gate"
         );
     }
@@ -345,12 +359,14 @@ mod tests {
         ));
         w.set_block_world(pos.x, pos.y, pos.z, Block::Air);
         assert!(
-            w.data.cell_kv_get(pos.x, pos.y, pos.z, "farm:moisture")
+            w.data
+                .cell_kv_get(pos.x, pos.y, pos.z, "farm:moisture")
                 .is_none(),
             "a replaced block takes its cell KV with it"
         );
         assert_eq!(
-            w.data.cell_kv_get(neighbour.x, neighbour.y, neighbour.z, "farm:moisture"),
+            w.data
+                .cell_kv_get(neighbour.x, neighbour.y, neighbour.z, "farm:moisture"),
             Some(&[1u8][..]),
             "the neighbour's KV is untouched"
         );
@@ -368,7 +384,8 @@ mod tests {
         ));
         w.remove_compound(origin).expect("removes the group");
         assert!(
-            w.data.cell_kv_get(origin.x, origin.y, origin.z, "kitchen:state")
+            w.data
+                .cell_kv_get(origin.x, origin.y, origin.z, "kitchen:state")
                 .is_none(),
             "breaking a model block clears its anchor's cell KV"
         );
@@ -443,7 +460,8 @@ mod tests {
 
         assert!(w.set_model_parts(origin, 0b101, None));
         let mask_at = |w: &ServerWorld, c: IVec3| {
-            w.data.cell_kv_get(c.x, c.y, c.z, block_model::PARTS_KV_KEY)
+            w.data
+                .cell_kv_get(c.x, c.y, c.z, block_model::PARTS_KV_KEY)
                 .map(<[u8; 4]>::try_from)
                 .and_then(Result::ok)
                 .map(u32::from_le_bytes)

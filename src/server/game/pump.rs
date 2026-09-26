@@ -199,19 +199,25 @@ impl ServerGame {
                 gather,
                 request_id,
             } => {
-                self.queue_menu_action(s, PendingMenuAction::SlotClick {
+                self.queue_menu_action(
+                    s,
+                    PendingMenuAction::SlotClick {
                         slot: slot.to_menu_slot(),
                         button: crate::net::protocol::button_from_wire(button),
                         shift,
                         gather,
                         request_id,
-                    });
+                    },
+                );
             }
             ClientToServer::MenuSwapOffHand { slot, request_id } => {
-                self.queue_menu_action(s, PendingMenuAction::SwapOffHand {
+                self.queue_menu_action(
+                    s,
+                    PendingMenuAction::SwapOffHand {
                         slot: slot.to_menu_slot(),
                         request_id,
-                    });
+                    },
+                );
             }
             ClientToServer::MenuDrag {
                 slots,
@@ -223,30 +229,39 @@ impl ServerGame {
                     .take(petramond_world::gui_state::MAX_MENU_DRAG_SLOTS)
                     .map(|slot| slot.to_menu_slot())
                     .collect();
-                self.queue_menu_action(s, PendingMenuAction::SlotDrag {
+                self.queue_menu_action(
+                    s,
+                    PendingMenuAction::SlotDrag {
                         slots,
                         button: crate::net::protocol::button_from_wire(button),
                         request_id,
-                    });
+                    },
+                );
             }
             ClientToServer::MenuDrop {
                 slot,
                 all,
                 request_id,
-            } => self.queue_menu_action(s, PendingMenuAction::DropSlot {
+            } => self.queue_menu_action(
+                s,
+                PendingMenuAction::DropSlot {
                     slot: slot.to_menu_slot(),
                     all,
                     request_id,
-                }),
+                },
+            ),
             ClientToServer::CraftRecipe {
                 recipe,
                 bulk,
                 request_id,
-            } => self.queue_menu_action(s, PendingMenuAction::CraftRecipe {
+            } => self.queue_menu_action(
+                s,
+                PendingMenuAction::CraftRecipe {
                     recipe,
                     bulk,
                     request_id,
-                }),
+                },
+            ),
             ClientToServer::SetCraftFilter { craftable_only } => {
                 self.sessions[s].player.craft_craftable_only = craftable_only;
             }
@@ -281,13 +296,15 @@ impl ServerGame {
             ClientToServer::StreamBatchAck {
                 messages_per_second,
             } => self.sessions[s]
-                .transport.terrain
+                .transport
+                .terrain
                 .apply_batch_ack(messages_per_second),
             ClientToServer::TerrainBacklog {
                 mesh_sections,
                 upload_columns,
             } => self.sessions[s]
-                .transport.terrain
+                .transport
+                .terrain
                 .apply_presentation_backlog(mesh_sections, upload_columns),
             ClientToServer::SectionCacheMiss { pos } => {
                 self.sessions[s].transport.terrain.handle_cache_miss(pos)
@@ -350,7 +367,9 @@ impl ServerGame {
         sess.player.pitch = t.pitch;
         sess.player.inventory.set_active(u.hotbar_slot);
         let selected = sess.selected_item();
-        sess.input.held_rotation.apply_wire(u.held_rotation, selected);
+        sess.input
+            .held_rotation
+            .apply_wire(u.held_rotation, selected);
 
         sess.input.intent_gameplay = u.gameplay;
         sess.input.intent_sneak = u.sneak;

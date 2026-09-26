@@ -59,7 +59,13 @@ impl Projects {
         // live shards remain authoritative, without a per-tick scan.
         for id in projects.live.iter() {
             projects.table_check[(id % TABLE_CHECK_TICKS as u64) as usize].push(id);
-            if projects.records.get(id).ok().flatten().is_some_and(|p| p.phase().active()) {
+            if projects
+                .records
+                .get(id)
+                .ok()
+                .flatten()
+                .is_some_and(|p| p.phase().active())
+            {
                 projects.active.insert(id);
             }
         }
@@ -249,7 +255,10 @@ impl Projects {
 /// File `id` as `table`'s report unless a newer project already is.
 fn file_report(table: [i32; 3], id: ProjectId) {
     let key = report_key(table);
-    if world_kv_get(&key).and_then(read_id).is_some_and(|filed| filed >= id) {
+    if world_kv_get(&key)
+        .and_then(read_id)
+        .is_some_and(|filed| filed >= id)
+    {
         return;
     }
     world_kv_set(&key, id.to_le_bytes().to_vec());

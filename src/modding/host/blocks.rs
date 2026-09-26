@@ -2,14 +2,14 @@
 //! ticks, light queries, collision-shape classification, and the
 //! model-group swap.
 
-use petramond_world::world::raycast;
 use mod_api::{BlockCall, HostRet};
+use petramond_world::world::raycast;
 
 use petramond_math::math::IVec3;
 
 use super::guards::{
-    batch_guard, checked_block, finite3, key_owned_by_namespace, sim_call, sim_query,
-    sim_read, stream_final_cell,
+    batch_guard, checked_block, finite3, key_owned_by_namespace, sim_call, sim_query, sim_read,
+    stream_final_cell,
 };
 
 /// The three presentation WRITES below all ask the same question first: does
@@ -242,7 +242,8 @@ pub(super) fn handle_block_call(mod_id: &str, call: BlockCall) -> HostRet {
         BlockCall::SurfaceYAt { pos } => sim_read(move |ctx| {
             let y = ctx
                 .world
-                .data().surface_collision_y(pos[0], pos[1])
+                .data()
+                .surface_collision_y(pos[0], pos[1])
                 .filter(|&y| ctx.world.block_if_stream_final(pos[0], y, pos[1]).is_some());
             HostRet::MaybeI32(y)
         }),
@@ -428,15 +429,30 @@ pub(super) fn handle_block_call(mod_id: &str, call: BlockCall) -> HostRet {
             if let Some(err) = batch_guard("LightAtMany position", positions.len()) {
                 return err;
             }
-            sim_read(|ctx| HostRet::Lights(positions.into_iter().map(|pos| {
-                let p = IVec3::from(pos);
-                ctx.world.block_if_stream_final(p.x, p.y, p.z).map(|_| mod_api::LightData {
-                    combined: ctx.world.data().combined_light6_at_world(p.x, p.y, p.z),
-                    sky: ctx.world.data().skylight6_at_world(p.x, p.y, p.z),
-                    block: ctx.world.data().blocklight6_at_world(p.x, p.y, p.z),
-                    block_rgb: ctx.world.data().blocklight6_rgb_at_world(p.x, p.y, p.z),
-                })
-            }).collect()))
+            sim_read(|ctx| {
+                HostRet::Lights(
+                    positions
+                        .into_iter()
+                        .map(|pos| {
+                            let p = IVec3::from(pos);
+                            ctx.world.block_if_stream_final(p.x, p.y, p.z).map(|_| {
+                                mod_api::LightData {
+                                    combined: ctx
+                                        .world
+                                        .data()
+                                        .combined_light6_at_world(p.x, p.y, p.z),
+                                    sky: ctx.world.data().skylight6_at_world(p.x, p.y, p.z),
+                                    block: ctx.world.data().blocklight6_at_world(p.x, p.y, p.z),
+                                    block_rgb: ctx
+                                        .world
+                                        .data()
+                                        .blocklight6_rgb_at_world(p.x, p.y, p.z),
+                                }
+                            })
+                        })
+                        .collect(),
+                )
+            })
         }
         BlockCall::CollisionShapeAt { pos } => sim_read(|ctx| {
             let p = IVec3::from(pos);
@@ -633,7 +649,10 @@ mod tests {
         world.clear_world();
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
         with_world_ctx(&mut world, || {
-            let loaded = handle_host_call(&mut store, HostCall::from(calls::LightAt { pos: [8, 64, 8] }));
+            let loaded = handle_host_call(
+                &mut store,
+                HostCall::from(calls::LightAt { pos: [8, 64, 8] }),
+            );
             assert!(
                 matches!(loaded, HostRet::Light(Some(_))),
                 "loaded cell must answer light, got {loaded:?}"
@@ -660,11 +679,13 @@ mod tests {
         assert!(world.set_block_world(8, 64, 8, Block::OakStairs));
         assert!(world.set_block_world(8, 65, 8, Block::Water));
         with_world_ctx(&mut world, || {
-            let mut shape =
-                |pos| match handle_host_call(&mut store, HostCall::from(calls::CollisionShapeAt { pos })) {
-                    HostRet::CollisionShape(s) => s,
-                    other => panic!("expected a shape reply, got {other:?}"),
-                };
+            let mut shape = |pos| match handle_host_call(
+                &mut store,
+                HostCall::from(calls::CollisionShapeAt { pos }),
+            ) {
+                HostRet::CollisionShape(s) => s,
+                other => panic!("expected a shape reply, got {other:?}"),
+            };
             assert_eq!(shape([8, 63, 8]), Some(CollisionShape::Full));
             assert_eq!(shape([8, 64, 8]), Some(CollisionShape::Partial));
             assert_eq!(shape([8, 65, 8]), Some(CollisionShape::Empty));

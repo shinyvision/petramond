@@ -483,7 +483,11 @@ fn admit(data: &mut ModStoreData, call: &HostCall) -> Result<(), HostRet> {
     if !legality.sides.allows(data.side) {
         return Err(HostRet::error(
             ErrorCode::WrongSide,
-            format!("{} is not available to a {:?} instance", call.name(), data.side),
+            format!(
+                "{} is not available to a {:?} instance",
+                call.name(),
+                data.side
+            ),
         ));
     }
     if legality.scope == Scope::Init && data.phase != Phase::Init {

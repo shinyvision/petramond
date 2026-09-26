@@ -206,7 +206,10 @@ fn shipped_structures_compile() {
     let content = crate::content::test_support::default_content();
     for template in super::CATALOG.get(&content).rows() {
         for (min, max) in template.info().bounds {
-            assert!((0..3).all(|axis| min[axis] <= max[axis]), "{min:?}..{max:?}");
+            assert!(
+                (0..3).all(|axis| min[axis] <= max[axis]),
+                "{min:?}..{max:?}"
+            );
         }
     }
 }

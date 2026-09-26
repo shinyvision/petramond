@@ -72,13 +72,12 @@ pub(crate) mod reference;
 #[cfg(test)]
 mod tests {
     use super::reference::{
-        FloorDensitySpec, ReferenceTerrainSpec, ShapingSplineSpecs, DEPTH_OFFSET_BIAS,
-        HEIGHT_SCALE,
+        FloorDensitySpec, ReferenceTerrainSpec, ShapingSplineSpecs, DEPTH_OFFSET_BIAS, HEIGHT_SCALE,
     };
     use super::*;
+    use crate::density::lattice::{DensityLattice, DensityLatticeBounds, DensityLatticeCellSize};
     use crate::density::shaper;
     use crate::graph::spline::CubicSpline;
-    use crate::density::lattice::{DensityLattice, DensityLatticeBounds, DensityLatticeCellSize};
     use crate::graph::SamplePoint;
     use petramond_world::chunk::{CHUNK_SY, SEA_LEVEL};
 

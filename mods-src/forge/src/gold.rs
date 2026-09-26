@@ -82,10 +82,14 @@ impl Gold {
     pub fn resolve() -> Gold {
         let tools = read_rows::<NondestructiveSpec>(keys::NONDESTRUCTIVE_DATA)
             .into_iter()
+            .filter(|(_, spec)| spec.enabled())
             .map(|(item, spec)| (item, tag_blocks(spec.tags())))
             .collect::<HashMap<_, _>>();
         let mut granted: HashMap<String, Vec<Grant>> = HashMap::new();
-        for fit in read_rows::<Vec<FitSpec>>(keys::AUGMENT_DATA).into_values().flatten() {
+        for fit in read_rows::<Vec<FitSpec>>(keys::AUGMENT_DATA)
+            .into_values()
+            .flatten()
+        {
             let Some(gentle) = &fit.gentle else {
                 continue;
             };

@@ -115,10 +115,7 @@ impl Mobs {
     }
 
     /// A live mob's whole tag map (the `MobTagsGet` HostCall's bulk read).
-    pub fn mob_tags(
-        &self,
-        id: MobId,
-    ) -> Option<&std::collections::BTreeMap<String, MobTagValue>> {
+    pub fn mob_tags(&self, id: MobId) -> Option<&std::collections::BTreeMap<String, MobTagValue>> {
         Some(self.get(id)?.tags())
     }
 

@@ -164,16 +164,17 @@ impl FluidSurface {
                 }
             })
         };
+        let reads = FluidReads {
+            block_at: &block_at,
+            height_at: &fluid,
+            still_at: &|_, _, _| true,
+        };
         let mut surface = Self::new(
-            x,
-            y,
-            z,
+            IVec3::new(x, y, z),
             block,
             block_at(x, y + 1, z).fluid() == Some(block),
             false,
-            &block_at,
-            &fluid,
-            &|_, _, _| true,
+            &reads,
         );
         surface.top_tile = tile;
         surface.top_angle = 0;

@@ -45,7 +45,7 @@ fn replay_keeps_predicates_and_write_order() {
     let mut ctx = FeatureCtx::new(&mut recorder);
     ctx.set_leaf(pos, Block::Stone);
     ctx.set_branch(pos, Block::Dirt);
-    ctx.replace_block(pos, Block::Stone, Block::Dirt);
+    ctx.replace_block(pos, &[Block::Stone], Block::Dirt);
     let plan = FeaturePlan {
         sections: recorder.sections,
     };

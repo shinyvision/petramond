@@ -71,13 +71,38 @@ pub mod event_types {
     }
 
     event_types!(
-        BlockPlacePre, BlockBreakPre, InteractAttempt, ItemUsePre,
-        MobDamagePre, PlayerDamagePre, BlockPlaced, BlockBroken, ItemUsed,
-        MobDied, MobSpawned, PlayerDamaged, PlayerDied, ContainerOpened,
-        ContainerClosed, SectionGenerated, SectionLoaded, PlayerDismounted,
-        MobTagAdded, MobTagRemoved, ItemPickedUp, ItemObtained, MobDamaged,
-        Interacted, ModEvent, UseUnclaimed, AttackAttempt, ProjectileHit,
-        ActorActed, SchematicChosen, SchematicPositioned, CellsEditPre,
+        BlockPlacePre,
+        BlockBreakPre,
+        InteractAttempt,
+        ItemUsePre,
+        MobDamagePre,
+        PlayerDamagePre,
+        BlockPlaced,
+        BlockBroken,
+        ItemUsed,
+        MobDied,
+        MobSpawned,
+        PlayerDamaged,
+        PlayerDied,
+        ContainerOpened,
+        ContainerClosed,
+        SectionGenerated,
+        SectionLoaded,
+        PlayerDismounted,
+        MobTagAdded,
+        MobTagRemoved,
+        ItemPickedUp,
+        ItemObtained,
+        MobDamaged,
+        Interacted,
+        ModEvent,
+        UseUnclaimed,
+        AttackAttempt,
+        ProjectileHit,
+        ActorActed,
+        SchematicChosen,
+        SchematicPositioned,
+        CellsEditPre,
     );
 }
 
@@ -385,12 +410,7 @@ impl<T: TypedMod> Mod for Typed<T> {
         self.state.gen_stage(callback_id, stage, ctx)
     }
 
-    fn gui_click(
-        &mut self,
-        kind_key: &str,
-        widget_id: &str,
-        at: Option<crate::ContainerAddress>,
-    ) {
+    fn gui_click(&mut self, kind_key: &str, widget_id: &str, at: Option<crate::ContainerAddress>) {
         self.state.gui_click(kind_key, widget_id, at);
     }
 

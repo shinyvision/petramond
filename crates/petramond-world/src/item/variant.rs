@@ -158,8 +158,10 @@ struct Row {
 /// append-only rows readers reach WITHOUT a lock — a chunk of rows is
 /// published once and never moves, so `get`/`blob` are two acquire loads —
 /// and a blob index that only interning locks.
+type VariantChunk = OnceLock<Box<[OnceLock<Row>]>>;
+
 pub struct VariantTable {
-    chunks: Box<[OnceLock<Box<[OnceLock<Row>]>>]>,
+    chunks: Box<[VariantChunk]>,
     /// Canonical blob → id, plus the row count (the next id is `len + 1`).
     index: RwLock<HashMap<Vec<u8>, u16>>,
 }
@@ -198,8 +200,8 @@ impl VariantTable {
         if slot >= MAX_VARIANTS {
             return Err(VariantError::TableFull);
         }
-        let chunk = self.chunks[slot / CHUNK]
-            .get_or_init(|| (0..CHUNK).map(|_| OnceLock::new()).collect());
+        let chunk =
+            self.chunks[slot / CHUNK].get_or_init(|| (0..CHUNK).map(|_| OnceLock::new()).collect());
         // Published before the index names the id, so a reader handed the id
         // always finds its row.
         let _ = chunk[slot % CHUNK].set(Row {
@@ -435,7 +437,11 @@ mod tests {
         assert_eq!(b.intern(&blue).unwrap(), red_in_a, "both tables start at 1");
         assert_eq!(*a.get(red_in_a).unwrap(), red);
         assert_eq!(*b.get(red_in_a).unwrap(), blue);
-        assert_eq!(a.get(VariantId(2)), None, "an id past the table reads nothing");
+        assert_eq!(
+            a.get(VariantId(2)),
+            None,
+            "an id past the table reads nothing"
+        );
         assert!(a.contains(&red) && !a.contains(&blue));
     }
 

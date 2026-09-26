@@ -164,7 +164,9 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
                 HostRet::BytesMany(
                     cells
                         .iter()
-                        .map(|&[x, y, z]| world.data().cell_kv_get(x, y, z, &key).map(<[u8]>::to_vec))
+                        .map(|&[x, y, z]| {
+                            world.data().cell_kv_get(x, y, z, &key).map(<[u8]>::to_vec)
+                        })
                         .collect(),
                 )
             })

@@ -60,17 +60,15 @@ impl Fixture {
                     if absent_one_in != 0 && rng.one_in(absent_one_in) {
                         continue;
                     }
-                    let pos = SectionPos::new(
-                        low.cx + dx as i32,
-                        low.cy + dy as i32,
-                        low.cz + dz as i32,
-                    );
+                    let pos =
+                        SectionPos::new(low.cx + dx as i32, low.cy + dy as i32, low.cz + dz as i32);
                     let (_, oy, _) = pos.origin_world();
                     let mut section = Section::new(pos.cx, pos.cy, pos.cz);
                     for ly in 0..SECTION_SIZE {
                         for lz in 0..SECTION_SIZE {
                             for lx in 0..SECTION_SIZE {
-                                let h = heights[(dz * SECTION_SIZE + lz) * dim + dx * SECTION_SIZE + lx];
+                                let h = heights
+                                    [(dz * SECTION_SIZE + lz) * dim + dx * SECTION_SIZE + lx];
                                 // Solid below the surface with random cave holes.
                                 if oy + ly as i32 <= h && !rng.one_in(8) {
                                     section.set_block(lx, ly, lz, Block::Stone);

@@ -279,8 +279,8 @@ impl CraftingRecipe {
                 unlock_on.insert(item);
             }
             for key in triggers.tags {
-                let tag = ItemTag::lookup(&key)
-                    .ok_or_else(|| format!("unknown unlock tag '{key}'"))?;
+                let tag =
+                    ItemTag::lookup(&key).ok_or_else(|| format!("unknown unlock tag '{key}'"))?;
                 let members = ItemType::all()
                     .iter()
                     .copied()

@@ -1,8 +1,9 @@
 use super::*;
-use petramond_world::chunk::{idx, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 use crate::biome::climate::{AxisRange, BiomeClimateEntry, ClimateRect, SurfaceClimate};
+use crate::density::terrain::TerrainDensitySpec;
 use crate::graph::{Channel, SamplePoint, SampledScalarField};
 use petramond_world::chunk::Chunk;
+use petramond_world::chunk::{idx, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 use petramond_world::section::Section;
 
 #[derive(Debug)]
@@ -81,7 +82,7 @@ fn test_system(field: impl SampledScalarField + 'static) -> SurfaceDensitySystem
         .set_channel(Channel::new(channels::MASTER_DENSITY), node);
     SurfaceDensitySystem {
         seed,
-        density,
+        density: density.into(),
         climate: Box::leak(Box::new(plains_index())),
         surface: SurfaceSystem,
     }
@@ -115,7 +116,7 @@ fn coast_system() -> SurfaceDensitySystem {
         .set_channel(Channel::new(channels::VARIANCE), zero);
     SurfaceDensitySystem {
         seed,
-        density,
+        density: density.into(),
         climate: Box::leak(Box::new(coast_index())),
         surface: SurfaceSystem,
     }
@@ -284,7 +285,13 @@ fn region_top_solid_matches_filled_chunk_excluding_water() {
 /// the density lattice walk byte for byte, waterline ice included.
 #[test]
 fn section_fill_matches_the_lattice_reference() {
-    for (seed, cx, cz) in [(7, 0, 0), (7, -2, 1), (7, 4, -3), (34, 6, -1), (31337, 0, 0)] {
+    for (seed, cx, cz) in [
+        (7, 0, 0),
+        (7, -2, 1),
+        (7, 4, -3),
+        (34, 6, -1),
+        (31337, 0, 0),
+    ] {
         let system = SurfaceDensitySystem::new(seed);
         let region = system.region(
             cx * CHUNK_SX as i32,

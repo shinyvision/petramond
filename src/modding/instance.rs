@@ -404,7 +404,7 @@ impl ModInstance {
 
     pub(super) fn call_guest_client(
         &mut self,
-        world: &crate::world::ServerWorld,
+        world: &crate::world::ReplicaWorld,
         call: &GuestCall,
     ) -> Option<GuestRet> {
         super::client::scope::enter(world, || self.call_guest_detached(call))

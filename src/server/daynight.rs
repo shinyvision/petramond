@@ -60,7 +60,11 @@ impl DayNightCycle {
                 return;
             }
         }
-        if let Some(raw) = world.data().world_kv_get(TIME_KEY).and_then(read_time_bytes) {
+        if let Some(raw) = world
+            .data()
+            .world_kv_get(TIME_KEY)
+            .and_then(read_time_bytes)
+        {
             if Some(raw) != self.published_time {
                 self.clock = clock_from_fraction(f32::from_le_bytes(raw), self.clock, self.cycle);
             }
@@ -98,7 +102,11 @@ impl DayNightCycle {
 /// [0.5, 1.0) — sunset through sunrise). False on a world where the cycle has
 /// not published yet.
 pub(super) fn is_night(world: &ServerWorld) -> bool {
-    world.data().world_kv_get(NIGHT_KEY).map(|b| b.first().copied()) == Some(Some(1))
+    world
+        .data()
+        .world_kv_get(NIGHT_KEY)
+        .map(|b| b.first().copied())
+        == Some(Some(1))
 }
 
 /// The published day clock (`petramond:clock`), or 0 on a world whose cycle has
@@ -154,7 +162,8 @@ fn read_clock(world: &ServerWorld) -> Option<u64> {
 
 fn read_frozen(world: &ServerWorld) -> bool {
     world
-        .data().world_kv_get(FROZEN_KEY)
+        .data()
+        .world_kv_get(FROZEN_KEY)
         .and_then(|b| b.first())
         .copied()
         == Some(1)
@@ -162,7 +171,8 @@ fn read_frozen(world: &ServerWorld) -> bool {
 
 fn read_time(world: &ServerWorld) -> Option<f32> {
     world
-        .data().world_kv_get(TIME_KEY)
+        .data()
+        .world_kv_get(TIME_KEY)
         .and_then(read_time_bytes)
         .map(f32::from_le_bytes)
         .filter(|t| t.is_finite())

@@ -17,9 +17,16 @@ fn fluid_checks_past_the_budget_carry_over_to_later_ticks() {
         w.schedule_fluid_tick(p, 1);
     }
     run_ticks(&mut w, 1);
-    assert_eq!(w.pending_fluid_checks(), cells.len() - FLUID_CHECKS_PER_TICK);
+    assert_eq!(
+        w.pending_fluid_checks(),
+        cells.len() - FLUID_CHECKS_PER_TICK
+    );
     run_ticks(&mut w, 1);
-    assert_eq!(w.pending_fluid_checks(), 0, "the carry-over drains next tick");
+    assert_eq!(
+        w.pending_fluid_checks(),
+        0,
+        "the carry-over drains next tick"
+    );
 }
 
 /// A check the budget pushed out still runs — first thing next tick.

@@ -1,7 +1,7 @@
 use petramond_world::block::Block;
+use petramond_world::chunk::SECTION_SIZE;
 #[cfg(test)]
 use petramond_world::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
-use petramond_world::chunk::SECTION_SIZE;
 use petramond_world::mathh::IVec3;
 use petramond_world::section::Section;
 

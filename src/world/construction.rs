@@ -9,7 +9,6 @@ use petramond_world::construction::{self, Plan, Record, Status};
 use petramond_world::item::ItemStack;
 use petramond_world::world::placement::PlacementPlan;
 
-
 #[cfg(test)]
 mod tests;
 

@@ -153,7 +153,7 @@ fn shore_climb_inner() {
             };
             let mut player_ashore = false;
             for _ in 0..1200 {
-                player.update(1.0 / 60.0, &world, climb);
+                player.update(1.0 / 60.0, world.data(), climb);
                 player_ashore |= ashore(player.pos, player.on_ground);
             }
             assert_eq!(

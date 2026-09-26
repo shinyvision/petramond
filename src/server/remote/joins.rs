@@ -50,7 +50,8 @@ impl ServerGame {
         self.close_open_menu_for(s, &mut events);
         self.tick_drops(s, &mut events);
         self.mods.settle_feed(&events);
-        self.broadcast.bank_wire_events(wire_world_events(&mut events.world));
+        self.broadcast
+            .bank_wire_events(wire_world_events(&mut events.world));
         let obstacles = self.world.mobs().solid_obstacles();
         let snapshot = self.player_snapshot_for_save(s, &obstacles);
         self.detach_departing_session(s);

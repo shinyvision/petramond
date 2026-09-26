@@ -43,7 +43,8 @@ fn magnitude_guard(call: &str, field: &str, value: f32, max: f32) -> Result<(), 
 
 /// The rules every drive intent obeys.
 pub(super) fn drive_guard(d: &MobDriveData) -> Result<(), HostRet> {
-    if d.horizontal.is_some_and(|v| !v.iter().all(|c| c.is_finite()))
+    if d.horizontal
+        .is_some_and(|v| !v.iter().all(|c| c.is_finite()))
         || d.vertical.is_some_and(|v| !v.is_finite())
         || d.yaw.is_some_and(|y| !y.is_finite())
     {
@@ -56,7 +57,9 @@ pub(super) fn drive_guard(d: &MobDriveData) -> Result<(), HostRet> {
                 .into(),
         ));
     }
-    if d.horizontal.is_some_and(|v| v[0].hypot(v[1]) > MAX_MOB_DRIVE_SPEED) {
+    if d.horizontal
+        .is_some_and(|v| v[0].hypot(v[1]) > MAX_MOB_DRIVE_SPEED)
+    {
         return Err(HostRet::invalid(format!(
             "MobDrive: horizontal speed exceeds {MAX_MOB_DRIVE_SPEED} m/s"
         )));
@@ -72,11 +75,11 @@ pub(super) fn drive_guard(d: &MobDriveData) -> Result<(), HostRet> {
 /// Latch one validated drive intent for this tick (see
 /// `Instance::set_drive`); `false` = unknown or dead mob.
 pub(super) fn apply_drive(ctx: &mut SimCtx<'_>, d: MobDriveData) -> bool {
-    let Some(index) = live_mob(ctx, d.mob_id) else {
+    let Some(_mob) = live_mob(ctx, d.mob_id) else {
         return false;
     };
     ctx.world.mobs_mut().set_mob_drive(
-        index,
+        d.mob_id,
         d.horizontal,
         d.vertical,
         d.yaw,
@@ -108,13 +111,13 @@ pub(super) fn apply_kinematic(
     k: MobKinematicData,
     tilt: Tilt,
 ) -> Result<bool, HostRet> {
-    let Some(index) = live_mob(ctx, k.mob_id) else {
+    let Some(_mob) = live_mob(ctx, k.mob_id) else {
         return Ok(false);
     };
     let pos = petramond_math::world_pos::WorldPos::from_array(k.pos);
     ctx.world
         .mobs_mut()
-        .set_mob_kinematic(index, pos, k.yaw, tilt)
+        .set_mob_kinematic(k.mob_id, pos, k.yaw, tilt)
         .map_err(|distance| {
             HostRet::invalid(format!(
                 "MobKinematic: placement {distance} blocks away exceeds the \
@@ -149,24 +152,23 @@ pub(super) fn apply_anim(ctx: &mut SimCtx<'_>, op: &MobAnimOp) -> bool {
         | MobAnimOp::Rate { mob_id, .. }
         | MobAnimOp::Seek { mob_id, .. } => *mob_id,
     };
-    let Some(index) = live_mob(ctx, mob_id) else {
+    let Some(_mob) = live_mob(ctx, mob_id) else {
         return false;
     };
     let mobs = ctx.world.mobs_mut();
     match op {
-        MobAnimOp::Set { anim, active, .. } => mobs.set_mob_anim(index, anim, *active),
-        MobAnimOp::Rate { anim, rate, .. } => mobs.set_mob_anim_rate(index, anim, *rate),
+        MobAnimOp::Set { anim, active, .. } => mobs.set_mob_anim(mob_id, anim, *active),
+        MobAnimOp::Rate { anim, rate, .. } => mobs.set_mob_anim_rate(mob_id, anim, *rate),
         MobAnimOp::Seek {
             anim, phase, rate, ..
-        } => mobs.set_mob_anim_seek(index, anim, *phase, *rate),
+        } => mobs.set_mob_anim_seek(mob_id, anim, *phase, *rate),
     }
 }
 
 /// The seat capacity and riders of the live mob `mob_id`; `None` = no such
 /// live mob.
 pub(super) fn riders(ctx: &SimCtx<'_>, mob_id: u64) -> Option<MobRidersData> {
-    let index = live_mob(ctx, mob_id)?;
-    let mob = &ctx.world.mobs().instances()[index];
+    let mob = live_mob(ctx, mob_id)?;
     let capacity = crate::mob::def(mob.kind).seats.len() as u8;
     let riders = ctx
         .world

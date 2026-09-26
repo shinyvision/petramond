@@ -1,6 +1,6 @@
-use crate::world::ReplicaWorld;
 use super::*;
 use crate::world::mesh_pool::{build_inline, nbhd_idx27};
+use crate::world::ReplicaWorld;
 use petramond_world::{
     chunk::{SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE},
     section::SectionSummary,
@@ -54,18 +54,25 @@ fn transition_donors_use_snapshot_tints_across_sections() {
         vec![64, 128, 192],
     );
     assert!(!has_transition(&world));
-    world.data.section_mut(east)
-        .unwrap()
-        .cell_kv_remove(0, 8, 8, petramond_world::block::TINT_KV_KEY);
+    world.data.section_mut(east).unwrap().cell_kv_remove(
+        0,
+        8,
+        8,
+        petramond_world::block::TINT_KV_KEY,
+    );
     assert!(has_transition(&world));
-    world.data.section_mut(east)
+    world
+        .data
+        .section_mut(east)
         .unwrap()
         .set_block(1, 9, 8, Block::SnowLayer);
     assert!(
         !has_transition(&world),
         "actual snow bedding excludes the donor"
     );
-    world.data.section_mut(east)
+    world
+        .data
+        .section_mut(east)
         .unwrap()
         .set_block(1, 9, 8, Block::Air);
     assert!(

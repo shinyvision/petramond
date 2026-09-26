@@ -38,8 +38,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::framing::{read_msg, read_msg_bounded, write_msg};
-use super::rate::TokenBucket;
 use super::protocol::{ClientToServer, ServerToClient};
+use super::rate::TokenBucket;
 use super::remap::IdRemap;
 
 /// Writer keepalive: send a `KeepAlive` frame after this much outbound silence.
@@ -261,7 +261,10 @@ impl TcpServerConn {
     }
 
     /// [`spawn`](Self::spawn) under explicit inbound limits.
-    pub fn spawn_with_limits(stream: TcpStream, limits: InboundLimits) -> io::Result<TcpServerConn> {
+    pub fn spawn_with_limits(
+        stream: TcpStream,
+        limits: InboundLimits,
+    ) -> io::Result<TcpServerConn> {
         configure(&stream)?;
         let peer = stream
             .peer_addr()
@@ -534,7 +537,10 @@ mod tests {
         while conn.try_recv().is_some() {
             delivered += 1;
         }
-        assert!(delivered < 16, "only about the burst got through ({delivered})");
+        assert!(
+            delivered < 16,
+            "only about the burst got through ({delivered})"
+        );
     }
 
     /// Every `send` increment must be matched by a writer-drain decrement,

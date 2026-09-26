@@ -323,7 +323,8 @@ impl App {
     }
 
     pub(super) fn take_game_input(&mut self) -> GameInput {
-        self.controls.pointer
+        self.controls
+            .pointer
             .take_game_input(&mut self.controls.input, self.screen.gameplay_enabled())
     }
 }

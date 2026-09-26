@@ -91,7 +91,9 @@ fn settle(game: &mut TestGame, what: &str) -> Vec<ServerToClient> {
             .any(|m| matches!(kind(m), "SectionData" | "SectionCached"));
         quiet = if sections { 0 } else { quiet + 1 };
         recorded.extend(msgs);
-        if quiet >= 30 && game.replica.world.chunk_loaded(0, 0) && !home_column_payloads(game).is_empty()
+        if quiet >= 30
+            && game.replica.world.data().chunk_loaded(0, 0)
+            && !home_column_payloads(game).is_empty()
         {
             return recorded;
         }
@@ -117,7 +119,7 @@ fn home_column_payloads(game: &TestGame) -> Vec<(SectionPos, SectionPayload)> {
 fn leave(game: &mut TestGame) -> Vec<ServerToClient> {
     place_player(game, FAR);
     frames_until(game, "the home column unloaded", |g| {
-        !g.replica.world.chunk_loaded(0, 0)
+        !g.replica.world.data().chunk_loaded(0, 0)
     })
 }
 
@@ -182,7 +184,8 @@ fn unmoved_sections_repromote_from_the_cache_byte_identically() {
         // the two payloads compare directly; the harness is synchronous, so
         // nothing mutates between the two reads.
         let client = game
-            .replica.world
+            .replica
+            .world
             .section_payload(*sp)
             .expect("re-promoted section is live client-side");
         let server = game
@@ -217,6 +220,7 @@ fn a_moved_belief_hash_resends_the_full_payload() {
     // belief to a hash current content can never equal (a real edit moves the
     // CURRENT hash instead — the same inequality drives the same branch).
     game.session_mut()
+        .transport_mut()
         .terrain
         .seed_client_cache(&[SectionCacheClaim {
             pos: sp,

@@ -36,11 +36,11 @@ enum RawOutcome {
     Empty,
 }
 
-/// The reward catalog stage of every content registry (rows name items, so
-/// it builds after the shared name tables).
+/// The reward catalog stage of every content registry. Stack bounds read item
+/// definitions, so this stage must run after the item table is built.
 pub(crate) static CATALOG: crate::content::Slot<Loot> = crate::content::Slot::new(
     crate::content::stage::LOOT,
-    &[crate::content::stage::NAMES],
+    &[crate::content::stage::ITEMS],
     load,
 );
 

@@ -24,7 +24,7 @@ pub fn put_furnaces(buf: &mut Vec<u8>, furnaces: &CellMap<Furnace>) {
 
 /// Read the furnace list written by [`put_furnaces`]. `None` on truncated input.
 pub fn get_furnaces(r: &mut Reader) -> Option<CellMap<Furnace>> {
-    get_indexed(r, |r| Furnace::get(r))
+    get_indexed(r, Furnace::get)
 }
 
 #[cfg(test)]

@@ -8,9 +8,9 @@ use super::controls::click_doc_id;
 use crate::app::connect::ConnectPhase;
 use crate::app::{App, AppScreen};
 use crate::game::{Game, GameEvents};
+use petramond::net::handle::ServerHandle;
 use petramond::net::protocol::{JoinData, ModEntry, SelfRestore};
 use petramond::player::PlayerId;
-use petramond::net::handle::ServerHandle;
 use petramond_input::controls::{Control, TextKey, TextShortcut};
 use petramond_math::math::Vec3;
 use petramond_math::world_pos::WorldPos;
@@ -151,8 +151,14 @@ fn a_bad_address_fails_inline_without_spawning_a_worker() {
 
     app.begin_connect();
 
-    assert!(matches!(app.shell.connect.phase, ConnectPhase::Failed { .. }));
-    assert!(!app.shell.connect.has_worker(), "no thread for a parse failure");
+    assert!(matches!(
+        app.shell.connect.phase,
+        ConnectPhase::Failed { .. }
+    ));
+    assert!(
+        !app.shell.connect.has_worker(),
+        "no thread for a parse failure"
+    );
     app.drive_doc_ui(GuiKind::ConnectServer, SCREEN, 0.0);
     assert_eq!(app.ui.state_mut().get_bool("has_status"), Some(true));
     assert_eq!(app.ui.state_mut().get_bool("connecting"), Some(false));
@@ -339,7 +345,10 @@ fn end_to_end_connect_through_the_ui_joins_a_lan_server() {
     state.set("server_addr", UiValue::Str(format!("127.0.0.1:{port}")));
     state.set("player_name", UiValue::Str("E2EVisitor".to_owned()));
     app.begin_connect();
-    assert!(app.shell.connect.connecting(), "the worker attempt is running");
+    assert!(
+        app.shell.connect.connecting(),
+        "the worker attempt is running"
+    );
 
     let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     loop {
@@ -357,7 +366,10 @@ fn end_to_end_connect_through_the_ui_joins_a_lan_server() {
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
     assert!(
-        app.session.as_ref().map(|s| &s.game).is_some_and(|g| g.is_remote()),
+        app.session
+            .as_ref()
+            .map(|s| &s.game)
+            .is_some_and(|g| g.is_remote()),
         "the adopted session is the remote client"
     );
 

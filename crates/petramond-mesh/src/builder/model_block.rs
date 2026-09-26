@@ -174,7 +174,10 @@ pub(super) fn emit_model_contact(
     };
     let basef = at.mesh_base();
     for piece in &tmpl.pieces {
-        if !supports_stamp(at.cell.x + piece.cell_delta[0], at.cell.z + piece.cell_delta[1]) {
+        if !supports_stamp(
+            at.cell.x + piece.cell_delta[0],
+            at.cell.z + piece.cell_delta[1],
+        ) {
             continue;
         }
         contact.extend(piece.verts.iter().map(|v| ContactShadowVertex {

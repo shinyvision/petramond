@@ -38,10 +38,8 @@ struct Fixture(PathBuf);
 
 impl Fixture {
     fn new(tag: &str) -> Fixture {
-        let root = std::env::temp_dir().join(format!(
-            "petramond-content-{tag}-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("petramond-content-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("mods")).unwrap();
         Fixture(root)
@@ -142,13 +140,20 @@ fn a_pinned_fixture_registry_is_current_on_its_thread_only() {
         ],
     );
     let content = test_support::with_mods(&fx.mods());
-    let tar = content.names().blocks.id("fx:tar").expect("the pack registers its block");
+    let tar = content
+        .names()
+        .blocks
+        .id("fx:tar")
+        .expect("the pack registers its block");
     assert_eq!(tar as usize, content.names().blocks.len() - 1);
     {
         let _pin = pin(content);
         assert!(std::ptr::eq(current(), content.registry()));
         assert_eq!(block_id("fx:tar"), Some(tar));
-        assert!(Block(tar).is_fluid(), "hot accessors read the pinned registry");
+        assert!(
+            Block(tar).is_fluid(),
+            "hot accessors read the pinned registry"
+        );
         let elsewhere = std::thread::spawn(|| block_id("fx:tar")).join().unwrap();
         assert_eq!(elsewhere, None, "another thread keeps the process registry");
     }
@@ -199,11 +204,19 @@ fn enabled_views_cascade_to_dependents_and_keep_asset_layers() {
     let all = packs(&fx.mods());
     assert_eq!(all.packs().len(), 3);
     let scoped = all.enabled(&["base_mod".to_owned()].into());
-    let ids: Vec<&str> = scoped.packs().iter().filter_map(|p| p.id.as_deref()).collect();
+    let ids: Vec<&str> = scoped
+        .packs()
+        .iter()
+        .filter_map(|p| p.id.as_deref())
+        .collect();
     assert_eq!(ids, ["loner"]);
     assert!(scoped.disabled().contains("dependent"));
     assert_eq!(scoped.installed().len(), 3);
-    assert_eq!(scoped.layers().len(), 3, "asset layers span every installed pack");
+    assert_eq!(
+        scoped.layers().len(),
+        3,
+        "asset layers span every installed pack"
+    );
     assert_eq!(scoped.catalog_layers().len(), 1);
 }
 

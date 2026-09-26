@@ -44,11 +44,13 @@ impl ServerWorld {
             }
         }
         if self
-            .side.save
+            .side
+            .save
             .as_ref()
             .is_some_and(|s| !s.colgen_manifest_contains(pos))
         {
-            self.side.gen
+            self.side
+                .gen
                 .pending_colgen_records
                 .push(col.cache_record(self.data.seed));
         }
@@ -164,7 +166,8 @@ impl ServerWorld {
 
     fn poll_inner(&mut self) -> usize {
         let target = self
-            .data.last_load_target
+            .data
+            .last_load_target
             .unwrap_or_else(|| LoadTarget::new(0, 0, 0, self.data.render_dist));
         let mut new_columns = 0usize;
         let mut new_column_positions: Vec<ChunkPos> = Vec::new();
@@ -265,7 +268,12 @@ impl ServerWorld {
         self.drain_budgeted(
             DISK_DRAIN_MIN_PER_POLL,
             DRAIN_TIME_BUDGET,
-            |w| w.side.save.as_ref().and_then(|s| s.poll_loaded_column_gen()),
+            |w| {
+                w.side
+                    .save
+                    .as_ref()
+                    .and_then(|s| s.poll_loaded_column_gen())
+            },
             |w, loaded| {
                 let pos = loaded.pos;
                 if !w.side.gen.pending.contains_key(&pos) {
@@ -288,7 +296,10 @@ impl ServerWorld {
                         }
                         let job = w.side.worker.submit(
                             target.column_priority_key(pos),
-                            GenJob::Column { pos, seed: w.data.seed },
+                            GenJob::Column {
+                                pos,
+                                seed: w.data.seed,
+                            },
                         );
                         if let Some(slot) = w.side.gen.pending.get_mut(&pos) {
                             *slot = Some(job);
@@ -398,7 +409,10 @@ impl ServerWorld {
                         heightmap_recompute.insert(sp.chunk_pos());
                     }
                 } else {
-                    w.side.gen.pending_overlays.insert(sp, (section, entities, mobs));
+                    w.side
+                        .gen
+                        .pending_overlays
+                        .insert(sp, (section, entities, mobs));
                     w.note_stream_nonfinal(sp);
                 }
             },
@@ -408,8 +422,7 @@ impl ServerWorld {
         let overlaid = self.apply_pending_overlays();
         if self.side.stream_events_enabled {
             for sp in &overlaid {
-                self.side.stream_events
-                    .push(StreamEvent::Loaded(*sp));
+                self.side.stream_events.push(StreamEvent::Loaded(*sp));
             }
         }
         for sp in &overlaid {
@@ -561,7 +574,8 @@ impl ServerWorld {
                 // the settled re-request isn't dedup-dropped.
                 self.light_bakes.cancel(sp);
                 let needs_bake = self
-                    .data.sections
+                    .data
+                    .sections
                     .get(&sp)
                     .is_some_and(|s| s.light_dirty && !s.all_opaque());
                 if !no_mesh_output || needs_bake {
@@ -622,7 +636,8 @@ impl ServerWorld {
     /// section positions.
     pub(super) fn apply_pending_overlays(&mut self) -> Vec<SectionPos> {
         let ready: Vec<SectionPos> = self
-            .side.gen
+            .side
+            .gen
             .pending_overlays
             .keys()
             .copied()

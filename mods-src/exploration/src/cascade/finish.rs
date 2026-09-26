@@ -52,9 +52,10 @@ impl Built {
 
     /// Could this giant's body be in the water's way at all?
     fn in_the_way(&self, g: &Intruder) -> bool {
-        g.solid.iter().any(|p| {
-            self.reach.contains_key(p) || self.cuts.contains(p) || self.silt.contains(p)
-        }) || self.basins.cols.contains_key(&(g.root[0], g.root[2]))
+        g.solid
+            .iter()
+            .any(|p| self.reach.contains_key(p) || self.cuts.contains(p) || self.silt.contains(p))
+            || self.basins.cols.contains_key(&(g.root[0], g.root[2]))
     }
 
     /// Re-run the containment flood with the standing bodies solid, dropping

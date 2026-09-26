@@ -110,10 +110,15 @@ impl Prev {
 
     /// The child of `parent` stamping `node_id` for `item`, if any.
     pub(crate) fn child_of(&self, parent: u32, node_id: u32, item: Option<u32>) -> Option<u32> {
-        self.insts.get(parent as usize)?.children.iter().copied().find(|&c| {
-            let d = &self.insts[c as usize];
-            d.node_id == node_id && d.item == item
-        })
+        self.insts
+            .get(parent as usize)?
+            .children
+            .iter()
+            .copied()
+            .find(|&c| {
+                let d = &self.insts[c as usize];
+                d.node_id == node_id && d.item == item
+            })
     }
 
     /// Whether instance `j` stamps the same node in the same context and

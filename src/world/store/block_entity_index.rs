@@ -2,7 +2,6 @@ use crate::world::{World, WorldSide};
 use petramond_world::block::Block;
 use petramond_world::chunk::SectionPos;
 
-
 /// Whether a cell holding `block` puts its section in the block-entity index:
 /// the animated-block gather that draws OUTSIDE the chunk mesh walks that
 /// index, so every block with an animated model must be admitted by it.
@@ -44,7 +43,8 @@ impl<S: WorldSide> World<S> {
     /// `pos`'s block ids may have changed.
     pub(in crate::world) fn refresh_particle_emitter_index(&mut self, pos: SectionPos) {
         let has = self
-            .data.sections
+            .data
+            .sections
             .get(&pos)
             .is_some_and(|s| s.has_particle_emitters());
         if has {

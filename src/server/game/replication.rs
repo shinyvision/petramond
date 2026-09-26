@@ -2,9 +2,8 @@ use std::sync::Arc;
 
 use crate::events::tick::{TickEvents, WorldEvents};
 use crate::net::protocol::{
-    BlockDelta, BlockDrawDelta, CellKvDelta, ClientEventMsg, ItemSlotWire, OpenScreen,
-    SelfEvents, SelfState, SelfTransform, SleepTally, SpatialSoundMsg, TickUpdate, Transform,
-    WorldEventMsg,
+    BlockDelta, BlockDrawDelta, CellKvDelta, ClientEventMsg, ItemSlotWire, OpenScreen, SelfEvents,
+    SelfState, SelfTransform, SleepTally, SpatialSoundMsg, TickUpdate, Transform, WorldEventMsg,
 };
 use crate::world::environment::ShaderParamMap;
 use petramond_world::inventory::Hand;
@@ -139,7 +138,11 @@ impl ServerGame {
     pub fn shared_tick_rows(&mut self, events: &TickEvents) -> SharedTickRows {
         let recipients = self.entity_lanes(events);
         let sleep_tally = SleepTally {
-            sleeping: self.sessions.iter().filter(|s| s.sim.sleep.is_some()).count() as u16,
+            sleeping: self
+                .sessions
+                .iter()
+                .filter(|s| s.sim.sleep.is_some())
+                .count() as u16,
             connected: self.sessions.len() as u16,
         };
         // Full open-chest state per batch (tiny), sorted so the wire batch is
@@ -399,17 +402,18 @@ impl ServerGame {
         // tick clears `mount`, so the first free tick corrects any residue.
         let transform = (sess.sim.mount.is_none() && diverged).then_some(current);
         let revision = player.inventory.revision();
-        let inventory = (sess.replication.last_sent_inventory_revision != Some(revision)).then(|| {
-            player
-                .inventory
-                .raw_slots()
-                .iter()
-                .copied()
-                .chain(std::iter::once(player.inventory.cursor().copied()))
-                .chain(std::iter::once(player.inventory.off_hand().copied()))
-                .map(|slot| slot.map(ItemSlotWire::from_stack))
-                .collect()
-        });
+        let inventory =
+            (sess.replication.last_sent_inventory_revision != Some(revision)).then(|| {
+                player
+                    .inventory
+                    .raw_slots()
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(player.inventory.cursor().copied()))
+                    .chain(std::iter::once(player.inventory.off_hand().copied()))
+                    .map(|slot| slot.map(ItemSlotWire::from_stack))
+                    .collect()
+            });
         sess.replication.last_sent_inventory_revision = Some(revision);
         SelfState {
             health: player.health(),
@@ -434,7 +438,8 @@ impl ServerGame {
                 .eating_progress()
                 .map(|p| (p.clamp(0.0, 1.0) * 255.0).round() as u8),
             eating_off_hand: sess
-                .sim.eating
+                .sim
+                .eating
                 .as_ref()
                 .is_some_and(|eat| eat.hand == petramond_world::inventory::Hand::Off),
             sleeping,
@@ -671,7 +676,10 @@ mod tests {
             "petramond:sky".to_owned(),
             [1.0, 0.5, 0.25, 1.0],
         )]));
-        assert!(broadcast.env_update(params.clone()).is_some(), "first window");
+        assert!(
+            broadcast.env_update(params.clone()).is_some(),
+            "first window"
+        );
         assert!(broadcast.env_update(params.clone()).is_none(), "unchanged");
         broadcast.reseed_env();
         assert_eq!(
@@ -691,7 +699,10 @@ mod tests {
                 ("petramond:time".to_owned(), [time, 0.0, 0.0, 0.0]),
             ]))
         };
-        assert_eq!(broadcast.env_update(map(0.1)).map(|rows| rows.len()), Some(2));
+        assert_eq!(
+            broadcast.env_update(map(0.1)).map(|rows| rows.len()),
+            Some(2)
+        );
         assert_eq!(
             broadcast.env_update(map(0.2)),
             Some(vec![("petramond:time".to_owned(), [0.2, 0.0, 0.0, 0.0])]),

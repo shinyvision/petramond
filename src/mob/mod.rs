@@ -67,10 +67,10 @@ pub use spawn::{
     hostile_spawn_plan, HostileSpawnCache, HOSTILE_SPAWN_ATTEMPTS, PASSIVE_SPAWN_INTERVAL_TICKS,
 };
 
-use petramond_world::fluid::Buoyancy;
 use petramond_world::bbmodel::Model;
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
+use petramond_world::fluid::Buoyancy;
 use petramond_world::item::ItemType;
 
 use brain::AiBehavior;

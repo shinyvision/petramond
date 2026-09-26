@@ -176,7 +176,10 @@ mod tests {
     fn a_drawn_run_stays_inside_its_measured_box() {
         let font = Font::builtin();
         let [w, h] = font.measure_scaled("Hi!", 2);
-        assert_eq!([w, h], [font.width("Hi!") as u32 * 2, font.line_h() as u32 * 2]);
+        assert_eq!(
+            [w, h],
+            [font.width("Hi!") as u32 * 2, font.line_h() as u32 * 2]
+        );
         let (iw, ih) = (w + 4, h + 4);
         let mut rgba = vec![0u8; (iw * ih * 4) as usize];
         font.draw_rgba(&mut rgba, iw, "Hi!", [2, 2], 2, [255, 255, 255, 255]);
@@ -187,7 +190,10 @@ mod tests {
                     continue;
                 }
                 lit += 1;
-                assert!((2..2 + w).contains(&x) && (2..2 + h).contains(&y), "{x},{y}");
+                assert!(
+                    (2..2 + w).contains(&x) && (2..2 + h).contains(&y),
+                    "{x},{y}"
+                );
             }
         }
         assert!(lit > 0, "the run drew something");

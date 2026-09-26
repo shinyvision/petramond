@@ -89,9 +89,7 @@ fn load_settings() -> ServerSettings {
 /// pack, then — this process serves exactly one world and draws nothing — the
 /// registry scoped to that world's enabled mods, so a pack the world switched
 /// off registers no ids at all. Either failure is the full load report.
-fn install_world_content(
-    world_name: &str,
-) -> Result<(), petramond_world::content::ContentErrors> {
+fn install_world_content(world_name: &str) -> Result<(), petramond_world::content::ContentErrors> {
     crate::content::install_from_env(&[])?;
     let dir = crate::save::world_dir(world_name);
     let disabled = crate::save::settings::load(&dir).disabled_mods;

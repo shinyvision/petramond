@@ -1,7 +1,5 @@
 //! WGPU renderer: atlas texture, opaque + transparent pipelines, fog.
 
-#![allow(clippy::too_many_arguments)]
-
 pub mod atlas;
 pub mod block_draw;
 pub mod block_entity_model;
@@ -35,8 +33,8 @@ pub mod resources;
 pub mod scene;
 pub mod selection;
 mod selection_highlight;
-pub(crate) mod skinned;
 pub mod shader_pack;
+pub(crate) mod skinned;
 pub mod texture_mips;
 pub mod ui;
 pub mod uniforms;

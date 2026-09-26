@@ -238,7 +238,10 @@ impl App {
                 self.engine_ctx = Some((dir.clone(), ctx));
             }
             self.sync_preview();
-            let (_, ctx) = self.engine_ctx.as_ref().expect("engine context was just set");
+            let (_, ctx) = self
+                .engine_ctx
+                .as_ref()
+                .expect("engine context was just set");
             let roots = &self.roots;
             self.validation = ctx.validate(
                 &self.proj.document,

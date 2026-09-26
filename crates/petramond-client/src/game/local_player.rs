@@ -10,11 +10,11 @@
 
 use petramond::net::protocol::SelfTransform;
 use petramond::player::{self, Input, Player, RaycastHit};
-use petramond_world::world::raycast;
 use petramond_math::math::Vec3;
 use petramond_render::camera::Camera;
 use petramond_world::mining::MiningState;
 use petramond_world::world::placement::HeldRotation;
+use petramond_world::world::raycast;
 
 use super::camera_rig::{CameraRig, EyeInputs, STEP_CAMERA_EPS};
 use super::creative::{BreakRepeat, FlightToggle};
@@ -119,7 +119,8 @@ impl LocalPlayer {
         if dx == 0.0 && dy == 0.0 {
             return;
         }
-        self.player.rotate(-dx * LOOK_SENSITIVITY, -dy * LOOK_SENSITIVITY);
+        self.player
+            .rotate(-dx * LOOK_SENSITIVITY, -dy * LOOK_SENSITIVITY);
         self.cam.yaw = self.player.yaw;
         self.cam.pitch = self.player.pitch;
     }
@@ -234,8 +235,12 @@ impl LocalPlayer {
             let mut remaining = dt.min(0.25);
             while remaining > 0.0 {
                 let step = remaining.min(player::DT_MAX);
-                self.player
-                    .update_with_obstacles(step, replica.world.data(), player_input, &obstacles);
+                self.player.update_with_obstacles(
+                    step,
+                    replica.world.data(),
+                    player_input,
+                    &obstacles,
+                );
                 remaining -= step;
             }
         }
@@ -320,7 +325,8 @@ impl LocalPlayer {
 
     /// Refresh the CLIENT's per-frame targeting: the raycast hit (presentation
     /// + `PlayerUpdate.target` source) against the replica world, the mob
-    /// under the crosshair from the REPLICATED rows, and the remote PLAYER
+    ///
+    /// The mob under the crosshair comes from the REPLICATED rows; the remote PLAYER
     /// under the crosshair from the remote-player rows (PvP). All three
     /// compete by distance — the nearest wins; a closer block occludes both
     /// entity kinds. At most one of `targeted_mob`/`targeted_player` is set

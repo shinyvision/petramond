@@ -111,17 +111,53 @@ const CORE: [[Biome; 5]; 5] = [
         Biome::SNOWY_TAIGA,
         Biome::TAIGA,
     ],
-    [Biome::PLAINS, Biome::PLAINS, Biome::FOREST, Biome::TAIGA, Biome::OLD_GROWTH_TAIGA],
-    [Biome::FOREST, Biome::PLAINS, Biome::FOREST, Biome::FOREST, Biome::FOREST],
-    [Biome::SAVANNA, Biome::SAVANNA, Biome::FOREST, Biome::FOREST, Biome::FOREST],
-    [Biome::DESERT, Biome::DESERT, Biome::DESERT, Biome::DESERT, Biome::DESERT],
+    [
+        Biome::PLAINS,
+        Biome::PLAINS,
+        Biome::FOREST,
+        Biome::TAIGA,
+        Biome::OLD_GROWTH_TAIGA,
+    ],
+    [
+        Biome::FOREST,
+        Biome::PLAINS,
+        Biome::FOREST,
+        Biome::FOREST,
+        Biome::FOREST,
+    ],
+    [
+        Biome::SAVANNA,
+        Biome::SAVANNA,
+        Biome::FOREST,
+        Biome::FOREST,
+        Biome::FOREST,
+    ],
+    [
+        Biome::DESERT,
+        Biome::DESERT,
+        Biome::DESERT,
+        Biome::DESERT,
+        Biome::DESERT,
+    ],
 ];
 
 const CORE_HIGH: [[Option<Biome>; 5]; 5] = [
-    [Some(Biome::SNOWY_TUNDRA), None, Some(Biome::SNOWY_TAIGA), None, None],
+    [
+        Some(Biome::SNOWY_TUNDRA),
+        None,
+        Some(Biome::SNOWY_TAIGA),
+        None,
+        None,
+    ],
     [None, None, None, None, Some(Biome::REDWOOD_FOREST)],
     [Some(Biome::PLAINS), None, None, Some(Biome::FOREST), None],
-    [None, None, Some(Biome::PLAINS), Some(Biome::FOREST), Some(Biome::FOREST)],
+    [
+        None,
+        None,
+        Some(Biome::PLAINS),
+        Some(Biome::FOREST),
+        Some(Biome::FOREST),
+    ],
     [None, None, None, None, None],
 ];
 
@@ -133,15 +169,45 @@ const PLATEAU: [[Biome; 5]; 5] = [
         Biome::SNOWY_TAIGA,
         Biome::SNOWY_TAIGA,
     ],
-    [Biome::MEADOW, Biome::MEADOW, Biome::FOREST, Biome::TAIGA, Biome::OLD_GROWTH_TAIGA],
-    [Biome::MEADOW, Biome::MEADOW, Biome::MEADOW, Biome::MEADOW, Biome::FOREST],
-    [Biome::SAVANNA, Biome::SAVANNA, Biome::FOREST, Biome::FOREST, Biome::FOREST],
-    [Biome::DESERT, Biome::DESERT, Biome::DESERT, Biome::DESERT, Biome::DESERT],
+    [
+        Biome::MEADOW,
+        Biome::MEADOW,
+        Biome::FOREST,
+        Biome::TAIGA,
+        Biome::OLD_GROWTH_TAIGA,
+    ],
+    [
+        Biome::MEADOW,
+        Biome::MEADOW,
+        Biome::MEADOW,
+        Biome::MEADOW,
+        Biome::FOREST,
+    ],
+    [
+        Biome::SAVANNA,
+        Biome::SAVANNA,
+        Biome::FOREST,
+        Biome::FOREST,
+        Biome::FOREST,
+    ],
+    [
+        Biome::DESERT,
+        Biome::DESERT,
+        Biome::DESERT,
+        Biome::DESERT,
+        Biome::DESERT,
+    ],
 ];
 
 const PLATEAU_HIGH: [[Option<Biome>; 5]; 5] = [
     [Some(Biome::SNOWY_TUNDRA), None, None, None, None],
-    [None, None, Some(Biome::MEADOW), Some(Biome::MEADOW), Some(Biome::REDWOOD_FOREST)],
+    [
+        None,
+        None,
+        Some(Biome::MEADOW),
+        Some(Biome::MEADOW),
+        Some(Biome::REDWOOD_FOREST),
+    ],
     [None, None, Some(Biome::FOREST), Some(Biome::FOREST), None],
     [None, None, None, None, None],
     [Some(Biome::DESERT), Some(Biome::DESERT), None, None, None],
@@ -157,8 +223,20 @@ const HILLS: [[Option<Biome>; 5]; 5] = [
 
 // Ocean by temperature: deep row (no deep variant of the warmest), shallow row.
 const OCEANS: [[Biome; 5]; 2] = [
-    [Biome::DEEP_OCEAN, Biome::DEEP_OCEAN, Biome::DEEP_OCEAN, Biome::DEEP_OCEAN, Biome::OCEAN],
-    [Biome::OCEAN, Biome::OCEAN, Biome::OCEAN, Biome::OCEAN, Biome::OCEAN],
+    [
+        Biome::DEEP_OCEAN,
+        Biome::DEEP_OCEAN,
+        Biome::DEEP_OCEAN,
+        Biome::DEEP_OCEAN,
+        Biome::OCEAN,
+    ],
+    [
+        Biome::OCEAN,
+        Biome::OCEAN,
+        Biome::OCEAN,
+        Biome::OCEAN,
+        Biome::OCEAN,
+    ],
 ];
 
 // --- Pickers (temperature index `i`, humidity index `j`, variance slice `v`) --
@@ -476,7 +554,15 @@ fn add_valley_slice(rows: &mut Vec<Row>, v: AxisRange) {
     // Rivers. Frozen + unfrozen both map to River, so the reference temperature
     // split collapses to FULL across these rows.
     add(rows, FULL, FULL, COAST, span(E[0], E[1]), v, Biome::RIVER);
-    add(rows, FULL, FULL, NEAR_INLAND, span(E[0], E[1]), v, Biome::RIVER);
+    add(
+        rows,
+        FULL,
+        FULL,
+        NEAR_INLAND,
+        span(E[0], E[1]),
+        v,
+        Biome::RIVER,
+    );
     add(
         rows,
         FULL,
@@ -574,7 +660,10 @@ mod tests {
             .into_iter()
             .filter(|(_, biome)| *biome == Biome::RIVER)
             .collect();
-        assert!(!river_rows.is_empty(), "surface table must assign Biome::RIVER");
+        assert!(
+            !river_rows.is_empty(),
+            "surface table must assign Biome::RIVER"
+        );
         for (rect, _) in river_rows {
             let var = rect
                 .axis_range(ClimateAxis::Variance)

@@ -228,7 +228,9 @@ impl App {
                         .as_mut()
                         .is_some_and(|session| session.game.adjust_tool(steps));
                 if !taken {
-                    self.controls.input.step_hotbar(self.hotbar_step_for_adjust(steps));
+                    self.controls
+                        .input
+                        .step_hotbar(self.hotbar_step_for_adjust(steps));
                 }
                 true
             }

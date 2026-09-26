@@ -412,13 +412,16 @@ pub enum GenOutput {
     SectionFailed(SectionPos),
 }
 
+type GeneratorKey = (u32, (u64, u64));
+type CachedGenerator = RefCell<Option<(GeneratorKey, ChunkGenerator)>>;
+
 thread_local! {
     /// Per-worker reused generator. Building a `ChunkGenerator` sets up the full noise
     /// stack, far too heavy per job; per-thread reuse also keeps its column-noise cache
     /// warm across the jobs of one streaming burst. Keyed by the seed and the installed
     /// config (gen-hook and memo epochs), so a session (re)installing mod worldgen hooks
     /// or a new world installing its caches evicts generators that captured the old ones.
-    static GENERATOR: RefCell<Option<((u32, (u64, u64)), ChunkGenerator)>> =
+    static GENERATOR: CachedGenerator =
         const { RefCell::new(None) };
 }
 

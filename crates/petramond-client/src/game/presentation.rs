@@ -18,7 +18,9 @@ use petramond_world::block::Block;
 
 use super::remote_players;
 use super::Game;
-use crate::animation::{BodyFrame, BodyInput, BodyState, FootstepSource, PlayerAnimation, RemoteBody};
+use crate::animation::{
+    BodyFrame, BodyInput, BodyState, FootstepSource, PlayerAnimation, RemoteBody,
+};
 
 mod entity_emitters;
 #[cfg(test)]
@@ -84,7 +86,8 @@ fn lit_cell(world: &petramond::world::ReplicaWorld, cell: IVec3) -> IVec3 {
         .map(|dy| cell + IVec3::new(0, dy, 0))
         .find(|c| {
             world
-                .data().block_if_loaded(c.x, c.y, c.z)
+                .data()
+                .block_if_loaded(c.x, c.y, c.z)
                 .is_none_or(|block| !block.is_opaque())
         })
         .unwrap_or(cell)
@@ -172,7 +175,7 @@ impl GamePresentationScratch {
     /// player bodies it sees are the ones the animation stage poses.
     pub fn snapshot<'a>(
         &'a mut self,
-        game: &Game,
+        game: &'a Game,
         now: f32,
         view: &ViewVolume,
     ) -> FramePresentation<'a> {
@@ -306,12 +309,14 @@ impl GamePresentationScratch {
             self.particle_emitters.clear();
             return;
         }
-        game.replica.world
+        game.replica
+            .world
             .collect_particle_emitters(view, &mut self.particle_emitters);
     }
 
     fn collect_block_draws(&mut self, game: &Game, view: &ViewVolume) {
-        game.replica.world
+        game.replica
+            .world
             .collect_block_draws(view, &mut self.block_draws);
     }
 
@@ -358,13 +363,19 @@ impl GamePresentationScratch {
     /// Every animated block (chests, doors, trapdoors, a pack's own) from the
     /// ONE world gather, each with its eased open progress.
     fn collect_block_entities(&mut self, game: &Game) {
-        game.replica.world.collect_animated_blocks(&mut self.animated_rows);
+        game.replica
+            .world
+            .collect_animated_blocks(&mut self.animated_rows);
         self.block_entities.clear();
         self.block_entities
-            .extend(self.animated_rows.iter().map(|&block| BlockEntityPresentation {
-                block,
-                open_progress: game.fx.block_open_progress(block.pos, block.pose.open),
-            }));
+            .extend(
+                self.animated_rows
+                    .iter()
+                    .map(|&block| BlockEntityPresentation {
+                        block,
+                        open_progress: game.fx.block_open_progress(block.pos, block.pose.open),
+                    }),
+            );
     }
 
     /// One row per replicated mob, in the store's order (the emitter gather
@@ -400,21 +411,23 @@ impl GamePresentationScratch {
             // Each layer at its tick-interpolated phase (prev→curr by id;
             // fading-out layers hold the blend's last phase).
             let anims_start = arena.anims.len();
-            arena.anims.extend(entry.anim_blend.iter().map(|&(anim, weight, held)| {
-                let phase = match (
-                    entry.prev_anims().iter().find(|(id, _)| *id == anim),
-                    entry.curr_anims().iter().find(|(id, _)| *id == anim),
-                ) {
-                    (Some((_, a)), Some((_, b))) => a + (b - a) * tick_alpha,
-                    (_, Some((_, b))) => *b,
-                    _ => held,
-                };
-                AnimLayer {
-                    anim,
-                    phase,
-                    weight,
-                }
-            }));
+            arena
+                .anims
+                .extend(entry.anim_blend.iter().map(|&(anim, weight, held)| {
+                    let phase = match (
+                        entry.prev_anims().iter().find(|(id, _)| *id == anim),
+                        entry.curr_anims().iter().find(|(id, _)| *id == anim),
+                    ) {
+                        (Some((_, a)), Some((_, b))) => a + (b - a) * tick_alpha,
+                        (_, Some((_, b))) => *b,
+                        _ => held,
+                    };
+                    AnimLayer {
+                        anim,
+                        phase,
+                        weight,
+                    }
+                }));
             let ragdoll_pose = curr.ragdoll.as_deref().map(|pose| {
                 let start = arena.ragdoll.len();
                 crate::game::replicated::lerp_ragdoll(
@@ -594,9 +607,9 @@ impl GamePresentationScratch {
                 pos,
                 emitter_tint: emitters.tint(),
                 emitter_self_lit: emitters.self_lit(),
-                skylight: world.skylight6_at_world(c.x, c.y, c.z),
+                skylight: world.data().skylight6_at_world(c.x, c.y, c.z),
                 blocklight: petramond_world::light::BlockLight6::from_x2(
-                    world.blocklight_rgb_at_world(c.x, c.y, c.z),
+                    world.data().blocklight_rgb_at_world(c.x, c.y, c.z),
                 ),
                 state: BodyState {
                     body_yaw,
@@ -613,11 +626,6 @@ impl GamePresentationScratch {
                     seated: p.curr.mount.is_some_and(mount_renders_seated),
                     seat_tilt,
                     hurt: p.hurt_flash01(),
-                    skylight: world.data().skylight6_at_world(c.x, c.y, c.z),
-                    blocklight: petramond_world::light::BlockLight6::from_x2(
-                        world.data().blocklight_rgb_at_world(c.x, c.y, c.z),
-                    ),
-                    bones: push_bones(&mut self.bone_offsets, p.bones.current()),
                 },
                 bones: frame.push_bones(p.bones.current()),
             };
@@ -701,7 +709,7 @@ impl GamePresentationScratch {
                 .unwrap_or(size.half_width)
                 .max(size.half_width);
             push_entity_shadow(
-                world,
+                world.data(),
                 &mut self.shadows,
                 feet,
                 half * MOB_SHADOW_RADIUS_SCALE,
@@ -717,12 +725,20 @@ impl GamePresentationScratch {
             if !visible(pos) {
                 continue;
             }
-            push_entity_shadow(world, &mut self.shadows, pos, ITEM_SHADOW_RADIUS);
+            push_entity_shadow(world.data(), &mut self.shadows, pos, ITEM_SHADOW_RADIUS);
         }
         let bodies = &self.animation.frame;
-        let feet = bodies.local.iter().chain(bodies.remotes.iter().map(|r| &r.body));
+        let feet = bodies
+            .local
+            .iter()
+            .chain(bodies.remotes.iter().map(|r| &r.body));
         for body in feet {
-            push_entity_shadow(world, &mut self.shadows, body.pos, PLAYER_SHADOW_RADIUS);
+            push_entity_shadow(
+                world.data(),
+                &mut self.shadows,
+                body.pos,
+                PLAYER_SHADOW_RADIUS,
+            );
         }
     }
 }
@@ -799,8 +815,11 @@ fn mount_renders_seated(mount: petramond::net::protocol::PlayerMount) -> bool {
 /// The local body's facing as presented: square in its seat when mounted,
 /// else the third-person follow pose.
 fn local_body_yaw(game: &Game) -> f32 {
-    game.replica.self_mount_pose()
-        .map_or(game.local.third_person.pose.body_yaw, |mount| mount.body_yaw)
+    game.replica
+        .self_mount_pose()
+        .map_or(game.local.third_person.pose.body_yaw, |mount| {
+            mount.body_yaw
+        })
 }
 
 /// The local third-person body, its bone offsets appended to `frame`'s
@@ -818,7 +837,8 @@ fn collect_player(
     let (skylight, blocklight) = game.held_item_light();
     // The body shares the first-person camera's auto-step vertical easing (a
     // negative, settling lag) so stepping up a ledge glides instead of popping.
-    let mut pos = game.local.player.pos + Vec3::new(0.0, game.local.camera_rig.step_y_offset(), 0.0);
+    let mut pos =
+        game.local.player.pos + Vec3::new(0.0, game.local.camera_rig.step_y_offset(), 0.0);
     // Sleep state reads the replicated self view (the sim's SleepState stays
     // server-side).
     let sleeping = game.replica.self_view.sleeping.is_some();
@@ -833,7 +853,11 @@ fn collect_player(
     // is the mount's facing, never the look-follow (which would spin the
     // whole body, legs through the hull); only the head follows the look,
     // clamped.
-    let seated = game.replica.entities.own_mount().is_some_and(mount_renders_seated);
+    let seated = game
+        .replica
+        .entities
+        .own_mount()
+        .is_some_and(mount_renders_seated);
     let mount = game.replica.self_mount_pose();
     let body_yaw = local_body_yaw(game);
     let head_yaw = match mount {
@@ -883,12 +907,14 @@ fn break_overlay_at(
     // the view carries only the outline box the decal is masked to — from the
     // one producer that answers for a placed model's world extent.
     let model = game
-        .replica.world
+        .replica
+        .world
+        .data()
         .model_outline_box(block)
         .map(|(base, min, max)| ModelCrack { base, min, max });
     // The ONE box producer answers for every box family at once; nothing here
     // asks which family it is.
-    game.replica.world.shape_draw_boxes(block, resolved);
+    game.replica.world.data().shape_draw_boxes(block, resolved);
     let shape_boxes = (!resolved.is_empty()).then(|| {
         let mut boxes = [CrackBox {
             min: [0.0; 3],
@@ -915,7 +941,10 @@ fn break_overlay_at(
         visual_box: if model.is_some() || shape_boxes.is_some() {
             None
         } else {
-            game.replica.world.data().selection_box_at(block.x, block.y, block.z)
+            game.replica
+                .world
+                .data()
+                .selection_box_at(block.x, block.y, block.z)
         },
         shape_boxes,
         model,

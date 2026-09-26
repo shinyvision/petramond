@@ -124,7 +124,11 @@ fn entities(payload: &[u8]) -> Option<Vec<u8>> {
         let ticks = r.bytes(4)?;
         let spin = r.bytes(4)?;
         let motion = r.u8()?;
-        let stuck = if motion == 2 { Some(r.bytes(20)?) } else { None };
+        let stuck = if motion == 2 {
+            Some(r.bytes(20)?)
+        } else {
+            None
+        };
         let mut w = TaggedWriter::new(&mut out);
         w.raw(1, pos);
         w.raw(2, vel);

@@ -6,7 +6,6 @@ use super::verdict::{settle_verdict, viability, Viable};
 use super::*;
 use crate::geometry::{feet_of, reaches};
 use crate::host::fake::rows::STONE;
-use crate::host::prelude::*;
 use crate::project::{Hold, Note, ProjectId, Report};
 use crate::testing::{short_of_stone, Session, CHEST_AT, HOME};
 use crate::worker::tests::{at_work, unit, working};
@@ -18,7 +17,9 @@ const AT: [i32; 3] = [1, 0, -2];
 /// One plan for the golem as it stands now.
 fn plan_now(session: &mut Session, id: ProjectId, golem: u64) -> Step {
     let body = session.body(golem);
-    at_work(session, id, |ctx, projects, job| plan(ctx, projects, job, &body))
+    at_work(session, id, |ctx, projects, job| {
+        plan(ctx, projects, job, &body)
+    })
 }
 
 fn phase(session: &mut Session, id: ProjectId) -> Phase {
@@ -88,7 +89,11 @@ fn a_body_in_the_air_or_a_site_not_yet_surveyed_plans_nothing() {
         .on_ground = true;
     session.builder.jobs.map.get_mut(&id).unwrap().survey = None;
     assert_eq!(plan_now(&mut session, id, golem), Step::Plan);
-    assert_eq!(phase(&mut session, id), Phase::Working, "nothing was finished");
+    assert_eq!(
+        phase(&mut session, id),
+        Phase::Working,
+        "nothing was finished"
+    );
 }
 
 #[test]
@@ -302,10 +307,18 @@ fn the_world_is_asked_whether_a_block_would_go_in_before_anyone_is_sent() {
     at_work(&mut session, id, |ctx, _, job| {
         assert!(viability(ctx, job, &body, middle, body.pos) == Viable::Done);
         settle_verdict(ctx, job, middle, Viable::Done);
-        let Task::Unit(i) = middle else { unreachable!() };
-        assert_eq!(job.survey.as_ref().unwrap().known[i], crate::survey::Known::Satisfied);
+        let Task::Unit(i) = middle else {
+            unreachable!()
+        };
+        assert_eq!(
+            job.survey.as_ref().unwrap().known[i],
+            crate::survey::Known::Satisfied
+        );
         settle_verdict(ctx, job, Task::Scaffold([4, 0, 4]), Viable::Waits(50));
-        assert!(job.crew.deferrals.deferred(Task::Scaffold([4, 0, 4]), ctx.now + 49));
+        assert!(job
+            .crew
+            .deferrals
+            .deferred(Task::Scaffold([4, 0, 4]), ctx.now + 49));
     });
 }
 

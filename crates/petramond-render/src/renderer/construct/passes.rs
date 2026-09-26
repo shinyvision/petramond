@@ -166,7 +166,14 @@ impl SkyPass {
         format: wgpu::TextureFormat,
         samples: u32,
     ) {
-        let env = env_targets(device, &self.env_scaler, samples, frame_depth, scene, format);
+        let env = env_targets(
+            device,
+            &self.env_scaler,
+            samples,
+            frame_depth,
+            scene,
+            format,
+        );
         for pass in &mut self.env_passes {
             pass.bind = crate::pipeline::create_environment_bind(
                 device,
@@ -246,7 +253,6 @@ impl HandPass {
             break_draw: DynamicDraw::new(device, break_pipe, "break overlay"),
             break_overlays: Vec::new(),
             held_item: HeldItemView::default(),
-            held_ease: Default::default(),
             visible: false,
             shake: [0.0, 0.0],
             screen_shake: true,
@@ -258,12 +264,6 @@ impl HandPass {
             off_item3d_count: 0,
             off_is_model: false,
             first_person: crate::first_person::FirstPersonHand::shipped(),
-            frames: None,
-            frame_dt: 0.0,
-            local_params: Vec::new(),
-            local_plays: Vec::new(),
-            local_events: Vec::new(),
-            names: Default::default(),
             arm_start: 0,
             arm_count: 0,
         }

@@ -46,7 +46,7 @@ fn columns(rng: &mut Rng, side: i32) -> Vec<ColumnCull> {
     let mut out = Vec::new();
     for cx in -side / 2..side / 2 {
         for cz in -side / 2..side / 2 {
-            let (min_cy, max_cy) = if rng.next() % 11 == 0 {
+            let (min_cy, max_cy) = if rng.next().is_multiple_of(11) {
                 (i32::MAX, i32::MIN)
             } else {
                 let lo = rng.range(-4, 8);
@@ -81,8 +81,14 @@ fn cull_regions_partition_the_index_into_contiguous_square_runs() {
         assert!(region.last > region.first, "no empty region");
         let run = &index[region.first as usize..region.last as usize];
         for entry in run {
-            assert_eq!(entry.pos.cx >> CULL_REGION_SHIFT << CULL_REGION_SHIFT, region.cx);
-            assert_eq!(entry.pos.cz >> CULL_REGION_SHIFT << CULL_REGION_SHIFT, region.cz);
+            assert_eq!(
+                entry.pos.cx >> CULL_REGION_SHIFT << CULL_REGION_SHIFT,
+                region.cx
+            );
+            assert_eq!(
+                entry.pos.cz >> CULL_REGION_SHIFT << CULL_REGION_SHIFT,
+                region.cz
+            );
         }
         assert_eq!(region.min_cy, run.iter().map(|e| e.min_cy).min().unwrap());
         assert_eq!(region.max_cy, run.iter().map(|e| e.max_cy).max().unwrap());
@@ -142,7 +148,10 @@ fn the_region_test_never_changes_what_is_visible() {
             for entry in &index[region.first as usize..region.last as usize] {
                 let visible = Renderer::column_visible(entry, &frustum, origin, eye, fog, false);
                 if visible {
-                    assert!(verdict.is_some(), "view {view}: region rejected a visible column");
+                    assert!(
+                        verdict.is_some(),
+                        "view {view}: region rejected a visible column"
+                    );
                 }
                 if verdict == Some(true) {
                     assert_eq!(
@@ -175,19 +184,34 @@ const STREAMS: ColumnStreams = ColumnStreams {
 #[test]
 fn a_column_batches_its_opaque_stream_when_its_sections_agree() {
     // All detailed: the whole stream in one draw.
-    assert_eq!(batch_column(visible(true, false, true), STREAMS, false).opaque, Some(false));
+    assert_eq!(
+        batch_column(visible(true, false, true), STREAMS, false).opaque,
+        Some(false)
+    );
     // All far-capable sections far: the leading far region in one draw.
-    assert_eq!(batch_column(visible(true, true, true), STREAMS, false).opaque, Some(true));
+    assert_eq!(
+        batch_column(visible(true, true, true), STREAMS, false).opaque,
+        Some(true)
+    );
     // Mixed LOD: every section draws for itself.
-    assert_eq!(batch_column(visible(true, true, false), STREAMS, false).opaque, None);
+    assert_eq!(
+        batch_column(visible(true, true, false), STREAMS, false).opaque,
+        None
+    );
     // Nothing opaque in view, or nothing in the stream.
-    assert_eq!(batch_column(visible(false, false, true), STREAMS, false).opaque, None);
+    assert_eq!(
+        batch_column(visible(false, false, true), STREAMS, false).opaque,
+        None
+    );
     let empty = ColumnStreams {
         opaque_quads: 0,
         opaque_far_quads: 0,
         ..STREAMS
     };
-    assert_eq!(batch_column(visible(true, false, true), empty, false).opaque, None);
+    assert_eq!(
+        batch_column(visible(true, false, true), empty, false).opaque,
+        None
+    );
 }
 
 /// A whole-column draw also covers culled sections: with indirect draws it is
@@ -308,7 +332,12 @@ fn the_section_sort_is_a_total_order_independent_of_input_order() {
 fn equal_distances_break_ties_on_the_column_then_the_build_order() {
     let first_built = with(section(5.0, 1, 0), SectionStream::OpaqueFar, 4);
     let second_built = with(section(5.0, 1, 0), SectionStream::OpaqueFar, 8);
-    let mut sections = vec![first_built, section(5.0, 0, 7), second_built, section(1.0, 4, 4)];
+    let mut sections = vec![
+        first_built,
+        section(5.0, 0, 7),
+        second_built,
+        section(1.0, 4, 4),
+    ];
     let (mut keys, mut sorted) = (Vec::new(), Vec::new());
     sort_sections(&mut sections, &mut keys, &mut sorted);
     let order: Vec<_> = sections

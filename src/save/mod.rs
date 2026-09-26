@@ -41,8 +41,8 @@ mod tests;
 pub use codec::{DiskSlot, KeptContent, SectionSnapshot};
 pub use format::RecordError;
 pub use level::LevelData;
-pub use players::PlayerFiles;
 pub use petramond_util::paths::base_data_dir;
+pub use players::PlayerFiles;
 pub use worlds::{
     delete_world, dir_name_for, list_worlds, random_seed, read_world_seed, read_world_settings,
     rename_world, seed_from_text, world_dir, world_exists, world_size_bytes, write_world_metadata,
@@ -275,7 +275,13 @@ fn missing_mods_backup_name(missing: &[String]) -> String {
         .iter()
         .map(|id| {
             id.chars()
-                .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' })
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '-' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
                 .collect()
         })
         .collect();

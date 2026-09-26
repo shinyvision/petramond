@@ -1,9 +1,9 @@
 //! Authoritative resolution of client-claimed mob targets.
 
-use petramond_world::world::raycast;
 use super::player::ConnectedPlayer;
 use crate::player;
 use crate::world::ServerWorld;
+use petramond_world::world::raycast;
 
 /// Resolve a client-claimed stable mob id against `sess`'s current view ray
 /// in `world`. The id is only a claim: it must name the nearest live body

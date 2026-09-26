@@ -34,7 +34,9 @@ impl Game {
     ) -> (bool, petramond::net::protocol::ClientRequestId) {
         let can = self.prediction.can_predict();
         let snapshot = if can {
-            crate::game::prediction::PredictionSnapshot::Inventory(self.replica.self_view.inventory.clone())
+            crate::game::prediction::PredictionSnapshot::Inventory(
+                self.replica.self_view.inventory.clone(),
+            )
         } else {
             crate::game::prediction::PredictionSnapshot::None
         };
@@ -73,7 +75,8 @@ impl Game {
             let slot = self.replica.self_view.inventory.active_slot() as usize;
             if all {
                 let _ = self
-                    .replica.self_view
+                    .replica
+                    .self_view
                     .inventory
                     .slot_mut(slot)
                     .and_then(|c| c.take());
@@ -125,7 +128,8 @@ impl Game {
                 }
             }
         }
-        self.net.queue(ClientToServer::Action(PlayerAction::ThrowCursor {
+        self.net
+            .queue(ClientToServer::Action(PlayerAction::ThrowCursor {
                 amount,
                 request_id,
             }));
@@ -156,7 +160,8 @@ impl Game {
             return;
         }
         self.local.player.craft_craftable_only = craftable_only;
-        self.net.queue(ClientToServer::SetCraftFilter { craftable_only });
+        self.net
+            .queue(ClientToServer::SetCraftFilter { craftable_only });
     }
 
     pub fn crafting_catalog(&self) -> &petramond_world::crafting::CraftingCatalog {
@@ -227,7 +232,8 @@ impl Game {
     // Inventory is the exception: the E key explicitly requests its session.
 
     pub fn request_open_inventory(&mut self) {
-        self.net.queue(ClientToServer::Action(PlayerAction::OpenInventory));
+        self.net
+            .queue(ClientToServer::Action(PlayerAction::OpenInventory));
     }
 
     /// Ack of a server-opened GUI session — any kind, engine container or mod
@@ -245,6 +251,7 @@ impl Game {
     /// message lands on; there is no client-side menu state to clear — the App
     /// owns which screen is up.
     pub fn close_open_menu(&mut self) {
-        self.net.queue(ClientToServer::Action(PlayerAction::CloseMenu));
+        self.net
+            .queue(ClientToServer::Action(PlayerAction::CloseMenu));
     }
 }

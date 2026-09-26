@@ -1,8 +1,8 @@
 //! Dirty-mark fan-out: the light and mesh invalidation choke points edits,
 //! ingest, and sky-cover moves route through.
 
-use crate::world::{ServerWorld, World, WorldSide};
 use crate::world::WorldData;
+use crate::world::{ServerWorld, World, WorldSide};
 use rustc_hash::FxHashSet;
 
 use petramond_world::chunk::{self, ChunkPos, SectionPos, SECTION_MIN_CY, SECTION_SIZE};
@@ -142,7 +142,8 @@ impl<S: WorldSide> World<S> {
                         let pos = SectionPos::new(cp.cx, cy, cp.cz);
                         if change.affects(pos)
                             && self
-                                .data.sections
+                                .data
+                                .sections
                                 .get(&pos)
                                 .is_some_and(|s| !(from_persist && s.light_from_persist))
                             && seen.insert(pos)
@@ -257,7 +258,8 @@ impl<S: WorldSide> World<S> {
             return;
         }
         let cell = petramond_math::math::IVec3::new(wx, wy, wz);
-        if radius < 0 || petramond_world::world::light::edit_relightable(&self.data.sections, cell) {
+        if radius < 0 || petramond_world::world::light::edit_relightable(&self.data.sections, cell)
+        {
             self.data.light_edits.push((cell, radius));
         } else {
             self.mark_light_dirty_around_cell_radius(wx, wy, wz, radius);
@@ -419,7 +421,11 @@ mod tests {
         }
         for _ in 0..2500 {
             w.pump_light_bakes();
-            if w.data.sections.values().all(|s| !s.light_dirty || s.all_opaque()) {
+            if w.data
+                .sections
+                .values()
+                .all(|s| !s.light_dirty || s.all_opaque())
+            {
                 return w;
             }
         }
@@ -436,15 +442,25 @@ mod tests {
         assert!(w.set_block_world(torch.x, torch.y, torch.z, Block::Torch));
 
         assert!(
-            w.data.sections.values().all(|s| !s.light_dirty || s.all_opaque()),
+            w.data
+                .sections
+                .values()
+                .all(|s| !s.light_dirty || s.all_opaque()),
             "an incremental edit marks nothing for a full rebake"
         );
         assert!(w.data.relight_demand.is_empty());
-        assert_eq!(w.data.light_edits.len(), 1, "the edit waits for the next drain");
+        assert_eq!(
+            w.data.light_edits.len(),
+            1,
+            "the edit waits for the next drain"
+        );
 
         w.pump_light_bakes();
         assert!(w.data.light_edits.is_empty());
-        assert!(!w.data.blocklight_rgb_at_world(torch.x + 1, torch.y, torch.z).is_dark());
+        assert!(!w
+            .data
+            .blocklight_rgb_at_world(torch.x + 1, torch.y, torch.z)
+            .is_dark());
         for (&pos, section) in w.data.sections.iter() {
             if section.all_opaque() {
                 continue;
@@ -453,9 +469,15 @@ mod tests {
                 SectionBakeJob::snapshot_unchecked(pos, &w.data.sections, &w.data.columns)
                     .expect("loaded"),
             );
-            assert_eq!(section.skylight_arc().as_deref(), Some(&want.skylight[..]), "{pos:?}");
+            assert_eq!(
+                section.skylight_arc().as_deref(),
+                Some(&want.skylight[..]),
+                "{pos:?}"
+            );
             let block = section.blocklight_arc();
-            let block = block.as_deref().unwrap_or(&petramond_world::world::light::ZERO_CUBE[..]);
+            let block = block
+                .as_deref()
+                .unwrap_or(&petramond_world::world::light::ZERO_CUBE[..]);
             assert_eq!(block, &want.blocklight[..], "{pos:?}");
         }
     }

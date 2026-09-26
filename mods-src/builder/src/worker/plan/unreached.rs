@@ -5,12 +5,12 @@ use crate::host::prelude::*;
 
 use super::{defer_task, Flow, Round};
 use crate::geometry::{manhattan, offset};
-use crate::worker::Job;
 use crate::project::{Project, Projects};
 use crate::worker::tuning::patience::SCAFFOLD_TRIES;
 use crate::worker::tuning::reach::{COVER, TRIM_REACH};
 use crate::worker::tuning::waits::{OUT_OF_REACH, SEALED_WAIT};
 use crate::worker::upkeep::open_block;
+use crate::worker::Job;
 use crate::worker::{pocket, wayin, Body, Ctx, Step, Task, TRACE};
 
 /// Mark what lies ON work the golem cannot reach: a block it could otherwise

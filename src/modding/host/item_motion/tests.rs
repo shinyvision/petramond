@@ -1,26 +1,26 @@
-use mod_api::calls;
 use super::*;
+use mod_api::{calls, HostCall};
 use petramond_math::world_pos::WorldPos;
 
 #[test]
 fn malformed_requests_are_rejected_before_entering_simulation() {
     for radius in [-1.0, f32::NAN, f32::INFINITY, 65.0] {
-        let result = handle(HostCall::from(calls::ItemEntitiesInRadius {
+        let result = handle(calls::ItemEntitiesInRadius {
             pos: [0.0; 3],
             radius,
             limit: 1,
-        }));
+        });
         assert!(matches!(result, HostRet::Err(message) if message.detail.contains("radius")));
     }
-    let result = handle(HostCall::from(calls::ItemEntitiesInRadius {
+    let result = handle(calls::ItemEntitiesInRadius {
         pos: [0.0; 3],
         radius: 1.0,
         limit: mod_api::SIM_BATCH_MAX as u32 + 1,
-    }));
+    });
     assert!(matches!(result, HostRet::Err(message) if message.detail.contains("limit")));
-    let result = handle(HostCall::from(calls::ItemImpulses {
+    let result = handle(calls::ItemImpulses {
         impulses: vec![(1, [0.0; 3]), (2, [f32::NAN; 3])],
-    }));
+    });
     assert!(matches!(result, HostRet::Err(message) if message.detail.contains("delta")));
 }
 

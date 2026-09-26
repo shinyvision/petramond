@@ -1,7 +1,6 @@
-use crate::world::{ServerWorld, World, WorldSide};
 use crate::world::WorldData;
+use crate::world::{ServerWorld, World, WorldSide};
 use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY};
-
 
 /// The bit of section `cy` in a per-column `cy` bitset.
 #[inline]
@@ -83,7 +82,8 @@ impl<S: WorldSide> World<S> {
         let dirty = std::mem::take(&mut self.data.random_tick_dirty);
         for pos in &dirty {
             let tickable = self
-                .data.sections
+                .data
+                .sections
                 .get(pos)
                 .is_some_and(|s| s.has_random_tickable());
             if tickable {
@@ -101,7 +101,6 @@ impl<S: WorldSide> World<S> {
         dirty.clear();
         self.data.random_tick_dirty = dirty;
     }
-
 }
 
 impl ServerWorld {
@@ -111,7 +110,8 @@ impl ServerWorld {
         if self.side.gen.pending_sections.insert(sp) {
             self.note_stream_nonfinal(sp);
             *self
-                .side.gen
+                .side
+                .gen
                 .pending_section_columns
                 .entry(sp.chunk_pos())
                 .or_insert(0) += 1;
@@ -142,19 +142,5 @@ impl ServerWorld {
     #[inline]
     pub(in crate::world) fn column_has_pending_section(&self, pos: ChunkPos) -> bool {
         self.side.gen.pending_section_columns.contains_key(&pos)
-    }
-
-    #[inline]
-    pub(in crate::world) fn clear_pending_sections_for_column(&mut self, pos: ChunkPos) {
-        self.side.gen.pending_sections.retain(|sp| sp.chunk_pos() != pos);
-        self.side.gen.pending_section_columns.remove(&pos);
-        self.rebuild_stream_nonfinal();
-    }
-
-    #[inline]
-    pub(in crate::world) fn clear_all_pending_sections(&mut self) {
-        self.side.gen.pending_sections.clear();
-        self.side.gen.pending_section_columns.clear();
-        self.rebuild_stream_nonfinal();
     }
 }

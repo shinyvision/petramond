@@ -19,12 +19,12 @@ mod tags;
 mod tests;
 
 pub use behavior::BlockBehavior;
-pub(crate) use data::{warm_views, BlockViews};
 pub use data::ENGINE_BLOCK_NAMES;
+pub use data::{shape_kind_id_by_key, state_key_declared};
+pub(crate) use data::{warm_views, BlockViews};
+pub use definition::{BlockFlags, BlockMaterial};
 pub(crate) use load::{load_registry, Registry as BlockRegistry};
 pub(crate) use shape_kind::CUSTOM_SHAPES;
-pub use data::{shape_kind_id_by_key, state_key_declared};
-pub use definition::{BlockFlags, BlockMaterial};
 // ColorRamp rides the public `ParticleEmitter::color_ramp` field; only tests
 // currently name the type, so the lib build sees the re-export as unused.
 #[allow(unused_imports)]
@@ -38,18 +38,16 @@ pub use shape::{
     posed_bounds, Aabb, BoxPose, CellPart, ItemBox, PosedBox, ShapeBox, ShapeFace, ShapeRenderBox,
     CROP_PLANE_DROP, CROP_PLANE_INSET,
 };
-pub use shape_kind::ConnectionRule;
-pub use shape_kind::ItemRender;
-pub use shape_kind::{
-    face_uv_turns, BlockShapeKind, ShapeFamily, ShapeKindDef, FACE_BEFORE_TURN,
-};
-pub use shape_kind::{MeshEmitter, PlantPlanes};
 /// Family identity for the state codecs each shape family's cells carry.
 pub use shape_kind::families as shape_kind_families;
+pub use shape_kind::ConnectionRule;
+pub use shape_kind::ItemRender;
+pub use shape_kind::{face_uv_turns, BlockShapeKind, ShapeFamily, ShapeKindDef, FACE_BEFORE_TURN};
 pub use shape_kind::{
     full_face_at, rests_flat_on_floor, CellCodec, CellView, FullFace, NoNeighborhood, ShapeCtx,
     ShapeNeighborhood, ShapeState, NO_PART_TINT, SHAPE_STATE_MAX,
 };
+pub use shape_kind::{MeshEmitter, PlantPlanes};
 // `pack_light_apertures` is the producer half of the aperture currency
 // (families + light tests); the lib target only consumes.
 pub use data::light_cells;

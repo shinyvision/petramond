@@ -118,7 +118,8 @@ impl ClientAudio {
     /// world lets the current track finish but schedules no new one.
     pub(super) fn update_session(&mut self, in_session: bool, world_frozen: bool, dt: f32) {
         self.audio.set_spatial_paused(world_frozen);
-        self.music.update(&mut self.audio, in_session, world_frozen, dt);
+        self.music
+            .update(&mut self.audio, in_session, world_frozen, dt);
     }
 
     /// The session ended: silence every voice it started in the engine — the

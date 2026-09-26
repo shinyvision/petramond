@@ -254,16 +254,26 @@ mod tests {
         for early in [ItemType::Diamond, ItemType::RawIron] {
             let obtained = [early].into_iter().collect();
             assert_eq!(index.opened_by(early, &obtained), vec!["test:station"]);
-            assert_eq!(index.opened_by_all(&obtained).collect::<Vec<_>>(), vec!["test:station"]);
+            assert_eq!(
+                index.opened_by_all(&obtained).collect::<Vec<_>>(),
+                vec!["test:station"]
+            );
         }
 
         let obtained: ItemSet = [ItemType::OakLog, ItemType::Stick].into_iter().collect();
-        assert_eq!(index.opened_by(ItemType::Stick, &obtained), vec!["test:station"]);
+        assert_eq!(
+            index.opened_by(ItemType::Stick, &obtained),
+            vec!["test:station"]
+        );
     }
 
     #[test]
     fn invalid_early_unlock_policy_rejects_the_recipe_row() {
-        let mut row = recipe("test:station", vec![exact(ItemType::OakLog)], ItemType::OakPlanks);
+        let mut row = recipe(
+            "test:station",
+            vec![exact(ItemType::OakLog)],
+            ItemType::OakPlanks,
+        );
         let data = |value: &str| vec![("petramond:unlock_on".into(), value.into())];
         assert!(row.set_data(data("{}")).is_err());
         assert!(row

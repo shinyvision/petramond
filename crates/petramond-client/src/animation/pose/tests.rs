@@ -241,7 +241,10 @@ fn walk_weight_blends_between_rest_and_the_full_cycle() {
     };
     let (rest, half, full) = (at(0.0), at(0.5), at(1.0));
     assert!(differs(&rest, &half), "half blend differs from rest");
-    assert!(differs(&full, &half), "half blend differs from the full cycle");
+    assert!(
+        differs(&full, &half),
+        "half blend differs from the full cycle"
+    );
 }
 
 /// A HELD arm ignores the walk cycle; a COMPOSED one rides it.

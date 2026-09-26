@@ -161,8 +161,9 @@ impl Game {
         // held-item easing, animator plays, hurt/eat ramps) advances right after the batches
         // applied, so this frame's latched one-shots jab this frame.
         let replica = &self.replica.world;
-        self.replica.entities
-            .advance_animation(dt, |pos| super::body_pose::movement_medium(replica, pos));
+        self.replica.entities.advance_animation(dt, |pos| {
+            super::body_pose::movement_medium(replica.data(), pos)
+        });
         let mut events = std::mem::take(&mut self.replica.events);
         self.deliver_client_mod_events(&events.self_events.client_events);
         self.sync_sleep_camera_on_open(&events.self_events);
@@ -199,14 +200,20 @@ impl Game {
     /// fully applies the break it can see (cell clear, hand, local world
     /// event).
     fn tick_local_mining(&mut self, dt: f32, input: &GameInput) {
-        let tool = self.replica.self_view.inventory.selected().and_then(|st| st.tool());
+        let tool = self
+            .replica
+            .self_view
+            .inventory
+            .selected()
+            .and_then(|st| st.tool());
         let look = self.local.look.map(|h| h.block);
         // One question, the same one the server asks: a body barred from mining
         // stops predicting one, whether the bar is a pack's claim or the open
         // menu the engine claims for. Without it the crack creeps up a block
         // the authority already refused and then snaps back.
         let barred = self
-            .local.player
+            .local
+            .player
             .denied_actions()
             .denies(mod_api::BodyAction::Mine);
         self.local.break_repeat.tick(dt);
@@ -227,9 +234,14 @@ impl Game {
             }
             return;
         }
-        let event =
-            self.local.mining
-                .update(dt, look, input.break_held, barred, &self.replica.world, tool);
+        let event = self.local.mining.update(
+            dt,
+            look,
+            input.break_held,
+            barred,
+            self.replica.world.data(),
+            tool,
+        );
         // The own crack overlay is CLIENT-OWNED: the local timer is its only
         // source (the server never ships it back — SelfState carries no
         // `mining` echo).
@@ -237,7 +249,8 @@ impl Game {
 
         if let Some(ev) = event {
             let normal = self
-                .local.look
+                .local
+                .look
                 .filter(|h| h.block == ev.pos && h.normal != IVec3::ZERO)
                 .map(|h| h.normal);
             self.apply_predicted_break(ev.pos, ev.block, normal);
@@ -404,7 +417,8 @@ impl Game {
     /// cooldown the server paces the hand by.
     fn attack_press(&mut self, input: &GameInput) -> bool {
         let denied = self
-            .local.player
+            .local
+            .player
             .denied_actions()
             .denies(mod_api::BodyAction::Attack);
         let mining = self.replica.self_view.mining.is_some();

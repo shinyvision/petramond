@@ -3,8 +3,7 @@ use crate::world::test_world::TestWorld;
 
 #[test]
 fn namespaced_keys_intern_to_shared_singletons_that_enqueue_hooks() {
-    let a = crate::block::behavior::by_name("testmod:zap")
-        .expect("namespaced keys resolve");
+    let a = crate::block::behavior::by_name("testmod:zap").expect("namespaced keys resolve");
     let b = crate::block::behavior::by_name("testmod:zap").expect("stable");
     assert_eq!(a.key(), "testmod:zap", "key() inverts by_name()");
     assert!(

@@ -1,5 +1,5 @@
-use crate::world::ServerWorld;
 use super::*;
+use crate::world::ServerWorld;
 use petramond_world::chunk::ChunkPos;
 
 #[test]
@@ -60,7 +60,13 @@ fn region_updates_clip_to_world_bounds_without_materializing_empty_sections() {
     let sections = world.data.sections.len();
     world.queue_non_air_updates_in_box(p - IVec3::ONE, p + IVec3::ONE);
     assert_eq!(
-        world.data.sim.update_queue.iter().copied().collect::<Vec<_>>(),
+        world
+            .data
+            .sim
+            .update_queue
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
         vec![p]
     );
     world.queue_non_air_updates_in_box(IVec3::splat(1000), IVec3::splat(1001));

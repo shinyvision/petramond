@@ -5,12 +5,12 @@ use super::sealing::{cutting, sealed_by};
 use super::verdict::{settle_verdict, viability, Viable};
 use super::{defer_task, places, task_cells, Flow, Mode, Round};
 use crate::geometry::{beside, feet_of, manhattan, offset, reaches};
-use crate::worker::Job;
 use crate::project::Projects;
 use crate::survey::Known;
 use crate::worker::tuning::waits::SEALED_WAIT;
 use crate::worker::tuning::window::{HERE, LATE_CLEAR};
 use crate::worker::waiting::{Probe, Waiting};
+use crate::worker::Job;
 use crate::worker::{cargo, sight, Body, Ctx, Step, Task};
 
 /// A block still to be laid right behind `task`'s, as the golem looks at it,

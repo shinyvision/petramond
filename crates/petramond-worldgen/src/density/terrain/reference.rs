@@ -325,4 +325,3 @@ fn shaping_inputs(
         (SplineAxis::new(shaper::axes::RIDGE), ridge),
     ]
 }
-

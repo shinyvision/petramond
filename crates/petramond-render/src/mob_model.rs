@@ -149,14 +149,9 @@ pub(crate) struct MobLayers<'a> {
 /// by name once; after that a lookup is an index plus a pointer compare
 /// against the table's name (a new session's table names ids afresh, which
 /// the compare catches), so no frame hashes or compares a clip name.
+#[derive(Default)]
 pub(crate) struct AnimClips<'m> {
     slots: Vec<Option<(Arc<str>, Option<&'m Animation>)>>,
-}
-
-impl Default for AnimClips<'_> {
-    fn default() -> Self {
-        Self { slots: Vec::new() }
-    }
 }
 
 impl<'m> AnimClips<'m> {
@@ -186,18 +181,18 @@ impl<'m> AnimClips<'m> {
 
 /// What posing one species keeps between frames: its resolved clips, and the
 /// per-instance layer list's storage.
+#[derive(Default)]
 pub(crate) struct MobPoseCache<'m> {
     clips: AnimClips<'m>,
     layers: Vec<(&'m Animation, f32, f32)>,
 }
 
-impl Default for MobPoseCache<'_> {
-    fn default() -> Self {
-        Self {
-            clips: AnimClips::default(),
-            layers: Vec::new(),
-        }
-    }
+/// The model and reusable pose state for one species draw run.
+pub(crate) struct MobPoseSpecies<'m, 'c> {
+    pub model: &'m Model,
+    pub scale: f32,
+    pub rig: &'c MobRig,
+    pub cache: &'c mut MobPoseCache<'m>,
 }
 
 /// Pose every instance of ONE species (`model` at `scale`) into `batch` —
@@ -208,16 +203,19 @@ impl Default for MobPoseCache<'_> {
 /// already moving it) the AI head-look is applied to the head. The caller
 /// groups instances by species and frustum-culls them first.
 pub(crate) fn pose_mob_instances<'i, 'm>(
-    model: &'m Model,
-    scale: f32,
+    species: MobPoseSpecies<'m, '_>,
     instances: impl IntoIterator<Item = &'i MobRenderInstance>,
     frame: MobLayers<'_>,
     render_origin: glam::IVec3,
-    rig: &MobRig,
-    cache: &mut MobPoseCache<'m>,
     batch: &mut SkinBatch,
     held: &mut Vec<MobHeld>,
 ) -> std::ops::Range<u32> {
+    let MobPoseSpecies {
+        model,
+        scale,
+        rig,
+        cache,
+    } = species;
     let first = batch.next_instance();
     let slots = bone_slots(model);
     let head_bone = model.head_bone();

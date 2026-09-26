@@ -81,10 +81,16 @@ fn a_pack_layer_retunes_the_recipe_by_name() {
     let flat = r#"{"nodes": {"base_height": 70.0}}"#;
     let flat_nodes = r#"{"nodes": {"base_height": {"constant": 70.0}}}"#;
     let layered = parse_layers(&[&base, flat_nodes]).expect("a node override loads");
-    assert!(parse_layers(&[&base, flat]).is_err(), "a node is an op, not a bare number");
+    assert!(
+        parse_layers(&[&base, flat]).is_err(),
+        "a node is an op, not a bare number"
+    );
     let graph = layered.build(9);
     for point in sample_points().into_iter().take(50) {
-        assert_eq!(graph.evaluate_channel(channels::BASE_HEIGHT, point), Some(70.0));
+        assert_eq!(
+            graph.evaluate_channel(channels::BASE_HEIGHT, point),
+            Some(70.0)
+        );
     }
     assert_ne!(layered.fingerprint, shipped.fingerprint);
     assert_eq!(
@@ -97,7 +103,10 @@ fn a_pack_layer_retunes_the_recipe_by_name() {
         .expect("a channel override loads")
         .build(9);
     let point = SamplePoint::new(10.0, 0.0, 10.0);
-    assert_eq!(graph.evaluate_channel(channels::BASE_HEIGHT, point), Some(64.0));
+    assert_eq!(
+        graph.evaluate_channel(channels::BASE_HEIGHT, point),
+        Some(64.0)
+    );
 }
 
 /// The vocabulary refuses recipes it cannot build exactly instead of
@@ -106,7 +115,10 @@ fn a_pack_layer_retunes_the_recipe_by_name() {
 fn malformed_recipes_are_refused() {
     let base = base();
     for (bad, why) in [
-        (r#"{"channels": {"base_height": "nowhere"}}"#, "unknown node"),
+        (
+            r#"{"channels": {"base_height": "nowhere"}}"#,
+            "unknown node",
+        ),
         (
             r#"{"nodes": {"a": {"abs": "b"}, "b": {"abs": "a"}}, "channels": {"base_height": "a"}}"#,
             "node cycle",
@@ -131,15 +143,27 @@ fn malformed_recipes_are_refused() {
             r#"{"fields": {"crag": {"salt": [1, 2], "first_octave": -5, "amplitudes": [0.0]}}}"#,
             "silent field",
         ),
-        (r#"{"nodes": {"crest": {"field": "moonlight"}}}"#, "unknown field"),
-        (r#"{"channels": {"base_height": {"axis": "y"}}}"#, "vertical base height"),
+        (
+            r#"{"nodes": {"crest": {"field": "moonlight"}}}"#,
+            "unknown field",
+        ),
+        (
+            r#"{"channels": {"base_height": {"axis": "y"}}}"#,
+            "vertical base height",
+        ),
         (r#"{"nodes": {"crest": {"sparkle": 1.0}}}"#, "unknown op"),
-        (r#"{"nodes": {"crest": {"terrace": {"input": 1.0, "step": 0.0}}}}"#, "flat terrace"),
+        (
+            r#"{"nodes": {"crest": {"terrace": {"input": 1.0, "step": 0.0}}}}"#,
+            "flat terrace",
+        ),
     ] {
         assert!(parse_layers(&[&base, bad]).is_err(), "accepted: {why}");
     }
     let without_density = base.replace(r#""master_density": "master_density","#, "");
-    assert!(parse_layers(&[&without_density]).is_err(), "missing master_density");
+    assert!(
+        parse_layers(&[&without_density]).is_err(),
+        "missing master_density"
+    );
 }
 
 /// The test-only nodes of the graph are part of the data vocabulary too.
@@ -153,7 +177,13 @@ fn the_whole_node_vocabulary_loads() {
         "channels": {"surface_detection": "surface_detection"}}"#;
     let graph = parse_layers(&[&base(), extra]).expect("loads").build(1);
     let inside = SamplePoint::new(0.5, 5.0, -3.0);
-    assert_eq!(graph.evaluate_channel(channels::SURFACE_DETECTION, inside), Some(0.5));
+    assert_eq!(
+        graph.evaluate_channel(channels::SURFACE_DETECTION, inside),
+        Some(0.5)
+    );
     let outside = SamplePoint::new(4.0, 5.0, 2.0);
-    assert_eq!(graph.evaluate_channel(channels::SURFACE_DETECTION, outside), Some(0.0));
+    assert_eq!(
+        graph.evaluate_channel(channels::SURFACE_DETECTION, outside),
+        Some(0.0)
+    );
 }

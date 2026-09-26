@@ -8,10 +8,10 @@ use crate::host::prelude::*;
 use super::trip::{at_container, go_to_container, hands_in_everything, short_of_bill};
 use super::wants::{dig_room, digs_ahead, keeps, needed_at, tool_kind, wanted};
 use crate::content::BLUEPRINT;
-use crate::worker::Job;
 use crate::project::{Hold, Note, Phase, Projects};
 use crate::survey::key_of;
 use crate::worker::tuning::hands::{LID_UP, LINGER};
+use crate::worker::Job;
 use crate::worker::{scaffold, Body, Ctx, Step, Then};
 
 /// At the chests: take what the work ahead needs from every container in reach.
@@ -131,9 +131,7 @@ pub fn fetch(
             );
         }
         if body.slots.iter().all(Option::is_some) {
-            projects.update(job.id, |p| {
-                p.hold_for(Hold::Storage, Note::HandsFull)
-            });
+            projects.update(job.id, |p| p.hold_for(Hold::Storage, Note::HandsFull));
         } else {
             // A trip that took nothing holds the job only when the hands
             // hold nothing to build with either: with two kinds of block
@@ -278,7 +276,9 @@ pub fn deposit(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, body: &Bod
     // room for goes home in its hands (and is set down there).
     if stuck && project.phase() == Phase::Returning {
         job.crew.cargo.chests_full = true;
-        projects.update(job.id, |p| p.note = std::mem::take(&mut p.note).with_chests_full());
+        projects.update(job.id, |p| {
+            p.note = std::mem::take(&mut p.note).with_chests_full()
+        });
     } else if stuck {
         projects.update(job.id, |p| p.hold_for(Hold::Storage, Note::ChestsFull));
     }

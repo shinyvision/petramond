@@ -1,11 +1,11 @@
 //! The trips to the chests a plan calls for.
 
 use super::{Flow, Round};
-use crate::worker::Job;
 use crate::project::Projects;
 use crate::worker::crew::Stamped;
 use crate::worker::tuning::waits::TOOL_TRIP_WAIT;
 use crate::worker::waiting::Waiting;
+use crate::worker::Job;
 use crate::worker::{cargo, scaffold, Body, Ctx};
 
 /// Only hands with no room left go back to the chests: a trip per dug

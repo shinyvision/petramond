@@ -2,7 +2,7 @@ use super::{at_work, working};
 use crate::geometry::feet_of;
 use crate::host::fake::rows::{AIR, STONE};
 use crate::testing::HOME;
-use crate::worker::body::{stands_at, standing_cell, unwedge};
+use crate::worker::body::{standing_cell, stands_at, unwedge};
 use crate::worker::legs::{centre, hold_still};
 
 #[test]
@@ -30,7 +30,11 @@ fn a_body_off_the_centre_of_its_cell_is_nudged_back_and_held_still() {
     body.pos = [4.2, 0.0, 4.5];
     centre(&body);
     let driven = || session.world.state().mobs[&golem].driven;
-    assert_eq!(driven(), Some([2.0, 0.0, 0.0]), "its own legs, at their fastest");
+    assert_eq!(
+        driven(),
+        Some([2.0, 0.0, 0.0]),
+        "its own legs, at their fastest"
+    );
     hold_still(&body);
     assert_eq!(driven(), Some([0.0; 3]));
 }

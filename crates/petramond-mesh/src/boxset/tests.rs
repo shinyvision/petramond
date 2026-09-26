@@ -62,7 +62,11 @@ impl BoxWorld for OpenAir {
         false
     }
     fn face_light(&self, _: Face, _: IVec3, _: f32, _: bool) -> CornerLight {
-        ([3; 4], [63; 4], [petramond_world::light::BlockLight6::DARK; 4])
+        (
+            [3; 4],
+            [63; 4],
+            [petramond_world::light::BlockLight6::DARK; 4],
+        )
     }
 }
 

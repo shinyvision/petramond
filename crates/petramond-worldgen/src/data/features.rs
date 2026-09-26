@@ -269,7 +269,8 @@ mod tests {
     /// name — including features no engine code places directly.
     #[test]
     fn accessors_resolve_their_own_rows() {
-        let accessors: [(&str, fn() -> &'static ConfiguredFeature); 9] = [
+        type FeatureAccessor = (&'static str, fn() -> &'static ConfiguredFeature);
+        let accessors: [FeatureAccessor; 9] = [
             ("petramond:oak_young", oak_young),
             ("petramond:oak_small", oak_small),
             ("petramond:oak_swamp", oak_swamp),

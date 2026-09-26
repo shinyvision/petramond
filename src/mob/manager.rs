@@ -10,17 +10,21 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use petramond_math::math::{IVec3, Vec3};
+use petramond_math::math::IVec3;
+#[cfg(test)]
+use petramond_math::math::Vec3;
 use petramond_world::block::Block;
 use petramond_world::chunk::ChunkPos;
 
 use super::noise::{Noise, NoiseField};
 use super::spatial::MobSnapshot;
 use super::{
-    append_body_supports, body_has_peer_support, body_separation, body_separation_from_body, def,
-    instance, solid_boxes, terrain_safe_motion_prefix, BodyMotion, EntityRef, Instance,
-    MobCollision, MobId, MobRng, MobSize,
+    append_body_supports, body_has_peer_support, def, instance, solid_boxes,
+    terrain_safe_motion_prefix, BodyMotion, EntityRef, Instance, MobCollision, MobId, MobRng,
 };
+
+#[cfg(test)]
+use super::body_separation;
 
 mod control;
 mod drops;
@@ -35,8 +39,8 @@ pub use lod::SimDistance;
 mod push;
 mod solids;
 use push::PushScratch;
-use solids::SolidScratch;
 pub use simulation::{MobAttack, MobExposureDamage, MobFall, MobTickEvents, PlayerAnchor};
+use solids::SolidScratch;
 
 /// The anchor nearest `pos`. Anchors are never empty: the local session always
 /// exists.
@@ -133,6 +137,12 @@ impl Default for Mobs {
 }
 
 impl Mobs {
+    /// Advance each mob's victim-owned damage immunity once per game tick.
+    pub fn tick_damage_immunity(&mut self) {
+        for mob in &mut self.list {
+            mob.tick_damage_immunity();
+        }
+    }
     /// `seed` (the world seed) makes natural spawning reproducible per world.
     pub fn new(seed: u64) -> Self {
         Mobs {

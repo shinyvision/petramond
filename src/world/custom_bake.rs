@@ -10,12 +10,13 @@
 //! matter how many gates exist. The intern set is bounded by the shapes'
 //! distinct geometries, not by the world.
 
-use crate::world::{ServerWorld, World, WorldSide};
+#[cfg(test)]
+use crate::world::ServerWorld;
 use crate::world::WorldData;
+use crate::world::{World, WorldSide};
 
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
-
 
 impl<S: WorldSide> World<S> {
     /// A block at `(wx, wy, wz)` became `new_block`: drop the cached bake for the

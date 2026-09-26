@@ -32,7 +32,10 @@ pub enum LightBakeEvent {
     /// The bake job panicked. Its pending slot is already released; the
     /// installer decides how the section's light settles (see
     /// `World::drain_light_bakes`).
-    Failed { pos: SectionPos, revision: u64 },
+    Failed {
+        pos: SectionPos,
+        revision: u64,
+    },
 }
 
 /// One pool job's report on the backend channel. Exactly one per job (the
@@ -365,7 +368,9 @@ mod tests {
         let pool = std::sync::Arc::new(crate::worker::JobPool::inline());
         let mut queue = LightBakeQueue::new(pool);
         let pos = SectionPos::new(1, 2, 3);
-        queue.backend.submit_run(0, pos, 5, || panic!("injected light panic"));
+        queue
+            .backend
+            .submit_run(0, pos, 5, || panic!("injected light panic"));
         // A newer request (id 6) owns the slot now.
         queue.pending.insert(
             pos,

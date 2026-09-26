@@ -10,7 +10,7 @@
 //! output streams.
 
 use glam::IVec3;
-use petramond_world::block::{Block, MeshEmitter, ShapeBox};
+use petramond_world::block::{Block, MeshEmitter};
 use petramond_world::chunk::{section_idx, SectionPos, SECTION_SIZE};
 use petramond_world::section::Section;
 use petramond_world::texture_transition::Rules;

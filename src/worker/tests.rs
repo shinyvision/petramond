@@ -120,7 +120,10 @@ fn jobs_run_under_the_submitters_content_registry() {
     pool.submit(1, move || {
         let _ = tx.send(Content::current().same(own));
     });
-    assert!(rx.recv().unwrap(), "the pinned submitter's registry rides the job");
+    assert!(
+        rx.recv().unwrap(),
+        "the pinned submitter's registry rides the job"
+    );
     assert!(
         !rx.recv().unwrap(),
         "an unpinned submitter's job reads the process registry"
@@ -157,7 +160,11 @@ fn an_inline_pool_contains_a_panicking_job_and_still_reports() {
         let _slot = slot;
         panic!("injected inline panic");
     });
-    assert_eq!(rx.try_recv(), Ok(false), "the caller got the failure, not the unwind");
+    assert_eq!(
+        rx.try_recv(),
+        Ok(false),
+        "the caller got the failure, not the unwind"
+    );
 }
 
 #[test]

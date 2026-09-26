@@ -219,6 +219,7 @@ impl Combat {
             pos,
             vel,
             fate,
+            ..
         } = payload
         else {
             return Outcome::Continue;

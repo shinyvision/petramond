@@ -215,12 +215,8 @@ impl AppScreen {
             S::ConnectionLost => shell(GuiKind::ConnectionLost, E::Back(S::Title)),
             S::Options => shell(GuiKind::Options, E::Back(S::Title)),
             S::OptionsSound => shell(GuiKind::OptionsSound, E::CancelRemapOrBack(S::Options)),
-            S::OptionsControls => {
-                shell(GuiKind::OptionsControls, E::CancelRemapOrBack(S::Options))
-            }
-            S::OptionsGraphics => {
-                shell(GuiKind::OptionsGraphics, E::CancelRemapOrBack(S::Options))
-            }
+            S::OptionsControls => shell(GuiKind::OptionsControls, E::CancelRemapOrBack(S::Options)),
+            S::OptionsGraphics => shell(GuiKind::OptionsGraphics, E::CancelRemapOrBack(S::Options)),
             S::Pause => shell(GuiKind::Pause, E::ResumeGame).with_hand(HandPolicy::Hidden),
             S::Game => Spec::new(R::Gameplay, None, E::PauseGame).with_hud(),
             S::Chat => Spec::new(R::Chat, None, E::Back(S::Game)).with_hud(),
@@ -250,28 +246,10 @@ impl AppScreen {
         self.role() == ScreenRole::Shell
     }
 
-    /// One of the Options screens (root or a category) is open.
-    #[inline]
-    pub(super) fn options_open(self) -> bool {
-        matches!(
-            self,
-            AppScreen::Options
-                | AppScreen::OptionsSound
-                | AppScreen::OptionsControls
-                | AppScreen::OptionsGraphics
-        )
-    }
-
     #[inline]
     #[cfg(test)]
     pub(super) fn inventory_open(self) -> bool {
         self == AppScreen::Menu(GuiKind::Inventory)
-    }
-
-    /// A gameplay overlay screen is up (sleep fade / death).
-    #[inline]
-    pub(super) fn overlay_open(self) -> bool {
-        self.role() == ScreenRole::Overlay
     }
 
     /// Any slot-based menu (container or mod GUI) is open — drives click

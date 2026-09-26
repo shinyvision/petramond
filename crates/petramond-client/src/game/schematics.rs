@@ -135,7 +135,8 @@ impl Game {
         {
             return;
         }
-        self.net.queue(ClientToServer::Action(PlayerAction::Schematic(
+        self.net
+            .queue(ClientToServer::Action(PlayerAction::Schematic(
                 SchematicRequest::Fetch { digest },
             )));
     }
@@ -233,7 +234,8 @@ impl Game {
                     self.keep_design(id, schematic);
                     self.tools.share.offered = Some((id, bytes));
                     self.tools.share.choice = None;
-                    self.net.queue(ClientToServer::Action(PlayerAction::Schematic(
+                    self.net
+                        .queue(ClientToServer::Action(PlayerAction::Schematic(
                             SchematicRequest::Chosen { tag, digest: id },
                         )));
                 }
@@ -251,7 +253,8 @@ impl Game {
             match outcome.unwrap_or_else(|_| Err("Encoding the schematic failed".into())) {
                 Ok((id, bytes)) => {
                     self.tools.share.offered = Some((id, bytes));
-                    self.net.queue(ClientToServer::Action(PlayerAction::Creative(
+                    self.net
+                        .queue(ClientToServer::Action(PlayerAction::Creative(
                             petramond::schematic::CreativeAction::Place {
                                 digest: id,
                                 origin,
@@ -329,7 +332,8 @@ impl Game {
         };
         let (tag, id, origin, turns) = self.tools.share.positioning.take().unwrap();
         self.cancel_world_tools();
-        self.tools.preview
+        self.tools
+            .preview
             .begin_positioning(schematic, tag, id, origin, turns);
     }
 }

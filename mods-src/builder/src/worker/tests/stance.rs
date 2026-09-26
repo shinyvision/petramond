@@ -28,16 +28,30 @@ fn the_stance_is_the_nearest_walk_that_sees_the_work() {
     let target = [5, 0, -6];
     let stance = at_work(&mut session, id, |ctx, _, job| {
         let hubs = Hubs::new(HOME, &job.crew.trail);
-        found(stance::find(ctx, &body, hubs, &[target], &lay(target), false, |_| true))
+        found(stance::find(
+            ctx,
+            &body,
+            hubs,
+            &[target],
+            &lay(target),
+            false,
+            |_| true,
+        ))
     });
     assert_eq!(stance, Some([1, 0, -6]), "one step on, and in reach");
 
     // A stance the caller will not have is passed over.
     let stance = at_work(&mut session, id, |ctx, _, job| {
         let hubs = Hubs::new(HOME, &job.crew.trail);
-        found(stance::find(ctx, &body, hubs, &[target], &lay(target), false, |s| {
-            s != [1, 0, -6]
-        }))
+        found(stance::find(
+            ctx,
+            &body,
+            hubs,
+            &[target],
+            &lay(target),
+            false,
+            |s| s != [1, 0, -6],
+        ))
     });
     assert!(stance.is_some_and(|s| s != [1, 0, -6]));
 }

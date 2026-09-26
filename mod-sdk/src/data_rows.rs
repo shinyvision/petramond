@@ -63,9 +63,9 @@ fn typed_rows<Id: Copy + std::fmt::Debug, T: DeserializeOwned>(
 }
 
 /// The rows that parse, and the rejected ones with serde's reason.
-fn split_rows<Id, T: DeserializeOwned>(
-    rows: Vec<(Id, String)>,
-) -> (Vec<(Id, T)>, Vec<(Id, String)>) {
+type SplitRows<Id, T> = (Vec<(Id, T)>, Vec<(Id, String)>);
+
+fn split_rows<Id, T: DeserializeOwned>(rows: Vec<(Id, String)>) -> SplitRows<Id, T> {
     let mut parsed = Vec::with_capacity(rows.len());
     let mut rejected = Vec::new();
     for (id, raw) in rows {
@@ -150,7 +150,10 @@ mod tests {
                 ),
             ]
         );
-        assert_eq!(rejected.iter().map(|(id, _)| *id).collect::<Vec<_>>(), [2, 4]);
+        assert_eq!(
+            rejected.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            [2, 4]
+        );
         assert!(rejected[0].1.contains("filed"), "{}", rejected[0].1);
     }
 

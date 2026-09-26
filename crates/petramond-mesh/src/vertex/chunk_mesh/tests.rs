@@ -39,7 +39,10 @@ fn sealing_converts_every_quad_stream_and_frees_the_builder_copy() {
         for (g, w) in got.iter().zip(&want) {
             assert_eq!(bytemuck::bytes_of(g), bytemuck::bytes_of(w), "{layer:?}");
         }
-        assert!(sealed.quads(layer).is_empty(), "{layer:?} builder copy kept");
+        assert!(
+            sealed.quads(layer).is_empty(),
+            "{layer:?} builder copy kept"
+        );
         assert_eq!(sealed.quad_len(layer), before.quad_len(layer));
     }
     // The far LOD prefix indexes the sealed stream identically.

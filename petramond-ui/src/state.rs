@@ -112,7 +112,11 @@ impl UiState {
 
     pub fn set(&mut self, key: impl Into<String>, value: UiValue) {
         let key = key.into();
-        if self.values.get(&key).is_some_and(|(old, _)| old.same_as(&value)) {
+        if self
+            .values
+            .get(&key)
+            .is_some_and(|(old, _)| old.same_as(&value))
+        {
             return;
         }
         self.revision += 1;

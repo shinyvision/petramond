@@ -2,8 +2,8 @@ use super::client_audio::WorldAudioFrame;
 use super::screen::HandPolicy;
 use super::session::Session;
 use super::{now_seconds, ui_snapshot, App, AppScreen};
-use petramond_audio::SpatialListener;
 use crate::animation::LocalInput;
+use petramond_audio::SpatialListener;
 use petramond_render::{DocumentUiFrame, HeldItemFrame, Renderer, UiFrame};
 
 impl App {
@@ -99,7 +99,8 @@ impl App {
                 None,
                 None,
             );
-            let mut ui = ui_snapshot::build(None, self.screen, self.controls.pointer.cursor(), None);
+            let mut ui =
+                ui_snapshot::build(None, self.screen, self.controls.pointer.cursor(), None);
             if let Some(kind) = doc_kind {
                 ui.kind = kind;
             }

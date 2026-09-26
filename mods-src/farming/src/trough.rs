@@ -33,36 +33,35 @@ pub enum TroughUse {
 /// [`FILL_WHEAT`] in hand (the acting hand's count — the consume is atomic,
 /// so a smaller stack falls through).
 pub fn use_gate(content: &Content, item: ItemId, block: BlockId) -> Option<TroughUse> {
-    if block == content.trough && item == content.water_bucket {
-        return Some(TroughUse::Fill);
-    }
-    if block == content.trough_filled && item == content.wooden_bucket {
-        return Some(TroughUse::Drain);
+    if let Some((swap, _)) = bucket_swap(content, block, item) {
+        return Some(match swap {
+            BucketSwap::Pour => TroughUse::Fill,
+            BucketSwap::Scoop => TroughUse::Drain,
+        });
     }
     let bundle = || u32::from(player_state().held_count) >= FILL_WHEAT;
-    (block == content.trough && item == content.wheat_item && bundle()).then_some(TroughUse::PackWheat)
+    (block == content.trough && item == content.wheat_item && bundle())
+        .then_some(TroughUse::PackWheat)
 }
 
 /// Apply a gated trough use (server). The held bucket swaps in place.
 pub fn apply(content: &Content, pos: [i32; 3], using: TroughUse) -> Outcome {
     match using {
         TroughUse::Fill => {
-            if !replace_held_one(content.water_bucket, keys::WOODEN_BUCKET) {
+            if !content.buckets.perform(BucketSwap::Pour, pos, || {
+                swap_block(pos, content.trough_filled);
+                crate::husbandry::clear_sips(content, pos);
+            }) {
                 return Outcome::Continue;
             }
-            swap_block(pos, content.trough_filled);
-            // Fresh water holds fresh sips (cell KV rides the swap).
-            crate::husbandry::clear_sips(content, pos);
-            emit_sound(keys::SPLASH_SOUND, Some(center(pos)));
         }
         TroughUse::Drain => {
-            if !replace_held_one(content.wooden_bucket, keys::WATER_BUCKET) {
+            if !content.buckets.perform(BucketSwap::Scoop, pos, || {
+                swap_block(pos, content.trough);
+                crate::husbandry::clear_sips(content, pos);
+            }) {
                 return Outcome::Continue;
             }
-            swap_block(pos, content.trough);
-            // Collected water can't leave a stale sip count behind.
-            crate::husbandry::clear_sips(content, pos);
-            emit_sound(keys::SPLASH_SOUND, Some(center(pos)));
         }
         TroughUse::PackWheat => {
             // The empty trough never carries a meal count, so there is
@@ -71,7 +70,7 @@ pub fn apply(content: &Content, pos: [i32; 3], using: TroughUse) -> Outcome {
                 return Outcome::Continue;
             }
             swap_block(pos, content.trough_wheat);
-            emit_sound(keys::HARVEST_SOUND, Some(center(pos)));
+            emit_sound(keys::HARVEST_SOUND, Some(block_center(pos)));
         }
     }
     Outcome::Cancel

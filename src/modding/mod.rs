@@ -806,7 +806,13 @@ fn wire_event_handler(
     match event {
         EventKind::BlockPlacePre => {
             bus.on_block_place_pre(priority, move |ctx, ev| {
-                match call_event(&inst, &filter, ctx, handler_id, convert::block_place_pre(ev)) {
+                match call_event(
+                    &inst,
+                    &filter,
+                    ctx,
+                    handler_id,
+                    convert::block_place_pre(ev),
+                ) {
                     Some((outcome, _)) => convert::outcome(outcome),
                     None => Outcome::Continue,
                 }
@@ -822,7 +828,13 @@ fn wire_event_handler(
         }
         EventKind::BlockBreakPre => {
             bus.on_block_break_pre(priority, move |ctx, ev| {
-                match call_event(&inst, &filter, ctx, handler_id, convert::block_break_pre(ev)) {
+                match call_event(
+                    &inst,
+                    &filter,
+                    ctx,
+                    handler_id,
+                    convert::block_break_pre(ev),
+                ) {
                     Some((outcome, echoed)) => {
                         if let Some(EventPayload::BlockBreakPre { drops, .. }) = echoed {
                             ev.drops = drops.map(|stacks| {
@@ -836,7 +848,13 @@ fn wire_event_handler(
             })
         }
         EventKind::InteractAttempt => bus.on_interact_attempt(priority, move |ctx, ev| {
-            match call_event(&inst, &filter, ctx, handler_id, convert::interact_attempt(ev)) {
+            match call_event(
+                &inst,
+                &filter,
+                ctx,
+                handler_id,
+                convert::interact_attempt(ev),
+            ) {
                 Some((outcome, _)) => convert::outcome(outcome),
                 None => Outcome::Continue,
             }
@@ -894,7 +912,13 @@ fn wire_event_handler(
             })
         }
         EventKind::PlayerDamagePre => bus.on_player_damage_pre(priority, move |ctx, ev| {
-            match call_event(&inst, &filter, ctx, handler_id, convert::player_damage_pre(ev)) {
+            match call_event(
+                &inst,
+                &filter,
+                ctx,
+                handler_id,
+                convert::player_damage_pre(ev),
+            ) {
                 Some((outcome, echoed)) => {
                     if let Some(EventPayload::PlayerDamagePre { amount, .. }) = echoed {
                         ev.amount = amount;

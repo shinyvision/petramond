@@ -23,9 +23,11 @@ impl ReplicaWorld {
                 break;
             };
             drained += 1;
-            self.side.terrain.mesh_jobs_in_flight = self.side.terrain.mesh_jobs_in_flight.saturating_sub(1);
+            self.side.terrain.mesh_jobs_in_flight =
+                self.side.terrain.mesh_jobs_in_flight.saturating_sub(1);
             if self
-                .side.terrain
+                .side
+                .terrain
                 .mesh_job_cancels
                 .get(&done.pos)
                 .is_some_and(|current| current.same_job(&done.cancel))
@@ -33,7 +35,7 @@ impl ReplicaWorld {
                 self.side.terrain.mesh_job_cancels.remove(&done.pos);
             }
             let mut mesh = match done.outcome {
-                crate::world::mesh_pool::MeshOutcome::Built(mesh) => mesh,
+                crate::world::mesh_pool::MeshOutcome::Built(mesh) => *mesh,
                 crate::world::mesh_pool::MeshOutcome::Cancelled => continue,
                 crate::world::mesh_pool::MeshOutcome::Failed => {
                     let current = self
@@ -50,7 +52,8 @@ impl ReplicaWorld {
                 }
             };
             let fresh = self
-                .data.sections
+                .data
+                .sections
                 .get(&done.pos)
                 .is_some_and(|s| s.mesh_revision == done.revision);
             if !fresh {
@@ -89,7 +92,8 @@ impl ReplicaWorld {
             for dz in -1..=1 {
                 for dx in -1..=1 {
                     nbhd[nbhd_idx27(dx, dy, dz)] = self
-                        .data.sections
+                        .data
+                        .sections
                         .get(&SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz))
                         .map(|s| NeighborSnap {
                             blocks: s.block_cube(),

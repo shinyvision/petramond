@@ -99,10 +99,22 @@ pub struct Uniforms {
 /// [`frame_wgsl`] emits this table and the tests pin it to the Rust layout
 /// (offsets contiguous, sizes matching, nothing left out).
 pub(crate) const UNIFORM_FIELDS: [(&str, &str, usize); 10] = [
-    ("view_proj", "mat4x4<f32>", std::mem::offset_of!(Uniforms, view_proj)),
-    ("cam_pos", "vec4<f32>", std::mem::offset_of!(Uniforms, cam_pos)),
+    (
+        "view_proj",
+        "mat4x4<f32>",
+        std::mem::offset_of!(Uniforms, view_proj),
+    ),
+    (
+        "cam_pos",
+        "vec4<f32>",
+        std::mem::offset_of!(Uniforms, cam_pos),
+    ),
     ("fog", "vec4<f32>", std::mem::offset_of!(Uniforms, fog)),
-    ("fog_color", "vec4<f32>", std::mem::offset_of!(Uniforms, fog_color)),
+    (
+        "fog_color",
+        "vec4<f32>",
+        std::mem::offset_of!(Uniforms, fog_color),
+    ),
     (
         "inv_view_proj",
         "mat4x4<f32>",
@@ -118,8 +130,16 @@ pub(crate) const UNIFORM_FIELDS: [(&str, &str, usize); 10] = [
         "vec4<u32>",
         std::mem::offset_of!(Uniforms, atlas_layout),
     ),
-    ("sky_color", "vec4<f32>", std::mem::offset_of!(Uniforms, sky_color)),
-    ("sun_dir", "vec4<f32>", std::mem::offset_of!(Uniforms, sun_dir)),
+    (
+        "sky_color",
+        "vec4<f32>",
+        std::mem::offset_of!(Uniforms, sky_color),
+    ),
+    (
+        "sun_dir",
+        "vec4<f32>",
+        std::mem::offset_of!(Uniforms, sun_dir),
+    ),
     (
         "volume_tint",
         "vec4<f32>",

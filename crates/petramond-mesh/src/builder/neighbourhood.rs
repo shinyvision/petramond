@@ -195,8 +195,7 @@ impl<'a> Neighbourhood<'a> {
         let b = self.block(p);
         b.is_opaque()
             || (b.is_slab() && self.full_slab(p))
-            || (self.registry.pad_class(b.id()) & PAD_OPAQUE_FLUID != 0
-                && self.fluid_fills(p, b))
+            || (self.registry.pad_class(b.id()) & PAD_OPAQUE_FLUID != 0 && self.fluid_fills(p, b))
             || (matches!(face, Face::PosY) && self.seals_floor(p))
     }
 

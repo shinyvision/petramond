@@ -5,7 +5,6 @@
 //! a request that was valid is re-proven, never assumed, at its turn.
 
 use crate::world::ServerWorld;
-use petramond_world::world::raycast;
 use mod_api::ActionRefusal;
 use petramond_math::facing::Facing;
 use petramond_math::math::{IVec3, Vec3};
@@ -16,6 +15,7 @@ use petramond_world::item::ItemStack;
 use petramond_world::world::placement::{
     self, click_spots, HeldRotation, PlaceInputs, PlacementPlan,
 };
+use petramond_world::world::raycast;
 
 use petramond_world::world::raycast::{RayFilter, RaycastHit};
 
@@ -113,7 +113,13 @@ impl ServerWorld {
 
     /// What a crosshair along `dir` from `actor`'s eye rests on.
     fn crosshair(&self, actor: &Actor, dir: Vec3) -> Option<(RaycastHit, f32)> {
-        raycast::filtered(actor.eye, dir, actor.reach, RayFilter::Selectable, &self.data)
+        raycast::filtered(
+            actor.eye,
+            dir,
+            actor.reach,
+            RayFilter::Selectable,
+            &self.data,
+        )
     }
 
     /// The click on the block at `pos` itself (a dig, a use): where `actor`
@@ -170,7 +176,8 @@ impl ServerWorld {
             if hit.normal == IVec3::ZERO {
                 return Err(ActionRefusal::NoLineOfSight);
             }
-            let looked_at = Block::from_id(self.data.chunk_block(hit.block.x, hit.block.y, hit.block.z));
+            let looked_at =
+                Block::from_id(self.data.chunk_block(hit.block.x, hit.block.y, hit.block.z));
             let target = placement::build_position(looked_at, hit.block, hit.normal);
             let builds = want
                 .writes
@@ -256,7 +263,7 @@ impl ServerWorld {
                 let block = clicked_row(paid.item, anchor.block);
                 for held_rotation in HeldRotation::each(paid.item) {
                     let inputs = PlaceInputs::of_click(
-                        self,
+                        self.data(),
                         hit.block,
                         hit.normal,
                         spot,
@@ -271,7 +278,9 @@ impl ServerWorld {
                         hit
                     });
                     match plan {
-                        Some(plan) if construction::advances(&self.data, &plan, want, record, &paid) => {
+                        Some(plan)
+                            if construction::advances(&self.data, &plan, want, record, &paid) =>
+                        {
                             return Ok((plan, paid));
                         }
                         None if body => refusal = ActionRefusal::BodyInTheWay,

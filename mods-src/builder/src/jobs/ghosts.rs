@@ -32,12 +32,7 @@ impl Ghosts {
         !self.restored || BLUEPRINT_CHECK.due(now, 0)
     }
 
-    pub fn sync(
-        &mut self,
-        content: &Content,
-        projects: &mut Projects,
-        live: &[ProjectId],
-    ) {
+    pub fn sync(&mut self, content: &Content, projects: &mut Projects, live: &[ProjectId]) {
         // Whose blueprint is in a player's hand, asked once however many
         // drafts want to know.
         let mut in_hand: Option<HashSet<ProjectId>> = None;

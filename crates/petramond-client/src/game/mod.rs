@@ -35,8 +35,8 @@
 
 pub mod ambient;
 mod block_animation;
-mod camera_rig;
 pub mod body_pose;
+mod camera_rig;
 mod client_mods;
 mod client_presentation;
 pub mod creative;
@@ -53,10 +53,10 @@ mod local_player;
 mod menu_actions;
 mod menu_prediction;
 mod net_link;
-mod replica_state;
 pub mod prediction;
 pub mod presentation;
 pub mod remote_players;
+mod replica_state;
 pub mod replicated;
 pub mod schematic_library;
 pub mod schematic_preview;
@@ -68,8 +68,8 @@ mod session_control;
 mod speed_fov;
 mod terrain_render;
 mod third_person;
-pub mod tools;
 pub mod tick;
+pub mod tools;
 mod view_bob;
 mod world_fx;
 mod world_prediction;
@@ -164,7 +164,8 @@ impl Game {
             self.local.player.toggle_mode();
             self.replica.self_view.mode = self.local.player.mode();
         }
-        self.net.queue(ClientToServer::Action(PlayerAction::ToggleMode));
+        self.net
+            .queue(ClientToServer::Action(PlayerAction::ToggleMode));
     }
 
     #[cfg(test)]
@@ -234,7 +235,8 @@ impl Game {
     /// placement tick).
     #[inline]
     pub fn held_block_state(&self) -> HeldBlockState {
-        self.local.held_rotation
+        self.local
+            .held_rotation
             .held_block_state(self.replica.self_view.inventory.selected().map(|s| s.item))
     }
 
@@ -253,7 +255,8 @@ impl Game {
     /// App-side respawn request (the death screen's button), latched to the
     /// next tick.
     pub fn request_respawn(&mut self) {
-        self.net.queue(ClientToServer::Action(PlayerAction::Respawn));
+        self.net
+            .queue(ClientToServer::Action(PlayerAction::Respawn));
     }
 
     /// Sleep fade progress in `[0, 1]` while the LOCAL player sleeps — the read
@@ -293,7 +296,12 @@ impl Game {
         if self.replica.self_view.mode != petramond::player::PlayerMode::Survival {
             return Vec::new();
         }
-        self.replica.self_view.effects.iter().map(|&(e, _)| e).collect()
+        self.replica
+            .self_view
+            .effects
+            .iter()
+            .map(|&(e, _)| e)
+            .collect()
     }
 
     /// Test injection: set the client's look target without a raycast, then

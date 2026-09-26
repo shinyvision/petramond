@@ -108,14 +108,8 @@ impl SpawnWorld {
     /// through the process-wide feature tile memo, which warms the tiles the
     /// join gen path reuses immediately after.
     fn standing_heights(&self, cx: i32, cz: i32) -> Vec<Option<i32>> {
-        let (region, raw) = cached_feature_region(
-            &self.surface,
-            &self.caves,
-            cx * CHUNK,
-            cz * CHUNK,
-            16,
-            16,
-        );
+        let (region, raw) =
+            cached_feature_region(&self.surface, &self.caves, cx * CHUNK, cz * CHUNK, 16, 16);
         // The cave-adjusted surface equals the raw one exactly when the
         // surface voxel was not carved.
         raw.iter()

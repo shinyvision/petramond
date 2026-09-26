@@ -29,7 +29,9 @@ impl ServerGame {
         let mut held = stack.and_then(|st| st.item.as_block());
         let pos = self.try_place(s, target, events)?;
         if stack.is_some_and(|st| !st.item.placement_variants().is_empty()) {
-            held = Some(Block::from_id(self.world.data().chunk_block(pos.x, pos.y, pos.z)));
+            held = Some(Block::from_id(
+                self.world.data().chunk_block(pos.x, pos.y, pos.z),
+            ));
         }
         events.player(s).placed_block = held;
         let hand = self.sessions[s].player.acting_hand;
@@ -84,9 +86,10 @@ impl ServerGame {
         // the clicked face. Air is replaceable too (a placement may overwrite it) but is
         // never itself a raycast hit, so exclude it. `p` then feeds the torch support
         // gate, the model footprint, and the final replaceable check uniformly.
-        let player_facing = crate::rules::placement::facing_from_forward(self.sessions[s].player.forward());
+        let player_facing =
+            crate::rules::placement::facing_from_forward(self.sessions[s].player.forward());
         let inputs = crate::world::placement::PlaceInputs::of_click(
-            &self.world,
+            self.world.data(),
             h.block,
             h.normal,
             h.spot_fraction(),
@@ -108,7 +111,8 @@ impl ServerGame {
         }
         let slab_stacks_in_hit = self
             .world
-            .data().slab_stack_slot_in_hit(
+            .data()
+            .slab_stack_slot_in_hit(
                 block,
                 h.block,
                 self.sessions[s].held_slab_rotation(),
@@ -243,7 +247,11 @@ impl ServerGame {
         // redundant for the usual non-replaceable furniture (a replaceable cell
         // can't equal it) but guards the rare replaceable custom shape against a
         // no-op self-replace that would still burn a re-bake.
-        match self.world.data().block_if_loaded(anchor.x, anchor.y, anchor.z) {
+        match self
+            .world
+            .data()
+            .block_if_loaded(anchor.x, anchor.y, anchor.z)
+        {
             Some(cur) if cur.is_replaceable() && cur != write_block => {}
             _ => return Some(None),
         }
@@ -280,7 +288,8 @@ impl ServerGame {
             Some(b) => b,
             None => self
                 .world
-                .data().custom_shape_boxes(anchor)
+                .data()
+                .custom_shape_boxes(anchor)
                 .unwrap_or_else(|| write_block.collision_boxes()),
         };
         if self.placement_occupied_by_body(Some(s), anchor, boxes) {

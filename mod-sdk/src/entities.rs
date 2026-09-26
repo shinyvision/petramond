@@ -3,8 +3,8 @@
 //! spawns.
 
 use mod_api::{
-    ConditionOp, EntityRef, Facing, MobAnimOp, MobAnimStateData, MobDriveData,
-    MobKinematicData, MobRidersData, MobSnapshot, PlayerId,
+    ConditionOp, EntityRef, Facing, MobAnimOp, MobAnimStateData, MobDriveData, MobKinematicData,
+    MobRidersData, MobSnapshot, PlayerId,
 };
 
 use crate::__rt::host_fn;

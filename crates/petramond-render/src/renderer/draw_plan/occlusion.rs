@@ -69,7 +69,11 @@ fn opposite(face: Face) -> Face {
 /// only moves AWAY from the camera's section along the step's axis (or out of
 /// the camera's own slab).
 fn moves_away(camera: SectionPos, pos: SectionPos, exit: Face) -> bool {
-    let glam::IVec3 { x: dx, y: dy, z: dz } = exit.dir();
+    let glam::IVec3 {
+        x: dx,
+        y: dy,
+        z: dz,
+    } = exit.dir();
     (pos.cx - camera.cx) * dx >= 0
         && (pos.cy - camera.cy) * dy >= 0
         && (pos.cz - camera.cz) * dz >= 0
@@ -106,7 +110,8 @@ impl SectionOcclusion {
                 self.visibility[(first + (cy - min_cy) as u32) as usize] = vis;
             }
         }
-        self.columns.insert(pos, ColumnVisibility { min_cy, first, len });
+        self.columns
+            .insert(pos, ColumnVisibility { min_cy, first, len });
         self.cy_bounds = (self.cy_bounds.0.min(min_cy), self.cy_bounds.1.max(max_cy));
     }
 
@@ -147,7 +152,11 @@ impl SectionOcclusion {
                 if entry.is_some_and(|entry| !here.connects(entry, exit)) {
                     continue;
                 }
-                let glam::IVec3 { x: dx, y: dy, z: dz } = exit.dir();
+                let glam::IVec3 {
+                    x: dx,
+                    y: dy,
+                    z: dz,
+                } = exit.dir();
                 let next = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
                 if next.cy < lo || next.cy > hi || !admit(next) {
                     continue;

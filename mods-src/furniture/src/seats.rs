@@ -39,7 +39,9 @@ pub(super) fn load_pieces() -> Vec<ResolvedPiece> {
         .into_iter()
         .filter_map(|(block, piece)| {
             if piece.footprint.contains(&0) || piece.seats.is_empty() {
-                log(&format!("furniture: seat row for {block:?} has no footprint or seats"));
+                log(&format!(
+                    "furniture: seat row for {block:?} has no footprint or seats"
+                ));
                 None
             } else {
                 Some(ResolvedPiece { block, piece })
@@ -111,7 +113,7 @@ impl Furniture {
         world: &impl WorldView,
         pos: [i32; 3],
         actor: &PlayerSnapshot,
-    ) -> Option<&'static Piece> {
+    ) -> Option<&Piece> {
         if actor.sneak && held_item_places_block(actor.held) {
             return None;
         }
@@ -149,8 +151,8 @@ pub(super) fn release_broken_piece_sitters(block: BlockId, piece: &Piece, pos: [
                     if get_block(base) == Some(block) {
                         continue; // a still-standing group owns this base
                     }
-                    for seat in piece.seats {
-                        let anchor = footprint_local_to_world(base, piece.footprint, facing, *seat);
+                    for &seat in &piece.seats {
+                        let anchor = footprint_local_to_world(base, piece.footprint, facing, seat);
                         for (id, a) in &posed {
                             if *a == anchor {
                                 mob_dismount(*id);
@@ -175,7 +177,10 @@ mod row_tests {
             let piece: Piece = parse_row_data(&raw).unwrap_or_else(|e| panic!("{block}: {e}"));
             assert!(piece.footprint.iter().all(|side| *side > 0), "{block}");
             assert!(!piece.seats.is_empty(), "{block}");
-            assert!(piece.seats.iter().flatten().all(|v| v.is_finite()), "{block}");
+            assert!(
+                piece.seats.iter().flatten().all(|v| v.is_finite()),
+                "{block}"
+            );
         }
     }
 }

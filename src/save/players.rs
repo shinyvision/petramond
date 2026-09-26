@@ -62,7 +62,12 @@ impl PlayerFiles {
         key: &PlayerKey,
         player: &crate::player::Player,
     ) -> Option<Vec<u8>> {
-        if self.protected.lock().expect("protected players").contains(key) {
+        if self
+            .protected
+            .lock()
+            .expect("protected players")
+            .contains(key)
+        {
             return None;
         }
         Some(match self.kept.lock().expect("kept players").get(key) {
@@ -131,7 +136,11 @@ impl PlayerFiles {
 
     /// Read a player file: `Ok(None)` when it does not exist. Any other read
     /// failure protects `key`'s saves (nothing of it could be kept aside).
-    fn read_player_file(&self, path: &Path, key: &PlayerKey) -> Result<Option<Vec<u8>>, RecordError> {
+    fn read_player_file(
+        &self,
+        path: &Path,
+        key: &PlayerKey,
+    ) -> Result<Option<Vec<u8>>, RecordError> {
         match std::fs::read(path) {
             Ok(bytes) => Ok(Some(bytes)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -187,7 +196,10 @@ impl PlayerFiles {
 
     fn protect(&self, key: &PlayerKey) {
         log::warn!("player {key} will not be saved this session: its file must not be overwritten");
-        self.protected.lock().expect("protected players").insert(*key);
+        self.protected
+            .lock()
+            .expect("protected players")
+            .insert(*key);
     }
 
     /// The identity→display-name registry bytes (`None` = none saved yet).
@@ -205,7 +217,10 @@ impl PlayerFiles {
             return Ok(false);
         }
         std::fs::create_dir_all(&self.players_dir)?;
-        petramond_persist::atomic_file::replace(&self.players_dir.join(PLAYER_REGISTRY_FILE), bytes)?;
+        petramond_persist::atomic_file::replace(
+            &self.players_dir.join(PLAYER_REGISTRY_FILE),
+            bytes,
+        )?;
         *written = generation;
         Ok(true)
     }

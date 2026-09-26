@@ -10,8 +10,7 @@ use petramond_world::item::{ItemStack, ItemType};
 fn wand() -> TestGame {
     let mut game = game_on_empty_chunk();
     game.local.player.set_mode(PlayerMode::Creative);
-    game.server_player_mut()
-        .set_mode(PlayerMode::Creative);
+    game.server_player_mut().set_mode(PlayerMode::Creative);
     game.server_player_mut().inventory.add(ItemStack::new(
         ItemType::by_name("petramond:schematic_wand").unwrap(),
         1,
@@ -22,7 +21,8 @@ fn wand() -> TestGame {
     game.local.cam.pos = WorldPos::new(8.5, 80.5, 0.0);
     game.local.cam.yaw = 0.0;
     game.local.cam.pitch = 0.0;
-    game.tools.world
+    game.tools
+        .world
         .selection
         .selection
         .region([8, 80, 10], [10, 82, 12], false)

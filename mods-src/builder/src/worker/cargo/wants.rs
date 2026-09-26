@@ -7,11 +7,11 @@ use crate::host::prelude::*;
 
 use super::totals;
 use crate::content::BLUEPRINT;
-use crate::worker::Job;
 use crate::project::Project;
 use crate::survey::{key_of, ItemKey, Known};
 use crate::worker::tuning::hands::{DIG_ROOM, DIG_ROOM_MOST, SPOIL_PER_SLOT};
 use crate::worker::tuning::window::LOOKAHEAD;
+use crate::worker::Job;
 use crate::worker::{scaffold, Body, Ctx};
 
 /// Slots kept free for what digging collects: a cellar dug out of a bank

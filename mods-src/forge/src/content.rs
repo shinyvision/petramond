@@ -112,7 +112,7 @@ fn resolve_metals(raw: HashMap<String, RawMetal>) -> HashMap<String, Metal> {
 
 impl Casting {
     pub fn resolve() -> Casting {
-        let moulds = read_rows::<MouldSpec>(keys::MOULD_DATA)
+        let moulds: std::collections::HashMap<_, _> = read_rows::<MouldSpec>(keys::MOULD_DATA)
             .into_iter()
             .map(|(item, mould)| (item, mould.class))
             .collect();

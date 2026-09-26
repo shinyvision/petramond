@@ -156,7 +156,10 @@ mod tests {
         let (back, kept_again) =
             get_containers(&mut Reader::new(&replaced), &pal).expect("decodes");
         assert_eq!(back[&12].slots[1], Some(ItemStack::new(ItemType::Stone, 2)));
-        assert!(kept_again.is_empty(), "filling the slot replaced the kept item");
+        assert!(
+            kept_again.is_empty(),
+            "filling the slot replaced the kept item"
+        );
     }
 
     #[test]

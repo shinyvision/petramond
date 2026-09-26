@@ -1,6 +1,6 @@
-use crate::world::ReplicaWorld;
 use crate::world::cell_change::{CellChange, ChangeKind};
 use crate::world::store::for_each_column_cy;
+use crate::world::ReplicaWorld;
 use crate::world::WorldData;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -53,8 +53,12 @@ impl ReplicaWorld {
             .map(|&b| SectionSummary::from_u8(b))
             .collect();
         self.data.column_summaries.insert(pos, summaries);
-        self.data.column_biome_halos.insert(pos, payload.mesh_biomes.0);
-        self.data.column_deep_band_los.insert(pos, payload.deep_band_lo);
+        self.data
+            .column_biome_halos
+            .insert(pos, payload.mesh_biomes.0);
+        self.data
+            .column_deep_band_los
+            .insert(pos, payload.deep_band_lo);
         // Sections normally land AFTER their column (the sender orders it so),
         // but the deep classification must not silently die if that ordering
         // ever regresses: re-classify anything already installed in this

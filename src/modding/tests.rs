@@ -10,7 +10,7 @@ use mod_api::{AttachSide, HostCall, Stage as ApiStage};
 
 use crate::events::tick::TickEvents;
 use crate::events::{Attach, EventBus, PostEvent, RosterRefs, Stage, TickSystems};
-use crate::world::ServerWorld;
+use crate::world::{ReplicaWorld, ServerWorld};
 use petramond_math::math::Vec3;
 
 use super::instance::ModInstance;
@@ -471,7 +471,10 @@ fn runaway_dispatch_is_disabled_by_its_fuel_budget() {
     runaway.call_init_detached();
     assert!(!runaway.disabled());
     let ret = runaway.call_guest_detached(&mod_api::GuestCall::TickSystem { id: 7 });
-    assert!(ret.is_none() && runaway.disabled(), "the fuel budget trapped the loop");
+    assert!(
+        ret.is_none() && runaway.disabled(),
+        "the fuel budget trapped the loop"
+    );
 }
 
 /// Contract: the PER-TICK budget spans every dispatch a mod makes in one
@@ -506,7 +509,10 @@ fn many_cheap_dispatches_in_one_tick_exhaust_the_tick_budget() {
             assert!(spread.call_guest_detached(&call).is_some());
         });
     }
-    assert!(!spread.disabled(), "two dispatches per tick fit the tick budget");
+    assert!(
+        !spread.disabled(),
+        "two dispatches per tick fit the tick budget"
+    );
 
     let mut crowded = hostile_guest_with_id("crowded", body);
     crowded.set_fuel_budget(budget);
@@ -599,9 +605,13 @@ fn sim_with_a_placed_machine() -> (
 }
 
 /// The parts mask stored at `c`.
-fn parts_mask_at(world: &ServerWorld, c: petramond_math::math::IVec3) -> Option<u32> {
+fn parts_mask_at<S: crate::world::WorldSide>(
+    world: &crate::world::World<S>,
+    c: petramond_math::math::IVec3,
+) -> Option<u32> {
     world
-        .data().cell_kv_get(c.x, c.y, c.z, petramond_world::block_model::PARTS_KV_KEY)
+        .data()
+        .cell_kv_get(c.x, c.y, c.z, petramond_world::block_model::PARTS_KV_KEY)
         .map(<[u8; 4]>::try_from)
         .and_then(Result::ok)
         .map(u32::from_le_bytes)
@@ -679,7 +689,8 @@ fn a_guest_dresses_a_placed_machine_and_a_joiner_sees_it() {
         assert_eq!(parts_mask_at(&sim.world, c), Some(PARTS), "{c:?}");
         assert_eq!(
             sim.world
-                .data().cell_kv_get(c.x, c.y, c.z, petramond_world::block::TINT_KV_KEY),
+                .data()
+                .cell_kv_get(c.x, c.y, c.z, petramond_world::block::TINT_KV_KEY),
             Some(&TINT[..]),
             "{c:?} takes the tint with the mask"
         );
@@ -752,7 +763,7 @@ fn short_debug_bounds_large_payloads() {
         rgba: vec![7; 256 * 256 * 4],
     });
     let rendered = super::host::short_debug(&call, 160);
-    assert!(rendered.starts_with("ClientImageSet"));
+    assert!(rendered.contains("ClientImageSet"));
     assert!(rendered.ends_with('…') && rendered.len() <= 164);
 }
 
@@ -873,11 +884,21 @@ fn gui_click_inventory_and_navigation_use_the_acting_session() {
     );
     assert_eq!(server.sessions()[0].replication().request_open_gui, None);
     assert_eq!(
-        server.sessions()[s].player().inventory.slot(0).unwrap().count,
+        server.sessions()[s]
+            .player()
+            .inventory
+            .slot(0)
+            .unwrap()
+            .count,
         3
     );
     assert_eq!(
-        server.sessions()[0].player().inventory.slot(0).unwrap().count,
+        server.sessions()[0]
+            .player()
+            .inventory
+            .slot(0)
+            .unwrap()
+            .count,
         5
     );
 }

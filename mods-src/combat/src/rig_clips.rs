@@ -65,11 +65,7 @@ fn rig_clips(rig: &str) -> Vec<String> {
 
 #[test]
 fn every_clip_the_pack_plays_is_on_its_rig() {
-    let rows = pack_rows_with_data(
-        include_str!("../pack/items.json"),
-        "items",
-        FAMILY_DATA,
-    );
+    let rows = pack_rows_with_data(include_str!("../pack/items.json"), "items", FAMILY_DATA);
     assert!(!rows.is_empty(), "the pack declares its families");
     let mut played: Vec<(&str, String)> = Vec::new();
     for (row, entry) in &rows {

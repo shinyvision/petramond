@@ -332,7 +332,10 @@ fn create_world_writes_buffered_settings_at_create() {
     click_doc_id(&mut app, "create");
     app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.1);
     assert_eq!(app.screen, crate::app::AppScreen::CreateWorld);
-    assert!(app.shell.create_world().is_some(), "create opens with a session");
+    assert!(
+        app.shell.create_world().is_some(),
+        "create opens with a session"
+    );
 
     // Type the name through the document's focused input, then let the
     // controller mirror it into bound state so Create enables.
@@ -529,8 +532,7 @@ fn chat_opens_from_t_sends_entered_message_via_server_echo() {
     assert!(app.handle_text_key(TextKey::Enter));
     assert_eq!(app.screen, crate::app::AppScreen::Game);
 
-    let msgs = app.game_mut()
-        .take_outbox_for_test();
+    let msgs = app.game_mut().take_outbox_for_test();
     assert!(msgs
         .iter()
         .any(|msg| matches!(msg, ClientToServer::ChatSend { text } if text == "hello")));
@@ -555,8 +557,7 @@ fn slash_opens_chat_with_a_command_prefix() {
     assert!(app.handle_text_input("time set night"));
     assert!(app.handle_text_key(TextKey::Enter));
 
-    let msgs = app.game_mut()
-        .take_outbox_for_test();
+    let msgs = app.game_mut().take_outbox_for_test();
     assert!(msgs
         .iter()
         .any(|msg| matches!(msg, ClientToServer::ChatSend { text } if text == "/time set night")));
@@ -592,8 +593,7 @@ fn chat_input_uses_shared_text_editor_selection_and_clipboard() {
     app.handle_text_shortcut(TextShortcut::Paste);
     assert!(app.handle_text_key(TextKey::Enter));
 
-    let msgs = app.game_mut()
-        .take_outbox_for_test();
+    let msgs = app.game_mut().take_outbox_for_test();
     assert!(msgs
         .iter()
         .any(|msg| matches!(msg, ClientToServer::ChatSend { text } if text == "pasted")));
@@ -740,7 +740,10 @@ fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
     assert!(app.remap_capture_key(KeyCode::Escape, true));
     assert_eq!(app.options.remap(), None);
     assert_eq!(
-        app.options.settings.bindings.binding(BindableAction::StrafeRight),
+        app.options
+            .settings
+            .bindings
+            .binding(BindableAction::StrafeRight),
         Binding::key(KeyCode::KeyD)
     );
 
@@ -756,7 +759,10 @@ fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
     assert!(app.remap_capture_key(KeyCode::KeyK, true));
     assert_eq!(app.options.remap(), None);
     assert_eq!(
-        app.options.settings.bindings.binding(BindableAction::StrafeLeft),
+        app.options
+            .settings
+            .bindings
+            .binding(BindableAction::StrafeLeft),
         Binding::key(KeyCode::KeyK)
     );
 
@@ -776,7 +782,11 @@ fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
     assert_eq!(app.options.remap(), Some("sprint"), "hold = chord start");
     assert!(app.remap_capture_key(KeyCode::AltLeft, false));
     assert_eq!(
-        app.options.settings.bindings.binding(BindableAction::Sprint).input,
+        app.options
+            .settings
+            .bindings
+            .binding(BindableAction::Sprint)
+            .input,
         BoundInput::Key(KeyCode::AltLeft)
     );
 }
@@ -785,8 +795,9 @@ fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
 /// `action_id`, resolved through the same row list the controller uses (the
 /// list interleaves category headers, so indexes are never hardcoded).
 fn click_bind_row(app: &mut App, action_id: &str) {
-    let index = crate::app::shell_docs::controls_action_row_index(&app.controls.action_table, action_id)
-        .unwrap_or_else(|| panic!("no controls row for '{action_id}'"));
+    let index =
+        crate::app::shell_docs::controls_action_row_index(&app.controls.action_table, action_id)
+            .unwrap_or_else(|| panic!("no controls row for '{action_id}'"));
     let rect = app
         .ui
         .out()
@@ -817,9 +828,10 @@ fn attack_rebinds_from_mouse_to_key() {
     app.handle_raw_mouse(petramond_input::keycode::MouseButton::Left, false);
     app.controls.pointer.clear_edges();
 
-    app.options.settings
+    app.options
+        .settings
         .bindings
-        .set(BindableAction::Attack, Binding::key(KeyCode::KeyF));
+        .set_id(BindableAction::Attack.id(), Binding::key(KeyCode::KeyF));
     assert!(app.handle_raw_key(KeyCode::KeyF, true));
     let input = app.take_game_input();
     assert!(
@@ -955,7 +967,10 @@ fn the_screen_shake_checkbox_toggles_the_setting_and_reaches_the_renderer() {
     use petramond_world::gui_state::GuiKind;
     let mut app = App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     let screen = (1280, 720);
-    assert!(app.options.settings.screen_shake, "screen shake defaults on");
+    assert!(
+        app.options.settings.screen_shake,
+        "screen shake defaults on"
+    );
     app.screen = crate::app::AppScreen::OptionsGraphics;
     for (i, expected) in [false, true].into_iter().enumerate() {
         let now = i as f64 * 0.3;
@@ -1002,18 +1017,22 @@ fn a_tool_adjust_with_nothing_to_adjust_steps_the_hotbar_the_way_the_wheel_does(
     ] {
         let mut app = super::app();
         assert!(app.screen.gameplay_enabled());
-        app.options.settings
+        app.options.settings.bindings.set_id(
+            BindableAction::HotbarNext.id(),
+            Binding::scroll(ScrollDir::Down),
+        );
+        app.options.settings.bindings.set_id(
+            BindableAction::HotbarPrev.id(),
+            Binding::scroll(ScrollDir::Up),
+        );
+        app.options
+            .settings
             .bindings
-            .set(BindableAction::HotbarNext, Binding::scroll(ScrollDir::Down));
-        app.options.settings
+            .set_id(BindableAction::AdjustToolNext.id(), chord(adjust_next));
+        app.options
+            .settings
             .bindings
-            .set(BindableAction::HotbarPrev, Binding::scroll(ScrollDir::Up));
-        app.options.settings
-            .bindings
-            .set(BindableAction::AdjustToolNext, chord(adjust_next));
-        app.options.settings
-            .bindings
-            .set(BindableAction::AdjustToolPrev, chord(adjust_prev));
+            .set_id(BindableAction::AdjustToolPrev.id(), chord(adjust_prev));
         app.rebuild_action_table();
 
         for notch in [-1.0, 1.0] {

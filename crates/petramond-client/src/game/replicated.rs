@@ -766,13 +766,16 @@ impl Game {
         debug_assert!(self.replica.section_installs.is_empty());
         for msg in msgs.drain(..) {
             match msg {
-                ServerToClient::ColumnData(column) => self.replica.world.install_remote_column(column),
+                ServerToClient::ColumnData(column) => {
+                    self.replica.world.install_remote_column(column)
+                }
                 ServerToClient::SectionData(section) => {
                     // A full payload supersedes any parked copy: the server
                     // only re-streams a claimed section when its content
                     // moved (or after a SectionCacheMiss dropped the belief).
                     self.replica.section_cache.discard(section.pos);
-                    if let Some(pos) = self.replica.world.install_remote_section_deferred(*section) {
+                    if let Some(pos) = self.replica.world.install_remote_section_deferred(*section)
+                    {
                         self.replica.section_installs.push(pos);
                     }
                 }
@@ -837,7 +840,8 @@ impl Game {
                 // time is the real cost of installing the batch's messages).
                 ServerToClient::StreamBatchStart => self.net.stream_batch_started(),
                 ServerToClient::StreamBatchEnd { count } => {
-                    self.replica.world
+                    self.replica
+                        .world
                         .finish_remote_install_batch(&self.replica.section_installs);
                     self.replica.section_installs.clear();
                     self.net.stream_batch_ended(count);
@@ -856,7 +860,8 @@ impl Game {
                 }
             }
         }
-        self.replica.world
+        self.replica
+            .world
             .finish_remote_install_batch(&self.replica.section_installs);
         self.replica.section_installs.clear();
     }
@@ -897,7 +902,13 @@ impl Game {
         let spot = petramond::mob::riding::dismount_spot(
             self.local.player.pos,
             self.local.player.yaw,
-            |feet| petramond::mob::riding::player_body_free(self.replica.world.data(), feet, &obstacles),
+            |feet| {
+                petramond::mob::riding::player_body_free(
+                    self.replica.world.data(),
+                    feet,
+                    &obstacles,
+                )
+            },
             |feet| petramond::mob::riding::dismount_footing_safe(self.replica.world.data(), feet),
         );
         if let Some(feet) = spot {
@@ -926,7 +937,8 @@ impl Game {
     /// how row-assertion tests step the staged interpolation deterministically.
     #[cfg(test)]
     pub fn commit_replication_window_for_test(&mut self) {
-        self.replica.entities
+        self.replica
+            .entities
             .advance_clock(crate::game::tick::TICK_DT * 1.001);
         self.advance_interp_window();
     }
@@ -934,8 +946,13 @@ impl Game {
     /// Adopt one replication batch: block deltas and client read models apply
     /// immediately, entity rows enter the interpolation FIFO, and this
     /// window's events translate to LOCAL types and buffer for `GameEvents`.
+    #[allow(clippy::boxed_local)] // The network message already owns a boxed tick payload.
     pub fn apply_tick_update(&mut self, update: Box<TickUpdate>) {
-        let TickUpdate { tick, clock: _, sections } = *update;
+        let TickUpdate {
+            tick,
+            clock: _,
+            sections,
+        } = *update;
         self.replica.entities.set_tick(tick);
         let mut rows = EntityWindow {
             mobs: MobLane::default(),
@@ -1019,10 +1036,8 @@ impl Game {
         // so the store reconciles the moment the pending queue drains.
         let stale_inventory = self.prediction.awaits_inventory_authority(outcomes);
         let stale_menu = self.prediction.awaits_menu_authority(outcomes);
-        let adopted_inventory = !stale_inventory
-            && self_state
-                .as_ref()
-                .is_some_and(|s| s.inventory.is_some());
+        let adopted_inventory =
+            !stale_inventory && self_state.as_ref().is_some_and(|s| s.inventory.is_some());
         let adopted_menu = !stale_menu && menu_sync.is_some();
         if let Some(state) = &self_state {
             self.replica.self_view.apply(state, !stale_inventory);
@@ -1034,7 +1049,8 @@ impl Game {
             // speed). An unsynced predicted player would walk at the wrong
             // speed for the whole duration and rubber-band every batch.
             self.local.player.set_effects(
-                self.replica.self_view
+                self.replica
+                    .self_view
                     .effects
                     .iter()
                     .map(
@@ -1049,8 +1065,10 @@ impl Game {
             // movement code reads every step, and the actions this body is
             // barred from. Both are authority, so the predicted body adopts
             // them with the effects.
-            self.local.player
-                .adopt_resolved_body(self.replica.self_view.move_scale, self.replica.self_view.denied_actions);
+            self.local.player.adopt_resolved_body(
+                self.replica.self_view.move_scale,
+                self.replica.self_view.denied_actions,
+            );
             // Tick-side transform mutations (teleports, knockback) win over
             // the local prediction — per-field against what we last sent.
             if let Some(t) = &state.transform {

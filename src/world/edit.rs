@@ -1,5 +1,5 @@
-use crate::world::{World, WorldSide};
 use crate::world::WorldData;
+use crate::world::{World, WorldSide};
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 use petramond_world::block_state::LogAxis;
@@ -120,7 +120,11 @@ impl<S: WorldSide> World<S> {
         // above already cleared the cell's per-cell state and mod KV for that
         // reason), heightmaps, remesh, shape bakes and refinement, the
         // bounded relight and the announce — runs in the one pipeline.
-        self.apply_cell_changes(&[CellChange::new(IVec3::new(wx, wy, wz), old, ChangeKind::Write)]);
+        self.apply_cell_changes(&[CellChange::new(
+            IVec3::new(wx, wy, wz),
+            old,
+            ChangeKind::Write,
+        )]);
         true
     }
 
@@ -166,12 +170,20 @@ impl<S: WorldSide> World<S> {
     /// flood reach. Sound because a value `v` at the cell decays 2 per step:
     /// no cell past `v/2 - 1` can observe a difference. The cell's own light
     /// cubes still hold their pre-edit values when this runs.
-    pub(super) fn edit_light_reach(&self, wx: i32, wy: i32, wz: i32, old: Block, new: Block) -> i32 {
+    pub(super) fn edit_light_reach(
+        &self,
+        wx: i32,
+        wy: i32,
+        wz: i32,
+        old: Block,
+        new: Block,
+    ) -> i32 {
         if old.light_emission() != 0 || new.light_emission() != 0 {
             return Self::LIGHT_REACH;
         }
         let value_at = |x: i32, y: i32, z: i32| {
-            self.data.skylight_at_world(x, y, z)
+            self.data
+                .skylight_at_world(x, y, z)
                 .max(self.data.blocklight_at_world(x, y, z)) as i32
         };
         let v = if old.is_opaque() && new == Block::Air {
@@ -279,7 +291,11 @@ impl<S: WorldSide> World<S> {
 
         let sky_cover_change = SkyCoverChange::between(old_sky_cover, new_sky_cover);
         if new_surface != old_surface || sky_cover_change.is_some() {
-            let col = self.data.columns.get_mut(&cpos).expect("column was read above");
+            let col = self
+                .data
+                .columns
+                .get_mut(&cpos)
+                .expect("column was read above");
             col.set_surface_y(lx, lz, new_surface);
             col.set_sky_cover_y(lx, lz, new_sky_cover);
         }

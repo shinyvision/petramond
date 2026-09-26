@@ -195,7 +195,9 @@ pub(super) fn handle_registry_call(call: RegistryCall) -> HostRet {
                 .data_value(&key)
                 .map(|v| v.as_bytes().to_vec()),
         ),
-        RegistryCall::BlockInfo { block } => HostRet::BlockInfo(block_info_data(block).map(Box::new)),
+        RegistryCall::BlockInfo { block } => {
+            HostRet::BlockInfo(block_info_data(block).map(Box::new))
+        }
         RegistryCall::BlockInfos { blocks } => match batch_guard("BlockInfos id", blocks.len()) {
             Some(err) => err,
             None => HostRet::BlockInfos(blocks.into_iter().map(block_info_data).collect()),
@@ -459,7 +461,10 @@ mod tests {
         assert!(!leaves.contains(&mod_api::BlockId(petramond_world::block::Block::Stone.id())));
         for tag in ["no_such_tag", "mymod:no_such_tag"] {
             assert_eq!(
-                handle_host_call(&mut data, HostCall::from(calls::BlocksByTag { tag: tag.into() })),
+                handle_host_call(
+                    &mut data,
+                    HostCall::from(calls::BlocksByTag { tag: tag.into() })
+                ),
                 HostRet::BlockList(Vec::new()),
                 "unlisted tag '{tag}' must read as an empty set"
             );
@@ -492,7 +497,10 @@ mod tests {
         assert!(!shovels.contains(&by_name("petramond:stick")));
         for tag in ["no_such_tag", "mymod:no_such_tag"] {
             assert_eq!(
-                handle_host_call(&mut data, HostCall::from(calls::ItemsByTag { tag: tag.into() })),
+                handle_host_call(
+                    &mut data,
+                    HostCall::from(calls::ItemsByTag { tag: tag.into() })
+                ),
                 HostRet::ItemList(Vec::new()),
                 "unlisted tag '{tag}' must read as an empty set"
             );

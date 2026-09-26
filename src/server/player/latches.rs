@@ -331,7 +331,10 @@ impl InputLatches {
 
     /// Queue one menu intent behind the ones already waiting. A full queue
     /// hands the intent back, for the caller to deny.
-    pub fn queue_menu_action(&mut self, action: PendingMenuAction) -> Result<(), PendingMenuAction> {
+    pub fn queue_menu_action(
+        &mut self,
+        action: PendingMenuAction,
+    ) -> Result<(), PendingMenuAction> {
         if self.menu_actions.len() >= MENU_QUEUE_DEPTH {
             return Err(action);
         }
@@ -389,7 +392,7 @@ mod tests {
 
     fn click(request_id: ClientRequestId) -> PendingMenuAction {
         PendingMenuAction::DropSlot {
-            slot: MenuSlot::Hotbar(0),
+            slot: MenuSlot::Inventory(0),
             all: false,
             request_id,
         }
@@ -468,8 +471,14 @@ mod tests {
             player: None,
         });
         let player = Player::new(WorldPos::new(0.0, 64.0, 0.0));
-        latches.pending_use_click =
-            Some(PendingUseClick::capture(&player, None, None, Some(5), true, false));
+        latches.pending_use_click = Some(PendingUseClick::capture(
+            &player,
+            None,
+            None,
+            Some(5),
+            true,
+            false,
+        ));
         assert_eq!(latches.drop_action_edges(), Some(5));
         assert!(!latches.intent_break_held);
         assert_eq!(latches.attack(), None);

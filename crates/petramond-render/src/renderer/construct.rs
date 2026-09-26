@@ -341,10 +341,7 @@ pub(super) fn new_renderer_inner(
 /// The frame uniforms before the first `update_uniforms`: identity view, the
 /// default fog band, white sky, late-morning sun. The icon-atlas bake reads
 /// this buffer, so these are also what the baked icons see.
-fn create_uniform_buffer(
-    device: &wgpu::Device,
-    (fog_start, fog_end): (f32, f32),
-) -> wgpu::Buffer {
+fn create_uniform_buffer(device: &wgpu::Device, (fog_start, fog_end): (f32, f32)) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("uniforms"),
         contents: bytemuck::cast_slice(&[Uniforms {

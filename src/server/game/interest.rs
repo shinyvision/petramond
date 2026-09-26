@@ -212,6 +212,7 @@ impl<K: Copy + Eq + Hash + Ord> InterestSet<K> {
     }
 
     /// Whether this set tracks `key` as of its latest refresh.
+    #[cfg(test)]
     pub(super) fn contains(&self, key: K) -> bool {
         self.tracked.contains(&key)
     }

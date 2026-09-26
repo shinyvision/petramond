@@ -18,7 +18,6 @@
 //! claiming consumer, plus the `used_unpredicted` echo for effects the
 //! initiator's replica could not foresee).
 
-use petramond_world::world::raycast;
 use super::game::ServerGame;
 use crate::events::tick::TickEvents;
 use crate::events::{InteractAttempt, Outcome, PostEvent};
@@ -375,7 +374,8 @@ impl ServerGame {
         let sess = &mut self.sessions[s];
         sess.replication.pending_corrective_cells.push(target.block);
         if target.normal != IVec3::ZERO {
-            sess.replication.pending_corrective_cells
+            sess.replication
+                .pending_corrective_cells
                 .push(target.block + target.normal);
         }
     }
@@ -805,7 +805,7 @@ mod tests {
             )
         };
         let ray = petramond_world::item::UseRay::Fluids(&[Block::Water]);
-        let (hit, _) = raycast::use_ray(eye, fwd, server.world.data(), ray)
+        let (hit, _) = petramond_world::world::raycast::use_ray(eye, fwd, server.world.data(), ray)
             .expect("the aim ray reaches the pool");
         assert_eq!(
             hit.block,
@@ -825,7 +825,8 @@ mod tests {
         );
         assert!(
             server.sessions[0]
-                .input.pending_use_click
+                .input
+                .pending_use_click
                 .is_some_and(|c| c.target.is_some()),
             "the receipt-time water-ray validator accepted the claimed cell"
         );

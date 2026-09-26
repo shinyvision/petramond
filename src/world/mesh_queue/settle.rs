@@ -4,7 +4,6 @@
 use crate::world::ReplicaWorld;
 use petramond_world::chunk::SectionPos;
 
-
 /// Pump frames a section waits after its latest arrival before meshing with
 /// an incomplete neighbourhood — long enough for the rest of a batch to land.
 const QUIET_FRAMES: u64 = 2;
@@ -26,10 +25,15 @@ impl ReplicaWorld {
             return;
         }
         let frame = self.side.terrain.mesh_pump_frame;
-        let entry = self.side.terrain.mesh_settle.entry(pos).or_insert(MeshSettle {
-            quiet_after: frame + QUIET_FRAMES,
-            deadline: frame + DEADLINE_FRAMES,
-        });
+        let entry = self
+            .side
+            .terrain
+            .mesh_settle
+            .entry(pos)
+            .or_insert(MeshSettle {
+                quiet_after: frame + QUIET_FRAMES,
+                deadline: frame + DEADLINE_FRAMES,
+            });
         entry.quiet_after = frame + QUIET_FRAMES;
     }
 

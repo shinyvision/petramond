@@ -30,7 +30,8 @@ fn schematic_placement_and_history_allow_overlapping_players_and_mobs() {
         .unwrap();
     let boxes = server
         .world
-        .data().collision_boxes_at(cells[0].x, cells[0].y - 1, cells[0].z)
+        .data()
+        .collision_boxes_at(cells[0].x, cells[0].y - 1, cells[0].z)
         .to_vec();
     for pos in cells {
         assert!(

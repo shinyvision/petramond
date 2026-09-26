@@ -132,8 +132,14 @@ fn the_generated_transition_decode_reads_the_lanes_apply_writes() {
     ] {
         assert!(reads.contains(&want), "transition decode misses {want:?}");
     }
-    assert!(text.contains("packed2 >> 28u"), "high nibble starts at bit 28");
-    assert!(text.contains("(packed >> 31u) << 12u"), "packed bit 31 is slot bit 12");
+    assert!(
+        text.contains("packed2 >> 28u"),
+        "high nibble starts at bit 28"
+    );
+    assert!(
+        text.contains("(packed >> 31u) << 12u"),
+        "packed bit 31 is slot bit 12"
+    );
 }
 
 /// The module is self-contained WGSL: it parses and names every helper the

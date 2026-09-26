@@ -42,7 +42,13 @@ impl HandPass {
         // Extruded held sprite (block atlas) OR a held bbmodel block (model
         // atlas) — both ride the item3d pipeline (non-indexed, depth-tested).
         if self.item3d_vertex_count > 0 {
-            self.draw_item3d(pass, ctx, 0, self.held_is_model, 0..self.item3d_vertex_count);
+            self.draw_item3d(
+                pass,
+                ctx,
+                0,
+                self.held_is_model,
+                0..self.item3d_vertex_count,
+            );
         }
         // The OFF hand's item3d stream (appended range, MVP slot 1).
         if self.off_item3d_count > 0 {

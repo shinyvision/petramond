@@ -92,7 +92,9 @@ pub(super) fn handle_worldgen_call(data: &mut ModStoreData, call: WorldgenCall) 
             if !filter.is_valid() {
                 return data.refuse_registration(
                     ErrorCode::InvalidArgument,
-                    format!("worldgen feature {feature_id}: write bounds are inverted ({filter:?})"),
+                    format!(
+                        "worldgen feature {feature_id}: write bounds are inverted ({filter:?})"
+                    ),
                 );
             }
             if stage == mod_api::WorldgenStage::Climate {

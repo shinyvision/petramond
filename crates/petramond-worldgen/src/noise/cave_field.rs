@@ -27,10 +27,10 @@ mod regions;
 mod sampling;
 mod source;
 mod terrain_surface;
+pub(crate) use caches::CaveCaches;
 use carve::BatchCarve;
 #[cfg(test)]
 use carve::MAX_FLOOR_DEPTH;
-pub(crate) use caches::CaveCaches;
 pub use fluid_falls::FallCell;
 #[cfg(test)]
 mod separation_tests;

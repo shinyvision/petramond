@@ -53,22 +53,8 @@ jobs:
           cache-workspaces: mods-src -> ../target
           save-cache: true
 
-      - name: Build and install mods
-        run: make mods MOD_PROFILE=release CARGO="cargo --locked"
-
-      # Stage every pack `make mods` installed (a pack = a directory with a
-      # pack.json, the same rule the game's discovery uses) — never a hardcoded
-      # list, which silently dropped newer packs from releases (vehicles and
-      # weather were missing until 2026-07-21).
-      - name: Stage bundled mods
-        run: |
-          set -euo pipefail
-          mkdir -p staged-mods
-          for d in mods/*/; do
-            [ -f "${d}pack.json" ] || continue
-            cp -r "$d" "staged-mods/$(basename "$d")"
-          done
-          echo "staged packs:" staged-mods/*/
+      - name: Build and stage bundled mods
+        run: CARGO_CMD="cargo --locked" bash scripts/install-mods.sh --profile release staged-mods
 
       - uses: actions/upload-artifact@v4
         with:

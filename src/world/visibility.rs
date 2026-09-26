@@ -30,7 +30,6 @@ use std::collections::VecDeque;
 use petramond_math::math::FACE_NEIGHBORS;
 use petramond_world::chunk::SectionPos;
 
-
 const NEAR_LOAD_RADIUS: i32 = 2;
 
 impl<S: WorldSide> World<S> {
@@ -57,7 +56,8 @@ impl<S: WorldSide> World<S> {
             (pos.cx - target.center.cx).abs() <= NEAR_LOAD_RADIUS
                 && (pos.cz - target.center.cz).abs() <= NEAR_LOAD_RADIUS
         };
-        self.data.last_load_target.is_some_and(near) || self.data.extra_load_targets.iter().copied().any(near)
+        self.data.last_load_target.is_some_and(near)
+            || self.data.extra_load_targets.iter().copied().any(near)
     }
 }
 
@@ -121,7 +121,8 @@ impl ReplicaWorld {
                 // look from, and a still-pending neighbour re-raises `vis_dirty`
                 // the moment it lands, re-running this refresh.
                 let n_side_open = self
-                    .data.sections
+                    .data
+                    .sections
                     .get(&n)
                     .is_some_and(|ns| ns.face_plane_open(-dx, -dy, -dz));
                 if !n_side_open {
@@ -163,7 +164,8 @@ impl ReplicaWorld {
 
         // Re-queue parked sections that just became visible (or entered the ring).
         let unpark: Vec<SectionPos> = self
-            .side.terrain
+            .side
+            .terrain
             .hidden_parked
             .iter()
             .filter(|p| visible.contains(p) || self.near_load_center(**p))
@@ -179,7 +181,8 @@ impl ReplicaWorld {
         // this the bounded wake-up path for clean-light and previously meshed
         // sections that had no first-light deferred entry to recheck.
         let unseal_near: Vec<SectionPos> = self
-            .side.terrain
+            .side
+            .terrain
             .sealed_parked
             .iter()
             .filter(|p| self.near_load_center(**p))
@@ -195,8 +198,8 @@ impl ReplicaWorld {
 
 #[cfg(test)]
 mod tests {
-    use crate::world::ReplicaWorld;
     use crate::world::store::LoadTarget;
+    use crate::world::ReplicaWorld;
     use petramond_world::block::Block;
     use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
     use petramond_world::section::Section;

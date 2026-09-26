@@ -117,4 +117,3 @@ pub fn blocks_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u16> {
         })
         .collect()
 }
-

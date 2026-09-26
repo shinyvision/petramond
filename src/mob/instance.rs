@@ -412,7 +412,11 @@ impl Instance {
     pub(super) fn shear(&mut self) -> Option<u8> {
         // The shared coat gate — the rule the client's shear prediction runs
         // against the replicated row.
-        if !crate::rules::item_use::can_shear_coat(self.kind, self.combat.death.is_dead(), self.is_shorn()) {
+        if !crate::rules::item_use::can_shear_coat(
+            self.kind,
+            self.combat.death.is_dead(),
+            self.is_shorn(),
+        ) {
             return None;
         }
         let spec = def(self.kind).shear?;

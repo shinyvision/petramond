@@ -27,7 +27,8 @@ impl WorldData {
         let cur = self.cursor();
         if buoyancy == Buoyancy::Surface {
             let cell = feet.block();
-            return fluid_surface_at(&cur, cell).or_else(|| fluid_surface_at(&cur, cell - IVec3::Y));
+            return fluid_surface_at(&cur, cell)
+                .or_else(|| fluid_surface_at(&cur, cell - IVec3::Y));
         }
         let x = feet.x.floor() as i32;
         let z = feet.z.floor() as i32;

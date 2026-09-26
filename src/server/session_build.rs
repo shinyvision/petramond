@@ -163,8 +163,7 @@ pub fn build_server_with_pool(
         crate::worker::warm_surface_tiles(&pool, seed, tiles);
     }
     // The SERVER world: sim + gen + light, no meshing (a replica draws).
-    let mut world =
-        ServerWorld::with_pool(seed, render_dist, pool.clone());
+    let mut world = ServerWorld::with_pool(seed, render_dist, pool.clone());
     perf.mark("pool_and_world");
     // Section records deflate on the same shared pool.
     let save = opened.save.map(|(mut save, saved)| {

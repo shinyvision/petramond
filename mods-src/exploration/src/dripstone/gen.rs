@@ -228,7 +228,8 @@ pub fn generate(d: &Dripstone, ctx: &GenCtx) -> Vec<GenWrite> {
     if !feet.is_empty() {
         probes.ask_unseen(
             ctx,
-            feet.iter().flat_map(|f| cone_cells(f.base, f.up, f.wide, false)),
+            feet.iter()
+                .flat_map(|f| cone_cells(f.base, f.up, f.wide, false)),
         );
         let space = |c: [i32; 3]| snapshot(c).unwrap_or_else(|| Space::of(probes.space(c)));
         for f in &feet {

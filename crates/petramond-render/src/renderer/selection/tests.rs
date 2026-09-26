@@ -1,7 +1,7 @@
 use super::*;
 use glam::Vec3;
-use petramond::world::ReplicaWorld;
 use petramond::save::client::AntiAliasing;
+use petramond::world::ReplicaWorld;
 use petramond_math::facing::Facing;
 use petramond_math::world_pos::WorldPos;
 use petramond_world::block::{Block, CellCodec, ShapeFamily};
@@ -47,7 +47,8 @@ fn selection_highlight_visual_check() {
         ),
     ] {
         renderer.set_anti_aliasing(aa);
-        let mut world = ReplicaWorld::with_pool(0, 1, Arc::new(petramond::worker::JobPool::inline()));
+        let mut world =
+            ReplicaWorld::with_pool(0, 1, Arc::new(petramond::worker::JobPool::inline()));
         let sp = SectionPos::new(origin.x / 16, 0, origin.z / 16);
         let mut section = Section::new(sp.cx, sp.cy, sp.cz);
         for x in 2..13 {

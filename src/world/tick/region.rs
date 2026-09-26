@@ -25,7 +25,8 @@ impl<S: WorldSide> World<S> {
             for cz in first.cz..=last.cz {
                 for cx in first.cx..=last.cx {
                     let sp = SectionPos::new(cx, cy, cz);
-                    let Some(section) = self.data.sections.get(&sp).filter(|s| !s.is_empty_air()) else {
+                    let Some(section) = self.data.sections.get(&sp).filter(|s| !s.is_empty_air())
+                    else {
                         continue;
                     };
                     let (x, y, z) = sp.origin_world();

@@ -55,7 +55,11 @@ fn a_sealed_cave_hides_everything_behind_its_walls() {
     assert!(occlusion.flood(camera, inside(4)));
     assert!(occlusion.is_visible(camera));
     for face in Face::ALL {
-        let glam::IVec3 { x: dx, y: dy, z: dz } = face.dir();
+        let glam::IVec3 {
+            x: dx,
+            y: dy,
+            z: dz,
+        } = face.dir();
         let wall = SectionPos::new(dx, 1 + dy, dz);
         assert!(occlusion.is_visible(wall), "{face:?} wall");
     }
@@ -79,7 +83,10 @@ fn a_tunnel_is_seen_along_its_length_only() {
     });
     assert!(occlusion.flood(camera, inside(4)));
     for cx in -4..=4 {
-        assert!(occlusion.is_visible(SectionPos::new(cx, 1, 0)), "tunnel {cx}");
+        assert!(
+            occlusion.is_visible(SectionPos::new(cx, 1, 0)),
+            "tunnel {cx}"
+        );
     }
     // The walls next to the camera are entered from it; farther along the
     // tunnel no face of a tunnel section opens sideways.
@@ -93,7 +100,10 @@ fn a_tunnel_is_seen_along_its_length_only() {
 #[test]
 fn sight_lines_never_step_back_toward_the_camera() {
     let camera = SectionPos::new(0, 0, 0);
-    assert!(moves_away(camera, camera, Face::NegX), "the camera's own section");
+    assert!(
+        moves_away(camera, camera, Face::NegX),
+        "the camera's own section"
+    );
     assert!(moves_away(camera, SectionPos::new(2, 0, 0), Face::PosX));
     assert!(!moves_away(camera, SectionPos::new(2, 0, 0), Face::NegX));
     assert!(moves_away(camera, SectionPos::new(2, 0, 0), Face::PosZ));
@@ -110,8 +120,14 @@ fn unrecorded_sections_are_open() {
         std::iter::once((0, SectionVisibility::NONE)),
     );
     assert!(occlusion.flood(SectionPos::new(0, 0, 0), |p| p.cx.abs() <= 3 && p.cz == 0));
-    assert!(occlusion.is_visible(SectionPos::new(3, 0, 0)), "reached through open air");
-    assert!(!occlusion.is_visible(SectionPos::new(0, 1, 0)), "above the loaded band");
+    assert!(
+        occlusion.is_visible(SectionPos::new(3, 0, 0)),
+        "reached through open air"
+    );
+    assert!(
+        !occlusion.is_visible(SectionPos::new(0, 1, 0)),
+        "above the loaded band"
+    );
 }
 
 #[test]

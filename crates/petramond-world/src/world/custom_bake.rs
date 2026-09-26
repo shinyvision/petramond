@@ -179,9 +179,7 @@ impl WorldData {
         ] {
             let p = IVec3::new(wx + dx, wy + dy, wz + dz);
             let b = Block::from_id(self.chunk_block(p.x, p.y, p.z));
-            if b.is_custom_shape()
-                && b.shape_kind_def().params.state_key() == Some(key)
-            {
+            if b.is_custom_shape() && b.shape_kind_def().params.state_key() == Some(key) {
                 self.invalidate_custom_bake(p);
                 self.content.custom_bake_dirty.insert(p);
             }

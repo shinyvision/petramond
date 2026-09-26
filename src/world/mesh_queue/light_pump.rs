@@ -50,7 +50,8 @@ impl<S: WorldSide> World<S> {
                 .into_iter()
                 .filter(|pos| {
                     let bakeable = self
-                        .data.sections
+                        .data
+                        .sections
                         .get(pos)
                         .is_some_and(|s| s.light_dirty && !s.all_opaque());
                     // Deferred first-timers bake once their gen neighbourhood
@@ -106,7 +107,8 @@ impl<S: WorldSide> World<S> {
                 }
             };
             let fresh = self
-                .data.sections
+                .data
+                .sections
                 .get(&res.pos)
                 .is_some_and(|s| s.light_dirty && s.light_revision == res.revision);
             if !fresh {
@@ -304,7 +306,8 @@ impl ReplicaWorld {
                 for dx in -1..=1 {
                     let p = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
                     if self
-                        .data.sections
+                        .data
+                        .sections
                         .get(&p)
                         .is_some_and(|s| s.light_dirty && !s.all_opaque())
                         && !self.section_sealed_by_loaded_neighbors(p)
@@ -317,7 +320,8 @@ impl ReplicaWorld {
                             && !self.side.terrain.prediction_terrain.owns_light(p)
                         {
                             let key = self
-                                .data.last_load_target
+                                .data
+                                .last_load_target
                                 .map_or(0, |t| t.section_priority_key(p));
                             self.light_bakes.request(
                                 key,
@@ -343,7 +347,8 @@ impl ReplicaWorld {
                 for dx in -1..=1 {
                     let p = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
                     if self
-                        .data.sections
+                        .data
+                        .sections
                         .get(&p)
                         .is_some_and(|s| s.light_dirty && !s.all_opaque())
                         && !self.section_sealed_by_loaded_neighbors(p)
@@ -361,7 +366,8 @@ impl ReplicaWorld {
             return;
         }
         let ready: Vec<SectionPos> = self
-            .side.terrain
+            .side
+            .terrain
             .light_blocked_meshes
             .iter()
             .copied()

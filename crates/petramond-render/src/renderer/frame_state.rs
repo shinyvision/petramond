@@ -494,4 +494,3 @@ impl Renderer {
         uploads.finish(drain, priority);
     }
 }
-

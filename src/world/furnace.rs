@@ -7,14 +7,15 @@
 //! wrappers plus the tick driver that supplies the recipe set the storage
 //! layer is kept ignorant of.
 
-use crate::world::{ReplicaWorld, ServerWorld, World, WorldSide};
+#[cfg(test)]
+use crate::world::{ReplicaWorld, ServerWorld};
+use crate::world::{World, WorldSide};
 use petramond_math::facing::Facing;
 use petramond_math::math::IVec3;
 use petramond_world::chunk::{SectionPos, SECTION_SIZE};
 use petramond_world::container::Container;
 use petramond_world::crafting::Recipes;
 use petramond_world::furnace::{Furnace, FURNACE_SLOTS};
-
 
 impl<S: WorldSide> World<S> {
     /// Advance every loaded furnace by one game tick, smelting per `recipes`.
@@ -172,7 +173,12 @@ mod tests {
             "cell KV survives"
         );
         assert_eq!(
-            world.data.sections.get(&spos).unwrap().entity_facing(8, 0, 8),
+            world
+                .data
+                .sections
+                .get(&spos)
+                .unwrap()
+                .entity_facing(8, 0, 8),
             Facing::East,
             "the facing (unified cell state, wiped by ordinary block writes) \
              is carried across the row swap"

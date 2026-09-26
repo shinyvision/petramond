@@ -1,5 +1,5 @@
-use crate::world::ServerWorld;
 use crate::world::store::for_each_column_cy;
+use crate::world::ServerWorld;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
 use crate::world::store::LoadTarget;
@@ -10,7 +10,8 @@ impl ServerWorld {
     /// the same hysteresis slack as the single-anchor path.
     pub(super) fn unload_far_multi(&mut self, targets: &[LoadTarget]) {
         let drop_columns: Vec<ChunkPos> = self
-            .data.columns
+            .data
+            .columns
             .keys()
             .filter(|p| !targets.iter().any(|t| Self::column_kept(*t, **p)))
             .copied()
@@ -31,7 +32,8 @@ impl ServerWorld {
                     continue;
                 }
                 let in_surface = self
-                    .side.gen
+                    .side
+                    .gen
                     .column_gen
                     .get(&cp)
                     .is_some_and(|col| Self::surface_window_for_column(col, 2).contains(&cy));
@@ -50,7 +52,8 @@ impl ServerWorld {
         let vwindow = Self::vertical_window(target.center_cy, 2);
 
         let drop_columns: Vec<ChunkPos> = self
-            .data.columns
+            .data
+            .columns
             .keys()
             .filter(|p| !Self::column_kept(target, **p))
             .copied()
@@ -149,7 +152,8 @@ impl ServerWorld {
     /// Drop any buffered disk overlays for a column that is no longer wanted, so a
     /// section whose column was evicted before its overlay could land doesn't linger.
     fn drop_overlays_for_column(&mut self, pos: ChunkPos) {
-        self.side.gen
+        self.side
+            .gen
             .pending_overlays
             .retain(|sp, _| sp.chunk_pos() != pos);
     }

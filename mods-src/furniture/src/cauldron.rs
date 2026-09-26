@@ -379,7 +379,9 @@ impl Furniture {
                     BucketSwap::Pour => cauldron.water,
                     BucketSwap::Scoop => cauldron.empty,
                 };
-                buckets.perform(swap, pos, || set_block(pos, next))
+                buckets.perform(swap, pos, || {
+                    set_block(pos, next);
+                })
             }
             CauldronSwap::Dye(flower, pigment, dilute) => {
                 if !consume_held(flower, 1) {

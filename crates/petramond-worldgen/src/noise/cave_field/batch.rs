@@ -36,7 +36,14 @@ impl CaveField {
     /// pairs, sharing one lattice per box the subdivision keeps.
     pub fn cave_carved_batch(&self, queries: &[([i32; 3], i32)], out: &mut Vec<bool>) {
         // Openness never depends on what fills a cell, so no pools are gathered.
-        self.cut_batch(queries, false, &self.memos().carved, false, CaveCut::is_open, out);
+        self.cut_batch(
+            queries,
+            false,
+            &self.memos().carved,
+            false,
+            CaveCut::is_open,
+            out,
+        );
     }
 
     /// [`Self::cave_carved_batch`] answering WHAT each open cell holds:

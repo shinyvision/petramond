@@ -31,7 +31,6 @@
 //! (see [`GroundCover`]). Every row must state its generation: a row without one
 //! would generate as nothing.
 
-
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
 use serde::Deserialize;
@@ -211,8 +210,7 @@ impl RawVegetation {
 /// Parse one row's `generation` text for `biome`.
 pub(crate) fn parse(biome: Biome, generation: Option<&str>) -> Result<BiomeSpec, String> {
     let text = generation.ok_or("no `generation` object")?;
-    let raw: RawGeneration =
-        serde_json::from_str(text).map_err(|e| format!("generation: {e}"))?;
+    let raw: RawGeneration = serde_json::from_str(text).map_err(|e| format!("generation: {e}"))?;
     let mut flags = BiomeFlags {
         beach_base: true,
         ..BiomeFlags::default()

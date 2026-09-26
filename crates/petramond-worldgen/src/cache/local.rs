@@ -91,9 +91,11 @@ pub(crate) fn clear_all() {
 /// One thread's direct-mapped table for `spec`: `thread_local!` holds it.
 /// Values must be pure functions of their key, as in the shared memos: a
 /// slot collision only evicts.
+type Slots<K, V> = RefCell<Box<[Option<(K, V)>]>>;
+
 pub(crate) struct LocalTable<K, V> {
     spec: &'static LocalSpec,
-    slots: RefCell<Box<[Option<(K, V)>]>>,
+    slots: Slots<K, V>,
     epoch: Cell<u64>,
     pending: Cell<(u32, u32)>,
 }

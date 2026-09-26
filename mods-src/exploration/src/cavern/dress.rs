@@ -15,8 +15,8 @@ use mod_sdk::*;
 
 use super::claims::Emitter;
 use super::{
-    is_open, neighbour_rock, pick_species, CEILING_MARGIN, SALT_CEILING, SALT_GROUND,
-    SALT_PATCH, SALT_VINE_BLOOM, VINE_MAX_LEN,
+    is_open, neighbour_rock, pick_species, CEILING_MARGIN, SALT_CEILING, SALT_GROUND, SALT_PATCH,
+    SALT_VINE_BLOOM, VINE_MAX_LEN,
 };
 use crate::content::{Content, Species};
 use crate::probe::{self, Query, TerrainReads};
@@ -187,9 +187,7 @@ impl Dressing {
                 self.floors.push(Dress { p, below, above });
             }
             let mut roof = GenRng::positional(seed, SALT_CEILING, p[0], p[1], p[2]);
-            if roof.next_i32(0, 999) < VINE_PER_MILLE
-                && below != Some(true)
-                && above != Some(false)
+            if roof.next_i32(0, 999) < VINE_PER_MILLE && below != Some(true) && above != Some(false)
             {
                 self.ceilings.push(Dress { p, below, above });
             }
@@ -273,7 +271,12 @@ impl Dressing {
         // the biome — otherwise every deep cave in the world would pay seven
         // terrain point queries per open roof column.
         let mut col_probed = vec![false; self.margin_cols.len()];
-        for (m, _) in self.margins.iter().zip(&mine[n_f + n_c..]).filter(|&(_, &k)| k) {
+        for (m, _) in self
+            .margins
+            .iter()
+            .zip(&mine[n_f + n_c..])
+            .filter(|&(_, &k)| k)
+        {
             if !std::mem::replace(&mut col_probed[m.col], true) {
                 let MarginCol { xz: [x, z], rows } = self.margin_cols[m.col];
                 cells.extend((0..rows).map(|k| [x, origin[1] + 16 + k as i32, z]));
@@ -299,7 +302,12 @@ impl Resolved {
             }
         }
         let ctx = out.ctx();
-        for (dress, _) in d.ceilings.iter().zip(&self.mine[n_f..]).filter(|&(_, &m)| m) {
+        for (dress, _) in d
+            .ceilings
+            .iter()
+            .zip(&self.mine[n_f..])
+            .filter(|&(_, &m)| m)
+        {
             // A cell resting on rock is a FLOOR, whatever hangs over it;
             // letting both passes claim one would put two decorations in one
             // cell.
@@ -309,7 +317,12 @@ impl Resolved {
             hang_curtain(content, out, seed, dress.p, |cell| is_open(ctx, cell));
         }
         let origin = ctx.origin_world();
-        for (m, _) in d.margins.iter().zip(&self.mine[n_f + n_c..]).filter(|&(_, &k)| k) {
+        for (m, _) in d
+            .margins
+            .iter()
+            .zip(&self.mine[n_f + n_c..])
+            .filter(|&(_, &k)| k)
+        {
             // Probe row `j` is `origin.y + 16 + j`; the root sits at `k`, its
             // support at `k - 1` (our own roof row when `k == 0`, which the
             // gather already proved open) and its roof at `k + 1`.

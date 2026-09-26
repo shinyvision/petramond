@@ -29,11 +29,19 @@ fn legacy_player_files_are_adopted_once_by_the_first_claimant() {
     let active = |data: Option<player::PlayerData>| data.map(|d| d.inventory.active_slot());
 
     assert_eq!(
-        active(opened.save.adopt_legacy_player("Ann ", &a).expect("decodes")),
+        active(
+            opened
+                .save
+                .adopt_legacy_player("Ann ", &a)
+                .expect("decodes")
+        ),
         Some(3),
         "the name sanitizes to the legacy file's key"
     );
-    assert_eq!(active(opened.save.load_player(&a).expect("decodes")), Some(3));
+    assert_eq!(
+        active(opened.save.load_player(&a).expect("decodes")),
+        Some(3)
+    );
     assert!(
         !dir.join("players/Ann_.dat").exists(),
         "the legacy file moved"
@@ -50,7 +58,9 @@ fn legacy_player_files_are_adopted_once_by_the_first_claimant() {
 
     assert_eq!(opened.save.load_player_registry(), None);
     let files = opened.save.player_files();
-    assert!(files.store_player_registry(2, b"{}").expect("registry writes"));
+    assert!(files
+        .store_player_registry(2, b"{}")
+        .expect("registry writes"));
     assert_eq!(
         opened.save.load_player_registry().as_deref(),
         Some(&b"{}"[..])
@@ -604,9 +614,10 @@ fn a_mob_whose_mod_is_gone_survives_its_section_being_resaved() {
         let (section, _, mobs) =
             load_blocking(&opened.save, &opened.saved, pos).expect("section loads");
         assert!(mobs.is_empty(), "the phantom is not spawned");
-        opened
-            .save
-            .save_sections(&mut opened.saved, vec![SectionSnapshot::from_section(&section)]);
+        opened.save.save_sections(
+            &mut opened.saved,
+            vec![SectionSnapshot::from_section(&section)],
+        );
         opened.save.shutdown();
     }
     let opened = open_at(dir.clone()).expect("reopen again");

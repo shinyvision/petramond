@@ -95,8 +95,11 @@ pub struct Content {
     /// and yield a harvest bonus (see [`crate::crops`]).
     pub farmland_fertile_dry: BlockId,
     pub farmland_fertile_wet: BlockId,
+    #[allow(dead_code)] // Resolve these rows at startup to validate the required content.
     pub wild_wheat: BlockId,
+    #[allow(dead_code)]
     pub wild_carrots: BlockId,
+    #[allow(dead_code)]
     pub wild_potatoes: BlockId,
     /// Ordered wild patch rules read from the wild block rows.
     pub(crate) wild_patches: Vec<crate::worldgen::WildCropSpec>,

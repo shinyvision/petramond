@@ -3,11 +3,11 @@
 
 mod extrude;
 
-use petramond_world::world::raycast;
 use super::world_tool::{ToolContext, ToolOverlay, WorldTool};
 use super::GameInput;
 use petramond::player::RayFilter;
 use petramond::schematic::{Selection, PLACEMENT_REACH};
+use petramond_world::world::raycast;
 
 /// The [`world_tool`](petramond_world::item::ItemType::world_tool) name of
 /// the tool that selects and captures regions.

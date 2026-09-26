@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mod_api::{
-    ClientFrameData, ClientUiEvent, EventFilter, EventKind, EventPayload, GuestCall, GuestRet, HeldPose,
-    Outcome, PlayerSnapshot, RuntimeSide,
+    ClientFrameData, ClientUiEvent, EventFilter, EventKind, EventPayload, GuestCall, GuestRet,
+    HeldPose, Outcome, PlayerSnapshot, RuntimeSide,
 };
 use petramond_world::inventory::{Hand, Inventory};
 
@@ -367,7 +367,13 @@ impl ClientModRuntime {
         super::scope::enter_inventory(inventory, || self.mod_event_inner(world, actor, key, data))
     }
 
-    fn mod_event_inner(&mut self, world: &ReplicaWorld, actor: &PlayerSnapshot, key: &str, data: &[u8]) {
+    fn mod_event_inner(
+        &mut self,
+        world: &ReplicaWorld,
+        actor: &PlayerSnapshot,
+        key: &str,
+        data: &[u8],
+    ) {
         let Some(mod_index) = self.owner_index(key) else {
             return;
         };
@@ -378,7 +384,11 @@ impl ClientModRuntime {
         let ids: Vec<u32> = self
             .handlers
             .iter()
-            .filter(|h| h.kind == EventKind::ModEvent && h.mod_index == mod_index && h.filter.matches(&payload))
+            .filter(|h| {
+                h.kind == EventKind::ModEvent
+                    && h.mod_index == mod_index
+                    && h.filter.matches(&payload)
+            })
             .map(|h| h.handler_id)
             .collect();
         for id in ids {
@@ -604,7 +614,9 @@ impl ClientModRuntime {
     pub fn disable_from_server(&mut self, mod_ids: &[String]) {
         for loaded in &mut self.mods {
             if mod_ids.contains(&loaded.id) {
-                loaded.instance.disable("the server disabled this mod for the session");
+                loaded
+                    .instance
+                    .disable("the server disabled this mod for the session");
             }
         }
     }
@@ -904,7 +916,14 @@ impl ClientModRuntime {
         dispatch_unit(&mut loaded.instance, world, &call, "client canvas event");
     }
 
-    pub fn canvas_scroll(&mut self, world: &ReplicaWorld, canvas_key: &str, x: f32, y: f32, delta: f32) {
+    pub fn canvas_scroll(
+        &mut self,
+        world: &ReplicaWorld,
+        canvas_key: &str,
+        x: f32,
+        y: f32,
+        delta: f32,
+    ) {
         let call = GuestCall::ClientCanvasScroll {
             canvas_key: canvas_key.to_owned(),
             x,

@@ -71,7 +71,10 @@ impl Profile {
             .iter()
             .find(|g| g.blocks.is_empty() || g.blocks.len() > 32)
         {
-            return Err(format!("a food group lists {} blocks (1..=32)", group.blocks.len()));
+            return Err(format!(
+                "a food group lists {} blocks (1..=32)",
+                group.blocks.len()
+            ));
         }
         Ok(())
     }
@@ -155,11 +158,17 @@ mod tests {
     fn out_of_range_profiles_fail_the_check() {
         let profile = |text: &str| parse_row_data::<Profile>(text).unwrap();
         let group = r#"{"blocks":["a:b"],"eaten":"keep"}"#;
-        assert!(profile(&format!(r#"{{"restore":3,"food":[{group}]}}"#)).check().is_ok());
-        assert!(profile(&format!(r#"{{"restore":11,"food":[{group}]}}"#)).check().is_err());
-        assert!(profile(r#"{"restore":3,"food":[]}"#).check().is_err());
-        assert!(profile(r#"{"restore":3,"food":[{"blocks":[],"eaten":"keep"}]}"#)
+        assert!(profile(&format!(r#"{{"restore":3,"food":[{group}]}}"#))
+            .check()
+            .is_ok());
+        assert!(profile(&format!(r#"{{"restore":11,"food":[{group}]}}"#))
             .check()
             .is_err());
+        assert!(profile(r#"{"restore":3,"food":[]}"#).check().is_err());
+        assert!(
+            profile(r#"{"restore":3,"food":[{"blocks":[],"eaten":"keep"}]}"#)
+                .check()
+                .is_err()
+        );
     }
 }

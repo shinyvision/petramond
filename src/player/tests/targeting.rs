@@ -1,6 +1,6 @@
-use petramond_world::world::raycast;
 use super::*;
 use petramond_math::world_pos::WorldPos;
+use petramond_world::world::raycast;
 
 /// DDA target selection: full cubes stop the ray on cell entry with the
 /// entered face's normal (zero when the eye starts inside one), precise
@@ -275,8 +275,7 @@ fn a_multi_cell_model_block_outlines_its_whole_model_from_every_cell() {
             cell.y as f64 + 0.5,
             cell.z as f64 + 0.5,
         );
-        let Some((hit, _)) = raycast::with_dist(eye, Vec3::new(1.0, 0.0, 0.0), world.data())
-        else {
+        let Some((hit, _)) = raycast::with_dist(eye, Vec3::new(1.0, 0.0, 0.0), world.data()) else {
             continue;
         };
         let SelectionShape::Box { min, max, .. } = hit.outline else {

@@ -591,7 +591,11 @@ impl Host for Fake {
             .collect()
     }
 
-    fn container_set(&self, at: ContainerAddress, slots: Vec<(u32, Option<ItemStackData>)>) -> bool {
+    fn container_set(
+        &self,
+        at: ContainerAddress,
+        slots: Vec<(u32, Option<ItemStackData>)>,
+    ) -> bool {
         let mut state = self.state_mut();
         let Some(held) = state.containers.get_mut(&at) else {
             return false;
@@ -657,7 +661,11 @@ impl Host for Fake {
             Some(schematic) => SchematicLookup::Ready(SchematicInfoData {
                 title: schematic.title.clone(),
                 size: schematic.size,
-                cells: schematic.sections.iter().map(|s| s.cells.len() as u64).sum(),
+                cells: schematic
+                    .sections
+                    .iter()
+                    .map(|s| s.cells.len() as u64)
+                    .sum(),
                 sections: schematic.sections.len() as u32,
             }),
             None => SchematicLookup::Missing,
@@ -750,7 +758,13 @@ impl Host for Fake {
         state.deeds.len() as u64
     }
 
-    fn spawn_item_data(&self, item: &str, count: u8, _pos: [f64; 3], _data: &[(&str, &[u8])]) -> bool {
+    fn spawn_item_data(
+        &self,
+        item: &str,
+        count: u8,
+        _pos: [f64; 3],
+        _data: &[(&str, &[u8])],
+    ) -> bool {
         self.state_mut()
             .deeds
             .push(Deed::Dropped(item.into(), count));

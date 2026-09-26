@@ -107,7 +107,11 @@ impl<S: WorldSide> World<S> {
         let mut changes = Vec::with_capacity(2);
         for (cell, top) in [(base, false), (upper, true)] {
             if let Some((c, lx, ly, lz)) = self.data.chunk_at_world_mut(cell.x, cell.y, cell.z) {
-                changes.push(CellChange::new(cell, c.block(lx, ly, lz), ChangeKind::Place));
+                changes.push(CellChange::new(
+                    cell,
+                    c.block(lx, ly, lz),
+                    ChangeKind::Place,
+                ));
                 // `set_block` clears any stale door entry; then record this cell's state.
                 c.set_block(lx, ly, lz, block);
                 c.set_door_state(
@@ -203,7 +207,10 @@ mod tests {
         assert!(w.data.door_footprint_clear(base));
         assert!(w.place_door(base, DOOR, Facing::South));
         let upper = base + UP;
-        assert_eq!(Block::from_id(w.data.chunk_block(base.x, base.y, base.z)), DOOR);
+        assert_eq!(
+            Block::from_id(w.data.chunk_block(base.x, base.y, base.z)),
+            DOOR
+        );
         assert_eq!(
             Block::from_id(w.data.chunk_block(upper.x, upper.y, upper.z)),
             DOOR
@@ -257,7 +264,10 @@ mod tests {
         let upper = base + UP;
         w.place_door(base, DOOR, Facing::South);
         run_ticks(&mut w, 2); // settle: supported, nothing happens
-        assert_eq!(Block::from_id(w.data.chunk_block(base.x, base.y, base.z)), DOOR);
+        assert_eq!(
+            Block::from_id(w.data.chunk_block(base.x, base.y, base.z)),
+            DOOR
+        );
 
         // Dig the floor out from under it: the door breaks at the undermining
         // update, in the first tick's dispatch.
@@ -291,7 +301,10 @@ mod tests {
         w.set_block_world(base.x + 1, base.y, base.z, Block::Stone);
         w.set_block_world(base.x + 1, base.y, base.z, Block::Air);
         run_ticks(&mut w, 3);
-        assert_eq!(Block::from_id(w.data.chunk_block(base.x, base.y, base.z)), DOOR);
+        assert_eq!(
+            Block::from_id(w.data.chunk_block(base.x, base.y, base.z)),
+            DOOR
+        );
         assert!(w.take_natural_breaks().is_empty());
     }
 
@@ -320,7 +333,10 @@ mod tests {
         let removed = w.remove_compound(base).unwrap();
         assert_eq!(removed.len(), 2);
         for c in removed {
-            assert_eq!(Block::from_id(w.data.chunk_block(c.x, c.y, c.z)), Block::Air);
+            assert_eq!(
+                Block::from_id(w.data.chunk_block(c.x, c.y, c.z)),
+                Block::Air
+            );
             assert!(w.door_state_at(c.x, c.y, c.z).is_none());
         }
     }

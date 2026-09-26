@@ -67,7 +67,12 @@ impl FeaturePlan {
             },
             sections: BTreeMap::new(),
         };
-        feature.generate(&mut FeatureCtx::new(&mut recorder), &mut |_| true, origin, rng);
+        feature.generate(
+            &mut FeatureCtx::new(&mut recorder),
+            &mut |_| true,
+            origin,
+            rng,
+        );
         match recorder.bounds {
             Bounds::Envelope { overflow: true, .. } => None,
             _ => Some(Self {
@@ -95,7 +100,11 @@ impl FeaturePlan {
     pub(crate) fn apply(&self, section: &mut Section) {
         let (ox, oy, oz) = section.origin_world();
         let side = SECTION_SIZE as i32;
-        let key = [ox.div_euclid(side), oy.div_euclid(side), oz.div_euclid(side)];
+        let key = [
+            ox.div_euclid(side),
+            oy.div_euclid(side),
+            oz.div_euclid(side),
+        ];
         if let Some(placements) = self.sections.get(&key) {
             let mut sink = SectionSink::new(section);
             for p in placements {

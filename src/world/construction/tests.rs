@@ -41,7 +41,7 @@ fn a_neighbour_derived_shape_still_counts_as_built() {
     let mut w = world();
     let at = IVec3::new(4, 64, 4);
     author(&mut w, Block::OakStairs, at, &[("facing", "north")]);
-    let design = Record::at(&w, at);
+    let design = Record::at(w.data(), at);
     // A second stair beside it turns the first into a corner: its stored
     // shape changes, its authored intent does not.
     let neighbour = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z]
@@ -51,7 +51,7 @@ fn a_neighbour_derived_shape_still_counts_as_built() {
             let mut probe = world();
             author(&mut probe, Block::OakStairs, at, &[("facing", "north")]);
             author(&mut probe, Block::OakStairs, at + d, &[("facing", f)]);
-            Record::at(&probe, at).state != design.state
+            Record::at(probe.data(), at).state != design.state
         })
         .expect("some neighbour turns a stair into a corner");
     author(
@@ -61,7 +61,7 @@ fn a_neighbour_derived_shape_still_counts_as_built() {
         &[("facing", neighbour.1)],
     );
     assert_ne!(
-        Record::at(&w, at).state,
+        Record::at(w.data(), at).state,
         design.state,
         "the neighbour refined it"
     );
@@ -88,8 +88,8 @@ fn a_door_is_one_paid_object_and_standing_open_is_still_built() {
         at,
         &[("facing", "east"), ("open", "true")],
     );
-    let lower = Record::at(&w, at);
-    let upper = Record::at(&w, at + IVec3::Y);
+    let lower = Record::at(w.data(), at);
+    let upper = Record::at(w.data(), at + IVec3::Y);
     let Plan::Unit { cost, writes } = plan(&lower, at) else {
         panic!("the lower half anchors the door");
     };

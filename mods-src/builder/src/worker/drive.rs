@@ -9,8 +9,8 @@ use super::{
     act, bridge, cargo, centre, eye_of, lifecycle, pillar, plan, rescue, unwedge, walk, wayin,
     Body, Ctx, Step, Then, TRACE,
 };
-use crate::worker::Job;
 use crate::project::{Phase, Project, Projects};
+use crate::worker::Job;
 
 pub(super) fn act_out(
     ctx: &mut Ctx,

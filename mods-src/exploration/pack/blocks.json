@@ -942,6 +942,7 @@
     {
       "block": "exploration:mushroom_door",
       "shape": "door",
+      "animated_model": "petramond:door",
       "flags": [
         "solid"
       ],

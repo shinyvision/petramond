@@ -99,7 +99,10 @@ impl ServerGame {
                         asset: digest,
                     });
                 } else {
-                    self.sessions[s].sim.schematic.want(Wanted::Choice(tag), digest);
+                    self.sessions[s]
+                        .sim
+                        .schematic
+                        .want(Wanted::Choice(tag), digest);
                 }
             }
             SchematicRequest::Positioned {
@@ -119,7 +122,8 @@ impl ServerGame {
                     > crate::schematic::PLACEMENT_REACH + 2.0
                 {
                     self.sessions[s]
-                        .sim.schematic
+                        .sim
+                        .schematic
                         .notices
                         .push(SchematicNotice::Refused {
                             message: "Place the schematic within reach".into(),
@@ -222,7 +226,10 @@ impl ServerGame {
     pub(super) fn open_schematic_choice(&mut self, player: crate::player::PlayerId, tag: String) {
         if let Some(sess) = self.sessions.iter_mut().find(|sess| sess.id == player) {
             sess.sim.schematic.choose = Some(tag.clone());
-            sess.sim.schematic.notices.push(SchematicNotice::Choose { tag });
+            sess.sim
+                .schematic
+                .notices
+                .push(SchematicNotice::Choose { tag });
         }
     }
 

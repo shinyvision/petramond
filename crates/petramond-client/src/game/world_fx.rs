@@ -64,7 +64,8 @@ impl WorldFx {
                     normal,
                     tint,
                 } => {
-                    let (sky, blk) = petramond::rules::breaking::break_light(world.data(), pos, normal);
+                    let (sky, blk) =
+                        petramond::rules::breaking::break_light(world.data(), pos, normal);
                     // A swing in progress on the broken block lapses on the
                     // next advance, which finds no animated block there.
                     self.burst(

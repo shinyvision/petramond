@@ -1,6 +1,6 @@
 use super::*;
 use crate::testing::MockHost;
-use crate::HostCall;
+use crate::{CoreCall, HostCall};
 
 #[derive(Default)]
 struct Counter {
@@ -59,19 +59,19 @@ fn typed_registrations_allocate_ids_and_dispatch_to_their_closures() {
     });
     assert!(host.calls().iter().any(|call| matches!(
         call,
-        HostCall::RegisterTickSystem {
+        HostCall::Core(CoreCall::RegisterTickSystem {
             system_id: TYPED_ID_BASE,
             attach: AttachSide::After,
             ..
-        }
+        })
     )));
     assert!(host.calls().iter().any(|call| matches!(
         call,
-        HostCall::RegisterEventHandler {
+        HostCall::Core(CoreCall::RegisterEventHandler {
             handler_id,
             event: EventKind::BlockPlaced,
             ..
-        } if *handler_id == TYPED_ID_BASE + 1
+        }) if *handler_id == TYPED_ID_BASE + 1
     )));
     assert_eq!(m.state.typed_ticks, 1);
     assert_eq!(m.state.raw_ticks, vec![5], "a raw id reaches the raw hook");

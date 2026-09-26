@@ -57,6 +57,7 @@ impl AssetRoots {
         self.packs.push(dir);
     }
 
+    #[cfg(test)]
     pub fn base(&self) -> Option<&Path> {
         self.base.as_deref()
     }
@@ -128,10 +129,8 @@ mod tests {
     use super::*;
 
     fn scratch(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "gui-builder-assets-{tag}-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("gui-builder-assets-{tag}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("scratch dir");
         dir
     }
@@ -154,7 +153,10 @@ mod tests {
             roots.find("ui/theme/theme.json"),
             Some(pack.join("ui/theme/theme.json"))
         );
-        assert_eq!(roots.find("only_base.txt"), Some(base.join("only_base.txt")));
+        assert_eq!(
+            roots.find("only_base.txt"),
+            Some(base.join("only_base.txt"))
+        );
         assert_eq!(
             roots.all("items.json"),
             vec![base.join("items.json"), pack.join("items.json")]
@@ -196,8 +198,14 @@ mod tests {
     fn the_repo_checkout_is_discovered_without_compile_time_paths() {
         // Tests run from the crate dir, inside the repo.
         let roots = AssetRoots::new(None, Vec::new());
-        let base = roots.base().expect("repo assets found from the working directory");
-        assert!(base.join("ui/theme/theme.json").is_file(), "{}", base.display());
+        let base = roots
+            .base()
+            .expect("repo assets found from the working directory");
+        assert!(
+            base.join("ui/theme/theme.json").is_file(),
+            "{}",
+            base.display()
+        );
         assert!(roots.samples_dir().is_some());
     }
 }

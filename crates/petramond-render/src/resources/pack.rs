@@ -125,8 +125,7 @@ pub(super) fn pack_column(
     GpuColumnMesh {
         buffers,
         regions,
-        origin_slot: prev_slot
-            .unwrap_or_else(|| origins.slot(device, queue, None, col_ox, col_oz)),
+        origin_slot: prev_slot.unwrap_or_else(|| origins.slot(device, queue, None, col_ox, col_oz)),
         col_ox,
         col_oz,
         cy_span: cy_span(&sections),

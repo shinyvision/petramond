@@ -1,5 +1,5 @@
-use crate::world::{ReplicaWorld, ServerWorld};
 use super::*;
+use crate::world::{ReplicaWorld, ServerWorld};
 // Source/flow tests place water at y>=65, above flat_world's stone floor.
 use crate::world::testutil::flat_server_world;
 use petramond_math::world_pos::WorldPos;
@@ -216,7 +216,10 @@ fn water_pours_one_block_per_tick_not_the_whole_column_at_once() {
     run_ticks(&mut w, 6 * water_flow_delay() as u32);
     for y in 65..=69 {
         assert_eq!(block(&w, 8, y, 8), Block::Water, "column y={y}");
-        assert!(is_falling(w.data.fluid_meta_world(8, y, 8)), "falling y={y}");
+        assert!(
+            is_falling(w.data.fluid_meta_world(8, y, 8)),
+            "falling y={y}"
+        );
     }
     // It rests on the floor, not inside it.
     assert_eq!(block(&w, 8, 64, 8), Block::Stone);
@@ -236,7 +239,10 @@ fn a_source_over_air_pours_straight_down_and_never_fans_out() {
 
     // First check: the pour, and nothing else.
     run_ticks(&mut w, ring());
-    assert!(is_falling(w.data.fluid_meta_world(8, 69, 8)), "poured below");
+    assert!(
+        is_falling(w.data.fluid_meta_world(8, 69, 8)),
+        "poured below"
+    );
     assert_eq!(block(&w, 9, 70, 8), Block::Air, "no sideways spread");
 
     // Many checks later the column has landed and spread its pool, and the
@@ -330,9 +336,9 @@ fn flowing_water_over_a_drop_only_goes_down_not_sideways() {
 #[test]
 fn flowing_water_does_not_flow_on_top_of_flowing_water() {
     let mut w = flat_server_world(); // stone floor at y=64
-                              // Carve the floor and lay a lower one at y=62, in a 1-wide channel: the
-                              // lower sheet sits on y=62 (water at y=63), and the upper flow would sit
-                              // directly on that lower water (at y=64).
+                                     // Carve the floor and lay a lower one at y=62, in a 1-wide channel: the
+                                     // lower sheet sits on y=62 (water at y=63), and the upper flow would sit
+                                     // directly on that lower water (at y=64).
     for x in 5..14 {
         carve(&mut w, x, 64, 8);
         w.set_block_world(x, 62, 8, Block::Stone);
@@ -680,7 +686,9 @@ fn a_cut_cascade_flows_inside_its_gorge_and_a_breached_one_does_not() {
     let mut w = flat_server_world();
     let (generated, (lo, hi)) = cut_cascade(&mut w);
     assert!(
-        generated.iter().all(|&p| is_source(meta_at(&w, p))),
+        generated
+            .iter()
+            .all(|&p| is_source(w.data().fluid_meta_world(p.x, p.y, p.z))),
         "worldgen water is meta 0 — a still source"
     );
     let inside = |p: &IVec3| {
@@ -769,7 +777,9 @@ fn lava_is_insulated_from_water_flow_probes() {
         petramond_world::fluid::FluidCurrent::NONE,
         "lava is a hazard, not a conveyor"
     );
-    assert!(w.data.is_fluid_source_world(IVec3::new(2, 65, 2), Block::Lava));
+    assert!(w
+        .data
+        .is_fluid_source_world(IVec3::new(2, 65, 2), Block::Lava));
     assert!(!w.is_water_source_world(IVec3::new(2, 65, 2)));
 }
 

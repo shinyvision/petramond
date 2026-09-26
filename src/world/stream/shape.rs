@@ -17,10 +17,12 @@ impl<S: WorldSide> World<S> {
     /// classification, keep checks). Identical to the single check while
     /// `extra_load_targets` is empty.
     pub(in crate::world) fn column_wanted_by_any_target(&self, cp: ChunkPos) -> bool {
-        self.data.last_load_target
+        self.data
+            .last_load_target
             .is_some_and(|t| Self::column_wanted(t, cp))
             || self
-                .data.extra_load_targets
+                .data
+                .extra_load_targets
                 .iter()
                 .any(|t| Self::column_wanted(*t, cp))
     }
@@ -138,7 +140,8 @@ impl<S: WorldSide> World<S> {
         };
         Self::column_kept(target, pos)
             || self
-                .data.extra_load_targets
+                .data
+                .extra_load_targets
                 .iter()
                 .any(|t| Self::column_kept(*t, pos))
     }

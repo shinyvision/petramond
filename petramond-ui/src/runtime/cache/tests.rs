@@ -29,7 +29,10 @@ fn doc() -> Arc<Document> {
 
 fn state() -> UiState {
     let mut s = UiState::new();
-    s.set("status", UiValue::Str("a long status line that wraps".into()));
+    s.set(
+        "status",
+        UiValue::Str("a long status line that wraps".into()),
+    );
     let rows: Vec<UiMap> = (0..8)
         .map(|i| {
             let mut m = UiMap::new();
@@ -87,7 +90,11 @@ fn an_unchanged_frame_reuses_the_arena_and_the_layout() {
     assert_eq!(second.expanded, 0, "{second:?}");
     assert_eq!(second.reused, first.expanded);
     assert!(second.layout_reused);
-    assert_eq!(visible(&out), drawn, "a cached frame draws what a fresh one did");
+    assert_eq!(
+        visible(&out),
+        drawn,
+        "a cached frame draws what a fresh one did"
+    );
 }
 
 #[test]

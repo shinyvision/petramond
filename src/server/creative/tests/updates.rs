@@ -108,8 +108,7 @@ fn schematic_placement_updates_skipped_interior_cells_and_the_rotated_one_block_
             server.world.set_block_world(p.x, p.y, p.z, b);
         }
         // Generated decorations have no outstanding edit notification to rescue them.
-        server.world.data().sim.update_queue.clear();
-        server.world.data().sim.update_set.clear();
+        server.world.clear_update_notifications_for_test();
         server
             .place_schematic(
                 0,
@@ -123,8 +122,7 @@ fn schematic_placement_updates_skipped_interior_cells_and_the_rotated_one_block_
         server
             .apply_creative(0, CreativeAction::Undo, &mut TickEvents::default())
             .unwrap();
-        server.world.data().sim.update_queue.clear();
-        server.world.data().sim.update_set.clear();
+        server.world.clear_update_notifications_for_test();
         server
             .apply_creative(0, CreativeAction::Redo, &mut TickEvents::default())
             .unwrap();

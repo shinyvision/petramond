@@ -267,7 +267,11 @@ mod tests {
             ("bare".to_owned(), spec(&bare)),
             ("hammer".to_owned(), spec(ROW)),
         ]);
-        assert_eq!(families.styles().count(), 1, "the broken ones are refused alone");
+        assert_eq!(
+            families.styles().count(),
+            1,
+            "the broken ones are refused alone"
+        );
         let refused: Vec<&str> = refused.iter().map(|(kind, _)| kind.as_str()).collect();
         assert_eq!(refused, ["bare", "hammer"]);
         let hammer = families

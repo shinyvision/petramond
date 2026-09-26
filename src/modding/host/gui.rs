@@ -111,21 +111,23 @@ pub(super) fn handle_gui_call(mod_id: &str, call: GuiCall) -> HostRet {
                     .collect(),
             )
         }),
-        GuiCall::GuiStateGet { key } => sim_query(|ctx| {
-            match actor_for(ctx, "GuiStateGet", "GuiStateGetFor") {
-                Ok(id) => HostRet::GuiValue(state_get(ctx, id, &key)),
-                Err(e) => e,
-            }
-        }),
+        GuiCall::GuiStateGet { key } => {
+            sim_query(
+                |ctx| match actor_for(ctx, "GuiStateGet", "GuiStateGetFor") {
+                    Ok(id) => HostRet::GuiValue(state_get(ctx, id, &key)),
+                    Err(e) => e,
+                },
+            )
+        }
         GuiCall::GuiStateGetFor { player_id, key } => {
             sim_query(|ctx| HostRet::GuiValue(state_get(ctx, PlayerId(player_id.0), &key)))
         }
-        GuiCall::GuiOpen { kind_key, at } => sim_query(|ctx| {
-            match actor_for(ctx, "GuiOpen", "GuiOpenFor") {
+        GuiCall::GuiOpen { kind_key, at } => {
+            sim_query(|ctx| match actor_for(ctx, "GuiOpen", "GuiOpenFor") {
                 Ok(id) => HostRet::Bool(open_gui(ctx, mod_id, id, &kind_key, at)),
                 Err(e) => e,
-            }
-        }),
+            })
+        }
         GuiCall::GuiOpenFor {
             player_id,
             kind_key,
@@ -207,7 +209,8 @@ mod tests {
 
             // Who is looking, and at what: the machine's anchor, so matching
             // a viewer to a placed machine is an equality test.
-            let HostRet::GuiViewers(viewers) = handle_host_call(&mut data, HostCall::from(calls::GuiViewers))
+            let HostRet::GuiViewers(viewers) =
+                handle_host_call(&mut data, HostCall::from(calls::GuiViewers))
             else {
                 panic!("GuiViewers answers its own reply kind");
             };

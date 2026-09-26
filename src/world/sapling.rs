@@ -223,7 +223,9 @@ impl ServerWorld {
         // log, so the trunk base lands there and the sapling is consumed.
         for (cell, block) in writes {
             if cell != pos
-                && self.data.block_if_loaded(cell.x, cell.y, cell.z)
+                && self
+                    .data
+                    .block_if_loaded(cell.x, cell.y, cell.z)
                     .is_some_and(Block::is_log)
             {
                 continue;

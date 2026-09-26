@@ -82,7 +82,12 @@ fn every_golden_version_decodes_to_the_same_content() {
 /// golden out.
 #[test]
 fn each_step_produces_the_next_golden_bytes() {
-    let steps: [(&[u8], &[u8], fn(&[u8]) -> Result<Vec<u8>, RecordError>); 4] = [
+    type GoldenStep<'a> = (
+        &'a [u8],
+        &'a [u8],
+        fn(&[u8]) -> Result<Vec<u8>, RecordError>,
+    );
+    let steps: [GoldenStep<'_>; 4] = [
         (V19, V20, v19::upgrade),
         (V19_ENTITIES, V20_ENTITIES, v19::upgrade),
         (V20, V21, v20::upgrade),

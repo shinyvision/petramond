@@ -36,7 +36,11 @@ fn a_dirty_column_waits_out_its_quiet_window_then_uploads_once() {
     // Level-triggered dirtiness re-reports the same revision every frame.
     dirty(&mut queue, col(0, 0), 1);
     let mut drain = FrameDrain::default();
-    assert_eq!(queue.next_ready(&mut drain), None, "still inside its quiet window");
+    assert_eq!(
+        queue.next_ready(&mut drain),
+        None,
+        "still inside its quiet window"
+    );
     queue.finish(drain, by_distance);
     assert!(!queue.is_empty());
     assert_eq!(run_frame(&mut queue), [col(0, 0)]);
@@ -121,7 +125,11 @@ fn superseded_heap_entries_are_skipped() {
         }
         queue.finish(drain, by_distance);
     }
-    assert_eq!(uploads, [(col(0, 0), 5)], "one upload, at the latest revision");
+    assert_eq!(
+        uploads,
+        [(col(0, 0), 5)],
+        "one upload, at the latest revision"
+    );
 }
 
 #[test]
@@ -157,7 +165,11 @@ fn a_restarted_column_waits_a_fresh_window() {
     queue.restart(column, revision, &mut drain);
     queue.finish(drain, by_distance);
     let mut drain = FrameDrain::default();
-    assert_eq!(queue.next_ready(&mut drain), None, "same frame: still waiting");
+    assert_eq!(
+        queue.next_ready(&mut drain),
+        None,
+        "same frame: still waiting"
+    );
     queue.finish(drain, by_distance);
     assert_eq!(run_frame(&mut queue), [col(4, 4)]);
 }

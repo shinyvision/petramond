@@ -272,7 +272,8 @@ impl<'a> GraphBuilder<'a> {
                     omin: field.first_octave,
                     amplitudes: recipe.amplitudes[name.as_str()],
                 };
-                self.graph.sampled_field(ShiftedClimateField::new(self.seed, &params))
+                self.graph
+                    .sampled_field(ShiftedClimateField::new(self.seed, &params))
             }
             RawOp::Axis(axis) => self.graph.axis(match axis {
                 RawAxis::X => Axis::X,
@@ -339,7 +340,8 @@ impl<'a> GraphBuilder<'a> {
                 let fade_height = finite("floor_clamp fade_height", *fade_height)?;
                 let solid_density = finite("floor_clamp solid_density", *solid_density)?;
                 let input = self.operand(input)?;
-                self.graph.floor_clamp(input, floor_y, fade_height, solid_density)
+                self.graph
+                    .floor_clamp(input, floor_y, fade_height, solid_density)
             }
             RawOp::RangeSelect {
                 selector,
@@ -355,8 +357,10 @@ impl<'a> GraphBuilder<'a> {
             }
             RawOp::Spline { spline, inputs } => {
                 let spline = self.spline(spline)?;
-                let bound: BTreeSet<SplineAxis> =
-                    inputs.keys().map(|axis| SplineAxis::new(axis.as_str())).collect();
+                let bound: BTreeSet<SplineAxis> = inputs
+                    .keys()
+                    .map(|axis| SplineAxis::new(axis.as_str()))
+                    .collect();
                 let required = spline.required_axes();
                 if let Some(axis) = required.difference(&bound).next() {
                     return Err(format!("spline input axis '{}' is unbound", axis.as_str()));
@@ -420,7 +424,9 @@ impl<'a> GraphBuilder<'a> {
                 }
                 RawKnotValue::Spline(nested) => SplineValue::Spline(Box::new(self.spline(nested)?)),
             };
-            points.push(SplinePoint::with_optional_derivative(location, value, slope));
+            points.push(SplinePoint::with_optional_derivative(
+                location, value, slope,
+            ));
         }
         Ok(CubicSpline::new(spline.axis.as_str(), points))
     }
@@ -467,7 +473,9 @@ impl TerrainRecipe {
             let node = builder
                 .operand(operand)
                 .map_err(|e| format!("channel '{channel}': {e}"))?;
-            builder.graph.set_channel(Channel::new(channel.as_str()), node);
+            builder
+                .graph
+                .set_channel(Channel::new(channel.as_str()), node);
         }
         let graph = builder.graph;
         for (channel, horizontal) in REQUIRED_CHANNELS {
@@ -483,7 +491,8 @@ impl TerrainRecipe {
 
     /// The density graph for `seed`.
     pub fn build(&self, seed: u32) -> ScalarGraph {
-        self.try_build(seed).expect("the terrain recipe was validated at load")
+        self.try_build(seed)
+            .expect("the terrain recipe was validated at load")
     }
 }
 

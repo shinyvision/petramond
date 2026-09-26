@@ -4,11 +4,11 @@
 //! and target/held-item state. It intentionally does not contain renderer DTOs
 //! or terrain upload handles.
 
-use petramond_world::selection::SelectionShape;
 use petramond_render::camera::Camera;
 use petramond_world::block::Block;
 use petramond_world::block_state::HeldBlockState;
 use petramond_world::item::ItemType;
+use petramond_world::selection::SelectionShape;
 
 use super::{Game, GameEnvironment};
 use crate::animation::BoneOffset;
@@ -98,7 +98,8 @@ impl Game {
     /// [`client_frame`](Self::client_frame) the update loop needs, without
     /// assembling the rest.
     pub fn mining_block(&self) -> Option<Block> {
-        self.replica.self_view
+        self.replica
+            .self_view
             .mining
             .map(|(p, _)| Block::from_id(self.replica.world.data().chunk_block(p.x, p.y, p.z)))
     }

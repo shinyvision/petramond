@@ -30,8 +30,16 @@ fn shader_vnoise(px: f32, pz: f32, period: u32, seed: u32) -> f32 {
     let iz = (fz as i32 as u32) & mask;
     let mix = |a: f32, b: f32, t: f32| a + (b - a) * t;
     mix(
-        mix(shader_corner(ix, iz, seed), shader_corner((ix + 1) & mask, iz, seed), tx),
-        mix(shader_corner(ix, (iz + 1) & mask, seed), shader_corner((ix + 1) & mask, (iz + 1) & mask, seed), tx),
+        mix(
+            shader_corner(ix, iz, seed),
+            shader_corner((ix + 1) & mask, iz, seed),
+            tx,
+        ),
+        mix(
+            shader_corner(ix, (iz + 1) & mask, seed),
+            shader_corner((ix + 1) & mask, (iz + 1) & mask, seed),
+            tx,
+        ),
         tz,
     )
 }
@@ -58,7 +66,12 @@ fn shader_sheet(xz: [f32; 2], p: &FieldParams, salt: u32, feature: f32, advect: 
     let off = [advect * p.off[0] / feature, advect * p.off[1] / feature];
     let base = (WRAP / feature) as u32;
     let a = shader_fbm(q, off, base, p.seed ^ shader_fmix(p.epoch) ^ salt);
-    let b = shader_fbm(q, off, base, p.seed ^ shader_fmix(p.epoch.wrapping_add(1)) ^ salt);
+    let b = shader_fbm(
+        q,
+        off,
+        base,
+        p.seed ^ shader_fmix(p.epoch.wrapping_add(1)) ^ salt,
+    );
     let n = a + (b - a) * p.epoch_frac.clamp(0.0, 1.0);
     let lo = 1.0 - p.storm;
     ((n - lo) / (1.0 - lo).max(0.001)).clamp(0.0, 1.0)
@@ -76,7 +89,10 @@ fn generated_shader_constants_and_coverage_math_match_the_sim() {
         "const WRAP: f32 = {:?};\nconst SHEET_B_FEATURE: f32 = {:?};\nconst SHEET_B_ADVECT: f32 = {:?};\nconst SHEET_B_SALT: u32 = 0x{:08X}u;\nconst RAIN_RAMP: f32 = {:?};",
         WRAP, SHEET_B_FEATURE, SHEET_B_ADVECT, SHEET_B_SALT, RAIN_RAMP,
     );
-    assert!(SHADER.contains(&constants), "weather shader constants were not generated");
+    assert!(
+        SHADER.contains(&constants),
+        "weather shader constants were not generated"
+    );
     for expression in [
         "h *= 0x85EBCA6Bu",
         "h *= 0xC2B2AE35u",
@@ -84,7 +100,10 @@ fn generated_shader_constants_and_coverage_math_match_the_sim() {
         "seed ^ fmix32(epoch + 1u) ^ salt",
         "return clamp(ca + cb, 0.0, 1.0)",
     ] {
-        assert!(SHADER.contains(expression), "weather shader changed: {expression}");
+        assert!(
+            SHADER.contains(expression),
+            "weather shader changed: {expression}"
+        );
     }
     for seed in [0, 7, 0xDEAD_BEEF] {
         let p = FieldParams {
@@ -99,7 +118,10 @@ fn generated_shader_constants_and_coverage_math_match_the_sim() {
             let z = (i * 173 % 3700) as f32 + 0.75;
             let cpu = coverage(f64::from(x), f64::from(z), &p);
             let shader = shader_coverage([x, z], &p);
-            assert!((cpu - shader).abs() < 0.0002, "{seed:#x} {x},{z}: {cpu} vs {shader}");
+            assert!(
+                (cpu - shader).abs() < 0.0002,
+                "{seed:#x} {x},{z}: {cpu} vs {shader}"
+            );
         }
     }
 }

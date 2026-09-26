@@ -79,7 +79,8 @@ pub(super) fn handle_kv_call(mod_id: &str, call: KvCall) -> HostRet {
             let p = IVec3::from(pos);
             HostRet::Bytes(
                 ctx.world
-                    .data().cell_kv_get(p.x, p.y, p.z, &key)
+                    .data()
+                    .cell_kv_get(p.x, p.y, p.z, &key)
                     .map(<[u8]>::to_vec),
             )
         }),
@@ -122,7 +123,8 @@ pub(super) fn handle_kv_call(mod_id: &str, call: KvCall) -> HostRet {
                         .map(|pos| {
                             let p = IVec3::from(pos);
                             ctx.world
-                                .data().cell_kv_get(p.x, p.y, p.z, &key)
+                                .data()
+                                .cell_kv_get(p.x, p.y, p.z, &key)
                                 .map(<[u8]>::to_vec)
                         })
                         .collect(),
@@ -151,7 +153,8 @@ pub(super) fn handle_kv_call(mod_id: &str, call: KvCall) -> HostRet {
                                     return ctx.world.cell_kv_remove(p.x, p.y, p.z, &key);
                                 };
                                 if ctx.world.data().cell_kv_get(p.x, p.y, p.z, &key).is_none()
-                                    && ctx.world.data().cell_kv_count(p.x, p.y, p.z) >= CELL_KV_MAX_KEYS
+                                    && ctx.world.data().cell_kv_count(p.x, p.y, p.z)
+                                        >= CELL_KV_MAX_KEYS
                                 {
                                     return false;
                                 }

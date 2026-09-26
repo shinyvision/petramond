@@ -292,7 +292,10 @@ impl Theme {
             24,
             17,
             None,
-            &[(FaceState::Empty, [40, 44, 48, 255]), (FaceState::Full, [230, 230, 230, 255])],
+            &[
+                (FaceState::Empty, [40, 44, 48, 255]),
+                (FaceState::Full, [230, 230, 230, 255]),
+            ],
         );
         multi(
             &mut atlas,
@@ -301,7 +304,10 @@ impl Theme {
             14,
             14,
             None,
-            &[(FaceState::Empty, [40, 40, 40, 255]), (FaceState::Full, [230, 140, 40, 255])],
+            &[
+                (FaceState::Empty, [40, 40, 40, 255]),
+                (FaceState::Full, [230, 140, 40, 255]),
+            ],
         );
         single(&mut atlas, &mut parts, "label", 1, 1, [0, 0, 0, 0], None);
 
@@ -315,7 +321,10 @@ impl Theme {
             ("selection", "#3E6FD9"),
             ("dim", "#00000080"),
         ] {
-            palette.insert(k.to_owned(), parse_hex(v).expect("placeholder colours parse"));
+            palette.insert(
+                k.to_owned(),
+                parse_hex(v).expect("placeholder colours parse"),
+            );
         }
 
         Theme {

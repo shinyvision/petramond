@@ -54,7 +54,11 @@ fn scaffolding_is_what_is_most_spare_in_hand_softest_first() {
     let body = session.body(golem);
     at_work(&mut session, id, |ctx, _, job| {
         let picked = scaffold::pick(ctx, job, &body).map(|k| k.item.clone());
-        assert_eq!(picked.as_deref(), Some("petramond:dirt"), "as spare: the softer");
+        assert_eq!(
+            picked.as_deref(),
+            Some("petramond:dirt"),
+            "as spare: the softer"
+        );
     });
 }
 
@@ -74,7 +78,11 @@ fn scaffolding_is_fetched_up_to_a_slots_worth_or_the_pillars_height() {
             Some((key("petramond:dirt"), 64))
         );
         let slot = [Some(stack("petramond:dirt", 64))];
-        assert_eq!(scaffold::to_fetch(ctx, job, &slot, &stock), None, "enough in hand");
+        assert_eq!(
+            scaffold::to_fetch(ctx, job, &slot, &stock),
+            None,
+            "enough in hand"
+        );
         job.crew.scaffolding.want = 80;
         assert_eq!(
             scaffold::to_fetch(ctx, job, &slot, &stock),
@@ -114,7 +122,10 @@ fn a_support_column_rises_from_the_ground_under_work_with_nothing_beside_it() {
             support::below(ctx, design, [5, 3, 5]),
             Support::Needed([5, 0, 5])
         ));
-        assert!(matches!(support::below(ctx, design, [5, 0, 5]), Support::Standing));
+        assert!(matches!(
+            support::below(ctx, design, [5, 0, 5]),
+            Support::Standing
+        ));
         assert!(
             matches!(support::below(ctx, design, [5, 12, 5]), Support::Impossible),
             "too deep"
@@ -136,7 +147,10 @@ fn pocket_site(sealed: bool) -> (Session, crate::project::ProjectId, u64) {
     let (mut session, id) = Session::site(
         "Pocket",
         [6, 1, 6],
-        &[([5, 0, 5], "petramond:stone"), ([5, 0, 4], "petramond:stone")],
+        &[
+            ([5, 0, 5], "petramond:stone"),
+            ([5, 0, 4], "petramond:stone"),
+        ],
     );
     for cell in [[4, 0, 5], [6, 0, 5], [5, 0, 6], [5, 1, 5]] {
         session.world.set(cell, STONE);
@@ -156,7 +170,11 @@ fn a_block_that_would_seal_work_in_waits_for_it() {
     let door = unit(&session, id, [5, 0, 4]);
     at_work(&mut session, id, |ctx, _, job| {
         assert_eq!(pocket::seals(ctx, job, door), Some(Some(inner)));
-        assert_eq!(pocket::seals(ctx, job, inner), Some(None), "laid first, it seals nothing");
+        assert_eq!(
+            pocket::seals(ctx, job, inner),
+            Some(None),
+            "laid first, it seals nothing"
+        );
     });
 }
 
@@ -166,8 +184,15 @@ fn work_sealed_in_has_a_built_neighbour_taken_down_to_reach_it() {
     let inner = unit(&session, id, [5, 0, 5]);
     let door = unit(&session, id, [5, 0, 4]);
     at_work(&mut session, id, |ctx, _, job| {
-        assert_eq!(pocket::opener(ctx, job, inner, [5, 0, 2], false), Some(door));
-        assert_eq!(pocket::opener(ctx, job, door, [5, 0, 2], false), None, "built");
+        assert_eq!(
+            pocket::opener(ctx, job, inner, [5, 0, 2], false),
+            Some(door)
+        );
+        assert_eq!(
+            pocket::opener(ctx, job, door, [5, 0, 2], false),
+            None,
+            "built"
+        );
     });
 }
 
@@ -185,7 +210,15 @@ fn a_pillar_is_found_for_work_no_ground_reaches() {
     let body = session.body(golem);
     let project = session.builder.projects.get(id).unwrap().clone();
     let found = at_work(&mut session, id, |ctx, _, job| {
-        pillar::find(ctx, job, &project, &body, Task::Unit(top), &[[0, 6, 0]], &[[0, 6, 0]])
+        pillar::find(
+            ctx,
+            job,
+            &project,
+            &body,
+            Task::Unit(top),
+            &[[0, 6, 0]],
+            &[[0, 6, 0]],
+        )
     });
     let Search::Found(found) = found else {
         panic!("a pillar reaches the top");
@@ -205,14 +238,19 @@ fn the_right_tool_is_taken_up_and_a_trip_is_made_for_one_the_chests_hold() {
     session.world.set([0, 0, 0], DIRT);
     session.job(id);
     let golem = session.golem(id, HOME, AT);
-    session
-        .world
-        .give(ContainerAddress::Block(CHEST_AT), "petramond:stone_shovel", 1);
+    session.world.give(
+        ContainerAddress::Block(CHEST_AT),
+        "petramond:stone_shovel",
+        1,
+    );
     let body = session.body(golem);
     let project = session.builder.projects.get(id).unwrap().clone();
     at_work(&mut session, id, |ctx, _, job| {
         let waiting = cargo::tools_waiting(ctx, job, &body, &project);
-        assert_eq!(waiting.into_iter().collect::<Vec<_>>(), vec!["shovel".to_owned()]);
+        assert_eq!(
+            waiting.into_iter().collect::<Vec<_>>(),
+            vec!["shovel".to_owned()]
+        );
         assert_eq!(cargo::tool_slot(ctx, &body.slots, DIRT), None, "bare hands");
     });
     session
@@ -222,8 +260,16 @@ fn the_right_tool_is_taken_up_and_a_trip_is_made_for_one_the_chests_hold() {
     at_work(&mut session, id, |ctx, _, job| {
         assert!(cargo::tools_waiting(ctx, job, &body, &project).is_empty());
         assert_eq!(cargo::tool_slot(ctx, &body.slots, DIRT), Some(1));
-        assert_eq!(cargo::tool_slot(ctx, &body.slots, STONE), None, "a shovel is no pickaxe");
-        assert_eq!(cargo::tool_slot(ctx, &body.slots, CHEST), None, "an axe's work");
+        assert_eq!(
+            cargo::tool_slot(ctx, &body.slots, STONE),
+            None,
+            "a shovel is no pickaxe"
+        );
+        assert_eq!(
+            cargo::tool_slot(ctx, &body.slots, CHEST),
+            None,
+            "an axe's work"
+        );
     });
 }
 

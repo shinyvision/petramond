@@ -60,7 +60,7 @@ impl KvRecord for Areas {
     }
 
     fn decode(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() % 24 != 0 {
+        if !bytes.len().is_multiple_of(24) {
             return None;
         }
         let mut r = ByteReader::new(bytes);
@@ -83,13 +83,16 @@ pub struct Rests {
 
 impl Rests {
     fn areas(&mut self) -> &mut Areas {
-        self.areas.get_or_insert_with(|| match world_kv_load::<Areas>(KEY) {
-            Ok(areas) => areas.unwrap_or_default(),
-            Err(error) => {
-                log(&format!("farming: {KEY} is unreadable ({error}); rests start afresh"));
-                Areas::default()
-            }
-        })
+        self.areas
+            .get_or_insert_with(|| match world_kv_load::<Areas>(KEY) {
+                Ok(areas) => areas.unwrap_or_default(),
+                Err(error) => {
+                    log(&format!(
+                        "farming: {KEY} is unreadable ({error}); rests start afresh"
+                    ));
+                    Areas::default()
+                }
+            })
     }
 
     /// Whether the column holding `pos` is still resting.
@@ -186,7 +189,10 @@ mod tests {
         let bytes = encode_versioned(&areas);
         assert_eq!(bytes[0], Areas::VERSION);
         assert_eq!(decode_versioned::<Areas>(&bytes), Ok(areas));
-        assert_eq!(decode_versioned::<Areas>(&[Areas::VERSION]), Ok(Areas::default()));
+        assert_eq!(
+            decode_versioned::<Areas>(&[Areas::VERSION]),
+            Ok(Areas::default())
+        );
     }
 
     #[test]

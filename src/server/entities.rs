@@ -225,7 +225,8 @@ impl ServerGame {
         let cell = feet.block();
         let Some(surface) = self.world.data().fluid_surface_at(cell).or_else(|| {
             self.world
-                .data().fluid_surface_at(cell - petramond_math::math::IVec3::Y)
+                .data()
+                .fluid_surface_at(cell - petramond_math::math::IVec3::Y)
         }) else {
             return;
         };
@@ -421,7 +422,7 @@ pub fn light_at_pos(
 /// airborne players are silent until they land. Reads the sessions, writes
 /// only the world's noise batch.
 pub(in crate::server) fn push_player_step_noises(
-    world: &mut World,
+    world: &mut ServerWorld,
     sessions: &crate::server::sessions::SessionRegistry,
 ) {
     for sess in sessions {

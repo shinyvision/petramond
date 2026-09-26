@@ -171,10 +171,10 @@ impl ServerGame {
             if server.item_pickup_tick(s) {
                 events.player(s).picked_up_item = true;
                 // Every observer hears the pickup at the collector's body.
-                events
-                    .world
-                    .item_picked_up
-                    .push((server.sessions[s].player.body_center(), server.sessions[s].id));
+                events.world.item_picked_up.push((
+                    server.sessions[s].player.body_center(),
+                    server.sessions[s].id,
+                ));
             }
         });
         self.end_stage(Stage::Pickup, events);

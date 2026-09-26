@@ -529,7 +529,8 @@ impl Remap for BurstTextureMsg {
 impl Remap for SpatialSoundMsg {
     fn remap(&mut self, map: &IdRemap) -> bool {
         match self {
-            SpatialSoundMsg::PlayAt { sound_id, .. } | SpatialSoundMsg::PlayOnMob { sound_id, .. } => {
+            SpatialSoundMsg::PlayAt { sound_id, .. }
+            | SpatialSoundMsg::PlayOnMob { sound_id, .. } => {
                 IdRemap::rewrite(sound_id, |id| map.sound(id))
             }
             // Stops and retunes carry no registry id and must reach the

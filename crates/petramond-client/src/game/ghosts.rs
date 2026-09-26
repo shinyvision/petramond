@@ -158,7 +158,9 @@ impl Game {
         let keys: Vec<String> = self.tools.ghosts.index.keys().cloned().collect();
         for key in keys {
             let positioned = self.tools.preview.positioning_tag();
-            if self.tools.ghosts.index[&key].placement.yields_to_positioning
+            if self.tools.ghosts.index[&key]
+                .placement
+                .yields_to_positioning
                 && positioned == Some(key.as_str())
             {
                 continue;
@@ -210,7 +212,8 @@ impl Game {
 
     fn sync_ghost_index(&mut self) {
         let wanted = &self.tools.share.ghosts;
-        self.tools.ghosts
+        self.tools
+            .ghosts
             .index
             .retain(|key, index| wanted.get(key) == Some(&index.placement));
         for (key, placement) in wanted.clone() {
@@ -220,7 +223,8 @@ impl Game {
             let Some(schematic) = self.schematic_design(&placement.digest).cloned() else {
                 continue;
             };
-            self.tools.ghosts
+            self.tools
+                .ghosts
                 .index
                 .insert(key, Index::new(placement, &schematic));
         }

@@ -36,6 +36,7 @@ macro_rules! tick_sections {
     ($($(#[$doc:meta])* $variant:ident($ty:ty) => $get:ident;)*) => {
         /// One feature's part of a [`TickUpdate`].
         #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+        #[allow(clippy::large_enum_variant)] // Stable wire shape uses inline section payloads.
         pub enum TickSection {
             $($(#[$doc])* $variant($ty),)*
         }

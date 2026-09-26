@@ -40,6 +40,7 @@ impl BlockAnimations {
     }
 
     /// The chests someone is looking inside.
+    #[cfg(test)]
     pub(super) fn open_chests(&self) -> &FxHashSet<IVec3> {
         &self.open_chests
     }
@@ -119,7 +120,10 @@ mod tests {
         anims.begin(AT, false);
         assert_eq!(anims.progress(AT, true), 0.0, "starts from closed");
         anims.advance(0.1, |_| Some((true, 4.0)));
-        assert!((anims.progress(AT, true) - 0.4).abs() < 1e-5, "eases at its speed");
+        assert!(
+            (anims.progress(AT, true) - 0.4).abs() < 1e-5,
+            "eases at its speed"
+        );
         for _ in 0..10 {
             anims.advance(0.1, |_| Some((true, 4.0)));
         }
@@ -133,9 +137,15 @@ mod tests {
         anims.begin(AT, false);
         anims.advance(0.1, |_| Some((true, 5.0)));
         anims.begin(AT, true);
-        assert!((anims.progress(AT, false) - 0.5).abs() < 1e-5, "keeps its progress");
+        assert!(
+            (anims.progress(AT, false) - 0.5).abs() < 1e-5,
+            "keeps its progress"
+        );
         anims.advance(0.05, |_| Some((false, 5.0)));
-        assert!((anims.progress(AT, false) - 0.25).abs() < 1e-5, "and eases back");
+        assert!(
+            (anims.progress(AT, false) - 0.25).abs() < 1e-5,
+            "and eases back"
+        );
         anims.advance(0.1, |_| None);
         assert!(anims.swings.is_empty(), "a broken block stops animating");
     }
@@ -148,9 +158,17 @@ mod tests {
         for _ in 0..10 {
             anims.advance_poses(0.1, |_| Some((false, 4.0)));
         }
-        assert_eq!(anims.open_progress(AT, false), 1.0, "a viewer holds it open");
+        assert_eq!(
+            anims.open_progress(AT, false),
+            1.0,
+            "a viewer holds it open"
+        );
         anims.set_open_chests(FxHashSet::default());
-        assert_eq!(anims.open_progress(AT, false), 1.0, "closing starts from open");
+        assert_eq!(
+            anims.open_progress(AT, false),
+            1.0,
+            "closing starts from open"
+        );
         for _ in 0..10 {
             anims.advance_poses(0.1, |_| Some((false, 4.0)));
         }

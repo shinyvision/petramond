@@ -27,7 +27,10 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: CoreCall) -> HostR
             .or_else(crate::modding::ai::detached_tick)
         {
             Some(tick) => HostRet::U64(tick),
-            None => HostRet::error(ErrorCode::NoContext, "no simulation context is active".into()),
+            None => HostRet::error(
+                ErrorCode::NoContext,
+                "no simulation context is active".into(),
+            ),
         },
         CoreCall::RngU64 { stream_key } => HostRet::U64(data.rng_next(&stream_key)),
         CoreCall::RegisterTickSystem {
@@ -85,7 +88,10 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: CoreCall) -> HostR
             if !key_owned_by_namespace(&data.mod_id, &key) {
                 return HostRet::error(
                     ErrorCode::Forbidden,
-                    format!("AI node key '{key}' must be namespaced '{}:name'", data.mod_id),
+                    format!(
+                        "AI node key '{key}' must be namespaced '{}:name'",
+                        data.mod_id
+                    ),
                 );
             }
             data.register(Registration::AiNode { key, callback_id })
@@ -267,7 +273,11 @@ mod tests {
             Some(&[0.25, 0.5, 0.75, 1.0])
         );
         assert_eq!(
-            world.data().environment().shader_params().get("petramond:light"),
+            world
+                .data()
+                .environment()
+                .shader_params()
+                .get("petramond:light"),
             Some(&[0.8, 0.0, 0.0, 0.0])
         );
         assert!(matches!(

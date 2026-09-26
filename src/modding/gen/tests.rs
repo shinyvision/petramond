@@ -148,9 +148,16 @@ fn a_trap_on_one_worker_disables_the_mod_on_every_worker() {
         }
     });
     assert!(worker.join().unwrap().is_none(), "the worker trapped");
-    assert!(board.health("hostile").is_disabled(), "the mod is down session-wide");
+    assert!(
+        board.health("hostile").is_disabled(),
+        "the mod is down session-wide"
+    );
     assert_eq!(board.disabled_since(0), vec!["hostile".to_owned()]);
     // This thread never instantiated the mod and now never will.
     assert!(hooks.replace_terrain(&inputs).is_none());
-    assert_eq!(board.disabled_count(), 1, "disabled once, not once per thread");
+    assert_eq!(
+        board.disabled_count(),
+        1,
+        "disabled once, not once per thread"
+    );
 }

@@ -59,6 +59,9 @@ mod tests {
 
         let later = t0 + Duration::from_secs(3600);
         assert!((0..3).all(|_| bucket.try_take(1.0, later)));
-        assert!(!bucket.try_take(1.0, later), "an idle hour banks only the capacity");
+        assert!(
+            !bucket.try_take(1.0, later),
+            "an idle hour banks only the capacity"
+        );
     }
 }

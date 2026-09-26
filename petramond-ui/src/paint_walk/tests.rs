@@ -162,24 +162,23 @@ fn image_backed_button_sizes_to_one_frame_and_still_clicks() {
     let state = UiState::new();
     let mut fs = crate::input::FrameState::new();
     let mut out = FrameOutput::default();
-    let frame =
-        |input: &[InputEvent], fs: &mut crate::input::FrameState, out: &mut FrameOutput| {
-            rt.frame(
-                FrameArgs {
-                    screen: (200, 200),
-                    scale: 1,
-                    now: 0.0,
-                    state: &state,
-                    input,
-                    clipboard: None,
-                    images: &images,
-                    dim: None,
-                    preview: None,
-                },
-                fs,
-                out,
-            );
-        };
+    let frame = |input: &[InputEvent], fs: &mut crate::input::FrameState, out: &mut FrameOutput| {
+        rt.frame(
+            FrameArgs {
+                screen: (200, 200),
+                scale: 1,
+                now: 0.0,
+                state: &state,
+                input,
+                clipboard: None,
+                images: &images,
+                dim: None,
+                preview: None,
+            },
+            fs,
+            out,
+        );
+    };
     frame(&[], &mut fs, &mut out);
 
     // Natural size is ONE frame of the 2x2 sheet, not the whole 64x64.

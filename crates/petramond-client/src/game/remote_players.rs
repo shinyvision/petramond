@@ -153,7 +153,11 @@ impl Replica<PlayerStateRow> for RemotePlayer {
             pose,
             ease: Default::default(),
             pending: Vec::new(),
-            hurt_t: if row.hurt_recent { HURT_FLASH_SECS } else { 0.0 },
+            hurt_t: if row.hurt_recent {
+                HURT_FLASH_SECS
+            } else {
+                0.0
+            },
             eat_t: 0.0,
             emitters,
             view: HeldItemView::default(),

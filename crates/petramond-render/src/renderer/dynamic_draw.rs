@@ -269,19 +269,6 @@ impl DynamicVertexDraw {
         }
         self.vertex_count = count;
     }
-
-    /// Bind this subsystem's pipeline + vbuf + ibuf and draw `index_count`
-    /// indices (derived by the caller from `vertex_count`). The caller sets shared
-    /// bind groups first. No-op when nothing is baked.
-    pub(super) fn draw(&self, pass: &mut wgpu::RenderPass<'_>, index_count: u32, samples: u32) {
-        if self.vertex_count == 0 {
-            return;
-        }
-        pass.set_pipeline(self.pipeline.get(samples));
-        pass.set_vertex_buffer(0, self.vbuf.slice(..));
-        pass.set_index_buffer(self.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-        pass.draw_indexed(0..index_count, 0, 0..1);
-    }
 }
 
 /// An INSTANCED dynamic draw — the particles: the vertex stage expands each

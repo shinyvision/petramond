@@ -8,8 +8,8 @@ use crate::host::prelude::*;
 use super::tuning::reach::POCKET_REGION;
 use super::{open_block, Ctx};
 use crate::geometry::{manhattan, offset, FACES};
-use crate::worker::Job;
 use crate::survey::Known;
+use crate::worker::Job;
 
 /// The unbuilt unit beside unit `i` that laying `i` would close off while
 /// it is open now, if any. `None` while part of the neighbourhood is

@@ -13,9 +13,9 @@
 //! [`super::item_use`]), so each consumer's claim test is written once too.
 
 use super::interact::ConsumerKind;
-use petramond_world::world::WorldData;
 use petramond_math::math::IVec3;
 use petramond_world::inventory::Hand;
+use petramond_world::world::WorldData;
 
 /// One consumer's verdict on the attempt.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -189,10 +189,7 @@ mod tests {
 
     #[test]
     fn every_consumer_is_offered_in_claim_order_until_one_claims() {
-        let mut reg = Scripted::new(
-            false,
-            vec![(Hand::Main, ConsumerKind::Eat, Claim::Claimed)],
-        );
+        let mut reg = Scripted::new(false, vec![(Hand::Main, ConsumerKind::Eat, Claim::Claimed)]);
         let out = run_use_click(&mut reg);
         assert_eq!(out.claimant, Some(ConsumerKind::Eat));
         assert!(out.presents_itself());
@@ -216,8 +213,16 @@ mod tests {
         assert_eq!(out.claimant, Some(ConsumerKind::Place));
         assert_eq!(out.placement, Some(7));
         assert!(out.off_hand_acted());
-        let main = reg.offered.iter().filter(|&&(h, _)| h == Hand::Main).count();
-        assert_eq!(main, ConsumerKind::CLAIM_ORDER.len(), "the main pass ran whole");
+        let main = reg
+            .offered
+            .iter()
+            .filter(|&&(h, _)| h == Hand::Main)
+            .count();
+        assert_eq!(
+            main,
+            ConsumerKind::CLAIM_ORDER.len(),
+            "the main pass ran whole"
+        );
         assert_eq!(reg.acting, Hand::Main, "the acting hand never leaks");
     }
 
@@ -252,6 +257,9 @@ mod tests {
     fn the_registered_consumer_needs_a_target() {
         assert!(!registered_offered(None, None));
         assert!(registered_offered(Some(IVec3::ZERO), None));
-        assert!(registered_offered(None, Some(3)), "a mob click is an attempt");
+        assert!(
+            registered_offered(None, Some(3)),
+            "a mob click is an attempt"
+        );
     }
 }

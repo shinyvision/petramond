@@ -8,7 +8,6 @@ use crate::mob::{Mobs, SavedMob};
 use petramond_math::math::Vec3;
 use petramond_world::chunk::ChunkPos;
 
-
 impl ServerWorld {
     /// The active mobs (read-only), for `Game` to forward to the render-side scene
     /// adapter and to ray-test for crosshair targeting.
@@ -33,7 +32,10 @@ impl ServerWorld {
         yaw: f32,
     ) -> Option<u64> {
         let (sky, block) = self.mob_render_light_at(pos);
-        self.side.entities.mobs.spawn_lit(kind, pos, yaw, sky, block)
+        self.side
+            .entities
+            .mobs
+            .spawn_lit(kind, pos, yaw, sky, block)
     }
 
     /// Atomically spawn a mob only when its complete collision body fits in
@@ -73,7 +75,10 @@ impl ServerWorld {
     pub fn restore_mobs(&mut self, mobs: impl IntoIterator<Item = SavedMob>) {
         for mob in mobs {
             let (sky, block) = self.mob_render_light_at(mob.pos);
-            self.side.entities.mobs.restore_saved_mob_lit(mob, sky, block);
+            self.side
+                .entities
+                .mobs
+                .restore_saved_mob_lit(mob, sky, block);
         }
     }
 
@@ -122,7 +127,9 @@ impl ServerWorld {
         if seat as usize >= crate::mob::def(mob.kind).seats.len() {
             return false;
         }
-        self.side.entities.riding
+        self.side
+            .entities
+            .riding
             .mount(player, crate::mob::riding::MountTarget::Mob(mob_id), seat)
     }
 
@@ -132,7 +139,9 @@ impl ServerWorld {
     /// exist and who takes one is the calling mod's policy. Finite-value
     /// validation happens at the host boundary.
     pub fn try_mount_anchor(&mut self, player: u8, anchor: crate::mob::riding::PoseAnchor) -> bool {
-        self.side.entities.riding
+        self.side
+            .entities
+            .riding
             .mount(player, crate::mob::riding::MountTarget::Anchor(anchor), 0)
     }
 
@@ -150,7 +159,10 @@ impl ServerWorld {
         // a stale region.
         self.route_probe_budget().refill();
         let (next, changed, lost) = self.nav_changes_since(self.side.entities.mobs.change_seq());
-        self.side.entities.mobs.invalidate_confined_regions(next, &changed, lost);
+        self.side
+            .entities
+            .mobs
+            .invalidate_confined_regions(next, &changed, lost);
         if self.side.entities.mobs.is_empty() {
             // Nobody is listening: drop the tick's noise batch, or a mob-free
             // world would accumulate the player's footsteps forever.

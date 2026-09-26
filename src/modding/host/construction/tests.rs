@@ -31,13 +31,16 @@ fn server_with_worker(slots: Vec<Option<ItemStack>>) -> (ServerGame, u64) {
             }
         }
     }
-    server.world_mut().mobs_mut().restore([crate::mob::SavedMob {
-        kind: crate::mob::Mob::Owl,
-        pos: WorldPos::new(8.5, 65.0, 8.5),
-        yaw: 0.0,
-        tags: Default::default(),
-        container: Container { slots },
-    }]);
+    server
+        .world_mut()
+        .mobs_mut()
+        .restore([crate::mob::SavedMob {
+            kind: crate::mob::Mob::Owl,
+            pos: WorldPos::new(8.5, 65.0, 8.5),
+            yaw: 0.0,
+            tags: Default::default(),
+            container: Container { slots },
+        }]);
     let id = server.world().mobs().instances()[0].id();
     (server, id)
 }
@@ -155,7 +158,12 @@ fn a_dig_accrues_on_consecutive_ticks_and_collects_its_drop() {
     );
     assert_eq!(drain(&mut server), vec![(ActorAction::Dig, None)]);
     assert_eq!(
-        Block::from_id(server.world().data().chunk_block(target.x, target.y, target.z)),
+        Block::from_id(
+            server
+                .world()
+                .data()
+                .chunk_block(target.x, target.y, target.z)
+        ),
         Block::Air
     );
     let carried = server.world().mobs().instances()[0].container().clone();
@@ -229,7 +237,12 @@ fn a_placement_pays_once_from_the_actors_slots_and_needs_a_face() {
     );
     assert_eq!(drain(&mut server), vec![(ActorAction::Place, None)]);
     assert_eq!(
-        Block::from_id(server.world().data().chunk_block(on_floor.x, on_floor.y, on_floor.z)),
+        Block::from_id(
+            server
+                .world()
+                .data()
+                .chunk_block(on_floor.x, on_floor.y, on_floor.z)
+        ),
         Block::Cobblestone
     );
     let carried = |server: &ServerGame| {
@@ -257,13 +270,23 @@ fn a_placement_pays_once_from_the_actors_slots_and_needs_a_face() {
         place(&mut server, second),
         HostRet::Place(PlaceRequest::Queued)
     );
-    server.world_mut().mobs_mut().container_mut(mob).unwrap().slots[0] = None;
+    server
+        .world_mut()
+        .mobs_mut()
+        .container_mut(mob)
+        .unwrap()
+        .slots[0] = None;
     assert_eq!(
         drain(&mut server),
         vec![(ActorAction::Place, Some(ActionRefusal::MissingItems))]
     );
     assert_eq!(
-        Block::from_id(server.world().data().chunk_block(second.x, second.y, second.z)),
+        Block::from_id(
+            server
+                .world()
+                .data()
+                .chunk_block(second.x, second.y, second.z)
+        ),
         Block::Air
     );
 }

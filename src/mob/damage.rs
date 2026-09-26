@@ -59,7 +59,9 @@ impl Instance {
         attacker: Option<EntityRef>,
         feedback: &MobDamageFeedback,
     ) -> bool {
-        if self.combat.death.is_dead() || (self.combat.damage_immunity.is_active() && feedback.has_immunity()) {
+        if self.combat.death.is_dead()
+            || (self.combat.damage_immunity.is_active() && feedback.has_immunity())
+        {
             return false;
         }
         let decreases_health = feedback
@@ -101,9 +103,11 @@ impl Instance {
                         if let Some(from) = origin {
                             let mut away = self.pos - from;
                             away.y = 0.0;
-                            self.motion.knockback = away.normalize_or_zero() * KNOCKBACK_SPEED * scale;
+                            self.motion.knockback =
+                                away.normalize_or_zero() * KNOCKBACK_SPEED * scale;
                             self.motion.vel.y = KNOCKBACK_UP * scale;
-                            self.combat.stagger_timer = self.combat.stagger_timer.max(duration.max(0.0));
+                            self.combat.stagger_timer =
+                                self.combat.stagger_timer.max(duration.max(0.0));
                             self.motion.on_ground = false;
                         }
                     }
@@ -234,7 +238,13 @@ impl Instance {
     /// thereafter it steps, colliding each bone-corner against the world's blocks (so the
     /// corpse can't pass through terrain and falls off edges). The mob's `pos`/`yaw` stay
     /// frozen — they're the ragdoll's model→world `global` transform.
-    pub(super) fn tick_ragdoll(&mut self, dt: f32, world: &ServerWorld, d: &MobDef, skeleton: &Skeleton) {
+    pub(super) fn tick_ragdoll(
+        &mut self,
+        dt: f32,
+        world: &ServerWorld,
+        d: &MobDef,
+        skeleton: &Skeleton,
+    ) {
         let vel = self.motion.vel;
         let yaw = self.yaw;
         let pos = self.pos;

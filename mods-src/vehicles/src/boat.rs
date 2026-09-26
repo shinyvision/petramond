@@ -45,7 +45,6 @@ use mod_sdk::*;
 
 use crate::keys;
 
-
 /// Candidate cells for a shore-hugging boat click, nearest first: the clicked
 /// cell itself, then the surrounding water cells out to two blocks. The
 /// checked spawn sweeps the whole hull, so a click right at the water's edge

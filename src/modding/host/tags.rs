@@ -107,12 +107,19 @@ pub(super) fn handle_tag_call(mod_id: &str, call: TagCall) -> HostRet {
             if let Some(err) = batch_guard("MobTagsGetMany mob", mob_ids.len()) {
                 return err;
             }
-            sim_read(|ctx| HostRet::MobTagsMany(mob_ids.into_iter().map(|id| {
-                let index = live_mob(ctx, id)?;
-                ctx.world.mobs().mob_tags(index).map(|tags| {
-                    tags.iter().map(|(k, v)| (k.clone(), to_api(v))).collect()
-                })
-            }).collect()))
+            sim_read(|ctx| {
+                HostRet::MobTagsMany(
+                    mob_ids
+                        .into_iter()
+                        .map(|id| {
+                            let _mob = live_mob(ctx, id)?;
+                            ctx.world.mobs().mob_tags(id).map(|tags| {
+                                tags.iter().map(|(k, v)| (k.clone(), to_api(v))).collect()
+                            })
+                        })
+                        .collect(),
+                )
+            })
         }
         TagCall::MobTagsWrite { writes } => {
             if let Some(err) = batch_guard("MobTagsWrite write", writes.len()) {
@@ -121,7 +128,9 @@ pub(super) fn handle_tag_call(mod_id: &str, call: TagCall) -> HostRet {
             let mut accepted = Vec::with_capacity(writes.len());
             for write in writes {
                 let call = match write {
-                    MobTagOp::Set { mob_id, key, value } => TagCall::MobTagSet { mob_id, key, value },
+                    MobTagOp::Set { mob_id, key, value } => {
+                        TagCall::MobTagSet { mob_id, key, value }
+                    }
                     MobTagOp::Delete { mob_id, key } => TagCall::MobTagDelete { mob_id, key },
                 };
                 match handle_tag_call(mod_id, call) {
@@ -226,7 +235,10 @@ mod tests {
                 other => panic!("live mob answers a snapshot, got {other:?}"),
             }
             assert_eq!(
-                handle_host_call(&mut data, HostCall::from(calls::MobInfo { mob_id: id + 999 })),
+                handle_host_call(
+                    &mut data,
+                    HostCall::from(calls::MobInfo { mob_id: id + 999 })
+                ),
                 HostRet::Mob(None),
                 "an unknown id is honestly absent"
             );

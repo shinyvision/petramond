@@ -163,7 +163,11 @@ impl Pad {
     /// The inclusive world box this pad spans around the section at `origin`.
     pub(crate) fn around(self, origin: [i32; 3]) -> ([i32; 3], [i32; 3]) {
         (
-            [origin[0] - self.xz, origin[1] - self.down, origin[2] - self.xz],
+            [
+                origin[0] - self.xz,
+                origin[1] - self.down,
+                origin[2] - self.xz,
+            ],
             [
                 origin[0] + 15 + self.xz,
                 origin[1] + 15 + self.up,
@@ -253,10 +257,9 @@ pub(crate) fn settle<V>(
 /// Plain memo entries for many keys, split at the ABI cap by [`paged`]; the
 /// reply is parallel to `keys`, and a key the host did not answer reads as
 /// missing. `get_many` is [`memo_get_many`] in play.
-pub(crate) fn lookup_many(
-    get_many: fn(Vec<Vec<u8>>) -> Vec<Option<Vec<u8>>>,
-    keys: Vec<Vec<u8>>,
-) -> Vec<Option<Vec<u8>>> {
+type MemoBatchLookup = fn(Vec<Vec<u8>>) -> Vec<Option<Vec<u8>>>;
+
+pub(crate) fn lookup_many(get_many: MemoBatchLookup, keys: Vec<Vec<u8>>) -> Vec<Option<Vec<u8>>> {
     paged(keys, |page| {
         let want = page.len();
         let mut reply = get_many(page);

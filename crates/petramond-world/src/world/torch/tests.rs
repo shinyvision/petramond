@@ -70,7 +70,8 @@ fn fence_post_top_supports_a_floor_torch_but_its_sides_hold_no_wall_torch() {
 
     let floor_torch = IVec3::new(8, 65, 8);
     assert!(
-        w.data.torch_supported_at(floor_torch, TorchPlacement::Floor),
+        w.data
+            .torch_supported_at(floor_torch, TorchPlacement::Floor),
         "a fence's post top should hold a floor torch"
     );
 

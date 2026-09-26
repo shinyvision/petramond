@@ -236,7 +236,12 @@ impl PreviewCache {
 
     /// The canvas rects of the current revision at `viewport`/`scale`,
     /// solved once per change.
-    pub fn rects(&mut self, images: &DiskImages, viewport: (i32, i32), scale: i32) -> Rc<Vec<RectEntry>> {
+    pub fn rects(
+        &mut self,
+        images: &DiskImages,
+        viewport: (i32, i32),
+        scale: i32,
+    ) -> Rc<Vec<RectEntry>> {
         let (Some(built), Some(rt)) = (self.built, &self.runtime) else {
             return Rc::default();
         };
@@ -403,7 +408,10 @@ mod tests {
         assert!(!cache.is_stale(1, 0));
         let a = cache.rects(&images, (400, 300), 1);
         let b = cache.rects(&images, (400, 300), 1);
-        assert!(Rc::ptr_eq(&a, &b), "unchanged inputs reuse the solved rects");
+        assert!(
+            Rc::ptr_eq(&a, &b),
+            "unchanged inputs reuse the solved rects"
+        );
         let first = cache.render(&images, (400, 300), 1, None);
         let second = cache.render(&images, (400, 300), 1, None);
         assert_eq!(first, second);

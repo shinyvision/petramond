@@ -145,8 +145,8 @@ clippy:
 # Needs `cargo install --locked cargo-deny`; CI runs it on every change and
 # weekly.
 deny:
-	$(CARGO) deny --workspace check
-	$(CARGO) deny --manifest-path mods-src/Cargo.toml --workspace check
+	$(CARGO) deny --config "$(CURDIR)/deny.toml" --workspace check
+	$(CARGO) deny --config "$(CURDIR)/deny.toml" --manifest-path mods-src/Cargo.toml --workspace check
 
 # Keep giant test fixtures and declarative wire schemas from disguising the
 # size of executable modules, and stop production modules growing past the
@@ -173,7 +173,7 @@ genparity:
 # Manual measurement targets are intentionally outside `check`: profile
 # numbers are machine/load dependent, and smoke duplicates full-suite coverage.
 profile:
-	CARGO_CMD="$(CARGO)" bash scripts/with-test-mods.sh bash scripts/profile.sh
+	MODS_PROFILE=release CARGO_CMD="$(CARGO)" bash scripts/with-test-mods.sh bash scripts/profile.sh
 
 smoke:
 	CARGO_CMD="$(CARGO)" bash scripts/with-test-mods.sh bash scripts/smoke.sh

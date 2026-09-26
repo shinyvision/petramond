@@ -76,7 +76,7 @@ pub fn macro_surface_map(seed: u32, side: usize, stride: i32) -> MacroSurfaceMap
             let biome = sampler
                 .sample_surface_cell(ClimateSampleCell::surface(wx, wz))
                 .and_then(|sample| index.classify_surface(sample.climate))
-                .map(|b| b as u8)
+                .map(|b| b.id())
                 .unwrap_or(0);
             let height = graph
                 .graph()

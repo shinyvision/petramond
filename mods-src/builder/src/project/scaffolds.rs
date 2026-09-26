@@ -38,12 +38,17 @@ pub(super) fn load(id: ProjectId) -> Option<Vec<[i32; 3]>> {
     let shards = u32::from_le_bytes(shards.try_into().ok()?) as usize;
     let mut cells = Vec::new();
     for shard in 0..shards {
-        cells.extend(world_kv_get(&shard_key(id, shard)).iter().flat_map(|bytes| {
-            bytes.chunks_exact(CELL_BYTES).map(|c| {
-                let axis = |a: usize| i32::from_le_bytes(c[a * 4..a * 4 + 4].try_into().unwrap());
-                [axis(0), axis(1), axis(2)]
-            })
-        }));
+        cells.extend(
+            world_kv_get(&shard_key(id, shard))
+                .iter()
+                .flat_map(|bytes| {
+                    bytes.chunks_exact(CELL_BYTES).map(|c| {
+                        let axis =
+                            |a: usize| i32::from_le_bytes(c[a * 4..a * 4 + 4].try_into().unwrap());
+                        [axis(0), axis(1), axis(2)]
+                    })
+                }),
+        );
     }
     Some(cells)
 }
@@ -85,7 +90,9 @@ mod tests {
     fn a_list_is_stored_across_shards_and_reads_back_in_order() {
         let _session = crate::testing::Session::flat(1);
         assert_eq!(load(3), None, "nothing stored yet");
-        let cells: Vec<[i32; 3]> = (0..CELLS_PER_SHARD as i32 + 5).map(|i| [i, -i, 7]).collect();
+        let cells: Vec<[i32; 3]> = (0..CELLS_PER_SHARD as i32 + 5)
+            .map(|i| [i, -i, 7])
+            .collect();
         save(3, &[], &cells, true);
         assert_eq!(load(3).as_deref(), Some(&cells[..]));
 

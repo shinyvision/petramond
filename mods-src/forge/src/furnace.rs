@@ -328,7 +328,9 @@ fn mould_in(anchor: [i32; 3]) -> Option<String> {
 /// What the metal in the basin is casting: the mould's class, or a bare plate
 /// when the basin is empty.
 fn cast_class<'a>(c: &'a Casting, mould: Option<&str>) -> &'a str {
-    mould.and_then(|m| c.mould_class(m)).unwrap_or(keys::CAST_PLATE_CLASS)
+    mould
+        .and_then(|m| c.mould_class(m))
+        .unwrap_or(keys::CAST_PLATE_CLASS)
 }
 
 /// What metal already running becomes: the mould's own route, else a plate.
@@ -553,11 +555,7 @@ impl ForgingFurnaceSpec {
     /// the metal accumulates, the tap drains) and the row's particle emitter
     /// carries the motion, at frame rate, for free.
     fn parts_mask(&self, state: &State) -> u32 {
-        let mask = if state.fire.lit() {
-            PART_COALS
-        } else {
-            0
-        };
+        let mask = if state.fire.lit() { PART_COALS } else { 0 };
         // A bit past the declared list names no cube and simply draws nothing,
         // so a stray one is invisible rather than wrong.
         debug_assert_eq!(mask >> PARTS.len(), 0, "a part bit the row never declared");

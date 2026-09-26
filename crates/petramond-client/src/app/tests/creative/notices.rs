@@ -3,11 +3,9 @@ use petramond::net::protocol::TickUpdate;
 use petramond::schematic::CreativeReply;
 
 fn send_error(app: &mut TestApp, message: &str) {
-    app.game_mut()
-        .apply_tick_update(Box::new(TickUpdate {
-            creative: vec![CreativeReply::Message(message.into())],
-            ..Default::default()
-        }));
+    app.game_mut().apply_tick_update(Box::new(
+        TickUpdate::new(0, 0).with(vec![CreativeReply::Message(message.into())]),
+    ));
 }
 
 #[test]
@@ -75,7 +73,8 @@ fn creative_notice_visual_check() {
     open_save_page(&mut app);
     app.sess_mut().library_form.name = "Workshop".into();
     app.game_mut()
-        .tools.world
+        .tools
+        .world
         .selection
         .selection
         .region([0, 0, 0], [3, 3, 3], false)

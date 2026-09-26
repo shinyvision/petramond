@@ -241,7 +241,10 @@ mod tests {
         link.push_frame(ClientToServer::KeepAlive);
         link.flush_frame();
         assert!(link.frame_is_empty());
-        assert!(matches!(server.inbox.try_recv(), Ok(ClientToServer::KeepAlive)));
+        assert!(matches!(
+            server.inbox.try_recv(),
+            Ok(ClientToServer::KeepAlive)
+        ));
         assert!(matches!(
             server.inbox.try_recv(),
             Ok(ClientToServer::ChatSend { .. })
@@ -256,7 +259,10 @@ mod tests {
         let mut link = NetLink::new(handle, false);
         link.note_lost_because("the server closed");
         link.send_now(ClientToServer::KeepAlive);
-        assert_eq!(link.take_lost_report().as_deref(), Some("the server closed"));
+        assert_eq!(
+            link.take_lost_report().as_deref(),
+            Some("the server closed")
+        );
         assert!(link.take_lost_report().is_none(), "reported exactly once");
     }
 
@@ -265,11 +271,16 @@ mod tests {
         let (handle, server) = ServerHandle::loopback();
         let mut link = NetLink::new(handle, false);
         link.stream_batch_ended(10);
-        assert!(server.inbox.try_recv().is_err(), "End without Start acks nothing");
+        assert!(
+            server.inbox.try_recv().is_err(),
+            "End without Start acks nothing"
+        );
         link.stream_batch_started();
         link.stream_batch_ended(10);
         match server.inbox.try_recv() {
-            Ok(ClientToServer::StreamBatchAck { messages_per_second }) => {
+            Ok(ClientToServer::StreamBatchAck {
+                messages_per_second,
+            }) => {
                 assert!(messages_per_second > 0.0);
             }
             _ => panic!("expected a StreamBatchAck"),

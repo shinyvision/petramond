@@ -44,7 +44,12 @@ pub fn gate(
 /// Till a cell the [`gate`] passed (server). `sky` is the weather field
 /// heard this tick (`None` = clear sky): rain on open ground tills straight
 /// to wet farmland.
-pub fn till(content: &Content, sky: Option<&FieldParams>, pos: [i32; 3], cover: BlockId) -> Outcome {
+pub fn till(
+    content: &Content,
+    sky: Option<&FieldParams>,
+    pos: [i32; 3],
+    cover: BlockId,
+) -> Outcome {
     let above = [pos[0], pos[1] + 1, pos[2]];
     // Till: clear replaceable cover (it drops nothing, like being replaced by
     // a placement), then choose the best-known appearance immediately. An

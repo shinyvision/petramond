@@ -71,7 +71,11 @@ fn a_walked_chain_stands_until_a_cell_it_looked_at_changes() {
         "a cell the walk never looked at"
     );
     supplies.changed(&[], true);
-    assert_eq!(supplies.chain(TABLE_AT).len(), 2, "a lost log drops them all");
+    assert_eq!(
+        supplies.chain(TABLE_AT).len(),
+        2,
+        "a lost log drops them all"
+    );
 }
 
 #[test]
@@ -106,7 +110,10 @@ fn stock_totals_what_every_chest_holds() {
 #[test]
 fn full_chests_have_no_room_and_an_unread_one_is_no_answer() {
     let session = chained();
-    for (cell, item) in [([1, 0, 0], "petramond:dirt"), ([2, 0, 0], "petramond:stone")] {
+    for (cell, item) in [
+        ([1, 0, 0], "petramond:dirt"),
+        ([2, 0, 0], "petramond:stone"),
+    ] {
         for _ in 0..4 {
             chest(&session.world, cell, item, 64);
         }
@@ -132,7 +139,10 @@ fn stock_is_read_once_a_tick() {
     chest(&session.world, [1, 0, 0], "petramond:dirt", 5);
     assert!(Rc::ptr_eq(&first, &supplies.stock_at(TABLE_AT, 10)));
     assert_eq!(
-        supplies.stock_at(TABLE_AT, 11).totals.get(&key("petramond:dirt")),
+        supplies
+            .stock_at(TABLE_AT, 11)
+            .totals
+            .get(&key("petramond:dirt")),
         Some(&10)
     );
     supplies.sweep(12);
@@ -161,7 +171,10 @@ fn a_shortfall_is_the_biggest_gap_first_named_for_the_owner() {
     let short = shortfall(&bill, &have);
     assert_eq!(
         short,
-        vec![(key("petramond:stone"), 4), (key("petramond:oak_planks"), 2)]
+        vec![
+            (key("petramond:stone"), 4),
+            (key("petramond:oak_planks"), 2)
+        ]
     );
     let named = worst(&short, &mut Caches::default()).expect("something is short");
     assert_eq!(named.to_string(), "Missing 4x Stone and more");
@@ -178,6 +191,9 @@ fn a_shortfall_is_the_biggest_gap_first_named_for_the_owner() {
     assert_eq!(short[0].0, key("petramond:dirt"), "equal gaps by name");
     let one = &short[1..];
     let named = worst(one, &mut Caches::default()).unwrap();
-    assert_eq!((named.to_string(), named.more), ("Missing 2x Stone".into(), false));
+    assert_eq!(
+        (named.to_string(), named.more),
+        ("Missing 2x Stone".into(), false)
+    );
     assert!(worst(&[], &mut Caches::default()).is_none());
 }

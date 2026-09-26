@@ -146,6 +146,7 @@ macro_rules! memo_group {
                 vec![$( self.$field.stats(), )*]
             }
 
+            #[allow(dead_code)] // Process-wide caches live beyond individual worlds.
             pub(crate) fn clear(&self) {
                 $( self.$field.clear(); )*
             }
@@ -310,9 +311,17 @@ mod tests {
         let many = CacheBudget::for_world(8, CacheBudget::REFERENCE_WORKERS * 3);
         assert_eq!(many.capacity(1000, Scaling::Frontier), 4096);
         let tiny = CacheBudget::for_world(2, 1);
-        assert_eq!(tiny.capacity(8192, Scaling::Frontier), 4096, "never below half");
+        assert_eq!(
+            tiny.capacity(8192, Scaling::Frontier),
+            4096,
+            "never below half"
+        );
         let huge = CacheBudget::for_world(reference_view * 100, 1);
-        assert_eq!(huge.capacity(8192, Scaling::Frontier), 32_768, "never above four times");
+        assert_eq!(
+            huge.capacity(8192, Scaling::Frontier),
+            32_768,
+            "never above four times"
+        );
     }
 
     /// A world's report names every memo exactly once, and generating fills
@@ -326,7 +335,9 @@ mod tests {
         let unique = names.len();
         names.dedup();
         assert_eq!(unique, names.len(), "duplicate memo names in {names:?}");
-        assert!(report.iter().all(|m| m.capacity.is_power_of_two() || !m.shared));
+        assert!(report
+            .iter()
+            .all(|m| m.capacity.is_power_of_two() || !m.shared));
 
         let generator =
             crate::driver::ChunkGenerator::with_caches(0xCAC4_E001, None, Arc::clone(&caches));
@@ -336,7 +347,12 @@ mod tests {
             generator.generate_section(petramond_world::chunk::SectionPos::new(0, cy, 0), &col);
         }
         let shared = |caches: &GenCaches| -> usize {
-            caches.report().iter().filter(|m| m.shared).map(|m| m.entries).sum()
+            caches
+                .report()
+                .iter()
+                .filter(|m| m.shared)
+                .map(|m| m.entries)
+                .sum()
         };
         assert!(shared(&caches) > 0, "generation filled no memo");
         let tiles = caches.terrain.surface_tiles.stats();

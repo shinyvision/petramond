@@ -71,27 +71,69 @@ fn to(cell: [i32; 3]) -> HashSet<[i32; 3]> {
     [cell].into_iter().collect()
 }
 
-fn way(way: Option<Way>) -> ([i32; 3], String, Vec<[i32; 3]>, Option<[i32; 3]>, u32) {
+type WayParts = ([i32; 3], String, Vec<[i32; 3]>, Option<[i32; 3]>, u32);
+
+fn way(way: Option<Way>) -> WayParts {
     let way = way.expect("a way out");
-    (way.from, format!("{:?}", way.step), way.digs, way.door, way.cost)
+    (
+        way.from,
+        format!("{:?}", way.step),
+        way.digs,
+        way.door,
+        way.cost,
+    )
 }
 
 #[test]
 fn the_way_along_open_ground_is_walked() {
     let grid = corridor(&[]);
-    let found = search(&grid, &from([0, 0, 0]), &to([4, 0, 0]), 20.0, &[], false, true);
+    let found = search(
+        &grid,
+        &from([0, 0, 0]),
+        &to([4, 0, 0]),
+        20.0,
+        &[],
+        false,
+        true,
+    );
     assert_eq!(
         way(found),
-        ([0, 0, 0], format!("{:?}", Move::Walk([1, 0, 0])), Vec::new(), None, 4)
+        (
+            [0, 0, 0],
+            format!("{:?}", Move::Walk([1, 0, 0])),
+            Vec::new(),
+            None,
+            4
+        )
     );
-    let found = search(&grid, &from([4, 0, 0]), &to([4, 0, 0]), 20.0, &[], false, true);
-    assert_eq!(way(found).0, [4, 0, 0], "already there: walk where it stands");
+    let found = search(
+        &grid,
+        &from([4, 0, 0]),
+        &to([4, 0, 0]),
+        20.0,
+        &[],
+        false,
+        true,
+    );
+    assert_eq!(
+        way(found).0,
+        [4, 0, 0],
+        "already there: walk where it stands"
+    );
 }
 
 #[test]
 fn a_door_in_the_way_is_opened_and_passed() {
     let grid = corridor(&[([2, 0, 0], DOOR_HALF), ([2, 1, 0], DOOR_HALF)]);
-    let found = search(&grid, &from([1, 0, 0]), &to([4, 0, 0]), 20.0, &[], false, true);
+    let found = search(
+        &grid,
+        &from([1, 0, 0]),
+        &to([4, 0, 0]),
+        20.0,
+        &[],
+        false,
+        true,
+    );
     // Into the doorway (a door's worth), out of it (the panel may be in the
     // way: another), and on.
     let cost = 1 + DOOR_MOVES + 1 + DOOR_MOVES + 1;
@@ -110,7 +152,15 @@ fn a_door_in_the_way_is_opened_and_passed() {
 #[test]
 fn earth_in_the_way_is_dug_through_by_what_it_costs() {
     let grid = corridor(&[([2, 0, 0], earth(2)), ([2, 1, 0], earth(2))]);
-    let found = search(&grid, &from([1, 0, 0]), &to([4, 0, 0]), 20.0, &[], false, true);
+    let found = search(
+        &grid,
+        &from([1, 0, 0]),
+        &to([4, 0, 0]),
+        20.0,
+        &[],
+        false,
+        true,
+    );
     assert_eq!(
         way(found),
         (
@@ -122,11 +172,28 @@ fn earth_in_the_way_is_dug_through_by_what_it_costs() {
         )
     );
     let sealed = corridor(&[([2, 0, 0], WALL), ([2, 1, 0], WALL)]);
-    assert!(search(&sealed, &from([1, 0, 0]), &to([4, 0, 0]), 20.0, &[], true, true).is_none());
+    assert!(search(
+        &sealed,
+        &from([1, 0, 0]),
+        &to([4, 0, 0]),
+        20.0,
+        &[],
+        true,
+        true
+    )
+    .is_none());
     let failed = [([0, 0, 0], [1, 0, 0])];
     assert!(
-        search(&corridor(&[]), &from([0, 0, 0]), &to([4, 0, 0]), 20.0, &failed, false, true)
-            .is_none(),
+        search(
+            &corridor(&[]),
+            &from([0, 0, 0]),
+            &to([4, 0, 0]),
+            20.0,
+            &failed,
+            false,
+            true
+        )
+        .is_none(),
         "a way walked and failed is not taken again"
     );
 }
@@ -141,19 +208,51 @@ fn ledge() -> HashMap<[i32; 3], Cell> {
 #[test]
 fn a_drop_is_taken_only_getting_out_and_never_a_deadly_one() {
     let grid = ledge();
-    let found = search(&grid, &from([0, 5, 0]), &to([1, 0, 0]), 20.0, &[], false, true);
+    let found = search(
+        &grid,
+        &from([0, 5, 0]),
+        &to([1, 0, 0]),
+        20.0,
+        &[],
+        false,
+        true,
+    );
     // Five blocks down, two past the safe fall: two points of damage.
     let cost = 1 + 5 + 2 * HURT_MOVES;
     assert_eq!(
         way(found),
-        ([0, 5, 0], format!("{:?}", Move::Drop([1, 0, 0])), Vec::new(), None, cost)
+        (
+            [0, 5, 0],
+            format!("{:?}", Move::Drop([1, 0, 0])),
+            Vec::new(),
+            None,
+            cost
+        )
     );
     assert!(
-        search(&grid, &from([0, 5, 0]), &to([1, 0, 0]), 20.0, &[], false, false).is_none(),
+        search(
+            &grid,
+            &from([0, 5, 0]),
+            &to([1, 0, 0]),
+            20.0,
+            &[],
+            false,
+            false
+        )
+        .is_none(),
         "digging a way in never drops where it cannot climb back"
     );
     assert!(
-        search(&grid, &from([0, 5, 0]), &to([1, 0, 0]), 2.0, &[], false, true).is_none(),
+        search(
+            &grid,
+            &from([0, 5, 0]),
+            &to([1, 0, 0]),
+            2.0,
+            &[],
+            false,
+            true
+        )
+        .is_none(),
         "a fall that kills is no way"
     );
 }
@@ -164,8 +263,25 @@ fn a_scaffold_to_rise_on_is_the_last_way_out() {
     let mut cells: Vec<([i32; 3], Cell)> = (0..=4).map(|y| ([0, y, 0], OPEN)).collect();
     cells.extend((2..=4).map(|y| ([1, y, 0], OPEN)));
     let grid = grid([-1, -1, -1], [2, 5, 1], &cells);
-    assert!(search(&grid, &from([0, 0, 0]), &to([1, 2, 0]), 20.0, &[], false, true).is_none());
-    let found = search(&grid, &from([0, 0, 0]), &to([1, 2, 0]), 20.0, &[], true, true);
+    assert!(search(
+        &grid,
+        &from([0, 0, 0]),
+        &to([1, 2, 0]),
+        20.0,
+        &[],
+        false,
+        true
+    )
+    .is_none());
+    let found = search(
+        &grid,
+        &from([0, 0, 0]),
+        &to([1, 2, 0]),
+        20.0,
+        &[],
+        true,
+        true,
+    );
     assert_eq!(
         way(found),
         (
@@ -200,7 +316,10 @@ fn the_ground_is_read_as_what_it_costs_to_get_through() {
     assert!(grid[&[0, -1, 0]].floor && !grid[&[0, -1, 0]].open);
     assert_eq!(grid[&[3, 0, -5]].dig, Some(5), "earth by hand");
     assert!(grid[&[3, 0, -6]].door && grid[&[3, 0, -6]].dig.is_none());
-    assert!(grid[&[2, 0, -6]].floor && grid[&[2, 0, -6]].dig.is_none(), "unbreakable");
+    assert!(
+        grid[&[2, 0, -6]].floor && grid[&[2, 0, -6]].dig.is_none(),
+        "unbreakable"
+    );
     assert!(grid[&[0, 0, -2]].open && !grid[&[0, 0, -2]].floor);
     assert_eq!(grid[&CHEST_AT].dig, None, "a supply chest is never dug");
     assert_eq!(grid[&TABLE_AT].dig, None, "nor the table");
@@ -210,8 +329,14 @@ fn the_ground_is_read_as_what_it_costs_to_get_through() {
         .give(ContainerAddress::Mob(golem), "petramond:stone_pickaxe", 1);
     let body = session.body(golem);
     let grid = read(&mut session, &body, true);
-    assert_eq!(grid[&[0, -1, 0]].dig, Some(4), "a stone pickaxe, four times faster");
-    assert!(body.slots.contains(&Some(stack("petramond:stone_pickaxe", 1))));
+    assert_eq!(
+        grid[&[0, -1, 0]].dig,
+        Some(4),
+        "a stone pickaxe, four times faster"
+    );
+    assert!(body
+        .slots
+        .contains(&Some(stack("petramond:stone_pickaxe", 1))));
 
     session.world.unload([0, 1, 0], [0, 1, 0]);
     assert!(at_work(&mut session, id, |ctx, _, job| {
@@ -238,7 +363,11 @@ fn the_designs_own_blocks_are_spared_digging_in_and_dear_getting_out() {
     });
     assert_eq!(spared[&[0, 0, 0]].dig, None, "built: left alone");
     assert_eq!(dug[&[0, 0, 0]].dig, Some(60 + DESIGN_MOVES));
-    assert_eq!(spared[&[2, 0, 0]].dig, Some(5), "earth in a design cell is work to clear");
+    assert_eq!(
+        spared[&[2, 0, 0]].dig,
+        Some(5),
+        "earth in a design cell is work to clear"
+    );
     assert!(spared[&[1, 0, 0]].open);
 }
 
@@ -246,7 +375,18 @@ fn the_designs_own_blocks_are_spared_digging_in_and_dear_getting_out() {
 fn a_fall_costs_its_levels_and_what_it_hurts() {
     let safe = SAFE_FALL as u32;
     assert_eq!(fall_cost(1, 20.0), Some(1));
-    assert_eq!(fall_cost(SAFE_FALL, 20.0), Some(safe), "a safe fall does not hurt");
-    assert_eq!(fall_cost(SAFE_FALL + 2, 20.0), Some(safe + 2 + 2 * HURT_MOVES));
-    assert_eq!(fall_cost(SAFE_FALL + 2, 2.0), None, "a fall that kills is no way");
+    assert_eq!(
+        fall_cost(SAFE_FALL, 20.0),
+        Some(safe),
+        "a safe fall does not hurt"
+    );
+    assert_eq!(
+        fall_cost(SAFE_FALL + 2, 20.0),
+        Some(safe + 2 + 2 * HURT_MOVES)
+    );
+    assert_eq!(
+        fall_cost(SAFE_FALL + 2, 2.0),
+        None,
+        "a fall that kills is no way"
+    );
 }

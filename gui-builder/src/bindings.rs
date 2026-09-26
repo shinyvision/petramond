@@ -4,10 +4,10 @@
 //! inspector's binding pickers, the Screen-data panel, and preview
 //! sample-state seeding. Missing file = features hide gracefully.
 
+use crate::assets::AssetRoots;
 use petramond_ui::{UiMap, UiState, UiValue};
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use crate::assets::AssetRoots;
 use std::sync::Arc;
 
 #[derive(Debug, Default)]
@@ -139,7 +139,10 @@ impl Catalog {
                 .map_err(|e| e.to_string())
                 .and_then(|json| Catalog::parse(&json));
             match parsed {
-                Ok(layer) => merged.get_or_insert_with(Catalog::default).kinds.extend(layer.kinds),
+                Ok(layer) => merged
+                    .get_or_insert_with(Catalog::default)
+                    .kinds
+                    .extend(layer.kinds),
                 Err(e) => eprintln!(
                     "gui-builder: {e} (at {}); that layer's binding docs are skipped",
                     path.display()

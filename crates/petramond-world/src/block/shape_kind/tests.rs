@@ -114,12 +114,7 @@ fn a_cover_that_stops_short_of_its_top_stays_open_to_the_light() {
     let apertures = |json: &str| {
         let (family, params, _) = resolve_json(json).unwrap();
         let (sim, ..) = families::singletons(family);
-        sim.light_apertures(
-            &params,
-            &facets::NoNeighborhood,
-            IVec3::ZERO,
-            Block::Air,
-        )
+        sim.light_apertures(&params, &facets::NoNeighborhood, IVec3::ZERO, Block::Air)
     };
     // 15/16 tall: fills most of its top octant, seals none of its top face.
     let farmland = apertures(r#"{"boxes":[{"to":[16,15,16]}]}"#);
@@ -387,10 +382,9 @@ fn an_inherited_top_face_is_uv_turned_by_its_parents_frame() {
     // they were authored in different frames. Reading the cell's turn
     // alone gives both `0` and is the bug this pins.
     let drawn_top = |b: &BoxDef| {
-        families::box_set_box(b, 0, Block::Stone, &|_| [1.0; 3]).faces
-            [2]
-        .expect("a top face")
-        .uv_turns
+        families::box_set_box(b, 0, Block::Stone, &|_| [1.0; 3]).faces[2]
+            .expect("a top face")
+            .uv_turns
     };
     assert_eq!(drawn_top(piece), 1, "inherited top turns with its parent");
     assert_eq!(drawn_top(own), 0, "the shape's own top does not");
@@ -421,8 +415,7 @@ fn custom_dimension_families_resolve_to_dimension_params() {
 
     // A wall_panel is the ladder family with a retuned slab.
     let (fam, params, _) =
-        resolve_json(r#"{"custom":{"family":"wall_panel","thickness":4,"height":12}}"#)
-            .unwrap();
+        resolve_json(r#"{"custom":{"family":"wall_panel","thickness":4,"height":12}}"#).unwrap();
     assert_eq!(fam, ShapeFamily::Ladder);
     let d = params.dimensions().unwrap();
     assert_eq!((d.thickness, d.height), (4.0 / 16.0, 12.0 / 16.0));

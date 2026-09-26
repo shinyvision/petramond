@@ -4,12 +4,12 @@ use crate::host::prelude::*;
 
 use super::Pillar;
 use crate::geometry::offset;
-use crate::worker::Job;
 use crate::project::{Project, Projects};
 use crate::worker::legs::{self, centre_on, hold_still};
 use crate::worker::tuning::body::{JUMP, ON_COLUMN, PERCH_OFF_CENTRE, PERCH_SETTLE_TICKS};
 use crate::worker::tuning::hands::SWING;
 use crate::worker::tuning::patience::{CLIMB_STALL, DESCENT_STALL};
+use crate::worker::Job;
 use crate::worker::{centre, hands, open_block, scaffold, Body, Ctx, Step};
 
 #[allow(clippy::too_many_arguments)]

@@ -162,17 +162,19 @@ impl DiskMob {
 /// against the rules) is skipped with a warning: writing another species'
 /// disk id would corrupt the record.
 pub fn put_mobs(buf: &mut Vec<u8>, mobs: &[SavedMob], kept: &[DiskMob], pal: &Palette) {
-    let live = mobs.iter().filter_map(|m| match pal.mob_to_disk(m.kind.id()) {
-        Some(species) => Some(DiskMob::of(m, species, pal)),
-        None => {
-            log::warn!(
-                "mob {:?} at {:?} has no save-palette pin (disabled mod?); not persisted",
-                m.kind,
-                m.pos
-            );
-            None
-        }
-    });
+    let live = mobs
+        .iter()
+        .filter_map(|m| match pal.mob_to_disk(m.kind.id()) {
+            Some(species) => Some(DiskMob::of(m, species, pal)),
+            None => {
+                log::warn!(
+                    "mob {:?} at {:?} has no save-palette pin (disabled mod?); not persisted",
+                    m.kind,
+                    m.pos
+                );
+                None
+            }
+        });
     let all: Vec<DiskMob> = live.chain(kept.iter().cloned()).collect();
     let distinct: BTreeSet<&str> = all
         .iter()

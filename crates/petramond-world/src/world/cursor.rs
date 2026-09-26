@@ -202,7 +202,11 @@ mod tests {
                     assert_eq!(cur.chunk_block(c), data.chunk_block(x, y, z), "{c:?}");
                     assert_eq!(cur.physics_block(c), data.physics_block(x, y, z), "{c:?}");
                     assert_eq!(cur.fluid_meta(c), data.fluid_meta_world(x, y, z), "{c:?}");
-                    assert_eq!(cur.collision_boxes(c), data.collision_boxes_at(x, y, z), "{c:?}");
+                    assert_eq!(
+                        cur.collision_boxes(c),
+                        data.collision_boxes_at(x, y, z),
+                        "{c:?}"
+                    );
                     assert_eq!(
                         cur.shape_state(c),
                         ShapeNeighborhood::shape_state(&data, c),

@@ -74,10 +74,26 @@ pub(super) fn handle(call: ConditionCall) -> HostRet {
             let mut accepted = Vec::with_capacity(ops.len());
             for op in ops {
                 let call = match op {
-                    mod_api::ConditionOp::Apply { entity, condition, stage, ticks } =>
-                        ConditionCall::EntityConditionApply { entity, condition, stage, ticks },
-                    mod_api::ConditionOp::Cool { entity, condition, ticks } =>
-                        ConditionCall::EntityConditionCool { entity, condition, ticks },
+                    mod_api::ConditionOp::Apply {
+                        entity,
+                        condition,
+                        stage,
+                        ticks,
+                    } => ConditionCall::EntityConditionApply {
+                        entity,
+                        condition,
+                        stage,
+                        ticks,
+                    },
+                    mod_api::ConditionOp::Cool {
+                        entity,
+                        condition,
+                        ticks,
+                    } => ConditionCall::EntityConditionCool {
+                        entity,
+                        condition,
+                        ticks,
+                    },
                 };
                 match handle(call) {
                     HostRet::Bool(ok) => accepted.push(ok),

@@ -68,7 +68,10 @@ impl ScheduledQueue {
     /// How many pending checks are due at or before `now` — a scan, for
     /// diagnostics and tests.
     pub fn due_count(&self, now: u64) -> usize {
-        self.heap.iter().filter(|Reverse((due, ..))| *due <= now).count()
+        self.heap
+            .iter()
+            .filter(|Reverse((due, ..))| *due <= now)
+            .count()
     }
 }
 

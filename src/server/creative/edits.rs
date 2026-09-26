@@ -67,7 +67,8 @@ impl ServerGame {
     ) -> Result<(), String> {
         self.close_open_edit(s, events);
         let mut record = self.sessions[s]
-            .sim.edits
+            .sim
+            .edits
             .take(replay)
             .ok_or_else(|| format!("Nothing to {}", replay.verb()))?;
         let policy = CellPolicy {
@@ -142,7 +143,8 @@ impl ServerGame {
         } = self;
         for pos in cells {
             sessions[s]
-                .sim.edits
+                .sim
+                .edits
                 .touch(pos, || world.snapshot_cell(pos).ok());
         }
     }
@@ -157,6 +159,9 @@ impl ServerGame {
         let Self {
             world, sessions, ..
         } = self;
-        sessions[s].sim.edits.close(|pos| world.snapshot_cell(pos).ok());
+        sessions[s]
+            .sim
+            .edits
+            .close(|pos| world.snapshot_cell(pos).ok());
     }
 }

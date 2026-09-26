@@ -115,7 +115,12 @@ pub(super) fn slab_corner_open(
             front_half
         }
     };
-    !petramond_world::slab::half_cell_occupied(state, pick(u.x, v.x), pick(u.y, v.y), pick(u.z, v.z))
+    !petramond_world::slab::half_cell_occupied(
+        state,
+        pick(u.x, v.x),
+        pick(u.y, v.y),
+        pick(u.z, v.z),
+    )
 }
 
 /// The light and tint of flat-lit geometry (plant planes, the torch pole):

@@ -116,7 +116,12 @@ pub(super) fn pose_body(
     // shoulder into the look pitch so a punch goes where the eyes do.
     if let Some(hb) = model.head_bone() {
         if !head_animated(hb) {
-            model.apply_head_look(&mut pose, hb, state.head_yaw - twist_total, state.head_pitch);
+            model.apply_head_look(
+                &mut pose,
+                hb,
+                state.head_yaw - twist_total,
+                state.head_pitch,
+            );
             locomotion::stabilize_swim_gaze(model, &mut pose, hb, state);
         }
     }

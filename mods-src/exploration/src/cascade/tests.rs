@@ -178,7 +178,9 @@ fn accepted_cascades_descend() {
         };
         checked += 1;
         let count = b.live_counts();
-        let live: Vec<usize> = (0..b.basins.pools.len()).filter(|&i| count[i] > 0).collect();
+        let live: Vec<usize> = (0..b.basins.pools.len())
+            .filter(|&i| count[i] > 0)
+            .collect();
         assert!(live.len() >= MIN_POOLS);
         for &j in &live[1..] {
             assert!(
@@ -367,10 +369,17 @@ fn a_walled_chain_seals_with_beds_alone() {
 fn an_edge_over_a_chasm_retreats_the_water_instead_of_rejecting() {
     let (mut basins, terrain) = two_pools(true);
     let sealed = seal::seal(&mut basins, &terrain).expect("the chain survives a chasm edge");
-    assert_eq!(basins.counts(), vec![25, 20], "exactly the chasm-side row retreats");
+    assert_eq!(
+        basins.counts(),
+        vec![25, 20],
+        "exactly the chasm-side row retreats"
+    );
     assert!(!basins.cols.contains_key(&(14, 0)));
     let dammed: BTreeSet<(i32, i32)> = (-2..=2).map(|z| (14, z)).collect();
-    assert_eq!(sealed.rim_dam, dammed, "the retreated row is dammed at the waterline");
+    assert_eq!(
+        sealed.rim_dam, dammed,
+        "the retreated row is dammed at the waterline"
+    );
     for z in -2..=2 {
         assert!(sealed.silt.contains(&[14, -4, z]), "no dam at the new edge");
     }
@@ -407,7 +416,10 @@ fn a_rim_of_tall_walls_is_a_tank_not_a_terrace() {
     let rim: BTreeSet<(i32, i32)> = [(0, 0), (1, 0)].into_iter().collect();
     let column = |x: i32, h: i32| (0..h).map(move |y| [x, y, 0]);
     let low: BTreeSet<[i32; 3]> = column(0, 4).chain(column(1, 1)).collect();
-    assert!(!seal::rim_is_a_wall(&low, &rim), "half the rim tall is still a lip");
+    assert!(
+        !seal::rim_is_a_wall(&low, &rim),
+        "half the rim tall is still a lip"
+    );
     let tall: BTreeSet<[i32; 3]> = column(0, 4).chain(column(1, 4)).collect();
     assert!(seal::rim_is_a_wall(&tall, &rim));
 }
@@ -481,14 +493,21 @@ fn a_settled_cell_round_trips_through_the_memo() {
         wet: Vec::new(),
     };
     let bytes = Feature::encode(Some(&feature));
-    assert_eq!(bytes.len(), Feature::encoded_len(3, 1, 2), "the size formula drifted");
+    assert_eq!(
+        bytes.len(),
+        Feature::encoded_len(3, 1, 2),
+        "the size formula drifted"
+    );
     let back = Feature::decode(&bytes)
         .expect("well-formed")
         .expect("a cascade");
     assert_eq!(back.writes, feature.writes);
     assert_eq!(back.reserves, feature.reserves);
     assert_eq!(back.suppressed, feature.suppressed);
-    assert!(matches!(Feature::decode(&Feature::encode(None)), Some(None)));
+    assert!(matches!(
+        Feature::decode(&Feature::encode(None)),
+        Some(None)
+    ));
     assert!(Feature::decode(&[9]).is_none(), "an unknown tag decoded");
     assert!(
         Feature::decode(&bytes[..bytes.len() - 1]).is_none(),

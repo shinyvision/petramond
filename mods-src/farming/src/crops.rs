@@ -82,7 +82,12 @@ pub enum Planting {
 /// placed on farmland — dry or wet. The instances differ only in what they
 /// do with a cell they cannot read (see [`on_place_pre`] and
 /// [`predict_place_pre`]).
-pub fn planting(content: &Content, world: &impl WorldView, pos: [i32; 3], block: BlockId) -> Planting {
+pub fn planting(
+    content: &Content,
+    world: &impl WorldView,
+    pos: [i32; 3],
+    block: BlockId,
+) -> Planting {
     let Some((_, stage)) = content.crop_stage(block) else {
         return Planting::NotACrop;
     };

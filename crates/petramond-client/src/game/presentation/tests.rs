@@ -30,7 +30,7 @@ fn a_step_sounds_the_flat_cover_it_presses_but_not_a_plant_it_walks_through() {
 /// Where a body's shadow lands, by how its feet sit against the ground.
 fn shadow_height(world: &ReplicaWorld, feet: WorldPos) -> Option<f64> {
     let mut out = Vec::new();
-    super::push_entity_shadow(world, &mut out, feet, 0.4);
+    super::push_entity_shadow(world.data(), &mut out, feet, 0.4);
     out.first().map(|s| s.center.y)
 }
 

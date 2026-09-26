@@ -1,10 +1,10 @@
 use super::super::Game;
 use crate::game::{GameEvents, GameInput};
 use petramond::events::tick::TickEvents;
+use petramond::net::handle::LoopbackServer;
 use petramond::net::protocol::{ClientToServer, PlayerUpdate, TargetRef};
 use petramond::server::game::ServerGame;
 use petramond::server::player::ConnectedPlayer;
-use petramond::net::handle::LoopbackServer;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 use petramond_render::camera::Camera;
@@ -53,6 +53,10 @@ pub(super) fn game() -> TestGame {
 pub(super) fn game_on_empty_chunk() -> TestGame {
     let mut game = game();
     install_empty_chunk(&mut game);
+    // Tests using this fixture place entities and blocks in chunk (0, 0).
+    // Keep the local session there as well so server interest filtering sees
+    // those rows and events, regardless of the seed's generated spawn point.
+    game.server_player_mut().pos = WorldPos::new(8.5, 64.0, 8.5);
     game
 }
 
@@ -197,7 +201,9 @@ impl TestGame {
     /// replace whole `Inventory` values, which resets the revision the
     /// on-change gate compares).
     pub(super) fn sync_self_view_for_test(&mut self) {
-        self.server.sessions[0].last_sent_inventory_revision = None;
+        self.server.sessions_mut()[0]
+            .replication_mut()
+            .last_sent_inventory_revision = None;
         let state = self.server.build_self_state(0);
         self.game.replica.self_view.apply(&state, true);
     }
@@ -213,16 +219,17 @@ impl TestGame {
     /// Mirror of what the next batch's `TickUpdate.open_chests` does, for
     /// tests that drive `chest_viewers` directly (no frame pump).
     pub(super) fn sync_open_chests_for_test(&mut self) {
-        let open = self.server.chest_viewers.keys().copied().collect();
+        let open = self.server.open_chests().into_iter().collect();
         self.game.fx.set_open_chests(open);
     }
 
     /// Mirror of what the next frame's `PlayerUpdate` does with the rotation
     /// counter, for tests that drive tick stages without frames.
     pub(super) fn sync_held_rotation_for_test(&mut self) {
-        let sess = &mut self.server.sessions[0];
+        let sess = &mut self.server.sessions_mut()[0];
         let selected = sess.selected_item();
-        sess.held_rotation
+        sess.input_mut()
+            .held_rotation
             .apply_wire(self.game.local.held_rotation.rotation, selected);
     }
 
@@ -237,11 +244,11 @@ impl TestGame {
     /// The local client's authoritative player (the session's, not the
     /// client's predicted copy).
     pub(super) fn server_player(&self) -> &petramond::player::Player {
-        &self.session().player
+        self.session().player()
     }
 
     pub(super) fn server_player_mut(&mut self) -> &mut petramond::player::Player {
-        &mut self.session_mut().player
+        self.session_mut().player_mut()
     }
 
     /// The local client's server-side session record (latched look, pending
@@ -257,33 +264,30 @@ impl TestGame {
     /// Session `index` — the local client is 0; extra sessions come from
     /// [`ServerGame::add_session_for_test`] via [`sim_mut`](Self::sim_mut).
     pub(super) fn session_at(&self, index: usize) -> &ConnectedPlayer {
-        &self.server.sessions[index]
+        &self.server.sessions()[index]
     }
 
     pub(super) fn session_at_mut(&mut self, index: usize) -> &mut ConnectedPlayer {
-        &mut self.server.sessions[index]
+        &mut self.server.sessions_mut()[index]
     }
 
     /// The authoritative world.
-    pub(super) fn server_world(&self) -> &petramond::world::World {
-        &self.server.world
+    pub(super) fn server_world(&self) -> &petramond::world::ServerWorld {
+        self.server.world()
     }
 
-    pub(super) fn server_world_mut(&mut self) -> &mut petramond::world::World {
-        &mut self.server.world
+    pub(super) fn server_world_mut(&mut self) -> &mut petramond::world::ServerWorld {
+        self.server.world_mut()
     }
 
     /// The same edit applied to both worlds: the authoritative one first,
     /// then the client's replica — for tests staging identical terrain on
     /// both sides without a stream round trip.
-    pub(super) fn server_and_replica_worlds_mut(&mut self) -> [&mut petramond::world::World; 2] {
-        [&mut self.server.world, &mut self.game.replica.world]
-    }
-
     /// One fixed world tick of the authoritative world alone (fluids, block
     /// ticks), without the session stages.
     pub(super) fn server_world_tick(&mut self) {
-        self.server.world.game_tick(&self.server.recipes);
+        let recipes = self.server.recipes().clone();
+        self.server.world_mut().game_tick(&recipes);
     }
 
     /// Apply `msg` server-side exactly as if the local client had sent it.
@@ -306,17 +310,20 @@ impl TestGame {
     /// Double-click gather: top up the cursor-held stack with every matching
     /// item in the inventory. See [`Inventory::collect_to_cursor`].
     pub(super) fn collect_to_cursor(&mut self) {
-        self.server.sessions[0].player.inventory.collect_to_cursor();
+        self.server.sessions_mut()[0]
+            .player_mut()
+            .inventory
+            .collect_to_cursor();
     }
 
     /// Test injection: replace the mod host (e.g. with a WAT guest) so the GUI
     /// click dispatch plumbing can be driven without compiled mods.
     pub(super) fn set_mods_for_test(&mut self, mods: petramond::modding::ModHost) {
-        self.server.mods = mods;
+        self.server.replace_mod_host_for_test(mods);
     }
 
     pub(super) fn mods_for_test(&self) -> &petramond::modding::ModHost {
-        &self.server.mods
+        self.server.mod_host()
     }
 }
 
@@ -324,7 +331,7 @@ impl TestGame {
 /// in-process client sends on an ordinary frame), with gameplay input live.
 /// Tests tweak fields to drive the message path.
 pub(super) fn player_update(game: &TestGame, gameplay: bool) -> PlayerUpdate {
-    let p = &game.server.sessions[0].player;
+    let p = game.server.sessions()[0].player();
     PlayerUpdate {
         transform: petramond::net::protocol::Transform {
             pos: p.pos,
@@ -360,7 +367,7 @@ pub(super) fn filled_inventory() -> Inventory {
 pub(super) fn give(game: &mut TestGame, item: ItemType, n: u8) {
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(item, n));
-    game.server.sessions[0].player.inventory = inv;
+    game.server_player_mut().inventory = inv;
 }
 
 pub(super) fn apply_drop_actions(game: &mut TestGame) -> TickEvents {
@@ -379,9 +386,9 @@ pub(super) fn hit(pos: IVec3, normal: IVec3) -> TargetRef {
 
 pub(super) fn install_empty_chunk(game: &mut TestGame) {
     let pos = petramond_world::chunk::ChunkPos::new(0, 0);
-    game.server.world.clear_world();
+    game.server.world_mut().clear_world();
     game.server
-        .world
+        .world_mut()
         .insert_chunk_for_test(pos, petramond_world::chunk::Chunk::new(0, 0));
 }
 
@@ -390,15 +397,15 @@ pub(super) fn install_empty_chunk(game: &mut TestGame) {
 /// sections first, so the air ABOVE the floor reads as LOADED — sim reads
 /// treat unloaded air as absent.
 /// Takes the `World` directly so tests driving a bare world can use it too.
-pub(super) fn flat_floor_loaded_air(
-    world: &mut petramond::world::World,
+pub(super) fn flat_floor_loaded_air<S: petramond::world::WorldSide>(
+    world: &mut petramond::world::World<S>,
     floor: petramond_world::block::Block,
 ) {
     install_flat_floor(world, floor, true);
 }
 
-fn install_flat_floor(
-    world: &mut petramond::world::World,
+fn install_flat_floor<S: petramond::world::WorldSide>(
+    world: &mut petramond::world::World<S>,
     floor: petramond_world::block::Block,
     loaded_air: bool,
 ) {
@@ -421,18 +428,19 @@ fn install_flat_floor(
 /// exact matching movement claim so reach validation uses that position.
 pub(super) fn set_server_view(game: &mut TestGame, eye: WorldPos, dir: Vec3) {
     let dir = dir.normalize();
-    let sess = &mut game.server.sessions[0];
-    sess.player.pos = eye - Vec3::Y * petramond::player::EYE;
-    sess.player.yaw = dir.x.atan2(dir.z);
-    sess.player.pitch = dir.y.clamp(-1.0, 1.0).asin();
-    sess.claim_pos = sess.player.pos;
-    sess.ticks_since_claim = 0;
+    let sess = game.session_mut();
+    sess.player_mut().pos = eye - Vec3::Y * petramond::player::EYE;
+    sess.player_mut().yaw = dir.x.atan2(dir.z);
+    sess.player_mut().pitch = dir.y.clamp(-1.0, 1.0).asin();
+    let pos = sess.player().pos;
+    sess.input_mut().claim_pos = pos;
+    sess.input_mut().ticks_since_claim = 0;
 }
 
 /// Aim the authoritative session through the centre segment of mob `index`,
 /// close enough for an honest target click.
 pub(super) fn aim_server_at_mob(game: &mut TestGame, index: usize) {
-    let mob = &game.server.world.mobs().instances()[index];
+    let mob = &game.server.world().mobs().instances()[index];
     let size = petramond::mob::def(mob.kind).size;
     let target = mob.pos + Vec3::Y * (size.height * 0.5);
     set_server_view(game, target - Vec3::Z * 2.0, Vec3::Z);

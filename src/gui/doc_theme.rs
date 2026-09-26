@@ -56,7 +56,10 @@ fn load() -> Arc<Theme> {
     };
     match Theme::load_stack(&stack) {
         Ok(theme) => return Arc::new(theme),
-        Err(e) => eprintln!("gui: theme stack [{}] failed to load — {e}", describe(stack.len())),
+        Err(e) => eprintln!(
+            "gui: theme stack [{}] failed to load — {e}",
+            describe(stack.len())
+        ),
     }
     if stack.len() > 1 {
         match Theme::load_stack(&stack[..1]) {

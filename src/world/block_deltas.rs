@@ -1,11 +1,10 @@
 //! Server-side replication delta log: the per-tick coalesced block/fluid
 //! change capture and the sparse per-cell wire state it ships.
 
-use crate::world::{ServerWorld, World, WorldSide};
 use crate::world::WorldData;
+use crate::world::{ServerWorld, World, WorldSide};
 use petramond_world::block::Block;
 use petramond_world::chunk::section_idx;
-
 
 impl ServerWorld {
     /// Turn the server-side replication log on/off (the server flips it on per
@@ -65,7 +64,6 @@ impl ServerWorld {
         }
         out
     }
-
 }
 
 impl<S: WorldSide> World<S> {

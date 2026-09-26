@@ -11,7 +11,7 @@ use std::sync::Arc;
 pub(super) mod claims;
 mod tile;
 use tile::build_tile;
-pub(super) use tile::{AnchorKey, ChunkAnchors, PlaneKey};
+pub(in crate::noise::cave_field) use tile::{AnchorKey, ChunkAnchors, PlaneKey};
 
 /// A placement site's identity: the context, the excavation row by its salt
 /// (the hash of its unique name) and the spacing cell.
@@ -127,10 +127,10 @@ impl Tiles {
             for z in origin[2]..=end[2] {
                 for x in origin[0]..=end[0] {
                     let pos = [x, y, z];
-                    let tile = field.memos().volume_tiles.get_or_insert(
-                        (field.context(), pos),
-                        || Arc::new(build_tile(field, pos)),
-                    );
+                    let tile = field
+                        .memos()
+                        .volume_tiles
+                        .get_or_insert((field.context(), pos), || Arc::new(build_tile(field, pos)));
                     any |= tile.cells.is_some();
                     tiles.push(tile);
                 }
@@ -303,7 +303,9 @@ pub(super) fn space_at(field: &CaveField, pos: [i32; 3]) -> Option<mod_api::Terr
     let tile = field
         .memos()
         .volume_tiles
-        .get_or_insert((field.context(), cell), || Arc::new(build_tile(field, cell)));
+        .get_or_insert((field.context(), cell), || {
+            Arc::new(build_tile(field, cell))
+        });
     let cells = tile.cells.as_ref()?;
     let p = pos.map(|v| v.rem_euclid(16) as usize);
     match cells[(p[1] * 16 + p[2]) * 16 + p[0]] {

@@ -26,10 +26,10 @@ mod transition;
 
 pub use cell_class::MeshRegistry;
 pub(super) use cube_face::face_axes;
-pub(super) use lighting::{boundary_plane, CornerLight};
-pub use pad::SectionMeshPad;
 #[cfg(test)]
 pub(super) use lighting::corner_cast_probes;
+pub(super) use lighting::{boundary_plane, CornerLight};
+pub use pad::SectionMeshPad;
 
 pub use closure_pad::WorldReads;
 pub use foliage::FOLIAGE_OVERHANG;

@@ -17,7 +17,10 @@ fn options_stack_returns_to_its_origin_and_clears_category_state() {
     app.push_screen(AppScreen::OptionsControls);
     app.options.begin_remap("jump");
     app.options.view_distance_preview = Some(12);
-    assert_eq!(app.screens_under, vec![AppScreen::Title, AppScreen::Options]);
+    assert_eq!(
+        app.screens_under,
+        vec![AppScreen::Title, AppScreen::Options]
+    );
 
     // ESC disarms a remap before it leaves the controls page.
     assert!(app.close_screen());
@@ -36,18 +39,31 @@ fn options_stack_returns_to_its_origin_and_clears_category_state() {
 fn a_screen_change_drops_the_old_click_streak_and_pointer_hold() {
     let mut app = app();
     assert!(!app.gui_router.doc_gather(
-        MenuSlot::Inventory(0), PointerButton::Primary, false, 1.0, false,
+        MenuSlot::Inventory(0),
+        PointerButton::Primary,
+        false,
+        1.0,
+        false,
     ));
-    app.controls.pointer.set_gameplay_button(PointerButton::Primary, true);
+    app.controls
+        .pointer
+        .set_gameplay_button(PointerButton::Primary, true);
     app.open_pause();
     assert_eq!(app.screen, AppScreen::Pause);
     assert!(!app.controls.pointer.is_grabbing());
     app.resume_game();
     assert_eq!(app.screen, AppScreen::Game);
     assert!(app.controls.pointer.is_grabbing());
-    assert!(!app.gui_router.doc_gather(
-        MenuSlot::Inventory(0), PointerButton::Primary, false, 1.1, true,
-    ), "a click before the pause must not become a double click afterward");
+    assert!(
+        !app.gui_router.doc_gather(
+            MenuSlot::Inventory(0),
+            PointerButton::Primary,
+            false,
+            1.1,
+            true,
+        ),
+        "a click before the pause must not become a double click afterward"
+    );
 }
 
 #[test]

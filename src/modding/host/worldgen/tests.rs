@@ -42,7 +42,10 @@ fn gen_registrations_gate_on_the_init_window() {
         HostRet::Unit
     );
     assert_eq!(
-        handle_host_call(&mut data, HostCall::from(calls::RegisterGenerator { callback_id: 4 })),
+        handle_host_call(
+            &mut data,
+            HostCall::from(calls::RegisterGenerator { callback_id: 4 })
+        ),
         HostRet::Unit
     );
     assert_eq!(data.stats.registered, 3);
@@ -62,10 +65,7 @@ fn gen_registrations_gate_on_the_init_window() {
         }),
         HostCall::from(calls::RegisterGenerator { callback_id: 4 }),
     ] {
-        assert!(matches!(
-            handle_host_call(&mut data, call),
-            HostRet::Err(_)
-        ));
+        assert!(matches!(handle_host_call(&mut data, call), HostRet::Err(_)));
     }
     // ...and the in-window Climate refusal above counted too.
     assert_eq!(data.stats.rejected_registrations, 4);

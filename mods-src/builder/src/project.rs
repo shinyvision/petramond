@@ -17,7 +17,9 @@ mod store;
 use crate::host::prelude::*;
 use serde::{Deserialize, Serialize};
 
-pub use note::{Note, Report};
+pub use note::Note;
+#[cfg(test)]
+pub use note::Report;
 pub use store::Projects;
 
 pub type ProjectId = u64;

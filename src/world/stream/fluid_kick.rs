@@ -111,8 +111,7 @@ impl ServerWorld {
                 continue; // full fluid/stone plane cannot accept flow
             }
             for_each_seam_cell(sp, d, |local, here, there| {
-                if is_fluid(blocks.get(local)) && cursor.chunk_block(there) == Block::Air.id()
-                {
+                if is_fluid(blocks.get(local)) && cursor.chunk_block(there) == Block::Air.id() {
                     updates.push(here);
                 }
             });
@@ -133,8 +132,7 @@ impl ServerWorld {
                 continue;
             }
             for_each_seam_cell(sp, d, |local, _, there| {
-                if blocks.get(local) == Block::Air.id() && is_fluid(cursor.chunk_block(there))
-                {
+                if blocks.get(local) == Block::Air.id() && is_fluid(cursor.chunk_block(there)) {
                     updates.push(there);
                 }
             });

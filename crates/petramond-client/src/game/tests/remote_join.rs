@@ -3,9 +3,9 @@
 //! no `ServerGame`), and the roster tracks join/leave broadcasts.
 
 use crate::game::Game;
+use petramond::net::handle::ServerHandle;
 use petramond::net::protocol::{ItemSlotWire, JoinData, SelfRestore, ServerToClient};
 use petramond::player::PlayerId;
-use petramond::net::handle::ServerHandle;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 use petramond_world::item::ItemType;
@@ -70,12 +70,17 @@ fn new_remote_seeds_the_client_from_join_data() {
         Some(IVec3::new(1, 70, 2))
     );
     assert_eq!(
-        game.local.player.inventory.selected().map(|s| (s.item, s.count)),
+        game.local
+            .player
+            .inventory
+            .selected()
+            .map(|s| (s.item, s.count)),
         Some((ItemType::Dirt, 12)),
         "the restored active slot selects the restored stack"
     );
     assert_eq!(
-        game.local.player
+        game.local
+            .player
             .effects()
             .iter()
             .map(|e| (e.effect, e.remaining))

@@ -66,8 +66,15 @@ fn a_note_is_data_and_words_only_when_shown() {
         "1 block was lost after it was placed; 2 scaffolds were out of reach and stand; \
          The chests are full"
     );
-    assert_eq!(Note::report(0, 0), Note::None, "nothing lost, nothing to say");
-    assert_eq!(Note::None.with_chests_full().to_string(), "The chests are full");
+    assert_eq!(
+        Note::report(0, 0),
+        Note::None,
+        "nothing lost, nothing to say"
+    );
+    assert_eq!(
+        Note::None.with_chests_full().to_string(),
+        "The chests are full"
+    );
     assert_eq!(
         Note::GolemDied.with_chests_full(),
         Note::GolemDied,
@@ -100,7 +107,11 @@ fn legacy_words_read_back_as_data() {
     assert!(!Note::from_legacy("Missing blueprint").is_shortfall());
     let report = "1 block was lost after it was placed";
     assert_eq!(Note::from_legacy(report), Note::Legacy(report.into()));
-    assert_eq!(Note::from_legacy(report).to_string(), report, "shown as it was");
+    assert_eq!(
+        Note::from_legacy(report).to_string(),
+        report,
+        "shown as it was"
+    );
 }
 
 #[test]
@@ -108,7 +119,9 @@ fn a_projects_scaffolds_are_stored_beside_it_across_a_reload() {
     let _session = crate::testing::Session::flat(1);
     let mut projects = Projects::load();
     let id = projects.create("ada".into(), [0, 0, 0]);
-    projects.update(id, |p| p.scaffolds.extend([[1, 0, 0], [2, 0, 0], [3, 0, 0]]));
+    projects.update(id, |p| {
+        p.scaffolds.extend([[1, 0, 0], [2, 0, 0], [3, 0, 0]])
+    });
     projects.update(id, |p| p.scaffolds.retain(|c| *c != [2, 0, 0]));
     let mut again = Projects::load();
     assert_eq!(
@@ -135,7 +148,10 @@ fn a_version_3_projects_scaffolds_are_adopted() {
         state.kv.retain(|k, _| !k.starts_with("builder:scaffolds/"));
     }
     let mut again = Projects::load();
-    assert_eq!(again.get(id).map(|p| p.scaffolds.clone()), Some(vec![[5, 0, 5]]));
+    assert_eq!(
+        again.get(id).map(|p| p.scaffolds.clone()),
+        Some(vec![[5, 0, 5]])
+    );
     again.update(id, |p| p.scaffolds.push([6, 0, 6]));
     assert_eq!(
         Projects::load().get(id).map(|p| p.scaffolds.clone()),
@@ -158,7 +174,11 @@ fn a_job_runs_from_draft_to_complete() {
     assert_eq!(reads(&p), (Phase::Draft, None, false, false, false));
     assert!(p.brief().open_to_change());
     p.hold_for(Hold::Player, Note::Paused);
-    assert_eq!((p.hold(), &p.note), (None, &Note::None), "a draft is never held");
+    assert_eq!(
+        (p.hold(), &p.note),
+        (None, &Note::None),
+        "a draft is never held"
+    );
 
     p.note = Note::TableGone;
     p.summon([1, 0, 0]);
@@ -222,7 +242,11 @@ fn a_dead_golem_holds_the_job_for_the_next() {
     p.golem_died();
     assert_eq!(reads(&p), (Phase::Draft, None, false, false, false));
 
-    for stage in [Project::emerged as fn(&mut Project), Project::burrow, |_: &mut Project| {}] {
+    for stage in [
+        Project::emerged as fn(&mut Project),
+        Project::burrow,
+        |_: &mut Project| {},
+    ] {
         let mut p = draft();
         p.summon([1, 0, 0]);
         stage(&mut p);
@@ -295,7 +319,11 @@ fn projects_are_numbered_and_listed_while_live_across_a_reload() {
     assert_eq!(again.get(a).map(Project::phase), Some(Phase::Cancelled));
     assert_eq!(again.get(b).map(|p| p.owner.clone()), Some("bo".into()));
     assert_eq!(again.create("cy".into(), [0, 0, 0]), 3);
-    assert_eq!(again.binding(b), projects.binding(b), "the world keeps its nonce");
+    assert_eq!(
+        again.binding(b),
+        projects.binding(b),
+        "the world keeps its nonce"
+    );
 }
 
 #[test]
@@ -324,11 +352,21 @@ fn a_blueprint_is_bound_to_its_world_and_its_project() {
         })
     };
     let binding = projects.binding(id);
-    assert_eq!(bound(vec![(PROJECT_DATA.into(), binding.clone())]), Some(id));
+    assert_eq!(
+        bound(vec![(PROJECT_DATA.into(), binding.clone())]),
+        Some(id)
+    );
     let mut elsewhere = binding.clone();
     elsewhere[0] ^= 1;
-    assert_eq!(bound(vec![(PROJECT_DATA.into(), elsewhere)]), None, "another world's");
-    assert_eq!(bound(vec![(PROJECT_DATA.into(), binding[..8].to_vec())]), None);
+    assert_eq!(
+        bound(vec![(PROJECT_DATA.into(), elsewhere)]),
+        None,
+        "another world's"
+    );
+    assert_eq!(
+        bound(vec![(PROJECT_DATA.into(), binding[..8].to_vec())]),
+        None
+    );
     assert_eq!(bound(Vec::new()), None, "a blank blueprint");
 }
 
@@ -342,7 +380,11 @@ fn the_newest_finished_project_stays_as_its_tables_report() {
         .collect();
     finish(&mut projects, ids[0]);
     finish(&mut projects, ids[1]);
-    assert_eq!(projects.report_at(table), Some(ids[1]), "drafts are no report");
+    assert_eq!(
+        projects.report_at(table),
+        Some(ids[1]),
+        "drafts are no report"
+    );
     assert_eq!(projects.active_at(table), None);
     assert_eq!(projects.report_at([9, 9, 9]), None);
     projects.update(ids[2], |p| p.summon(table));
@@ -350,7 +392,10 @@ fn the_newest_finished_project_stays_as_its_tables_report() {
     assert_eq!(projects.report_at(table), Some(ids[1]), "the report stands");
 
     projects.sweep();
-    assert!(ids.iter().all(|id| projects.peek(*id).is_some()), "all asked about");
+    assert!(
+        ids.iter().all(|id| projects.peek(*id).is_some()),
+        "all asked about"
+    );
     projects.sweep();
     assert!(projects.peek(ids[0]).is_none());
     assert!(projects.peek(ids[1]).is_some() && projects.peek(ids[2]).is_some());
@@ -372,6 +417,10 @@ fn a_tables_report_is_found_after_a_reload() {
     finish(&mut projects, older);
     let reloaded = Projects::load();
     assert!(reloaded.peek(newer).is_none(), "nothing is read yet");
-    assert_eq!(reloaded.report_at(table), Some(newer), "the newest, not the last");
+    assert_eq!(
+        reloaded.report_at(table),
+        Some(newer),
+        "the newest, not the last"
+    );
     assert_eq!(reloaded.report_at([0, 0, 0]), None);
 }

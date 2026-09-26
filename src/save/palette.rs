@@ -373,7 +373,9 @@ pub fn load_or_create(dir: &Path, disabled: &BTreeSet<String>) -> std::io::Resul
                 p.item_to_disk[i.id() as usize] = disk as u16;
             }
             None => {
-                log::warn!("save palette: unknown item '{name}' (disk id {disk}) is kept but not usable")
+                log::warn!(
+                    "save palette: unknown item '{name}' (disk id {disk}) is kept but not usable"
+                )
             }
         }
     }
@@ -627,7 +629,7 @@ mod tests {
     }
 
     fn disabled_mod_palette_inner(save: &Path) {
-        std::fs::create_dir_all(&save).unwrap();
+        std::fs::create_dir_all(save).unwrap();
         let disabled: BTreeSet<String> = ["palmod".to_owned()].into();
 
         let relic = block_from_name("palmod:relic").expect("fixture block registered");
@@ -635,7 +637,7 @@ mod tests {
 
         // Fresh save opened with the mod DISABLED: no palette entry appended,
         // and the runtime id has no disk pin (encodes as air/empty).
-        let p = load_or_create(&save, &disabled).unwrap();
+        let p = load_or_create(save, &disabled).unwrap();
         let text = std::fs::read_to_string(save.join("palette.json")).unwrap();
         assert!(
             !text.contains("palmod:relic"),
@@ -649,7 +651,7 @@ mod tests {
         assert_eq!(p.item_to_disk(relic_item.id()), 0);
 
         // The mod enabled: the entry appends and round-trips.
-        let p = load_or_create(&save, &BTreeSet::new()).unwrap();
+        let p = load_or_create(save, &BTreeSet::new()).unwrap();
         let disk = p.block_to_disk(relic.id());
         assert_ne!(disk, 0, "enabled content gets a real disk id");
         assert_eq!(p.block_from_disk(disk), relic.id());
@@ -658,7 +660,7 @@ mod tests {
 
         // Disabled again, entry NOW IN THE FILE: decodes as unknown (air /
         // empty), no to-disk pin, and the entry itself stays (append-only).
-        let p = load_or_create(&save, &disabled).unwrap();
+        let p = load_or_create(save, &disabled).unwrap();
         assert_eq!(p.block_from_disk(disk), 0, "disabled block decodes to air");
         assert_eq!(p.block_from_disk_known(disk), None, "kept in disk form");
         assert_eq!(p.item_from_disk_known(item_disk), None);
@@ -675,7 +677,7 @@ mod tests {
         );
 
         // Re-enabled: the untouched entry restores the exact mapping.
-        let p = load_or_create(&save, &BTreeSet::new()).unwrap();
+        let p = load_or_create(save, &BTreeSet::new()).unwrap();
         assert_eq!(p.block_from_disk(disk), relic.id(), "re-enabling restores");
         assert_eq!(p.block_to_disk(relic.id()), disk, "same disk id as before");
         assert_eq!(p.item_from_disk(item_disk), relic_item.id());

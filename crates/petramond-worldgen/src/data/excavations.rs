@@ -116,9 +116,12 @@ pub(crate) static TABLE: petramond_world::content::Slot<Excavations> =
     );
 
 fn load_table(reg: &petramond_world::content::ContentRegistry) -> Result<Excavations, String> {
-    petramond_world::registry::read_catalog(reg.packs(), "excavations.json", "excavation", |texts| {
-        load::parse_layers(texts, super::underground::TABLE.get(reg))
-    })
+    petramond_world::registry::read_catalog(
+        reg.packs(),
+        "excavations.json",
+        "excavation",
+        |texts| load::parse_layers(texts, super::underground::TABLE.get(reg)),
+    )
 }
 
 /// The current registry's excavation table.

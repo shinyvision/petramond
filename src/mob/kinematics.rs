@@ -310,8 +310,9 @@ impl Instance {
         if d.edge_guard && self.motion.on_ground && !nav_jumped && env.immersion.is_none() {
             self.guard_edge(dt, d, env);
         }
-        let carried = (self.combat.stagger_timer <= 0.0 && !loco.can_steer && env.immersion.is_none())
-            .then_some([self.motion.vel.x, self.motion.vel.z]);
+        let carried =
+            (self.combat.stagger_timer <= 0.0 && !loco.can_steer && env.immersion.is_none())
+                .then_some([self.motion.vel.x, self.motion.vel.z]);
         // The shore climb follows where locomotion (a walk or a drive) heads.
         let heading = Vec3::new(self.motion.vel.x, 0.0, self.motion.vel.z);
         self.resist_and_push(dt, incoming, env);
@@ -428,7 +429,8 @@ impl Instance {
             // ledge alike).
             self.moving = self.motion.air_walk
                 && !self.motion.on_ground
-                && self.motion.vel.x * self.motion.vel.x + self.motion.vel.z * self.motion.vel.z > 1e-6;
+                && self.motion.vel.x * self.motion.vel.x + self.motion.vel.z * self.motion.vel.z
+                    > 1e-6;
         }
         None
     }
@@ -499,8 +501,13 @@ impl Instance {
         if let Some(ShoreClimb::Launch(speed)) = shore {
             self.motion.vel.y = self.motion.vel.y.max(speed);
         } else {
-            self.motion.vel.y =
-                sample.vertical_velocity(self.motion.vel.y, self.pos.y as f32, d.buoyancy, true, dt);
+            self.motion.vel.y = sample.vertical_velocity(
+                self.motion.vel.y,
+                self.pos.y as f32,
+                d.buoyancy,
+                true,
+                dt,
+            );
         }
         shore
     }
@@ -568,7 +575,10 @@ impl Instance {
         // gait expression survives the whole ballistic arc. Landing clears it.
         self.motion.air_walk = !grounded
             && (self.moving
-                || (self.motion.air_walk && self.motion.vel.x * self.motion.vel.x + self.motion.vel.z * self.motion.vel.z > 1e-6));
+                || (self.motion.air_walk
+                    && self.motion.vel.x * self.motion.vel.x
+                        + self.motion.vel.z * self.motion.vel.z
+                        > 1e-6));
         healed
     }
 

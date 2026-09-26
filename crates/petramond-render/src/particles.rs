@@ -146,9 +146,7 @@ const FACES: [Face; 6] = [
 /// and `particle_face_shade`, indexed by face (`vertex_index / 4`).
 pub(crate) fn wgsl_faces() -> String {
     let vec3 = |v: Vec3| format!("vec3<f32>({:?}, {:?}, {:?})", v.x, v.y, v.z);
-    let list = |f: &dyn Fn(&Face) -> String| {
-        FACES.iter().map(f).collect::<Vec<_>>().join(", ")
-    };
+    let list = |f: &dyn Fn(&Face) -> String| FACES.iter().map(f).collect::<Vec<_>>().join(", ");
     format!(
         "var<private> particle_face_right: array<vec3<f32>, 6> = array<vec3<f32>, 6>({});\n\
          var<private> particle_face_up: array<vec3<f32>, 6> = array<vec3<f32>, 6>({});\n\

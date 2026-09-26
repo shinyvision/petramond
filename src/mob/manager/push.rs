@@ -176,7 +176,8 @@ impl Mobs {
         for &(ra, rb) in pairs.iter() {
             let (i, j) = (order[ra as usize], order[rb as usize]);
             let (a, b) = (bodies[i].unwrap(), bodies[j].unwrap());
-            let Some(push_a) = super::super::body_separation(a.pos, a.yaw, a.size, b.pos, b.yaw, b.size)
+            let Some(push_a) =
+                super::super::body_separation(a.pos, a.yaw, a.size, b.pos, b.yaw, b.size)
             else {
                 continue;
             };
@@ -236,7 +237,9 @@ impl Mobs {
                 continue;
             }
             let d = def(m.kind);
-            if let Some(mob_push) = super::super::body_separation_from_body(m.pos, m.yaw, d.size, player) {
+            if let Some(mob_push) =
+                super::super::body_separation_from_body(m.pos, m.yaw, d.size, player)
+            {
                 push -= mob_push;
             }
         }

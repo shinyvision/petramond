@@ -158,13 +158,14 @@ impl TerrainPass {
         // the layer does, which sections carrying both make rare.
         let side = self.pipes.transparent.get(ctx.samples);
         let top = self.pipes.transparent_two_sided.get(ctx.samples);
-        self.draws.encode(pass, QuadPass::Transparent, &self.geometry, &|layer| {
-            if layer == petramond_mesh::QuadLayer::TransparentTwoSided {
-                top
-            } else {
-                side
-            }
-        });
+        self.draws
+            .encode(pass, QuadPass::Transparent, &self.geometry, &|layer| {
+                if layer == petramond_mesh::QuadLayer::TransparentTwoSided {
+                    top
+                } else {
+                    side
+                }
+            });
         let list = self.draws.list(QuadPass::Transparent);
         stats.transparent_draws += list.len();
         stats.transparent_indices += list.indices();

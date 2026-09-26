@@ -5,7 +5,6 @@ use crate::host::prelude::*;
 use super::wants::{digs_ahead, keeps, tool_kind, wanted};
 use crate::content::BLUEPRINT;
 use crate::geometry::{feet_of, manhattan, reach_to, reaches};
-use crate::worker::Job;
 use crate::project::{Hold, Note, Project, Projects};
 use crate::survey::{key_of, ItemKey};
 use crate::worker::plan::Mode;
@@ -13,6 +12,7 @@ use crate::worker::route::{self, Hubs};
 use crate::worker::stance::{self, Search};
 use crate::worker::tuning::reach::CHEST_REACH;
 use crate::worker::waiting::Waiting;
+use crate::worker::Job;
 use crate::worker::{sight, Body, Ctx, Step, Then, TRACE};
 
 /// Head for the chest holding what the work ahead needs, or hold the job

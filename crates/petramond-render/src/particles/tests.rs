@@ -72,7 +72,11 @@ fn expand(rows: &[ParticleRow]) -> Vec<ParticleVertex> {
         let c = Vec3::from(row.center);
         for vertex in 0..VERTS_PER_CUBE {
             let (face, corner) = (vertex / 4, vertex % 4);
-            let sx = if corner == 1 || corner == 2 { 1.0 } else { -1.0 };
+            let sx = if corner == 1 || corner == 2 {
+                1.0
+            } else {
+                -1.0
+            };
             let sy = if corner >= 2 { 1.0 } else { -1.0 };
             let (pos, shade) = if row.quad != 0 {
                 if face != 0 {
@@ -160,7 +164,11 @@ fn oriented_particles_keep_their_plane_and_atlas_split_among_cubes() {
         petramond_math::math::IVec3::ZERO,
         &mut rows,
     );
-    assert_eq!((total, block), (3, 2), "one row per particle, block rows first");
+    assert_eq!(
+        (total, block),
+        (3, 2),
+        "one row per particle, block rows first"
+    );
     let vertices = expand(&rows);
     assert_eq!(expand(&rows[..2]).len(), 4 + VERTS_PER_CUBE);
     assert_eq!(expand(&rows[2..]).len(), VERTS_PER_CUBE);
@@ -688,7 +696,12 @@ fn the_generated_face_table_is_faces() {
     let wgsl = wgsl_faces();
     let right = FACES
         .iter()
-        .map(|f| format!("vec3<f32>({:?}, {:?}, {:?})", f.right.x, f.right.y, f.right.z))
+        .map(|f| {
+            format!(
+                "vec3<f32>({:?}, {:?}, {:?})",
+                f.right.x, f.right.y, f.right.z
+            )
+        })
         .collect::<Vec<_>>()
         .join(", ");
     assert!(wgsl.contains(&format!("array<vec3<f32>, 6>({right})")));

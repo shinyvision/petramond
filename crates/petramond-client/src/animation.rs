@@ -345,7 +345,12 @@ impl PlayerAnimation {
                 }
                 None => {
                     if let Some(animator) = bodies.body(remote.key) {
-                        animator.advance(Some(&remote.body.state), Some(&remote.frames), inputs, dt);
+                        animator.advance(
+                            Some(&remote.body.state),
+                            Some(&remote.frames),
+                            inputs,
+                            dt,
+                        );
                     }
                 }
             }

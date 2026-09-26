@@ -11,15 +11,17 @@ use petramond_world::chunk::{section_idx, SEA_LEVEL, SECTION_SIZE, WORLD_MAX_Y};
 use petramond_world::section::Section;
 
 use super::lattice::{DensityLattice, DensityLatticeBounds, DensityLatticeCellSize};
-use super::terrain::{channels, FloorDensitySpec, TerrainDensityGraph};
+#[cfg(test)]
+use super::terrain::reference::FloorDensitySpec;
+use super::terrain::{channels, TerrainDensityGraph};
 
 use crate::biome::climate::{
     BiomeClimateIndex, ClimateAxis, ClimateSampleCell, ClimateSampler, CLIMATE_SAMPLE_CELL_X,
     CLIMATE_SAMPLE_CELL_Z,
 };
 use crate::biome::spec;
-use crate::rng::patch_field;
 use crate::region::RegionCells;
+use crate::rng::patch_field;
 use crate::surface::rule::SurfaceCtx;
 use crate::surface::SurfaceSystem;
 
@@ -215,7 +217,13 @@ impl SurfaceDensitySystem {
         if temperature >= crate::data::climate_table::table().frozen_temperature_max {
             return Block::Water;
         }
-        let field = patch_field(self.seed, crate::salts::SEA_ICE_EDGE, wx, wz, SEA_ICE_EDGE_PERIOD);
+        let field = patch_field(
+            self.seed,
+            crate::salts::SEA_ICE_EDGE,
+            wx,
+            wz,
+            SEA_ICE_EDGE_PERIOD,
+        );
         let threshold =
             SEA_ICE_MIN_DEPTH + (field * (SEA_ICE_MAX_DEPTH - SEA_ICE_MIN_DEPTH + 1) as f32) as i32;
         if depth <= threshold {
@@ -298,8 +306,7 @@ impl SurfaceDensitySystem {
 /// top exclusive: from the terrain density's floor — at and under which the
 /// density is solid by construction, so no surface lies lower — to the top of
 /// the cubic world. A deeper or taller world moves these bounds, nothing else.
-pub(crate) const SURFACE_SEARCH_Y: std::ops::Range<i32> =
-    FloorDensitySpec::default_surface().floor_y as i32..WORLD_MAX_Y;
+pub(crate) const SURFACE_SEARCH_Y: std::ops::Range<i32> = 0..WORLD_MAX_Y;
 
 /// The lowest surface a column reports: one below the search range, for a
 /// column with no solid cell in it. Every cell under it is filled, whatever

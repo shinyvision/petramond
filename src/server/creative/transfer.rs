@@ -47,7 +47,8 @@ impl ServerGame {
     ) {
         if !self.may_edit(s) {
             return self.sessions[s]
-                .sim.creative
+                .sim
+                .creative
                 .refuse("Creative tools require creative mode".into());
         }
         let design = if self.world.schematics().store.contains(&digest) {
@@ -58,14 +59,18 @@ impl ServerGame {
             Design::Arriving(digest)
         } else {
             return self.sessions[s]
-                .sim.creative
+                .sim
+                .creative
                 .refuse("A schematic is still being transferred".into());
         };
-        self.sessions[s].sim.creative.try_enqueue(Pending::Placement {
-            design,
-            origin,
-            turns,
-        });
+        self.sessions[s]
+            .sim
+            .creative
+            .try_enqueue(Pending::Placement {
+                design,
+                origin,
+                turns,
+            });
     }
 
     /// An uploaded design's bytes arrived whole: decode them for the paste
@@ -149,7 +154,8 @@ impl ServerGame {
             return false;
         }
         let captured = session
-            .sim.creative
+            .sim
+            .creative
             .capture
             .take()
             .unwrap()
@@ -158,7 +164,8 @@ impl ServerGame {
         match captured {
             Ok((digest, bytes)) => {
                 session
-                    .sim.creative
+                    .sim
+                    .creative
                     .replies
                     .push(CreativeReply::Captured { digest });
                 session.sim.schematic.send(digest, bytes);

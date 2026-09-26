@@ -17,8 +17,8 @@ const SPAN: usize = 4;
 /// cover segments, never incrementally. Returns whether an edit landed.
 fn random_edit(f: &mut Fixture, rng: &mut Rng, cell: IVec3) -> bool {
     let (lx, lz) = (chunk::lx(cell.x), chunk::lz(cell.z));
-    let cover = f.columns[&ChunkPos::new(cell.x.div_euclid(16), cell.z.div_euclid(16))]
-        .sky_cover_y(lx, lz);
+    let cover =
+        f.columns[&ChunkPos::new(cell.x.div_euclid(16), cell.z.div_euclid(16))].sky_cover_y(lx, lz);
     let roll = rng.next() % 6;
     let (section, lx, ly, lz) = f.cell_mut(cell).expect("edit inside the window");
     if roll == 0 {
@@ -86,13 +86,20 @@ fn incremental_relight_equals_full_rebakes() {
             }
         }
         for &cell in &edits {
-            assert!(edit_relightable(&f.sections, cell), "round {round}: {cell:?}");
+            assert!(
+                edit_relightable(&f.sections, cell),
+                "round {round}: {cell:?}"
+            );
         }
         let relit = relight_edits(&f.sections, &f.columns, &edits)
             .unwrap_or_else(|| panic!("round {round}: a fully baked window must relight"));
         relit_total += relit.len();
         for r in relit {
-            assert_ne!(r.mask, 0, "round {round}: {:?} reported an empty change", r.pos);
+            assert_ne!(
+                r.mask, 0,
+                "round {round}: {:?} reported an empty change",
+                r.pos
+            );
             f.install(r.pos, r.skylight, r.blocklight);
         }
         f.assert_matches_full_bakes(&format!("round {round}"));
@@ -154,7 +161,10 @@ fn an_unbaked_opaque_neighbour_reads_as_implied_light() {
         }
     }
     let relit = relight_edits(&f.sections, &f.columns, &edits).expect("implied neighbour");
-    assert!(relit.iter().all(|r| r.pos != solid), "an opaque section is never relit");
+    assert!(
+        relit.iter().all(|r| r.pos != solid),
+        "an opaque section is never relit"
+    );
     for r in relit {
         f.install(r.pos, r.skylight, r.blocklight);
     }

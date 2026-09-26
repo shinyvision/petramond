@@ -793,8 +793,7 @@ fn hovering_an_unaffordable_grid_cell_publishes_its_tooltip() {
     app.solve_menu_frame_for_test(screen);
     assert_eq!(app.ui.state_mut().get_bool("show_recipe_tip"), Some(false));
     assert!(app
-        .ui
-        .doc_hooks()
+        .doc_hooks_for_test()
         .iter()
         .all(|hook| hook.kind != petramond::gui::DocHookKind::TipResult));
 }

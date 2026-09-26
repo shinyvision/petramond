@@ -11,7 +11,9 @@ use crate::net::protocol::{
     ActionDenyReason, ActionOutcome, ClientRequestId, PlayerAction, TargetRef,
 };
 use crate::server::game::ServerGame;
-use crate::server::player::{AttackClick, PendingBreakFinished, PendingMenuAction, PendingUseClick};
+use crate::server::player::{
+    AttackClick, PendingBreakFinished, PendingMenuAction, PendingUseClick,
+};
 use petramond_math::math::IVec3;
 
 impl ServerGame {
@@ -33,15 +35,19 @@ impl ServerGame {
             PlayerAction::Drop { all, request_id } => {
                 let sess = &mut self.sessions[s];
                 let slot = sess.player.inventory.active_slot();
-                sess.sim.drop_queue.queue_selected(slot, all, Some(request_id));
+                sess.sim
+                    .drop_queue
+                    .queue_selected(slot, all, Some(request_id));
             }
             PlayerAction::ThrowCursor { amount, request_id } => {
                 let sess = &mut self.sessions[s];
-                if !sess
-                    .sim.drop_queue
-                    .queue_cursor(&sess.player.inventory, amount, Some(request_id))
-                {
-                    sess.replication.pending_action_outcomes
+                if !sess.sim.drop_queue.queue_cursor(
+                    &sess.player.inventory,
+                    amount,
+                    Some(request_id),
+                ) {
+                    sess.replication
+                        .pending_action_outcomes
                         .push(ActionOutcome::deny(request_id, ActionDenyReason::Denied));
                 }
             }
@@ -86,7 +92,8 @@ impl ServerGame {
                     return;
                 }
                 self.sessions[s]
-                    .sim.creative
+                    .sim
+                    .creative
                     .try_enqueue(super::creative::Pending::Action(action));
             }
             PlayerAction::Schematic(request) => self.apply_schematic_request(s, request),
@@ -132,11 +139,13 @@ impl ServerGame {
         click.target = self.authoritative_use_target(s, click.ray_item(), click.target);
         let sess = &mut self.sessions[s];
         if let Some(old) = sess
-            .input.pending_use_click
+            .input
+            .pending_use_click
             .replace(click)
             .and_then(|old| old.request_id)
         {
-            sess.replication.pending_action_outcomes
+            sess.replication
+                .pending_action_outcomes
                 .push(ActionOutcome::deny(old, ActionDenyReason::Denied));
         }
     }
@@ -156,14 +165,18 @@ impl ServerGame {
         let old_deferred = self.sessions[s].input.deferred_break_finished.take();
         if let Some(old) = old_deferred {
             self.sessions[s]
-                .replication.pending_action_outcomes
+                .replication
+                .pending_action_outcomes
                 .push(ActionOutcome::deny(
                     old.request_id,
                     ActionDenyReason::Denied,
                 ));
             // Old optimistic clear may still be on the client.
             let cells = self.world.break_footprint_cells(old.pos);
-            self.sessions[s].replication.pending_corrective_cells.extend(cells);
+            self.sessions[s]
+                .replication
+                .pending_corrective_cells
+                .extend(cells);
         }
         let request = PendingBreakFinished {
             request_id,
@@ -211,12 +224,12 @@ impl ServerGame {
         accepted: bool,
         reason: Option<ActionDenyReason>,
     ) {
-        self.sessions[s]
-            .replication.pending_action_outcomes
-            .push(crate::net::protocol::ActionOutcome {
+        self.sessions[s].replication.pending_action_outcomes.push(
+            crate::net::protocol::ActionOutcome {
                 id,
                 accepted,
                 reason,
-            });
+            },
+        );
     }
 }

@@ -344,7 +344,11 @@ fn swept_bounds(parts: &[ModelPart]) -> Aabb {
     let mut lo = [f32::INFINITY; 3];
     let mut hi = [f32::NEG_INFINITY; 3];
     for part in parts {
-        let samples = if part.joint.is_some() { CULL_SAMPLES } else { 0 };
+        let samples = if part.joint.is_some() {
+            CULL_SAMPLES
+        } else {
+            0
+        };
         for step in 0..=samples {
             let open01 = step as f32 / CULL_SAMPLES as f32;
             for corner in part.corners() {
@@ -373,7 +377,10 @@ fn swept_bounds(parts: &[ModelPart]) -> Aabb {
 /// How far the closed variant `0` is lifted to sit centred in a unit cube.
 fn item_lift(parts: &[ModelPart]) -> f32 {
     let lo = parts.iter().map(|p| p.min[1]).fold(f32::INFINITY, f32::min);
-    let hi = parts.iter().map(|p| p.max[1]).fold(f32::NEG_INFINITY, f32::max);
+    let hi = parts
+        .iter()
+        .map(|p| p.max[1])
+        .fold(f32::NEG_INFINITY, f32::max);
     (1.0 - (hi - lo)) * 0.5 - lo
 }
 

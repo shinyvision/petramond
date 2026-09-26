@@ -134,7 +134,10 @@ mod tests {
         );
         assert_eq!(out.kicked.len(), 1);
         assert_eq!(out.kicked[0].0, id);
-        assert!(server.sessions.by_id(id).is_none(), "the faulted session left");
+        assert!(
+            server.sessions.by_id(id).is_none(),
+            "the faulted session left"
+        );
         assert_eq!(server.sessions.len(), 1, "the host plays on");
         assert!(server.world.current_tick() > tick, "the world kept ticking");
         assert!(

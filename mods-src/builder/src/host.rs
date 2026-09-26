@@ -37,6 +37,7 @@ macro_rules! host_calls {
         pub trait Host {
             $(
                 $(#[$doc])*
+                #[allow(clippy::too_many_arguments)] // Mirrors the guest host call signature.
                 fn $name(&self, $($arg: $ty),*) $(-> $ret)?;
             )*
         }

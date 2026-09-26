@@ -15,8 +15,8 @@ use super::tuning::price::{
 };
 use super::{Body, Ctx};
 use crate::geometry::{offset, SIDES};
-use crate::worker::Job;
 use crate::project::Project;
+use crate::worker::Job;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Move {
@@ -266,9 +266,7 @@ fn moves_from(grid: Grid, rules: Rules, c: [i32; 3]) -> Vec<Onward> {
         // Along, onto the floor there, or off the edge.
         if let Some((cost, digs, door)) = grid.clear(&[up(n, 1), n]) {
             match grid.at(up(n, -1)) {
-                Some(below) if below.floor => {
-                    moves.push((n, Move::Walk(n), 1 + cost, digs, door))
-                }
+                Some(below) if below.floor => moves.push((n, Move::Walk(n), 1 + cost, digs, door)),
                 Some(below) if below.open => {
                     if let Some((land, drop)) = grid.landing(c, up(n, -1)) {
                         if let Some(hurt) = fall_cost(drop, rules.health) {

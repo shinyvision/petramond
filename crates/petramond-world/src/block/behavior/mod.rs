@@ -125,22 +125,6 @@ pub fn by_name(name: &str) -> Option<&'static dyn BlockBehavior> {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn behavior_names_round_trip() {
-        for name in [
-            "inert", "grass", "dirt", "leaves", "fluid", "fragile", "sapling", "door",
-        ] {
-            let b = by_name(name).unwrap_or_else(|| panic!("unregistered behavior '{name}'"));
-            assert_eq!(b.key(), name, "key() must be the inverse of by_name()");
-        }
-        assert!(by_name("bogus").is_none());
-    }
-}
-
 /// A behaviour whose LOGIC lives above the data layer (fluid flow, fragile
 /// support, sapling growth, doors — they drive the scheduler, drops, or
 /// worldgen features). The data layer knows its static FACTS (key, random-tick
@@ -200,5 +184,21 @@ impl BlockBehavior for EngineHook {
             "engine behaviour '{}' must dispatch through the engine registry",
             self.key
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn behavior_names_round_trip() {
+        for name in [
+            "inert", "grass", "dirt", "leaves", "fluid", "fragile", "sapling", "door",
+        ] {
+            let b = by_name(name).unwrap_or_else(|| panic!("unregistered behavior '{name}'"));
+            assert_eq!(b.key(), name, "key() must be the inverse of by_name()");
+        }
+        assert!(by_name("bogus").is_none());
     }
 }

@@ -1,7 +1,7 @@
-use petramond_world::world::raycast;
 use super::*;
 use crate::entity::fluid_fixture::{self, block, BRINE, SYRUP};
 use crate::world::testutil::flat_server_world;
+use petramond_world::world::raycast;
 
 #[test]
 fn bucket_rays_key_on_the_fluid_rows() {

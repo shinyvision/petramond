@@ -124,17 +124,35 @@ mod tests {
             assert_eq!(<[i32; 3]>::from_tag(&cell.to_tag()), Some(cell));
         }
         let point = [0.1 + 0.2, -64.000_000_1, 1.0e300];
-        assert_eq!(<[f64; 3]>::from_tag(&point.to_tag()), Some(point), "never rounded");
+        assert_eq!(
+            <[f64; 3]>::from_tag(&point.to_tag()),
+            Some(point),
+            "never rounded"
+        );
     }
 
     #[test]
     fn anything_else_reads_as_absent() {
         let text = |s: &str| MobTagValue::Str(s.into());
-        assert_eq!(<[i32; 3]>::from_tag(&text("4 0 -2")), None, "the old decimal text");
-        assert_eq!(<[i32; 3]>::from_tag(&text("+00000040000000000000000")), None);
-        assert_eq!(<[i32; 3]>::from_tag(&text("00000004000000000000000g")), None);
+        assert_eq!(
+            <[i32; 3]>::from_tag(&text("4 0 -2")),
+            None,
+            "the old decimal text"
+        );
+        assert_eq!(
+            <[i32; 3]>::from_tag(&text("+00000040000000000000000")),
+            None
+        );
+        assert_eq!(
+            <[i32; 3]>::from_tag(&text("00000004000000000000000g")),
+            None
+        );
         assert_eq!(<[i32; 3]>::from_tag(&MobTagValue::I64(4)), None);
-        assert_eq!(<[f64; 3]>::from_tag(&[1, 2, 3].to_tag()), None, "a cell is no point");
+        assert_eq!(
+            <[f64; 3]>::from_tag(&[1, 2, 3].to_tag()),
+            None,
+            "a cell is no point"
+        );
     }
 }
 

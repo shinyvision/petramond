@@ -124,9 +124,18 @@ impl InspectorSchema {
                 palette_binding: true,
                 ..Self::default()
             },
-            Row | Column | Spacer | Rotimage { .. } | Checkbox | Toggle { .. }
-            | Slider { .. } | TextInput { .. } | Gauge { .. } | Badge { .. }
-            | Alert { .. } | TabBar { .. } => Self::default(),
+            Row
+            | Column
+            | Spacer
+            | Rotimage { .. }
+            | Checkbox
+            | Toggle { .. }
+            | Slider { .. }
+            | TextInput { .. }
+            | Gauge { .. }
+            | Badge { .. }
+            | Alert { .. }
+            | TabBar { .. } => Self::default(),
         }
     }
 }

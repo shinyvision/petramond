@@ -13,7 +13,10 @@ fn a_wait_holds_until_its_tick_and_is_replaced_or_lifted() {
     assert_eq!(until.until(&Task::Unit(3)), Some(50));
 
     until.set(Task::Unit(3), 10);
-    assert!(!until.holds(&Task::Unit(3), 20), "a later wait replaces the earlier");
+    assert!(
+        !until.holds(&Task::Unit(3), 20),
+        "a later wait replaces the earlier"
+    );
     assert_eq!(until.len(), 1, "lapsed waits are still kept");
     until.lift(&Task::Unit(3));
     assert_eq!((until.until(&Task::Unit(3)), until.len()), (None, 0));
@@ -48,7 +51,11 @@ fn tries_close_together_count_once() {
     assert_eq!(tries.count_spaced(1usize, 10, 40), 1);
     assert_eq!(tries.count_spaced(1, 49, 40), 1, "within the spacing");
     assert_eq!(tries.count_spaced(1, 50, 40), 2);
-    assert_eq!(tries.count_spaced(1, 60, 40), 2, "spaced from the last counted");
+    assert_eq!(
+        tries.count_spaced(1, 60, 40),
+        2,
+        "spaced from the last counted"
+    );
     assert_eq!(tries.count_spaced(2, 60, 40), 1);
 }
 

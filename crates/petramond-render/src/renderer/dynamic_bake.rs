@@ -287,13 +287,15 @@ impl Renderer {
         let mobs = &self.actor.mobs;
         for g in &mut self.actor.mob_gpu {
             g.drawn = pose_mob_instances(
-                g.model,
-                g.scale,
+                crate::mob_model::MobPoseSpecies {
+                    model: g.model,
+                    scale: g.scale,
+                    rig: &g.rig,
+                    cache: &mut g.pose,
+                },
                 g.visible.iter().map(|&i| &mobs[i as usize]),
                 layers,
                 render_origin,
-                &g.rig,
-                &mut g.pose,
                 &mut self.actor.skin.batch,
                 &mut mob_held,
             );
@@ -458,17 +460,14 @@ impl Renderer {
         let particles = &self.particle.instances;
         let model_particles = &self.particle.model_instances;
         let mut block_rows = 0u32;
-        self.particle.draw.bake(
-            &self.device,
-            &self.queue,
-            &mut self.particle.rows,
-            |rows| {
+        self.particle
+            .draw
+            .bake(&self.device, &self.queue, &mut self.particle.rows, |rows| {
                 let (total, block) =
                     build_particles_split(particles, model_particles, env, render_origin, rows);
                 block_rows = block;
                 total
-            },
-        );
+            });
         self.particle.block_count = if self.particle.draw.instance_count == 0 {
             0
         } else {

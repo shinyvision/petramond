@@ -77,9 +77,10 @@ fn player_file_roundtrips() {
         ["petramond:oak_planks", "petramond:torch"],
         "unlocked recipes survive in unlock order"
     );
-    assert!(restored.progression.obtained().intersects(
-        &[ItemType::OakLog, ItemType::Coal].into_iter().collect()
-    ));
+    assert!(restored
+        .progression
+        .obtained()
+        .intersects(&[ItemType::OakLog, ItemType::Coal].into_iter().collect()));
     let mut fresh = petramond_world::item::ItemSet::EMPTY;
     fresh.insert(ItemType::Diamond);
     assert!(
@@ -202,8 +203,7 @@ fn unresolvable_slots_and_unknown_fields_are_kept_and_written_back() {
 
     let mut filled = player.clone();
     *filled.inventory.slot_mut(5).expect("slot 5") = Some(ItemStack::new(ItemType::Stone, 1));
-    let back =
-        super::decode(&encode_keeping(&filled, &pal, &got.kept), &pal).expect("decodes");
+    let back = super::decode(&encode_keeping(&filled, &pal, &got.kept), &pal).expect("decodes");
     assert_eq!(
         back.inventory.raw_slots()[5],
         Some(ItemStack::new(ItemType::Stone, 1)),

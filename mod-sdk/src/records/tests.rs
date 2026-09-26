@@ -142,12 +142,21 @@ impl KvRecord for Legacy {
 
 #[test]
 fn a_bare_legacy_value_reads_as_version_zero() {
-    assert_eq!(decode_versioned_or_legacy::<Legacy>(&[5, 1], 2), Ok(Legacy(261)));
+    assert_eq!(
+        decode_versioned_or_legacy::<Legacy>(&[5, 1], 2),
+        Ok(Legacy(261))
+    );
     let current = encode_versioned(&Legacy(261));
     assert_eq!(current.len(), 3);
-    assert_eq!(decode_versioned_or_legacy::<Legacy>(&current, 2), Ok(Legacy(261)));
+    assert_eq!(
+        decode_versioned_or_legacy::<Legacy>(&current, 2),
+        Ok(Legacy(261))
+    );
     assert_eq!(
         decode_versioned_or_legacy::<Legacy>(&[9, 5, 1], 2),
-        Err(RecordError::Newer { found: 9, newest: 1 })
+        Err(RecordError::Newer {
+            found: 9,
+            newest: 1
+        })
     );
 }

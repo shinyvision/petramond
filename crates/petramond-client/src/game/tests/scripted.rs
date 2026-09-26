@@ -61,8 +61,7 @@ impl ScriptedServer {
     /// Join the fake server as a remote client.
     pub(super) fn join() -> Self {
         let (handle, pipe) = ServerHandle::loopback();
-        let cam =
-            petramond_render::camera::Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0);
+        let cam = petramond_render::camera::Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0);
         let game = Game::new_remote(
             cam,
             join_data(WorldPos::new(4.5, 90.0, -7.5)),
@@ -162,5 +161,8 @@ fn scripted_roster_and_chat_reach_the_client_read_models() {
     assert_eq!(roster.get(&PlayerId(4)).map(String::as_str), Some("Guest"));
     assert!(!roster.contains_key(&PlayerId(0)));
     assert_eq!(server.game.take_chat_lines(), vec![line]);
-    assert!(server.game.take_chat_lines().is_empty(), "chat is taken once");
+    assert!(
+        server.game.take_chat_lines().is_empty(),
+        "chat is taken once"
+    );
 }

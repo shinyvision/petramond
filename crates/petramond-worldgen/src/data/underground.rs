@@ -6,7 +6,6 @@
 //!
 //! This table resolves blocks, so do not initialize it from a block registry loader.
 
-
 use serde::Deserialize;
 
 use crate::noise::settings::CAVE_MIN_Y;

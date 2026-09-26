@@ -75,7 +75,7 @@ fn equal_intent_gets_equal_response(name: &str, world: &ServerWorld) {
         );
         player.update(
             0.05,
-            world,
+            world.data(),
             crate::player::Input {
                 wishdir: Vec3::X,
                 jump: true,
@@ -143,7 +143,8 @@ fn swimmers_bob_and_floaters_settle(name: &str, world: &ServerWorld) {
         "{name}: surface buoyancy settles without bobbing"
     );
     assert!(world
-        .data().body_fluid(hull.instances()[0].pos, 1.8, Buoyancy::Surface)
+        .data()
+        .body_fluid(hull.instances()[0].pos, 1.8, Buoyancy::Surface)
         .is_some());
 
     let mut dropped = body("surface", WorldPos::new(8.5, 90.0, 8.5));

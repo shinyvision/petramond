@@ -8,7 +8,6 @@ use petramond_world::slab::SlabSlot;
 
 use super::cell_change::{CellChange, ChangeKind};
 
-
 impl<S: WorldSide> World<S> {
     /// Place one slab layer into `pos`, either creating a new slab cell or filling the
     /// empty matching half of an existing slab cell. The caller owns entity-overlap

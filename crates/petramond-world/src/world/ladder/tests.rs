@@ -28,10 +28,7 @@ fn a_placed_ladder_collides_as_its_facing_resolved_panel() {
     let p = IVec3::new(8, 64, 8);
     w.set_block_world(p.x, p.y, p.z, Block::LadderEast);
     let boxes = w.data.collision_boxes_at(p.x, p.y, p.z);
-    assert_eq!(
-        boxes,
-        crate::ladder::collision_boxes(Facing::East)
-    );
+    assert_eq!(boxes, crate::ladder::collision_boxes(Facing::East));
     // The panel is thin, standable geometry hugging the wall side — not a
     // full cube and not empty (a body bumps it and can stand on top).
     assert_eq!(boxes.len(), 1);
@@ -46,7 +43,10 @@ fn climbable_query_reads_the_facing_row() {
     let p = IVec3::new(8, 64, 8);
     assert_eq!(w.data.climb_at(p.x, p.y, p.z), None);
     w.set_block_world(p.x, p.y, p.z, Block::LadderSouth);
-    assert_eq!(w.data.climb_at(p.x, p.y, p.z), Some(Climb::Panel(Facing::South)));
+    assert_eq!(
+        w.data.climb_at(p.x, p.y, p.z),
+        Some(Climb::Panel(Facing::South))
+    );
     // A non-climbable block never answers.
     w.set_block_world(p.x, p.y, p.z, Block::Stone);
     assert_eq!(w.data.climb_at(p.x, p.y, p.z), None);

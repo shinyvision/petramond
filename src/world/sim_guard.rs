@@ -37,7 +37,6 @@ use petramond_world::block::Block;
 use petramond_world::chunk::{SectionPos, SECTION_SIZE};
 use petramond_world::section::SectionSummary;
 
-
 /// Widest read reach of any gated behaviour, in cells: the fluid sideways slope
 /// search walks up to `1 + SLOPE_FIND_DIST` = 5 cells from the flowing cell;
 /// every other reaction reads closer. ±5 cells stays within the adjacent
@@ -186,9 +185,9 @@ impl ServerWorld {
 
 #[cfg(test)]
 mod tests {
-    use crate::world::ServerWorld;
     use crate::mob::Mob;
     use crate::world::testutil::flat_server_world;
+    use crate::world::ServerWorld;
     use petramond_math::math::IVec3;
     use petramond_math::world_pos::WorldPos;
     use petramond_world::block::Block;

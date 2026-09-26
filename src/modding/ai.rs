@@ -177,9 +177,13 @@ struct AbiTag<'a>(&'a MobTagValue);
 impl Serialize for AbiTag<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self.0 {
-            MobTagValue::Bool(b) => serializer.serialize_newtype_variant("MobTagValue", 0, "Bool", b),
+            MobTagValue::Bool(b) => {
+                serializer.serialize_newtype_variant("MobTagValue", 0, "Bool", b)
+            }
             MobTagValue::Int(i) => serializer.serialize_newtype_variant("MobTagValue", 1, "I64", i),
-            MobTagValue::Float(f) => serializer.serialize_newtype_variant("MobTagValue", 2, "F64", f),
+            MobTagValue::Float(f) => {
+                serializer.serialize_newtype_variant("MobTagValue", 2, "F64", f)
+            }
             MobTagValue::String(s) => {
                 serializer.serialize_newtype_variant("MobTagValue", 3, "Str", s.as_str())
             }
@@ -276,9 +280,8 @@ fn dispatch_node(
                 return decisions;
             }
             Some(_) => {
-                instance.disable(
-                    "answered an AI node batch with a reply of the wrong shape or length",
-                );
+                instance
+                    .disable("answered an AI node batch with a reply of the wrong shape or length");
                 return vec![None; members.len()];
             }
             None if instance.disabled() || !instance.declines(batch_kind()) => {

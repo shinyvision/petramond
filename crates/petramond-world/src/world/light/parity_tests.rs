@@ -30,7 +30,8 @@ fn batched_bake_matches_per_section_bakes() {
         let member_positions: Vec<SectionPos> = (0..GROUP)
             .flat_map(|my| {
                 (0..GROUP).flat_map(move |mz| {
-                    (0..GROUP).map(move |mx| SectionPos::new(base.cx + mx, base.cy + my, base.cz + mz))
+                    (0..GROUP)
+                        .map(move |mx| SectionPos::new(base.cx + mx, base.cy + my, base.cz + mz))
                 })
             })
             .filter(|p| fixture.sections.contains_key(p))
@@ -49,7 +50,13 @@ fn batched_bake_matches_per_section_bakes() {
         for out in batched {
             let want = fixture.full_bake(out.pos);
             report_first_diff(&label, "skylight", out.pos, &out.skylight, &want.skylight);
-            report_first_diff(&label, "block light", out.pos, &out.blocklight, &want.blocklight);
+            report_first_diff(
+                &label,
+                "block light",
+                out.pos,
+                &out.blocklight,
+                &want.blocklight,
+            );
         }
     }
 }
@@ -109,6 +116,12 @@ fn a_custom_aperture_gates_light_identically_in_both_bakes() {
         !single.blocklight[far].is_dark()
     };
 
-    assert!(!lit_far_end(true), "a closed custom aperture must stop the light");
-    assert!(lit_far_end(false), "an open custom aperture must pass the light");
+    assert!(
+        !lit_far_end(true),
+        "a closed custom aperture must stop the light"
+    );
+    assert!(
+        lit_far_end(false),
+        "an open custom aperture must pass the light"
+    );
 }

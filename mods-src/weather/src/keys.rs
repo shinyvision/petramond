@@ -75,7 +75,10 @@ mod tests {
     fn the_emitter_rows_filter_by_the_same_snowy_biomes() {
         let emitters = Value::parse(include_str!("../pack/particle_emitters.json"))
             .expect("particle_emitters.json parses");
-        assert_eq!(emitter_biomes(&emitters, super::SNOW_BUNDLE, "biomes"), snowy_names());
+        assert_eq!(
+            emitter_biomes(&emitters, super::SNOW_BUNDLE, "biomes"),
+            snowy_names()
+        );
         assert_eq!(
             emitter_biomes(&emitters, super::RAIN_BUNDLE, "exclude_biomes"),
             snowy_names()

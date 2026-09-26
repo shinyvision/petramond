@@ -285,12 +285,10 @@ pub fn decode_call<T: DeserializeOwned>(bytes: &[u8]) -> Result<Decoded<T>, post
     match crate::decode(bytes) {
         Ok(call) => Ok(Decoded::Known(call)),
         Err(e) => match postcard::take_from_bytes::<u32>(bytes) {
-            Ok((variant, _)) if variant as usize >= variant_count::<T>() => {
-                Ok(Decoded::Unknown {
-                    domain: None,
-                    variant,
-                })
-            }
+            Ok((variant, _)) if variant as usize >= variant_count::<T>() => Ok(Decoded::Unknown {
+                domain: None,
+                variant,
+            }),
             _ => Err(e),
         },
     }

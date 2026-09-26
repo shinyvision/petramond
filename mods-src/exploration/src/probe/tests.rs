@@ -146,7 +146,14 @@ fn a_refused_batch_leaves_every_cell_unknown() {
 #[test]
 fn only_cells_outside_the_section_are_probed() {
     reset();
-    let ctx = GenCtx::for_test([0, 0, 0], 1, vec![0u16; 4096], vec![64; 256], vec![0; 256], 62);
+    let ctx = GenCtx::for_test(
+        [0, 0, 0],
+        1,
+        vec![0u16; 4096],
+        vec![64; 256],
+        vec![0; 256],
+        62,
+    );
     let mut reads = TerrainReads::with_query(fake_terrain);
     assert!(reads.ask_unseen(&ctx, [[3, 3, 3], [3, -1, 3], [3, 16, 3]]));
     assert_eq!(calls(), vec![2], "the owned cell cost a probe");
@@ -162,8 +169,26 @@ fn a_pad_spans_the_section_plus_its_reach() {
         up: 7,
     };
     assert_eq!(pad.around([16, -32, 0]), ([14, -37, -2], [33, -10, 17]));
-    assert!(in_reach(7, [80, 0, 0], Pad { xz: 5, down: 0, up: 0 }, fake_biomes_in_box));
-    assert!(!in_reach(7, [80, 0, 0], Pad { xz: 0, down: 0, up: 0 }, fake_biomes_in_box));
+    assert!(in_reach(
+        7,
+        [80, 0, 0],
+        Pad {
+            xz: 5,
+            down: 0,
+            up: 0
+        },
+        fake_biomes_in_box
+    ));
+    assert!(!in_reach(
+        7,
+        [80, 0, 0],
+        Pad {
+            xz: 0,
+            down: 0,
+            up: 0
+        },
+        fake_biomes_in_box
+    ));
 }
 
 #[test]
@@ -195,7 +220,11 @@ fn settle_derives_once_publishes_and_defers_behind_a_lease() {
 
     CLAIM.with(|c| *c.borrow_mut() = Some(MemoClaim::Pending));
     assert_eq!(run(), Err(Deferred));
-    assert_eq!(derived.get(), 2, "a deferred section derived the fact anyway");
+    assert_eq!(
+        derived.get(),
+        2,
+        "a deferred section derived the fact anyway"
+    );
 }
 
 #[test]
@@ -226,7 +255,13 @@ fn lookup_many_is_parallel_to_its_keys_even_when_the_host_answers_short() {
     reset();
     fake_put(b"a", vec![1]);
     let keys: Vec<Vec<u8>> = (0..SIM_BATCH_MAX + 2)
-        .map(|i| if i == 0 { b"a".to_vec() } else { vec![b'x', (i % 251) as u8] })
+        .map(|i| {
+            if i == 0 {
+                b"a".to_vec()
+            } else {
+                vec![b'x', (i % 251) as u8]
+            }
+        })
         .collect();
     let got = lookup_many(fake_get_many, keys);
     assert_eq!(got.len(), SIM_BATCH_MAX + 2);

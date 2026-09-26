@@ -493,10 +493,7 @@ fn build_lut(
 }
 
 fn is_identity_lut(table: &[Option<u16>]) -> bool {
-    table
-        .iter()
-        .enumerate()
-        .all(|(i, &v)| v == Some(i as u16))
+    table.iter().enumerate().all(|(i, &v)| v == Some(i as u16))
 }
 
 #[inline]

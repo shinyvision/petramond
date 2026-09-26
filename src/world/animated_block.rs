@@ -11,12 +11,13 @@
 //! admits a cell by its stored state: every animated row stores one (its
 //! placement front, or its shape's own state).
 
-use crate::world::{ServerWorld, World, WorldSide};
+#[cfg(test)]
+use crate::world::ServerWorld;
+use crate::world::{World, WorldSide};
 use petramond_math::math::IVec3;
 use petramond_world::animated_model::{AnimatedModelDef, AnimatedPose};
 use petramond_world::block::{Block, ShapeNeighborhood};
 use petramond_world::light::BlockLight6;
-
 
 /// One animated block to draw this frame: where, what, how it is posed by its
 /// own state, and the light at its cell. The client eases the open fraction

@@ -30,9 +30,7 @@ pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
 
 pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
     match ev {
-        UiEvent::Click { id, .. } if id == "back" => {
-            ctx.request(ShellCommand::ReopenConnectServer)
-        }
+        UiEvent::Click { id, .. } if id == "back" => ctx.request(ShellCommand::ReopenConnectServer),
         UiEvent::Key {
             key: NavKey::Enter, ..
         } => ctx.request(ShellCommand::ReopenConnectServer),

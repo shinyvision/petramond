@@ -9,10 +9,10 @@ use super::task_cells;
 use super::verdict::{verdict_name, viability};
 use crate::design::Design;
 use crate::geometry::reaches;
-use crate::worker::Job;
 use crate::survey::{ItemKey, Known, Survey};
 use crate::worker::crew::Crew;
 use crate::worker::step::Task;
+use crate::worker::Job;
 use crate::worker::{cargo, Body, Ctx, TRACE};
 
 pub(super) fn heartbeat(ctx: &Ctx, job: &Job, body: &Body) {
@@ -160,7 +160,12 @@ pub(super) fn deferred(ctx: &Ctx, job: &Job, candidates: &[(Task, [i32; 3])]) {
     let top: Vec<String> = candidates
         .iter()
         .take(6)
-        .map(|(t, c)| format!("{t:?}@{c:?} until {:?}", job.crew.deferrals.deferred.until(t)))
+        .map(|(t, c)| {
+            format!(
+                "{t:?}@{c:?} until {:?}",
+                job.crew.deferrals.deferred.until(t)
+            )
+        })
         .collect();
     log(&format!(
         "TRACE deferred candidates at {}: {top:?}",

@@ -2,12 +2,11 @@
 //! (`flush_modified_chunks`) and eviction (`harvest_section_snapshot`), plus
 //! the save-handle plumbing.
 
-use crate::world::ServerWorld;
 use crate::entity::DroppedItem;
 use crate::mob::SavedMob;
 use crate::save::{SectionSnapshot, WorldSave};
+use crate::world::ServerWorld;
 use petramond_world::chunk::SectionPos;
-
 
 impl ServerWorld {
     /// Attach an on-disk save: enables section persistence (load-from-disk in the
@@ -108,7 +107,8 @@ impl ServerWorld {
             let entities = by_section.remove(&pos).unwrap_or_default();
             let mobs = mobs_by_section.remove(&pos).unwrap_or_default();
             let record_holds_entities = self
-                .side.save
+                .side
+                .save
                 .as_ref()
                 .is_some_and(|s| s.record_holds_entities(pos));
             if let Some(snap) =
@@ -160,13 +160,16 @@ impl ServerWorld {
         // overwrite the player's on-disk record with pre-overlay state. Skip; the
         // record on disk stays authoritative. (Entities that wandered in are
         // dropped with the unload — losing a wanderer beats corrupting a build.)
-        if self.side.gen.awaited_overlays.contains(&sp) || self.side.gen.pending_overlays.contains_key(&sp) {
+        if self.side.gen.awaited_overlays.contains(&sp)
+            || self.side.gen.pending_overlays.contains_key(&sp)
+        {
             return None;
         }
         let entities = self.side.entities.dropped_items.take_items_in_section(sp);
         let mobs = self.side.entities.mobs.take_in_section(sp);
         let record_holds_entities = self
-            .side.save
+            .side
+            .save
             .as_ref()
             .is_some_and(|s| s.record_holds_entities(sp));
         self.snapshot_section_for_save(sp, entities, mobs, record_holds_entities)

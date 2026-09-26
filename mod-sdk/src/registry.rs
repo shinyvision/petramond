@@ -296,7 +296,11 @@ mod tests {
                 .map(|id| (id.0 < 600).then_some(id.0 * 2))
                 .collect()
         });
-        assert_eq!(pages, [256, 256, 256], "one page per crossing, none past the gap");
+        assert_eq!(
+            pages,
+            [256, 256, 256],
+            "one page per crossing, none past the gap"
+        );
         assert_eq!(found.len(), 600);
         assert_eq!(found[599], (BlockId(599), 1198));
     }

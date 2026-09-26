@@ -123,7 +123,10 @@ mod tests {
         assert_eq!(board.disabled_count(), 2);
         assert_eq!(board.disabled_since(1), vec!["alpha".to_owned()]);
         assert!(board.disabled_since(2).is_empty());
-        assert!(board.disabled_since(7).is_empty(), "a stale counter is harmless");
+        assert!(
+            board.disabled_since(7).is_empty(),
+            "a stale counter is harmless"
+        );
     }
 
     #[test]

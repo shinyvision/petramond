@@ -105,8 +105,8 @@ impl ServerWorld {
     }
 
     fn update_load_multi_targets(&mut self, targets: Vec<LoadTarget>) {
-        let unchanged =
-            self.data.last_load_target == Some(targets[0]) && self.data.extra_load_targets == targets[1..];
+        let unchanged = self.data.last_load_target == Some(targets[0])
+            && self.data.extra_load_targets == targets[1..];
         if unchanged {
             if !self.data.missing_columns_settled {
                 self.request_missing_columns_multi(&targets);
@@ -176,7 +176,8 @@ impl ServerWorld {
                     if !targets.iter().any(|t| Self::column_wanted(*t, pos)) {
                         continue;
                     }
-                    if self.side.gen.column_gen.contains_key(&pos) || self.side.gen.pending.contains_key(&pos)
+                    if self.side.gen.column_gen.contains_key(&pos)
+                        || self.side.gen.pending.contains_key(&pos)
                     {
                         continue;
                     }
@@ -217,7 +218,9 @@ impl ServerWorld {
             let band_lo = *Self::surface_window_for_column(col, 0).start();
             for &cy in &cys {
                 let sp = SectionPos::new(pos.cx, cy, pos.cz);
-                if self.data.sections.contains_key(&sp) || self.side.gen.pending_sections.contains(&sp) {
+                if self.data.sections.contains_key(&sp)
+                    || self.side.gen.pending_sections.contains(&sp)
+                {
                     continue;
                 }
                 if self.skip_empty_sky_section(sp, content_top) {
@@ -251,7 +254,9 @@ impl ServerWorld {
                 if !Self::column_wanted(target, pos) {
                     continue;
                 }
-                if self.side.gen.column_gen.contains_key(&pos) || self.side.gen.pending.contains_key(&pos) {
+                if self.side.gen.column_gen.contains_key(&pos)
+                    || self.side.gen.pending.contains_key(&pos)
+                {
                     continue;
                 }
                 missing.push((target.column_priority_key(pos), pos));
@@ -280,7 +285,8 @@ impl ServerWorld {
         // to the worker (poll's cache drain resubmits). Both answers resolve
         // the same `pending` entry.
         let cached = self
-            .side.save
+            .side
+            .save
             .as_ref()
             .is_some_and(|s| s.colgen_manifest_contains(pos));
         let job = if cached {
@@ -359,7 +365,9 @@ impl ServerWorld {
             let band_lo = *Self::surface_window_for_column(col, 0).start();
             for &cy in &cys {
                 let sp = SectionPos::new(pos.cx, cy, pos.cz);
-                if self.data.sections.contains_key(&sp) || self.side.gen.pending_sections.contains(&sp) {
+                if self.data.sections.contains_key(&sp)
+                    || self.side.gen.pending_sections.contains(&sp)
+                {
                     continue;
                 }
                 if self.skip_empty_sky_section(sp, content_top) {
@@ -394,7 +402,9 @@ impl ServerWorld {
             let band_lo = *Self::surface_window_for_column(col, 0).start();
             for cy in self.wanted_section_cys_for_column(*pos, col, center_cy, 0) {
                 let sp = SectionPos::new(pos.cx, cy, pos.cz);
-                if self.data.sections.contains_key(&sp) || self.side.gen.pending_sections.contains(&sp) {
+                if self.data.sections.contains_key(&sp)
+                    || self.side.gen.pending_sections.contains(&sp)
+                {
                     continue;
                 }
                 if self.skip_empty_sky_section(sp, col.content_top()) {
@@ -423,7 +433,8 @@ impl ServerWorld {
         let band_lo = *Self::surface_window_for_column(&col, 0).start();
         for cy in self.wanted_section_cys_for_column(pos, &col, target.center_cy, 0) {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
-            if self.data.sections.contains_key(&sp) || self.side.gen.pending_sections.contains(&sp) {
+            if self.data.sections.contains_key(&sp) || self.side.gen.pending_sections.contains(&sp)
+            {
                 continue;
             }
             if self.skip_empty_sky_section(sp, content_top) {
@@ -437,7 +448,10 @@ impl ServerWorld {
             ));
         }
         self.admit_section_candidates(
-            wanted.into_iter().map(|(key, sp)| (key, sp, col.clone())).collect(),
+            wanted
+                .into_iter()
+                .map(|(key, sp)| (key, sp, col.clone()))
+                .collect(),
         );
     }
 
@@ -556,7 +570,10 @@ mod tests {
 
         world.side.gen.section_submit_budget = MAX_PENDING_SECTION_JOBS;
         world.admit_section_candidates(wanted.clone());
-        assert_eq!(world.side.gen.pending_sections.len(), MAX_PENDING_SECTION_JOBS);
+        assert_eq!(
+            world.side.gen.pending_sections.len(),
+            MAX_PENDING_SECTION_JOBS
+        );
         assert!(world.side.gen.section_requests_unsettled);
         let last = wanted.last().unwrap().1;
         assert!(!world.side.gen.pending_sections.contains(&last));

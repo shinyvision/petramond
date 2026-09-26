@@ -223,7 +223,10 @@ impl ServerGame {
             centre.y.floor() as i32,
             centre.z.floor() as i32,
         );
-        let (sky, blk) = self.world.data().dynamic_light_at_world(cell.0, cell.1, cell.2);
+        let (sky, blk) = self
+            .world
+            .data()
+            .dynamic_light_at_world(cell.0, cell.1, cell.2);
         for stack in stacks {
             let mut drop = crate::entity::DroppedItem::new(centre, stack, self.seeds.draw());
             drop.skylight = sky;
@@ -292,20 +295,23 @@ mod tests {
         type Seen = Vec<(Option<crate::player::PlayerId>, bool)>;
         let seen: Arc<Mutex<Seen>> = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&seen);
-        server.mods.bus_mut().on_player_damage_pre(0, move |ctx, _ev| {
-            let id = ctx.actor;
-            let use_held = id
-                .and_then(|id| {
-                    ctx.world
-                        .player_roster()
-                        .iter()
-                        .find(|r| r.id == id.0)
-                        .map(|r| r.use_held)
-                })
-                .unwrap_or(false);
-            sink.lock().unwrap().push((id, use_held));
-            crate::events::Outcome::Continue
-        });
+        server
+            .mods
+            .bus_mut()
+            .on_player_damage_pre(0, move |ctx, _ev| {
+                let id = ctx.actor;
+                let use_held = id
+                    .and_then(|id| {
+                        ctx.world
+                            .player_roster()
+                            .iter()
+                            .find(|r| r.id == id.0)
+                            .map(|r| r.use_held)
+                    })
+                    .unwrap_or(false);
+                sink.lock().unwrap().push((id, use_held));
+                crate::events::Outcome::Continue
+            });
 
         let mut events = crate::events::tick::TickEvents::default();
         server.damage_player(

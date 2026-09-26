@@ -25,6 +25,8 @@ use super::read::ReadQueues;
 use super::worlds::player_path;
 use super::{colgen, level, region, SectionStore};
 
+type RegionRecords = HashMap<(i32, i32), Vec<(u16, Vec<u8>)>>;
+
 /// Messages from the game thread to the writer.
 pub(super) enum IoMsg {
     /// One region group of sections, encoding (or encoded) in its slot.
@@ -106,7 +108,7 @@ impl Job {
                 store: SectionStore::Authoritative,
                 records,
             } => {
-                let mut by_region: HashMap<(i32, i32), Vec<(u16, Vec<u8>)>> = HashMap::new();
+                let mut by_region: RegionRecords = HashMap::new();
                 for (pos, bytes) in records.take(pal) {
                     by_region
                         .entry(region::region_of(pos))
@@ -268,7 +270,7 @@ pub(super) fn write_thread(
 
 /// Merge encoded cache records into their region files.
 fn write_cache_sections(region_dir: &Path, records: Vec<(SectionPos, Vec<u8>)>) {
-    let mut by_region: HashMap<(i32, i32), Vec<(u16, Vec<u8>)>> = HashMap::new();
+    let mut by_region: RegionRecords = HashMap::new();
     for (pos, bytes) in records {
         by_region
             .entry(region::region_of(pos))

@@ -20,7 +20,10 @@ fn pen(world: &Fake) {
 fn a_route_answer_stands_for_its_memory() {
     let (mut session, id, _) = working(HOME);
     at_work(&mut session, id, |ctx, _, _| {
-        assert_eq!(route::probe(ctx, [0, 0, -6], PEN, Vec::new()), Some(Route::Open));
+        assert_eq!(
+            route::probe(ctx, [0, 0, -6], PEN, Vec::new()),
+            Some(Route::Open)
+        );
     });
     pen(&session.world);
     at_work(&mut session, id, |ctx, _, _| {
@@ -32,7 +35,10 @@ fn a_route_answer_stands_for_its_memory() {
         assert_eq!(route::remembered(ctx, [0, 0, -6], PEN), Some(Route::Open));
         ctx.now += MEMORY;
         assert_eq!(route::remembered(ctx, [0, 0, -6], PEN), None);
-        assert_eq!(route::probe(ctx, [0, 0, -6], PEN, Vec::new()), Some(Route::Closed));
+        assert_eq!(
+            route::probe(ctx, [0, 0, -6], PEN, Vec::new()),
+            Some(Route::Closed)
+        );
         // Cells treated as built are another question.
         assert_eq!(
             route::probe(ctx, [0, 0, -6], [2, 0, -6], vec![[1, 0, -6]]),
@@ -53,7 +59,10 @@ fn a_spent_route_budget_is_no_answer_for_the_rest_of_the_tick() {
     });
     session.world.route_budget(Some(1));
     at_work(&mut session, id, |ctx, _, _| {
-        assert!(matches!(route::region(ctx, [0, 0, -6], false, &[]), Some(Some(_))));
+        assert!(matches!(
+            route::region(ctx, [0, 0, -6], false, &[]),
+            Some(Some(_))
+        ));
         assert!(
             matches!(route::region(ctx, [0, 0, -6], false, &[]), Some(Some(_))),
             "a flood is remembered like a route"
@@ -74,13 +83,19 @@ fn a_flood_counts_the_moves_to_every_foothold_of_the_site() {
             .expect("a flood of the site");
         assert_eq!(region.moves([0, 0, -6]), Some(0));
         assert_eq!(region.moves([3, 0, -6]), Some(3));
-        assert_eq!(region.moves([0, 1, -4]), Some(2), "a step up onto the block");
+        assert_eq!(
+            region.moves([0, 1, -4]),
+            Some(2),
+            "a step up onto the block"
+        );
         assert_eq!(region.moves([0, 0, -4]), None, "inside it");
         assert!(!region.contains(PEN));
         assert!(region.contains(HOME));
         assert_eq!(region.cells().next(), Some([0, 0, -6]), "nearest first");
         assert!(
-            route::region(ctx, [40, 0, 0], false, &[]).unwrap().is_none(),
+            route::region(ctx, [40, 0, 0], false, &[])
+                .unwrap()
+                .is_none(),
             "off the site"
         );
         assert_eq!(route::moves_or_guess(ctx, [0, 0, -6], [3, 0, -6]), 3);
@@ -128,7 +143,14 @@ fn a_long_walk_goes_in_legs_toward_the_goal() {
         assert_ne!(first, goal);
         assert!(manhattan(first, body.cell) <= LEG);
         assert!(manhattan(first, goal) < manhattan(body.cell, goal));
-        assert_eq!(route::leg(ctx, hubs, &body, body.cell), Some(Some(body.cell)));
-        assert_eq!(route::leg(ctx, hubs, &body, PEN), Some(None), "no way there");
+        assert_eq!(
+            route::leg(ctx, hubs, &body, body.cell),
+            Some(Some(body.cell))
+        );
+        assert_eq!(
+            route::leg(ctx, hubs, &body, PEN),
+            Some(None),
+            "no way there"
+        );
     });
 }

@@ -257,7 +257,9 @@ fn index_v3(
     let mut slots = [0u8; 2 * SLOT_BYTES];
     file.read_exact(&mut slots)?;
     let mut candidates: Vec<(usize, Slot)> = (0..2)
-        .filter_map(|i| Slot::from_bytes(&slots[i * SLOT_BYTES..(i + 1) * SLOT_BYTES]).map(|s| (i, s)))
+        .filter_map(|i| {
+            Slot::from_bytes(&slots[i * SLOT_BYTES..(i + 1) * SLOT_BYTES]).map(|s| (i, s))
+        })
         .collect();
     candidates.sort_by_key(|&(_, slot)| std::cmp::Reverse(slot.seq));
     for (active, slot) in candidates {
@@ -312,7 +314,10 @@ fn parse_index(bytes: &[u8], index_offset: u64) -> Option<FxHashMap<u16, RecordL
         if offset < DATA_START || end > index_offset {
             return None;
         }
-        if records.insert(lidx, RecordLocation { offset, len }).is_some() {
+        if records
+            .insert(lidx, RecordLocation { offset, len })
+            .is_some()
+        {
             return None;
         }
     }
@@ -375,7 +380,10 @@ pub fn merge_region(
     if replacements.is_empty() {
         return Ok(());
     }
-    if replacements.values().any(|body| u32::try_from(body.len()).is_err()) {
+    if replacements
+        .values()
+        .any(|body| u32::try_from(body.len()).is_err())
+    {
         return Err(too_large("region record too large"));
     }
     let old = match (RegionReader::open(path), policy) {
@@ -404,8 +412,11 @@ fn append(
     // Past any bytes a crashed append left behind: they are garbage no
     // slot names, and compaction drops them.
     let mut offset = file.seek(SeekFrom::End(0))?;
-    let mut records: BTreeMap<u16, RecordLocation> =
-        old.records.iter().map(|(&lidx, &loc)| (lidx, loc)).collect();
+    let mut records: BTreeMap<u16, RecordLocation> = old
+        .records
+        .iter()
+        .map(|(&lidx, &loc)| (lidx, loc))
+        .collect();
     let index = {
         let mut out = BufWriter::with_capacity(256 << 10, &mut file);
         for (&lidx, body) in replacements {

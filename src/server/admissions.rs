@@ -22,7 +22,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 
 use crate::net::identity::PlayerKey;
-use crate::net::protocol::{ItemSlotWire, JoinData, JoinRejectReason, SectionCacheClaim, SelfRestore};
+use crate::net::protocol::{
+    ItemSlotWire, JoinData, JoinRejectReason, SectionCacheClaim, SelfRestore,
+};
 use crate::player::{Player, PlayerId};
 use crate::server::accounts;
 use crate::server::game::ServerGame;
@@ -270,7 +272,6 @@ impl ServerGame {
         // Reseed the env params for the newcomer: a static param map would
         // otherwise never reach them.
         self.broadcast.reseed_env();
-        self.broadcast.replay_spatial_loops(&mut session);
         self.sessions.join(session);
         Some((data, flight.name))
     }
@@ -291,7 +292,8 @@ impl ServerGame {
         view_distance: i32,
         cached_sections: &[SectionCacheClaim],
     ) -> Result<(Box<JoinData>, String), JoinRejectReason> {
-        let ticket = self.begin_admission(key, requested, view_distance, cached_sections.to_vec())?;
+        let ticket =
+            self.begin_admission(key, requested, view_distance, cached_sections.to_vec())?;
         loop {
             let admitted = self
                 .admissions
@@ -357,9 +359,14 @@ mod tests {
         let mut server = crate::server::session_build::build_server_inline("", 5, 2);
         server.set_max_players(3);
         let local = server.sessions[0].name.clone();
+        let requested = if local.eq_ignore_ascii_case("Rachel") {
+            "Visitor"
+        } else {
+            "Rachel"
+        };
 
         let first = server
-            .begin_admission(key(1), "Rachel", 8, Vec::new())
+            .begin_admission(key(1), requested, 8, Vec::new())
             .expect("room for one");
         assert_eq!(
             server.check_admission(&key(1)),
@@ -367,7 +374,7 @@ mod tests {
             "a joining identity cannot join twice"
         );
         let second = server
-            .begin_admission(key(2), "rachel", 8, Vec::new())
+            .begin_admission(key(2), &requested.to_ascii_lowercase(), 8, Vec::new())
             .expect("room for two");
         assert_eq!(
             server.begin_admission(key(3), "Third", 8, Vec::new()),
@@ -386,10 +393,14 @@ mod tests {
         let (data, name) = server
             .finish_admission(admitted.next().expect("first"))
             .expect("restored");
-        assert_eq!((data.player_id, name.as_str()), (PlayerId(1), "Rachel"));
+        assert_eq!((data.player_id, name.as_str()), (PlayerId(1), requested));
         assert!(data.players.iter().any(|(_, n)| *n == local));
         server.abandon_admission(admitted.next().expect("second"));
-        assert_eq!(server.sessions.len(), 2, "an abandoned join adds no session");
+        assert_eq!(
+            server.sessions.len(),
+            2,
+            "an abandoned join adds no session"
+        );
         assert!(
             server.check_admission(&key(2)).is_ok(),
             "an abandoned join releases its reservation"

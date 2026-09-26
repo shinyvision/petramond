@@ -186,13 +186,7 @@ impl SectionMesher<'_> {
     /// One visible cube face: tile, tints, lighting and transition, then
     /// either a deferred greedy [`FlatFace`] (a plain opaque face whose four
     /// corners are flat) or a quad pushed into the stream the block rides.
-    fn emit_cube_face(
-        &mut self,
-        cube: &CubeCell,
-        face: Face,
-        front: IVec3,
-        front_block: Block,
-    ) {
+    fn emit_cube_face(&mut self, cube: &CubeCell, face: Face, front: IVec3, front_block: Block) {
         let cell = &cube.cell;
         let block = cell.block;
         let (base_tile, overlay_tile, tint) = match cube.side_style {

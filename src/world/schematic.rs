@@ -1,8 +1,8 @@
 pub(crate) mod capture;
 
-use crate::world::ServerWorld;
 use crate::schematic::share::GhostPlacement;
 use crate::schematic::store::Store;
+use crate::world::ServerWorld;
 
 /// A world's schematic assets and the ghosts anchored in it.
 pub struct WorldSchematics {

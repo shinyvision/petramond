@@ -4,11 +4,11 @@ use crate::host::prelude::*;
 
 use super::places;
 use crate::geometry::{offset, SIDES};
-use crate::worker::Job;
 use crate::survey::Known;
 use crate::worker::body::stands_at;
 use crate::worker::route::{self, Hubs};
 use crate::worker::tuning::patience::{CUTTER_ROUNDS, SITE_STALLED};
+use crate::worker::Job;
 use crate::worker::{Ctx, Task, TRACE};
 
 /// Whether placing `task` would cut the golem at `from` off from its home.

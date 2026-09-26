@@ -123,7 +123,7 @@ pub(super) fn empty_biome() -> Arc<[u8]> {
 
 /// How one mesh job ended.
 pub(super) enum MeshOutcome {
-    Built(ChunkMesh),
+    Built(Box<ChunkMesh>),
     /// Cancelled before or during the build: a newer job (or an unload)
     /// superseded it.
     Cancelled,
@@ -185,7 +185,9 @@ impl MeshPool {
             let outcome = if job_cancel.is_cancelled() {
                 MeshOutcome::Cancelled
             } else {
-                build(&job_cancel).map_or(MeshOutcome::Cancelled, MeshOutcome::Built)
+                build(&job_cancel).map_or(MeshOutcome::Cancelled, |mesh| {
+                    MeshOutcome::Built(Box::new(mesh))
+                })
             };
             slot.complete(MeshDone {
                 pos,
@@ -503,11 +505,10 @@ fn build(job: MeshJob, cancel: &crate::worker::JobCancel) -> Option<ChunkMesh> {
     // Hand the renderer GPU-ready streams (quantising here keeps it off the
     // render thread, whose column upload is then a byte copy) and the
     // section's face connectivity for occlusion culling.
-    let mesh = mesh.map(|mut mesh| {
+    mesh.map(|mut mesh| {
         mesh.visibility = SectionVisibility::of_section(&center);
         mesh.into_sealed()
-    });
-    mesh
+    })
 }
 
 #[cfg(test)]

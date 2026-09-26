@@ -9,6 +9,9 @@ description = "Windowing-toolkit-free input vocabulary: key/mouse identities and
 [lints]
 workspace = true
 
+[features]
+test-support = []
+
 [dependencies]
 serde = { workspace = true }
 

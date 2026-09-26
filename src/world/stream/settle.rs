@@ -1,5 +1,5 @@
-use crate::world::ServerWorld;
 use crate::world::store::for_each_column_cy;
+use crate::world::ServerWorld;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
 use crate::world::store::LoadTarget;
@@ -60,7 +60,9 @@ impl ServerWorld {
                 let cp = ChunkPos::new(cx, cz);
                 let bits = self.data.section_column_cys.get(&cp).copied().unwrap_or(0);
                 for_each_column_cy(bits, |cy| {
-                    self.data.deferred_rechecks.insert(SectionPos::new(cx, cy, cz));
+                    self.data
+                        .deferred_rechecks
+                        .insert(SectionPos::new(cx, cy, cz));
                 });
             }
         }

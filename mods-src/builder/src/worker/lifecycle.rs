@@ -9,8 +9,8 @@ use super::tuning::body::{BURROW_DEPTH, BURROW_TICKS, EMERGE_TICKS, TRAVEL_DEPTH
 use super::{open_block, Body, Crew, Ctx, Step, FULL_HEALTH_TAG, HOLD_TAG, PROJECT_TAG};
 use crate::content::{BLUEPRINT, EARTH_BURST, GOLEM};
 use crate::geometry::{feet_of, offset};
-use crate::worker::Job;
 use crate::project::{Project, Projects};
+use crate::worker::Job;
 pub const EMERGE: &str = "emerge";
 pub const BURROW: &str = "burrow";
 

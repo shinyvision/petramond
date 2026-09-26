@@ -124,8 +124,14 @@ mod tests {
 
     #[test]
     fn smoothstep01_eases_from_zero_to_one() {
-        assert_eq!((smoothstep01(0.0), smoothstep01(0.5), smoothstep01(1.0)), (0.0, 0.5, 1.0));
-        assert!(smoothstep01(0.1) < 0.1 && smoothstep01(0.9) > 0.9, "flat at both ends");
+        assert_eq!(
+            (smoothstep01(0.0), smoothstep01(0.5), smoothstep01(1.0)),
+            (0.0, 0.5, 1.0)
+        );
+        assert!(
+            smoothstep01(0.1) < 0.1 && smoothstep01(0.9) > 0.9,
+            "flat at both ends"
+        );
     }
 
     const FIELD: ColonyField = ColonyField {
@@ -195,7 +201,10 @@ mod tests {
 
     #[test]
     fn a_rare_field_rolls_before_placing() {
-        let rare = ColonyField { one_in: 1_000_000, ..FIELD };
+        let rare = ColonyField {
+            one_in: 1_000_000,
+            ..FIELD
+        };
         let owned = (-40..40)
             .flat_map(|wz| (-40..40).map(move |wx| (wx, wz)))
             .filter(|&(wx, wz)| rare.densest(3, wx, wz, |_| ()).1.is_some())

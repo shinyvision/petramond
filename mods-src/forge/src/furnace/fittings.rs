@@ -42,7 +42,11 @@ impl Fittings {
             .map(|text| parse_row_data::<Vec<UpgradeSpec>>(&text))
             .unwrap_or_else(|| Ok(Vec::new()));
         let specs = specs.unwrap_or_else(|reason| {
-            log(&row_error(keys::UPGRADES_DATA, keys::FORGING_FURNACE, &reason));
+            log(&row_error(
+                keys::UPGRADES_DATA,
+                keys::FORGING_FURNACE,
+                &reason,
+            ));
             Vec::new()
         });
         let rows = specs
@@ -51,7 +55,11 @@ impl Fittings {
                 let upgrade = Upgrade::from_spec(&spec);
                 if upgrade.is_none() {
                     let reason = format!("unknown fitting kind '{}'", spec.kind);
-                    log(&row_error(keys::UPGRADES_DATA, keys::FORGING_FURNACE, &reason));
+                    log(&row_error(
+                        keys::UPGRADES_DATA,
+                        keys::FORGING_FURNACE,
+                        &reason,
+                    ));
                 }
                 upgrade
             })
@@ -118,7 +126,10 @@ impl Fittings {
                 let page = &keys::fittings::TABLE[row.index];
                 for (key, value) in [
                     (page.name, GuiValue::Str(row.name.clone())),
-                    (page.image, GuiValue::Str(format!("../icons/{}.png", row.icon))),
+                    (
+                        page.image,
+                        GuiValue::Str(format!("../icons/{}.png", row.icon)),
+                    ),
                     (
                         page.inactive_image,
                         GuiValue::Str(format!("../icons/{}_inactive.png", row.icon)),
@@ -178,8 +189,9 @@ impl Fittings {
 impl Upgrade {
     /// A row from its spec; `None` when its `kind` is not one of [`KINDS`].
     fn from_spec(spec: &UpgradeSpec) -> Option<Self> {
-        let number =
-            |value: Option<f64>, fallback: u32| value.unwrap_or(f64::from(fallback)).max(1.0) as u32;
+        let number = |value: Option<f64>, fallback: u32| {
+            value.unwrap_or(f64::from(fallback)).max(1.0) as u32
+        };
         Some(Self {
             index: KINDS.iter().position(|k| *k == spec.kind)?,
             name: spec.name.clone(),

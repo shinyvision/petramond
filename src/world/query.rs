@@ -1,6 +1,4 @@
-
 use crate::world::{ReplicaWorld, ServerWorld};
-
 
 impl ServerWorld {
     /// Anything still generating, loading from disk or waiting on an overlay.
@@ -21,7 +19,8 @@ impl ReplicaWorld {
             + self.side.terrain.light_blocked_meshes.len();
         (
             mesh.min(u32::MAX as usize) as u32,
-            self.side.terrain
+            self.side
+                .terrain
                 .mesh_upload_dirty_columns
                 .len()
                 .min(u32::MAX as usize) as u32,

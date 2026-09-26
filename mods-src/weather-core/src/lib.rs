@@ -13,8 +13,8 @@
 //! few ticks of quantization near a lane period's end) at any world age.
 
 mod field_constants;
-pub use field_constants::{FEATURE_SIZE, RAIN_RAMP, SHEET_B_ADVECT, SHEET_B_FEATURE, WRAP};
 use field_constants::SHEET_B_SALT;
+pub use field_constants::{FEATURE_SIZE, RAIN_RAMP, SHEET_B_ADVECT, SHEET_B_FEATURE, WRAP};
 /// Coverage at or above this starts to rain. Tuned against the TWO-SHEET
 /// sum distribution (rebalance 2026-07-17, offline stats harness): at a
 /// fixed point it rains ~15% of the time in ~3-min showers grouped into
@@ -580,11 +580,20 @@ mod tests {
             wind: wind(clock, seed),
             clock,
         };
-        assert_eq!(row.params_at(clock), row.params, "an unmoved clock is the row");
+        assert_eq!(
+            row.params_at(clock),
+            row.params,
+            "an unmoved clock is the row"
+        );
         let next = field_params(advance_offset(off, clock + 1, seed), clock + 1, seed);
         let replayed = row.params_at(clock + 1);
         assert_eq!(
-            (replayed.storm, replayed.seed, replayed.epoch, replayed.epoch_frac),
+            (
+                replayed.storm,
+                replayed.seed,
+                replayed.epoch,
+                replayed.epoch_frac
+            ),
             (next.storm, next.seed, next.epoch, next.epoch_frac),
             "the clock-driven lanes are exact"
         );

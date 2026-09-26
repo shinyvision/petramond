@@ -47,6 +47,13 @@ pub struct TagsSpec {
 }
 
 impl NondestructiveSpec {
+    pub fn enabled(&self) -> bool {
+        match self {
+            NondestructiveSpec::Flag(enabled) => *enabled,
+            NondestructiveSpec::Tags(_) => true,
+        }
+    }
+
     /// The block tags the entry adds (none for the bare flag).
     pub fn tags(&self) -> &[String] {
         match self {

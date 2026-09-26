@@ -146,7 +146,6 @@ impl Form {
         Form::Slope(Dir::W),
     ];
 
-
     pub fn is_curve(self) -> bool {
         matches!(self, Form::Curve(..))
     }

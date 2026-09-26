@@ -52,8 +52,5 @@ fn the_frame_module_declares_the_table_in_order() {
 #[test]
 fn the_shader_params_module_spells_the_slot_count() {
     assert!(shader_params_wgsl().contains(&format!("array<vec4<f32>, {SHADER_PARAM_SLOTS}>")));
-    assert_eq!(
-        std::mem::size_of::<ShaderParams>(),
-        SHADER_PARAM_SLOTS * 16
-    );
+    assert_eq!(std::mem::size_of::<ShaderParams>(), SHADER_PARAM_SLOTS * 16);
 }

@@ -155,7 +155,12 @@ impl Session {
         let blueprint = self.blueprint(id);
         self.world
             .put(ContainerAddress::Mob(golem), 0, Some(blueprint));
-        let job = self.builder.jobs.map.get_mut(&id).expect("the job is attended");
+        let job = self
+            .builder
+            .jobs
+            .map
+            .get_mut(&id)
+            .expect("the job is attended");
         job.crew.mob = Some(golem);
         job.crew.last_mob = Some(golem);
         golem

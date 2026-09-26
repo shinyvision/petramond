@@ -1,6 +1,6 @@
 use crate::events::{PostEvent, PostEventKind};
 use crate::server::mod_runtime::ModRuntime;
-use crate::world::{StreamEvent, ServerWorld};
+use crate::world::{ServerWorld, StreamEvent};
 
 /// Hand the section stream events buffered by the per-frame `World::poll` to
 /// the bus. The capture gate mirrors listener presence so an idle bus costs

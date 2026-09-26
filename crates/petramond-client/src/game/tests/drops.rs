@@ -56,7 +56,11 @@ fn an_undermined_snow_layer_shatters_without_a_drop() {
             game.sim_mut().game_tick_step(&mut feed);
         }
         assert_eq!(
-            Block::from_id(game.server_world().chunk_block(cell.x, cell.y, cell.z)),
+            Block::from_id(
+                game.server_world()
+                    .data()
+                    .chunk_block(cell.x, cell.y, cell.z)
+            ),
             Block::Air,
             "{block:?} must shatter once unsupported"
         );
@@ -207,7 +211,7 @@ fn dropped_item_magnets_toward_player_then_absorbs() {
     let d0 = (game.server_world().item_entities()[0].pos - chest).length();
     game.server_world_mut().tick_item_lifetime();
     game.sim_mut().item_pickup_tick(0);
-    let p0 = game.session().id;
+    let p0 = game.session().id();
     assert_eq!(
         game.server_world().item_entities()[0].pickup_requested,
         Some(p0)
@@ -297,7 +301,7 @@ fn dropped_item_beyond_one_block_is_not_magnet_picked_up() {
 
     for _ in 0..60 {
         let pp = game.server_player().body_center();
-        let p0 = game.session().id;
+        let p0 = game.session().id();
         game.server_world_mut().tick_item_physics(
             TICK_DT,
             &[petramond::mob::PlayerAnchor {
@@ -311,10 +315,7 @@ fn dropped_item_beyond_one_block_is_not_magnet_picked_up() {
     }
 
     assert_eq!(game.server_world().item_entities().len(), 1);
-    assert_eq!(
-        count_item(&game.server_player().inventory, item),
-        before
-    );
+    assert_eq!(count_item(&game.server_player().inventory, item), before);
 }
 
 #[test]
@@ -573,11 +574,7 @@ fn queued_cursor_one_throw_stashes_only_remainder_on_menu_close() {
 
     game.throw_cursor(ThrowAmount::One);
     assert_eq!(
-        game.server_player()
-            .inventory
-            .cursor()
-            .unwrap()
-            .count,
+        game.server_player().inventory.cursor().unwrap().count,
         12,
         "throwing one does not mutate the cursor immediately"
     );
@@ -665,9 +662,7 @@ fn a_noop_throw_does_not_arm_the_throw_jab() {
     game.server_player_mut().inventory = petramond_world::inventory::Inventory::new();
     // Nothing in hand or on the cursor: every throw path is a no-op.
     for _ in 0..64 {
-        game.server_player_mut()
-            .inventory
-            .decrement_selected();
+        game.server_player_mut().inventory.decrement_selected();
     }
     game.drop_selected_item(false);
     game.throw_cursor(ThrowAmount::All);
@@ -694,10 +689,7 @@ fn throw_animates_once_at_the_click_and_is_never_echoed_back() {
         "the throw animates at the click frame (P0 prediction)"
     );
     assert!(
-        game.server_player()
-            .inventory
-            .selected()
-            .is_some(),
+        game.server_player().inventory.selected().is_some(),
         "a frame with no fixed tick must not mutate the inventory"
     );
 
@@ -727,7 +719,7 @@ fn two_players_each_collect_their_own_adjacent_drop_in_one_tick() {
             20.5, 64.0, 0.5,
         )));
     for s in [0, other] {
-        let centre = game.session_at(s).player.body_center();
+        let centre = game.session_at(s).player().body_center();
         let mut drop = DroppedItem::new(centre, ItemStack::new(item, 1), s as u32 + 1);
         drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
         game.server_world_mut().spawn_item(drop);
@@ -745,7 +737,7 @@ fn two_players_each_collect_their_own_adjacent_drop_in_one_tick() {
     );
     for s in [0, other] {
         assert_eq!(
-            count_item(&game.session_at(s).player.inventory, item),
+            count_item(&game.session_at(s).player().inventory, item),
             1,
             "session {s} got exactly its own drop"
         );
@@ -765,9 +757,10 @@ fn a_single_drop_between_two_players_goes_to_exactly_one() {
             1.0, 64.0, 0.5,
         )));
     // Midway between the two body centres: within the absorb radius of both.
-    let mid = game.server_player()
+    let mid = game
+        .server_player()
         .body_center()
-        .lerp(game.session_at(other).player.body_center(), 0.5);
+        .lerp(game.session_at(other).player().body_center(), 0.5);
     let mut drop = DroppedItem::new(mid, ItemStack::new(item, 1), 1);
     drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
     game.server_world_mut().spawn_item(drop);
@@ -782,6 +775,6 @@ fn a_single_drop_between_two_players_goes_to_exactly_one() {
     );
     assert!(took_0 && !took_1, "first come in session order takes it");
     let total = count_item(&game.server_player().inventory, item)
-        + count_item(&game.session_at(other).player.inventory, item);
+        + count_item(&game.session_at(other).player().inventory, item);
     assert_eq!(total, 1, "no dupe, no vanish");
 }

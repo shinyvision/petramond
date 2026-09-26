@@ -13,9 +13,9 @@ mod tick;
 mod trouble;
 
 use super::Ctx;
-use crate::worker::Job;
 use crate::project::{ProjectId, Projects};
 use crate::testing::{Session, HOME};
+use crate::worker::Job;
 
 /// Route-search nodes a test tick may spend: the session's own budget.
 const NODES: u32 = 28_000;

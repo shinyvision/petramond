@@ -6,7 +6,10 @@ use super::super::graph::{FrameShape, PassGroup};
 use super::*;
 
 fn order() -> Vec<Node> {
-    frame_graph().expect("the pass table is valid").order().collect()
+    frame_graph()
+        .expect("the pass table is valid")
+        .order()
+        .collect()
 }
 
 fn position(order: &[Node], node: Node) -> usize {
@@ -28,7 +31,11 @@ fn assert_before(first: Node, then: Node, why: &str) {
 #[test]
 fn ordering_contracts_hold() {
     use Node::*;
-    assert_before(Opaque, Sky, "the sky shades only pixels terrain left uncovered");
+    assert_before(
+        Opaque,
+        Sky,
+        "the sky shades only pixels terrain left uncovered",
+    );
     assert_before(
         ContactShadow,
         Sky,
@@ -39,7 +46,11 @@ fn ordering_contracts_hold() {
         Sky,
         "an orphaned blob shadow must be painted over by the sky",
     );
-    assert_before(Sky, TerrainModels, "models draw over the sky-filled background");
+    assert_before(
+        Sky,
+        TerrainModels,
+        "models draw over the sky-filled background",
+    );
     assert_before(
         TranslucentBlocks,
         BreakOverlay,
@@ -50,7 +61,11 @@ fn ordering_contracts_hold() {
         ModelBreak,
         "a crack on a model's glass draws on top of the glass",
     );
-    assert_before(ModelBreak, BreakOverlay, "the model crack precedes the block crack");
+    assert_before(
+        ModelBreak,
+        BreakOverlay,
+        "the model crack precedes the block crack",
+    );
     assert_before(
         BreakOverlay,
         Particles,
@@ -61,25 +76,49 @@ fn ordering_contracts_hold() {
         Fluid,
         "water blends in front of a submerged crack",
     );
-    assert_before(Particles, Fluid, "water blends over the particles behind it");
+    assert_before(
+        Particles,
+        Fluid,
+        "water blends over the particles behind it",
+    );
     assert_before(
         Fluid,
         EnvDownsample,
         "a fluid surface writes no depth; paint order keeps clouds in front of lakes",
     );
-    assert_before(EnvDownsample, Environment, "the march reads the downsampled depth");
-    assert_before(Environment, EnvComposite, "the composite lifts the march result");
+    assert_before(
+        EnvDownsample,
+        Environment,
+        "the march reads the downsampled depth",
+    );
+    assert_before(
+        Environment,
+        EnvComposite,
+        "the composite lifts the march result",
+    );
     assert_before(
         EnvComposite,
         EmitterParticles,
         "flames and rain streak over the cloud deck",
     );
-    assert_before(EmitterParticles, Outline, "highlights draw over the whole world");
+    assert_before(
+        EmitterParticles,
+        Outline,
+        "highlights draw over the whole world",
+    );
     assert_before(Ghosts, Hand, "the hand draws over everything in the world");
     assert_before(Hand, Grade, "the grade reads the finished world");
-    assert_before(Grade, Crosshair, "chrome draws ungraded over the final image");
+    assert_before(
+        Grade,
+        Crosshair,
+        "chrome draws ungraded over the final image",
+    );
     assert_before(Crosshair, Ui, "the UI covers the crosshair");
-    assert_before(Ui, UiOverlay, "tooltips and the dragged stack are front-most");
+    assert_before(
+        Ui,
+        UiOverlay,
+        "tooltips and the dragged stack are front-most",
+    );
 }
 
 fn plan(shape: FrameShape, active: impl Fn(Node) -> bool) -> FramePlan<Node> {
@@ -141,7 +180,10 @@ fn without_volumetrics_the_world_is_one_pass_up_to_the_hand() {
     });
     assert_eq!(group_labels(&p), ["opaque pass", "hand pass", "grade pass"]);
     let world = &p.groups[0];
-    assert!(world.color.unwrap().store, "the hand loads the world colour");
+    assert!(
+        world.color.unwrap().store,
+        "the hand loads the world colour"
+    );
     assert!(
         !world.depth.unwrap().store,
         "the hand clears depth, so the world's depth never leaves the GPU tile"
@@ -173,7 +215,10 @@ fn msaa_without_a_hand_resolves_on_the_last_world_pass() {
         msaa: true,
     };
     let p = plan(shape, |n| {
-        matches!(n, Node::Opaque | Node::Sky | Node::Outline | Node::Crosshair)
+        matches!(
+            n,
+            Node::Opaque | Node::Sky | Node::Outline | Node::Crosshair
+        )
     });
     assert_eq!(group_labels(&p), ["opaque pass", "crosshair pass"]);
     assert!(p.groups[0].resolve);
@@ -193,7 +238,10 @@ fn screen_chrome_shares_the_post_process_pass() {
     assert_eq!(group_labels(&p), ["opaque pass", "grade pass"]);
     assert_eq!(p.groups[1].nodes.len(), 4);
     assert!(p.groups[1].color.unwrap().clear);
-    assert!(p.groups[1].color.unwrap().store, "the swapchain is presented");
+    assert!(
+        p.groups[1].color.unwrap().store,
+        "the swapchain is presented"
+    );
 }
 
 /// Every route, with and without MSAA, over pseudo-random subsets of the

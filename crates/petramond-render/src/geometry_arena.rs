@@ -105,7 +105,7 @@ impl GeometryArena {
     /// An arena of `unit`-byte elements in blocks of about `block_bytes`.
     pub fn new(unit: u64, block_bytes: u64) -> Self {
         assert!(
-            unit > 0 && unit % wgpu::COPY_BUFFER_ALIGNMENT == 0,
+            unit > 0 && unit.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT),
             "arena unit {unit} breaks wgpu's copy alignment"
         );
         Self {
@@ -144,7 +144,8 @@ impl GeometryArena {
 
     /// The bound range for a live allocation, `len` bytes from its start.
     pub fn slice(&self, alloc: &LayerAlloc, len: u64) -> wgpu::BufferSlice<'_> {
-        self.block(alloc.block).slice(alloc.offset..alloc.offset + len)
+        self.block(alloc.block)
+            .slice(alloc.offset..alloc.offset + len)
     }
 
     /// The whole buffer of block `index`, for draws that bind a block once

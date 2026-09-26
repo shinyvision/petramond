@@ -51,7 +51,7 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
     // once the server's light bake lands (the light-final ship gate); with the
     // inline test pool that completes inside the pump.
     let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
-    while game.replica.world.chunk_block(8, 64, 8) != Block::Stone.id() {
+    while game.replica.world.data().chunk_block(8, 64, 8) != Block::Stone.id() {
         assert!(
             std::time::Instant::now() < deadline,
             "the server floor replicated"
@@ -59,25 +59,28 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
         frame(&mut game);
     }
     assert!(
-        game.replica.world.loaded_section_count() > 0,
+        game.replica.world.data().loaded_section_count() > 0,
         "replica sections appear from the pipe"
     );
     assert!(
-        game.replica.world
+        game.replica
+            .world
             .section_at_world_for_test(8, 64, 8)
             .is_some_and(|s| s.has_baked_light() && !s.light_dirty),
         "the install seeded the server's baked light — the replica never bakes"
     );
     assert!(
-        game.replica.world.chunk_loaded(0, 0),
+        game.replica.world.data().chunk_loaded(0, 0),
         "the column data replicated (heightmap/biome/summaries)"
     );
 
     // A post-join server edit reaches the replica through the delta pipe.
-    assert!(game.server_world_mut().set_block_world(8, 66, 8, Block::Dirt));
+    assert!(game
+        .server_world_mut()
+        .set_block_world(8, 66, 8, Block::Dirt));
     frame(&mut game);
     assert_eq!(
-        game.replica.world.chunk_block(8, 66, 8),
+        game.replica.world.data().chunk_block(8, 66, 8),
         Block::Dirt.id(),
         "a block placed server-side shows up in the replica after the pump"
     );
@@ -91,7 +94,8 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
         .place_door(door, Block::OakDoor, Facing::East));
     frame(&mut game);
     assert_eq!(
-        game.replica.world
+        game.replica
+            .world
             .door_state_at(door.x, door.y, door.z)
             .map(|s| s.open),
         Some(false),
@@ -100,7 +104,8 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
     assert_eq!(game.server_world_mut().toggle_door(door), Some(door));
     frame(&mut game);
     assert_eq!(
-        game.replica.world
+        game.replica
+            .world
             .door_state_at(door.x, door.y, door.z)
             .map(|s| s.open),
         Some(true),
@@ -114,11 +119,14 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
         frame(&mut game);
     }
     assert!(
-        !game.replica.world.chunk_loaded(0, 0),
+        !game.replica.world.data().chunk_loaded(0, 0),
         "the left-behind column unloaded from the replica"
     );
     assert!(
-        game.replica.world.section_at_world_for_test(8, 64, 8).is_none(),
+        game.replica
+            .world
+            .section_at_world_for_test(8, 64, 8)
+            .is_none(),
         "its sections dropped with it"
     );
 }
@@ -133,12 +141,13 @@ fn server_rebakes_replicate_as_light_data() {
 
     // Wait for the lit floor section to ship.
     let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
-    while game.replica.world.chunk_block(8, 64, 8) != Block::Stone.id() {
+    while game.replica.world.data().chunk_block(8, 64, 8) != Block::Stone.id() {
         assert!(std::time::Instant::now() < deadline, "the floor replicated");
         frame(&mut game);
     }
     let block_at = |g: &super::common::TestGame| {
-        g.replica.world
+        g.replica
+            .world
             .section_at_world_for_test(torch.x, torch.y, torch.z)
             .map(|s| s.blocklight_at(6, 1, 6))
             .unwrap_or(petramond_world::light::LightRgb::ZERO)
@@ -165,7 +174,8 @@ fn server_rebakes_replicate_as_light_data() {
         frame(&mut game);
     }
     assert!(
-        game.replica.world
+        game.replica
+            .world
             .section_at_world_for_test(torch.x, torch.y, torch.z)
             .is_some_and(|s| !s.light_dirty),
         "the replica never holds dirty light — it waits for the server"

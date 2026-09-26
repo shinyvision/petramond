@@ -495,7 +495,7 @@ fn fluid_body_emits_only_outward_boundary_walls() {
             // outward direction (front-facing under back-face culling).
             let n = geometric_normal(quad);
             assert!(
-                n[0] * dx as f32 + n[2] * dz as f32 > 1e-6,
+                n[0] * d.x as f32 + n[2] * d.z as f32 > 1e-6,
                 "{fluid:?}: {face:?} wall wound inward (geometric normal {n:?})"
             );
             walls_seen[match face {

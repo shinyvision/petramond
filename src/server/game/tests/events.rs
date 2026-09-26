@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex};
 
 use crate::events::tick::TickEvents;
 use crate::events::{Attach, DamageSource, PostEvent, PostEventKind, Stage};
-use crate::server::game::ServerGame;
 use crate::server::session_build::build_server_inline;
 
 #[test]
@@ -17,7 +16,8 @@ fn player_died_fires_exactly_once_on_the_zero_transition() {
     {
         let deaths = deaths.clone();
         server
-            .bus
+            .mods
+            .bus_mut()
             .on_post(PostEventKind::PlayerDied, 0, move |_, _| {
                 *deaths.lock().unwrap() += 1;
             });
@@ -27,16 +27,7 @@ fn player_died_fires_exactly_once_on_the_zero_transition() {
     server.damage_player(0, 2, DamageSource::Fall, None, &mut feed); // 1 → 0: dies
     server.damage_player(0, 2, DamageSource::Fall, None, &mut feed); // already dead: no re-fire
     server.damage_player(0, 0, DamageSource::Fall, None, &mut feed); // the zero fall drain: non-event
-    {
-        let ServerGame {
-            world,
-            sessions,
-            bus,
-            ..
-        } = &mut server;
-        let sess = &mut sessions[0];
-        bus.drain_post(world, &mut sess.player, &mut sess.gui_state, &mut feed);
-    }
+    server.drain_post_events(&mut feed);
     assert_eq!(*deaths.lock().unwrap(), 1);
 }
 
@@ -52,24 +43,28 @@ fn attached_systems_run_in_stage_order_and_post_events_drain_within_the_tick() {
     ] {
         let log = log.clone();
         server
-            .systems
+            .mods
+            .systems_mut()
             .attach(at, 0, move |_| log.lock().unwrap().push(label));
     }
     {
         // A system's post event must dispatch at the enclosing stage's
         // boundary — within the same tick — not linger to a later tick.
         let log = log.clone();
+        let player = server.sessions[0].id;
         server
-            .systems
+            .mods
+            .systems_mut()
             .attach(Attach::Before(Stage::Placement), 0, move |ctx| {
                 log.lock().unwrap().push("emit");
-                ctx.queue.emit(PostEvent::PlayerDied);
+                ctx.queue.emit(PostEvent::PlayerDied { player });
             });
     }
     {
         let log = log.clone();
         server
-            .bus
+            .mods
+            .bus_mut()
             .on_post(PostEventKind::PlayerDied, 0, move |_, _| {
                 log.lock().unwrap().push("post_handler");
             });

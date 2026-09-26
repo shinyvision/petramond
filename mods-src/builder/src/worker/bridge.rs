@@ -13,8 +13,8 @@ use super::tuning::patience::{WALKWAY_PATIENCE, WALKWAY_STEP_UNTAKEN, WALKWAY_SU
 use super::{open_block, Body, Ctx, Step, Task};
 use crate::content::GOLEM;
 use crate::geometry::{feet_of, manhattan, offset, reaches};
-use crate::worker::Job;
 use crate::project::Projects;
+use crate::worker::Job;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Bridge {

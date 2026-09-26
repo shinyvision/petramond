@@ -6,7 +6,8 @@ use petramond_world::chunk::ChunkPos;
 
 impl ServerWorld {
     fn generation_targets(&self) -> Vec<LoadTarget> {
-        self.data.last_load_target
+        self.data
+            .last_load_target
             .into_iter()
             .chain(self.data.extra_load_targets.iter().copied())
             .collect()
@@ -30,7 +31,8 @@ impl ServerWorld {
             Some((ticket, key))
         });
         let sections = self
-            .side.gen
+            .side
+            .gen
             .pending_section_jobs
             .iter()
             .filter_map(|(sp, job)| {
@@ -53,23 +55,39 @@ impl ServerWorld {
     pub(super) fn prune_stale_section_requests(&mut self) {
         let targets = self.generation_targets();
         let stale = self
-            .side.gen.pending_section_jobs.iter()
+            .side
+            .gen
+            .pending_section_jobs
+            .iter()
             .filter_map(|(sp, job)| {
                 if self.side.gen.awaited_overlays.contains(sp) {
                     return None;
                 }
-                let wanted = self.side.gen.column_gen.get(&sp.chunk_pos()).is_some_and(|col| {
-                    targets.iter().any(|target| {
-                        Self::column_wanted(*target, sp.chunk_pos())
-                            && self.wanted_section_cys_for_column(
-                                sp.chunk_pos(), col, target.center_cy, 0,
-                            ).contains(&sp.cy)
-                    })
-                });
+                let wanted = self
+                    .side
+                    .gen
+                    .column_gen
+                    .get(&sp.chunk_pos())
+                    .is_some_and(|col| {
+                        targets.iter().any(|target| {
+                            Self::column_wanted(*target, sp.chunk_pos())
+                                && self
+                                    .wanted_section_cys_for_column(
+                                        sp.chunk_pos(),
+                                        col,
+                                        target.center_cy,
+                                        0,
+                                    )
+                                    .contains(&sp.cy)
+                        })
+                    });
                 (!wanted).then_some((*sp, job.ticket))
             })
             .collect::<Vec<_>>();
-        let removed = self.side.worker.remove_queued(stale.iter().map(|(_, ticket)| *ticket));
+        let removed = self
+            .side
+            .worker
+            .remove_queued(stale.iter().map(|(_, ticket)| *ticket));
         for (sp, ticket) in stale {
             if removed.contains(&ticket) {
                 self.side.gen.pending_section_jobs.remove(&sp);
@@ -114,12 +132,12 @@ impl ServerWorld {
             candidates.truncate(MAX_PENDING_COLUMN_GEN_JOBS);
         }
         let nearest: FxHashSet<_> = candidates.into_iter().map(|(_, pos)| pos).collect();
-        let removed = self.side.worker.remove_queued(
-            self.side.gen
-                .pending
-                .iter()
-                .filter_map(|(pos, job)| (!nearest.contains(pos)).then_some(job.as_ref()?.ticket)),
-        );
+        let removed =
+            self.side.worker.remove_queued(
+                self.side.gen.pending.iter().filter_map(|(pos, job)| {
+                    (!nearest.contains(pos)).then_some(job.as_ref()?.ticket)
+                }),
+            );
         // Removing a queue entry is atomic with starting it. Running jobs and
         // disk reads keep their pending slots until their results arrive.
         self.side.gen.pending.retain(|_, job| {

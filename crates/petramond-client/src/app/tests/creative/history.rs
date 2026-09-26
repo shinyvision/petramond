@@ -27,7 +27,8 @@ fn redo_chord_replays_selection_once_and_respects_menu_and_wand_routing() {
     let game = app.game_mut();
     game.set_active_hotbar(slot as u8);
     for x in 0..3 {
-        game.tools.world
+        game.tools
+            .world
             .selection
             .selection
             .region([x, 0, 0], [x, 0, 0], false)
@@ -55,7 +56,8 @@ fn redo_chord_replays_selection_once_and_respects_menu_and_wand_routing() {
     assert_eq!(app.game().tools.world.selection.selection.len(), 3);
 
     app.game_mut()
-        .tools.world
+        .tools
+        .world
         .selection
         .set_pending_corner([5; 3]);
     shortcut(&mut app, false);
@@ -71,7 +73,8 @@ fn redo_chord_replays_selection_once_and_respects_menu_and_wand_routing() {
         let game = app.game_mut();
         game.set_active_hotbar(if preview { slot as u8 } else { 0 });
         if preview {
-            game.tools.preview
+            game.tools
+                .preview
                 .begin_paste(std::sync::Arc::new(schematic_fixture()));
         }
         game.take_outbox_for_test();

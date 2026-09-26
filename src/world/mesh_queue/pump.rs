@@ -1,8 +1,11 @@
-#[cfg(test)]
 use crate::world::ReplicaWorld;
+#[cfg(test)]
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
-use super::{max_mesh_jobs_in_flight, CANDIDATE_SCAN_PER_MESH_JOB, MESH_SUBMIT_TIME_BUDGET, MIN_MESH_JOBS_PER_PUMP};
+use super::{
+    max_mesh_jobs_in_flight, CANDIDATE_SCAN_PER_MESH_JOB, MESH_SUBMIT_TIME_BUDGET,
+    MIN_MESH_JOBS_PER_PUMP,
+};
 
 impl ReplicaWorld {
     /// Drain finished meshes and submit newly-dirty sections to the off-thread mesh
@@ -46,7 +49,8 @@ impl ReplicaWorld {
         }
         let target = self.data.last_load_target;
         let candidates = self
-            .side.terrain
+            .side
+            .terrain
             .dirty_meshes
             .pop_nearest_batch(candidate_cap, target);
         let mut submitted = 0usize;
@@ -143,7 +147,8 @@ impl ReplicaWorld {
     pub fn mesh_section_blocking_for_test(&mut self, pos: SectionPos) {
         for dz in -1..=1 {
             for dx in -1..=1 {
-                self.data.ensure_column(ChunkPos::new(pos.cx + dx, pos.cz + dz));
+                self.data
+                    .ensure_column(ChunkPos::new(pos.cx + dx, pos.cz + dz));
             }
         }
         for _ in 0..256 {

@@ -10,11 +10,11 @@
 
 use crate::mob::Mob;
 use crate::player::Player;
-use petramond_world::world::{raycast, WorldData};
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::item::{ItemStack, ItemType, ItemUse};
+use petramond_world::world::{raycast, WorldData};
 
 /// The acting body as the item-use rules read it. The server answers from
 /// the session's [`Player`]; the client from its predicted local body plus
@@ -115,14 +115,17 @@ impl EngineItemUse {
 /// `item_use_pre` event instead.
 pub fn resolve_engine_item_use(actor: &impl ActorView, world: &WorldData) -> Option<EngineItemUse> {
     match held_item(actor)?.item_use()? {
-        ItemUse::BucketFill { fills } => bucket_fill_target(world, actor.eye(), actor.look_dir(), fills)
-            .map(|(source, becomes)| EngineItemUse::Fill { source, becomes }),
-        ItemUse::BucketPour { becomes, fluid } => bucket_pour_cell(world, actor.eye(), actor.look_dir())
-            .map(|cell| EngineItemUse::Pour {
+        ItemUse::BucketFill { fills } => {
+            bucket_fill_target(world, actor.eye(), actor.look_dir(), fills)
+                .map(|(source, becomes)| EngineItemUse::Fill { source, becomes })
+        }
+        ItemUse::BucketPour { becomes, fluid } => {
+            bucket_pour_cell(world, actor.eye(), actor.look_dir()).map(|cell| EngineItemUse::Pour {
                 cell,
                 fluid,
                 becomes,
-            }),
+            })
+        }
         ItemUse::Shear => None,
     }
 }
@@ -182,7 +185,7 @@ pub fn pour_lands(world: &WorldData, cell: IVec3) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::WorldRole;
+    use crate::world::{ReplicaWorld, ServerWorld};
     use petramond_world::chunk::{
         Chunk, ChunkPos, SectionPos, CHUNK_SX, CHUNK_SZ, SECTION_MAX_CY, SECTION_MIN_CY,
     };
@@ -228,9 +231,9 @@ mod tests {
     /// An authoritative world (3×3 loaded chunks, stone floor at y=64) built
     /// by `build`, plus a CLIENT REPLICA of it installed through the real wire
     /// payloads — the two worlds the two mirrors evaluate the rules against.
-    fn server_and_replica(build: impl FnOnce(&mut World)) -> (World, World) {
+    fn server_and_replica(build: impl FnOnce(&mut ServerWorld)) -> (ServerWorld, ReplicaWorld) {
         let pool = std::sync::Arc::new(crate::worker::JobPool::new(1));
-        let mut server = World::new_with_pool(0, 1, WorldRole::Combined, pool.clone());
+        let mut server = ServerWorld::with_pool(0, 1, pool.clone());
         let columns: Vec<ChunkPos> = (-1..=1)
             .flat_map(|cz| (-1..=1).map(move |cx| ChunkPos::new(cx, cz)))
             .collect();
@@ -244,7 +247,7 @@ mod tests {
             server.insert_chunk_for_test(cp, c);
         }
         build(&mut server);
-        let mut replica = World::new_with_pool(0, 1, WorldRole::ClientReplica, pool);
+        let mut replica = ReplicaWorld::with_pool(0, 1, pool);
         for &cp in &columns {
             replica.install_remote_column(server.column_payload(cp).expect("a loaded column"));
             for cy in SECTION_MIN_CY..=SECTION_MAX_CY {
@@ -256,7 +259,7 @@ mod tests {
         (server, replica)
     }
 
-    fn run_ticks(w: &mut World, n: u32) {
+    fn run_ticks(w: &mut ServerWorld, n: u32) {
         let recipes = petramond_world::crafting::Recipes::default();
         for _ in 0..n {
             w.game_tick(&recipes);
@@ -270,7 +273,7 @@ mod tests {
             assert!(w.set_block_world(src.x, src.y, src.z, Block::Water));
         });
         let actor = looking_down_at(ItemType::WoodenBucket, src);
-        let on_server = resolve_engine_item_use(&actor, &server);
+        let on_server = resolve_engine_item_use(&actor, server.data());
         assert_eq!(
             on_server,
             Some(EngineItemUse::Fill {
@@ -278,9 +281,9 @@ mod tests {
                 becomes: ItemType::WaterBucket
             })
         );
-        assert_eq!(resolve_engine_item_use(&actor, &replica), on_server);
-        assert!(engine_item_use_claims(&actor, &server));
-        assert!(engine_item_use_claims(&actor, &replica));
+        assert_eq!(resolve_engine_item_use(&actor, replica.data()), on_server);
+        assert!(engine_item_use_claims(&actor, server.data()));
+        assert!(engine_item_use_claims(&actor, replica.data()));
     }
 
     #[test]
@@ -293,8 +296,8 @@ mod tests {
             assert!(!w.is_water_source_world(flow), "the ring cell is flow");
         });
         let actor = looking_down_at(ItemType::WoodenBucket, flow);
-        assert_eq!(resolve_engine_item_use(&actor, &server), None);
-        assert_eq!(resolve_engine_item_use(&actor, &replica), None);
+        assert_eq!(resolve_engine_item_use(&actor, server.data()), None);
+        assert_eq!(resolve_engine_item_use(&actor, replica.data()), None);
     }
 
     #[test]
@@ -302,14 +305,14 @@ mod tests {
         let floor = IVec3::new(4, 64, 4);
         let (server, replica) = server_and_replica(|_| {});
         let actor = looking_down_at(ItemType::WaterBucket, floor);
-        let on_server = resolve_engine_item_use(&actor, &server);
+        let on_server = resolve_engine_item_use(&actor, server.data());
         assert!(
             matches!(on_server, Some(EngineItemUse::Pour { cell, fluid: Block::Water, .. }) if cell == floor + IVec3::Y),
             "stone is poured against: {on_server:?}"
         );
-        assert_eq!(resolve_engine_item_use(&actor, &replica), on_server);
-        assert!(engine_item_use_claims(&actor, &server));
-        assert!(engine_item_use_claims(&actor, &replica));
+        assert_eq!(resolve_engine_item_use(&actor, replica.data()), on_server);
+        assert!(engine_item_use_claims(&actor, server.data()));
+        assert!(engine_item_use_claims(&actor, replica.data()));
     }
 
     #[test]
@@ -317,8 +320,8 @@ mod tests {
         let (server, replica) = server_and_replica(|_| {});
         let mut actor = looking_down_at(ItemType::WaterBucket, IVec3::new(4, 64, 4));
         actor.dir = Vec3::new(0.0, 1.0, 0.0);
-        assert_eq!(resolve_engine_item_use(&actor, &server), None);
-        assert_eq!(resolve_engine_item_use(&actor, &replica), None);
+        assert_eq!(resolve_engine_item_use(&actor, server.data()), None);
+        assert_eq!(resolve_engine_item_use(&actor, replica.data()), None);
     }
 
     #[test]
@@ -326,7 +329,7 @@ mod tests {
         let (server, _) = server_and_replica(|_| {});
         let actor = looking_down_at(ItemType::Shears, IVec3::new(4, 64, 4));
         assert!(holds_shears(&actor));
-        assert_eq!(resolve_engine_item_use(&actor, &server), None);
+        assert_eq!(resolve_engine_item_use(&actor, server.data()), None);
     }
 
     #[test]

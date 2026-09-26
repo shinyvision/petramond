@@ -139,7 +139,11 @@ mod tests {
         let root = scratch("pack");
         let docs = root.join("ui/documents");
         std::fs::create_dir_all(&docs).unwrap();
-        std::fs::write(root.join("pack.json"), r#"{ "id": "doctest", "name": "T" }"#).unwrap();
+        std::fs::write(
+            root.join("pack.json"),
+            r#"{ "id": "doctest", "name": "T" }"#,
+        )
+        .unwrap();
         std::fs::write(
             root.join("items.json"),
             r#"{ "items": [ { "key": "doctest:ingot", "tags": ["doctest:metal"] } ] }"#,
@@ -179,8 +183,18 @@ mod tests {
         let theme = Theme::placeholder();
         let issues = ctx.validate(&doc, &theme, &UiState::new(), &|_| None);
         let text: Vec<&str> = issues.iter().map(|i| i.message.as_str()).collect();
-        assert!(text.iter().any(|m| m.contains("ships outside any pack")), "{text:?}");
-        assert!(text.iter().any(|m| m.contains("not available to mod documents")), "{text:?}");
-        assert!(text.iter().any(|m| m.contains("unknown item tag")), "{text:?}");
+        assert!(
+            text.iter().any(|m| m.contains("ships outside any pack")),
+            "{text:?}"
+        );
+        assert!(
+            text.iter()
+                .any(|m| m.contains("not available to mod documents")),
+            "{text:?}"
+        );
+        assert!(
+            text.iter().any(|m| m.contains("unknown item tag")),
+            "{text:?}"
+        );
     }
 }

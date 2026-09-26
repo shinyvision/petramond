@@ -216,289 +216,297 @@ fn arc_backed_section_payloads_roundtrip_byte_exact() {
 #[test]
 fn tick_updates_roundtrip() {
     roundtrip(&ServerToClient::Tick(Box::new(TickUpdate {
-        creative: vec![crate::schematic::CreativeReply::Message(
-            "Schematic placed".into(),
-        )],
-        schematics: vec![crate::schematic::share::SchematicNotice::Ghost {
-            key: "fixture:ghost".into(),
-            placement: Some(crate::schematic::share::GhostPlacement {
-                digest: [7; 32],
-                origin: [-4, 60, 9],
-                turns: 3,
-                yields_to_positioning: false,
-            }),
-        }],
         tick: 812,
         clock: 6_600,
-        block_deltas: vec![
-            BlockDelta {
-                pos: IVec3::new(-8, 70, 3),
-                block_id: 9,
-                fluid: Some(0x87),
-                state: None,
-                cell_kv: vec![("furniture:dye".into(), vec![200, 30, 40])],
-            },
-            BlockDelta {
-                pos: IVec3::new(4, 65, 4),
-                block_id: 12,
-                fluid: None,
-                state: Some(petramond_world::block::ShapeState::with_ids(
-                    &[1, 12, 0],
-                    0b110,
-                )),
-                cell_kv: vec![],
-            },
-            BlockDelta {
-                pos: IVec3::new(5, 65, 4),
-                block_id: 30,
-                fluid: None,
-                state: Some(petramond_world::block::ShapeState::new(&[1, 0, 0, 3])),
-                cell_kv: vec![],
-            },
-        ],
-        block_draws: vec![crate::net::protocol::BlockDrawDelta {
-            pos: IVec3::new(1, 2, 3),
-            prims: vec![mod_api::DrawPrim::Cuboid {
-                min: [0.0, 0.0, 0.0],
-                max: [1.0, 0.5, 1.0],
-                tile: "stone".into(),
-                tint: [200, 120, 60],
-                emissive: true,
-            }]
-            .into(),
-        }],
-        cell_kv_deltas: vec![
-            CellKvDelta {
-                pos: IVec3::new(4, 65, 4),
-                key: "furniture:dye".into(),
-                value: Some(vec![200, 30, 40]),
-            },
-            CellKvDelta {
-                pos: IVec3::new(5, 65, 4),
-                key: "farming:sips".into(),
-                value: None,
-            },
-        ],
-        mobs: vec![MobStateRow {
-            id: 4211,
-            kind_id: 1,
-            pos: WorldPos::new(4.5, 71.0, -2.25),
-            yaw: 0.75,
-            tilt: petramond_math::math::Tilt::LEVEL,
-            anim_time: 12.5,
-            moving: true,
-            idle_anim: Some(1),
-            head_yaw: -0.25,
-            head_pitch: 0.1,
-            hurt_timer: 0.2,
-            dead: false,
-            shorn: true,
-            emitters: vec![1],
-            conditions: vec![(0, 1)],
-            anims: Vec::new(),
-            ragdoll: Some(vec![([1.0, 2.0, 3.0], [0.0, 0.0, 0.0, 1.0])]),
-            dig: None,
-            held: [None; 2],
-            draw: Default::default(),
-        }]
-        .into(),
-        items: EntityLane {
-            despawned: vec![3, 5],
-            spawned: vec![ItemStateRow {
-                id: 7,
-                item_id: 3,
-                count: 12,
-                data: None,
-                pos: WorldPos::new(0.5, 65.0, 0.5),
-                spin: 1.25,
-                flight: None,
-            }]
-            .into(),
-            updated: RowSet::default(),
-        },
-        sleep_tally: SleepTally {
-            sleeping: 1,
-            connected: 3,
-        },
-        players: vec![PlayerStateRow {
-            conditions: Vec::new(),
-            id: PlayerId(1),
-            transform: Transform {
-                pos: WorldPos::new(4.5, 71.0, -2.25),
-                vel: Vec3::new(0.0, -0.5, 1.0),
-                yaw: 0.75,
-                pitch: -0.25,
-            },
-            on_ground: true,
-            sneaking: false,
-            sleeping: true,
-            sleep_yaw: Some(1.5),
-            alive: true,
-            visible: true,
-            held_item: Some(5),
-            held_data: None,
-            off_hand_item: Some(6),
-            off_hand_data: None,
-            mining: Some((IVec3::new(4, 70, -2), 6)),
-            eating: false,
-            eating_off_hand: false,
-            held_pose_main: None,
-            held_pose_off: None,
-            held_display: [None; 2],
-            // Non-empty on the ROW, because this is the field that ships for
-            // every player every tick — an encoding that silently drops it
-            // would look exactly like nobody posing anything.
-            bone_poses: vec![crate::player::BonePose {
-                bone: 3,
-                rotation: [-11.0, 3.0, 41.0],
-                translation: [0.0, 1.0, -2.0],
-                hold: true,
-            }],
-            animator: crate::player::AnimatorClaims {
-                params: vec![crate::player::AnimatorParam {
-                    rig: crate::player::RigId(0),
-                    param: 4,
-                    value: crate::player::AnimatorValue::Number(1.0),
-                }],
-                plays: vec![crate::player::AnimatorPlay {
-                    rig: crate::player::RigId(0),
-                    slot: 2,
-                    clip: 9,
-                    clock: crate::player::AnimatorClock::Scrub(0.25),
-                    mirror: true,
-                    priority: 1,
-                }],
-            },
-            hurt_recent: true,
-            snap: true,
-            mount: None,
-        }]
-        .into(),
-        player_actions: vec![
-            (PlayerId(1), PlayerActionKind::Died),
-            (PlayerId(0), PlayerActionKind::Respawned),
-            (
-                PlayerId(1),
-                PlayerActionKind::Animator {
-                    rig: crate::player::RigId(0),
-                    event: 5,
-                },
-            ),
-        ]
-        .into(),
-        self_state: Some(SelfState {
-            conditions: Vec::new(),
-            health: 14,
-            mode: 0,
-            effects: vec![(0, 900)],
-            inventory_revision: 42,
-            inventory: Some(vec![
-                Some(ItemSlotWire {
-                    item_id: 5,
-                    count: 64,
-                    data: None,
+        sections: vec![
+            TickSection::Creative(vec![crate::schematic::CreativeReply::Message(
+                "Schematic placed".into(),
+            )]),
+            TickSection::Schematics(vec![crate::schematic::share::SchematicNotice::Ghost {
+                key: "fixture:ghost".into(),
+                placement: Some(crate::schematic::share::GhostPlacement {
+                    digest: [7; 32],
+                    origin: [-4, 60, 9],
+                    turns: 3,
+                    yields_to_positioning: false,
                 }),
-                None,
+            }]),
+            TickSection::BlockDeltas(vec![
+                BlockDelta {
+                    pos: IVec3::new(-8, 70, 3),
+                    block_id: 9,
+                    fluid: Some(0x87),
+                    state: None,
+                    cell_kv: vec![("furniture:dye".into(), vec![200, 30, 40])],
+                },
+                BlockDelta {
+                    pos: IVec3::new(4, 65, 4),
+                    block_id: 12,
+                    fluid: None,
+                    state: Some(petramond_world::block::ShapeState::with_ids(
+                        &[1, 12, 0],
+                        0b110,
+                    )),
+                    cell_kv: vec![],
+                },
+                BlockDelta {
+                    pos: IVec3::new(5, 65, 4),
+                    block_id: 30,
+                    fluid: None,
+                    state: Some(petramond_world::block::ShapeState::new(&[1, 0, 0, 3])),
+                    cell_kv: vec![],
+                },
             ]),
-            eating: Some(128),
-            eating_off_hand: true,
-            move_scale: 0.5,
-            denied_actions: crate::player::DeniedActions::of([mod_api::BodyAction::Mine]),
-            held_pose_main: Some(mod_api::HeldPose {
-                first_person: mod_api::HeldPoseData {
-                    rotation: [0.0, 2.5, 0.0],
-                    translation: [1.25, -3.5, -4.0],
+            TickSection::BlockDraws(vec![crate::net::protocol::BlockDrawDelta {
+                pos: IVec3::new(1, 2, 3),
+                prims: vec![mod_api::DrawPrim::Cuboid {
+                    min: [0.0, 0.0, 0.0],
+                    max: [1.0, 0.5, 1.0],
+                    tile: "stone".into(),
+                    tint: [200, 120, 60],
+                    emissive: true,
+                }]
+                .into(),
+            }]),
+            TickSection::CellKvDeltas(vec![
+                CellKvDelta {
+                    pos: IVec3::new(4, 65, 4),
+                    key: "furniture:dye".into(),
+                    value: Some(vec![200, 30, 40]),
                 },
-                third_person: mod_api::HeldPoseData::IDENTITY,
+                CellKvDelta {
+                    pos: IVec3::new(5, 65, 4),
+                    key: "farming:sips".into(),
+                    value: None,
+                },
+            ]),
+            TickSection::Mobs(
+                vec![MobStateRow {
+                    id: 4211,
+                    kind_id: 1,
+                    pos: WorldPos::new(4.5, 71.0, -2.25),
+                    yaw: 0.75,
+                    tilt: petramond_math::math::Tilt::LEVEL,
+                    anim_time: 12.5,
+                    moving: true,
+                    idle_anim: Some(1),
+                    head_yaw: -0.25,
+                    head_pitch: 0.1,
+                    hurt_timer: 0.2,
+                    dead: false,
+                    shorn: true,
+                    emitters: vec![1],
+                    conditions: vec![(0, 1)],
+                    anims: Vec::new(),
+                    ragdoll: Some(vec![([1.0, 2.0, 3.0], [0.0, 0.0, 0.0, 1.0])]),
+                    dig: None,
+                    held: [None; 2],
+                    draw: Default::default(),
+                }]
+                .into(),
+            ),
+            TickSection::Items(EntityLane {
+                despawned: vec![3, 5],
+                spawned: vec![ItemStateRow {
+                    id: 7,
+                    item_id: 3,
+                    count: 12,
+                    data: None,
+                    pos: WorldPos::new(0.5, 65.0, 0.5),
+                    spin: 1.25,
+                    flight: None,
+                }]
+                .into(),
+                updated: RowSet::default(),
             }),
-            held_pose_off: None,
-            held_display: [None; 2],
-            bone_poses: vec![crate::player::BonePose {
-                bone: 7,
-                rotation: [8.0, -2.0, -29.0],
-                translation: [0.5, 0.0, 1.5],
-                hold: false,
-            }],
-            animator: crate::player::AnimatorClaims {
-                params: Vec::new(),
-                plays: vec![crate::player::AnimatorPlay {
-                    rig: crate::player::RigId(1),
-                    slot: 0,
-                    clip: 3,
-                    clock: crate::player::AnimatorClock::Run {
-                        rate: 1.0,
-                        looping: false,
+            TickSection::SleepTally(SleepTally {
+                sleeping: 1,
+                connected: 3,
+            }),
+            TickSection::Players(
+                vec![PlayerStateRow {
+                    conditions: Vec::new(),
+                    id: PlayerId(1),
+                    transform: Transform {
+                        pos: WorldPos::new(4.5, 71.0, -2.25),
+                        vel: Vec3::new(0.0, -0.5, 1.0),
+                        yaw: 0.75,
+                        pitch: -0.25,
                     },
-                    mirror: false,
-                    priority: 0,
-                }],
-            },
-            sleeping: None,
-            sleep_bed: None,
-            transform: Some(SelfTransform {
-                transform: Transform {
-                    pos: WorldPos::new(1.5, 80.0, -3.25),
-                    vel: Vec3::ZERO,
-                    yaw: 1.25,
-                    pitch: -0.5,
-                },
-                on_ground: true,
-            }),
-        }),
-        open_chests: vec![IVec3::new(1, 65, 1)],
-        env: Some(vec![
-            ("petramond:time".into(), [0.5, 1.0, 3.0, 0.0]),
-            ("petramond:light".into(), [1.0, 1.0, 1.0, 1.0]),
-        ]),
-        events: vec![
-            WorldEventMsg::BlockBroken {
-                pos: IVec3::new(4, 65, 4),
-                block_id: 12,
-                normal: Some(IVec3::Y),
-                tint: None,
-            },
-            WorldEventMsg::ItemPickedUp {
-                pos: WorldPos::new(1.0, 65.0, 2.0),
-                by: PlayerId(1),
-            },
-            WorldEventMsg::SpatialSound(SpatialSoundMsg::PlayOnMob {
-                handle: 3,
-                sound_id: 2,
-                mob_id: 4211,
-                volume: 0.5,
-                pitch: 1.1,
-                last_pos: WorldPos::new(0.0, 70.0, 0.0),
-            }),
-        ],
-        self_events: SelfEvents {
-            picked_up_item: true,
-            open_screen: Some(OpenScreen::Gui {
-                kind_key: "kitchen:oven".into(),
-                anchor: Some(crate::menu::MenuAnchor::Mob(7)),
-            }),
-            animator_events: vec![(crate::player::RigId(1), 2)],
-            ..Default::default()
-        },
-        action_outcomes: vec![ActionOutcome {
-            id: 1,
-            accepted: true,
-            reason: None,
-        }],
-        menu_sync: Some(MenuSyncMsg {
-            target: MenuTargetWire::Container {
-                kind_key: "kitchen:oven".into(),
-                anchor: Some(IVec3::new(4, 65, 4).into()),
-                slots: Some(vec![
+                    on_ground: true,
+                    sneaking: false,
+                    sleeping: true,
+                    sleep_yaw: Some(1.5),
+                    alive: true,
+                    visible: true,
+                    held_item: Some(5),
+                    held_data: None,
+                    off_hand_item: Some(6),
+                    off_hand_data: None,
+                    mining: Some((IVec3::new(4, 70, -2), 6)),
+                    eating: false,
+                    eating_off_hand: false,
+                    held_pose_main: None,
+                    held_pose_off: None,
+                    held_display: [None; 2],
+                    // Non-empty on the ROW, because this is the field that ships for
+                    // every player every tick — an encoding that silently drops it
+                    // would look exactly like nobody posing anything.
+                    bone_poses: vec![crate::player::BonePose {
+                        bone: 3,
+                        rotation: [-11.0, 3.0, 41.0],
+                        translation: [0.0, 1.0, -2.0],
+                        hold: true,
+                    }],
+                    animator: crate::player::AnimatorClaims {
+                        params: vec![crate::player::AnimatorParam {
+                            rig: crate::player::RigId(0),
+                            param: 4,
+                            value: crate::player::AnimatorValue::Number(1.0),
+                        }],
+                        plays: vec![crate::player::AnimatorPlay {
+                            rig: crate::player::RigId(0),
+                            slot: 2,
+                            clip: 9,
+                            clock: crate::player::AnimatorClock::Scrub(0.25),
+                            mirror: true,
+                            priority: 1,
+                        }],
+                    },
+                    hurt_recent: true,
+                    snap: true,
+                    mount: None,
+                }]
+                .into(),
+            ),
+            TickSection::PlayerActions(
+                vec![
+                    (PlayerId(1), PlayerActionKind::Died),
+                    (PlayerId(0), PlayerActionKind::Respawned),
+                    (
+                        PlayerId(1),
+                        PlayerActionKind::Animator {
+                            rig: crate::player::RigId(0),
+                            event: 5,
+                        },
+                    ),
+                ]
+                .into(),
+            ),
+            TickSection::SelfState(SelfState {
+                conditions: Vec::new(),
+                health: 14,
+                mode: 0,
+                effects: vec![(0, 900)],
+                inventory_revision: 42,
+                inventory: Some(vec![
                     Some(ItemSlotWire {
                         item_id: 5,
-                        count: 3,
+                        count: 64,
                         data: None,
                     }),
                     None,
                 ]),
-                gui_state: Some(vec![("kitchen:burn01".into(), GuiValueWire::F32(0.5))]),
-            },
-        }),
+                eating: Some(128),
+                eating_off_hand: true,
+                move_scale: 0.5,
+                denied_actions: crate::player::DeniedActions::of([mod_api::BodyAction::Mine]),
+                held_pose_main: Some(mod_api::HeldPose {
+                    first_person: mod_api::HeldPoseData {
+                        rotation: [0.0, 2.5, 0.0],
+                        translation: [1.25, -3.5, -4.0],
+                    },
+                    third_person: mod_api::HeldPoseData::IDENTITY,
+                }),
+                held_pose_off: None,
+                held_display: [None; 2],
+                bone_poses: vec![crate::player::BonePose {
+                    bone: 7,
+                    rotation: [8.0, -2.0, -29.0],
+                    translation: [0.5, 0.0, 1.5],
+                    hold: false,
+                }],
+                animator: crate::player::AnimatorClaims {
+                    params: Vec::new(),
+                    plays: vec![crate::player::AnimatorPlay {
+                        rig: crate::player::RigId(1),
+                        slot: 0,
+                        clip: 3,
+                        clock: crate::player::AnimatorClock::Run {
+                            rate: 1.0,
+                            looping: false,
+                        },
+                        mirror: false,
+                        priority: 0,
+                    }],
+                },
+                sleeping: None,
+                sleep_bed: None,
+                transform: Some(SelfTransform {
+                    transform: Transform {
+                        pos: WorldPos::new(1.5, 80.0, -3.25),
+                        vel: Vec3::ZERO,
+                        yaw: 1.25,
+                        pitch: -0.5,
+                    },
+                    on_ground: true,
+                }),
+            }),
+            TickSection::OpenChests(vec![IVec3::new(1, 65, 1)]),
+            TickSection::Env(vec![
+                ("petramond:time".into(), [0.5, 1.0, 3.0, 0.0]),
+                ("petramond:light".into(), [1.0, 1.0, 1.0, 1.0]),
+            ]),
+            TickSection::Events(vec![
+                WorldEventMsg::BlockBroken {
+                    pos: IVec3::new(4, 65, 4),
+                    block_id: 12,
+                    normal: Some(IVec3::Y),
+                    tint: None,
+                },
+                WorldEventMsg::ItemPickedUp {
+                    pos: WorldPos::new(1.0, 65.0, 2.0),
+                    by: PlayerId(1),
+                },
+                WorldEventMsg::SpatialSound(SpatialSoundMsg::PlayOnMob {
+                    handle: 3,
+                    sound_id: 2,
+                    mob_id: 4211,
+                    volume: 0.5,
+                    pitch: 1.1,
+                    last_pos: WorldPos::new(0.0, 70.0, 0.0),
+                }),
+            ]),
+            TickSection::SelfEvents(SelfEvents {
+                picked_up_item: true,
+                open_screen: Some(OpenScreen::Gui {
+                    kind_key: "kitchen:oven".into(),
+                    anchor: Some(crate::menu::MenuAnchor::Mob(7)),
+                }),
+                animator_events: vec![(crate::player::RigId(1), 2)],
+                ..Default::default()
+            }),
+            TickSection::ActionOutcomes(vec![ActionOutcome {
+                id: 1,
+                accepted: true,
+                reason: None,
+            }]),
+            TickSection::MenuSync(MenuSyncMsg {
+                target: MenuTargetWire::Container {
+                    kind_key: "kitchen:oven".into(),
+                    anchor: Some(IVec3::new(4, 65, 4).into()),
+                    slots: Some(vec![
+                        Some(ItemSlotWire {
+                            item_id: 5,
+                            count: 3,
+                            data: None,
+                        }),
+                        None,
+                    ]),
+                    gui_state: Some(vec![("kitchen:burn01".into(), GuiValueWire::F32(0.5))]),
+                },
+            }),
+        ],
     })));
 }
 

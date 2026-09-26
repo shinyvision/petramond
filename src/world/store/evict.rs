@@ -136,7 +136,9 @@ impl<S: WorldSide> World<S> {
             for job in gen.pending_section_jobs.values() {
                 job.cancel();
             }
-            server.worker.remove_queued(gen.pending_section_jobs.values().map(|job| job.ticket));
+            server
+                .worker
+                .remove_queued(gen.pending_section_jobs.values().map(|job| job.ticket));
             gen.pending_section_jobs.clear();
             gen.pending_sections.clear();
             gen.pending_section_columns.clear();
@@ -198,7 +200,10 @@ impl<S: WorldSide> World<S> {
     fn forget_section_mesh(&mut self, pos: SectionPos) {
         if let Some(replica) = self.side.replica_mut() {
             if replica.terrain.remove_mesh(pos) {
-                replica.terrain.mesh_upload_dirty_columns.insert(pos.chunk_pos());
+                replica
+                    .terrain
+                    .mesh_upload_dirty_columns
+                    .insert(pos.chunk_pos());
             }
         }
     }

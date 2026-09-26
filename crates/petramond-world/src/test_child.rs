@@ -67,7 +67,9 @@ impl ChildRun {
 /// (libtest prints it before any test starts) and the summary the LAST
 /// `test result: ` line.
 fn ran_exactly_one_passing_test(stdout: &str) -> Result<(), String> {
-    let running = stdout.lines().find_map(|line| line.strip_prefix("running "));
+    let running = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("running "));
     let passed = stdout
         .lines()
         .rev()

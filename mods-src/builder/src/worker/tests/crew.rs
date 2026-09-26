@@ -30,11 +30,23 @@ fn a_search_that_found_nothing_stands_until_something_moves() {
     let task = Task::Scaffold([0, 3, 0]);
     deferrals.found_nowhere(task, [0, 0, 0], 100, true);
     assert_eq!(deferrals.still_nowhere(task, [0, 0, 0], 99), Some(true));
-    assert_eq!(deferrals.still_nowhere(task, [1, 0, 0], 99), None, "stood elsewhere");
-    assert_eq!(deferrals.still_nowhere(task, [0, 0, 0], 100), None, "forgiven");
+    assert_eq!(
+        deferrals.still_nowhere(task, [1, 0, 0], 99),
+        None,
+        "stood elsewhere"
+    );
+    assert_eq!(
+        deferrals.still_nowhere(task, [0, 0, 0], 100),
+        None,
+        "forgiven"
+    );
     assert_eq!(deferrals.still_nowhere(Task::Unit(0), [0, 0, 0], 99), None);
     deferrals.site_changed();
-    assert_eq!(deferrals.still_nowhere(task, [0, 0, 0], 99), None, "the site moved");
+    assert_eq!(
+        deferrals.still_nowhere(task, [0, 0, 0], 99),
+        None,
+        "the site moved"
+    );
 }
 
 #[test]
@@ -42,7 +54,10 @@ fn a_faceless_unit_is_propped_after_spaced_refusals() {
     let mut faces = Faces::default();
     assert_eq!(FACELESS_TRIES, 3);
     assert!(!faces.faceless_try(1, 10));
-    assert!(!faces.faceless_try(1, 20), "asks close together are one try");
+    assert!(
+        !faces.faceless_try(1, 20),
+        "asks close together are one try"
+    );
     assert!(!faces.faceless_try(1, 10 + FACELESS_SPACING));
     assert!(faces.faceless_try(1, 10 + 2 * FACELESS_SPACING));
     assert!(!faces.faceless_try(2, 10), "counted per unit");
@@ -56,7 +71,11 @@ fn a_faceless_unit_is_propped_after_spaced_refusals() {
     faces.propped.insert(1, vec![[0, 0, 0], [0, 1, 0]]);
     assert_eq!(faces.unprop(1), Some(vec![[0, 0, 0], [0, 1, 0]]));
     assert!(!faces.floating.contains(&1));
-    assert_eq!(faces.faceless.count_spaced(1, 0, FACELESS_SPACING), 1, "tries start over");
+    assert_eq!(
+        faces.faceless.count_spaced(1, 0, FACELESS_SPACING),
+        1,
+        "tries start over"
+    );
     assert_eq!(faces.unprop(1), None);
 }
 
@@ -109,7 +128,10 @@ fn a_reading_goes_stale_after_its_period() {
 #[test]
 fn a_wait_is_told_in_the_owners_words_only_when_worth_telling() {
     assert_eq!(Waiting::Resupply.told(), Some("Waiting for materials"));
-    assert_eq!(Waiting::GroundLoading.told(), Some("Waiting for the ground to load"));
+    assert_eq!(
+        Waiting::GroundLoading.told(),
+        Some("Waiting for the ground to load")
+    );
     assert_eq!(Waiting::Probe(Probe::Walk).told(), None);
     assert_eq!(
         Waiting::Probe(Probe::Walk).pondering(),

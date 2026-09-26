@@ -8,7 +8,10 @@ impl<S: WorldSide> World<S> {
     /// live here was removed on 2026-07-06 after playtests traced black (unlit) faces to
     /// section culling — do not reintroduce it here.
     pub(in crate::world) fn section_produces_no_mesh(&self, pos: SectionPos) -> bool {
-        self.data.sections.get(&pos).is_some_and(|s| s.is_empty_air())
+        self.data
+            .sections
+            .get(&pos)
+            .is_some_and(|s| s.is_empty_air())
     }
 
     /// Exact future-work skip: every adjoining plane is a loaded, fully opaque
@@ -21,7 +24,8 @@ impl<S: WorldSide> World<S> {
             return false;
         }
         petramond_math::math::FACE_NEIGHBORS.into_iter().all(|d| {
-            self.data.sections
+            self.data
+                .sections
                 .get(&SectionPos::new(pos.cx + d.x, pos.cy + d.y, pos.cz + d.z))
                 .is_some_and(|s| s.face_plane_fully_opaque(-d.x, -d.y, -d.z))
         })
@@ -39,7 +43,8 @@ impl ReplicaWorld {
             return false;
         }
         if self.side.terrain.remove_mesh(pos) {
-            self.side.terrain
+            self.side
+                .terrain
                 .mesh_upload_dirty_columns
                 .insert(pos.chunk_pos());
         }

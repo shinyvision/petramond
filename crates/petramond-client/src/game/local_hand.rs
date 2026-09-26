@@ -174,7 +174,10 @@ impl LocalHand {
     /// Latch this frame's one-shots AGAIN for the client-mod frame hook: the
     /// first gesture in `one_shots` order wins a hand (the ranking is
     /// cosmetic — the edges share one button, so they almost never coincide).
-    pub(super) fn latch_swing_events(&mut self, one_shots: impl IntoIterator<Item = (Hand, OneShot)>) {
+    pub(super) fn latch_swing_events(
+        &mut self,
+        one_shots: impl IntoIterator<Item = (Hand, OneShot)>,
+    ) {
         for (hand, kind) in one_shots {
             let slot = match hand {
                 Hand::Main => &mut self.swing_events.main,
@@ -273,7 +276,10 @@ mod tests {
             "the held press fires when the hand comes home"
         );
         hand.recover(0.5);
-        assert!(!hand.attack_press(false, false, false, || 0.4), "held only once");
+        assert!(
+            !hand.attack_press(false, false, false, || 0.4),
+            "held only once"
+        );
     }
 
     #[test]
@@ -283,7 +289,10 @@ mod tests {
         assert!(!hand.attack_press(false, false, true, || 0.4));
         assert!(!hand.attack_press(true, false, false, || 0.4), "denied");
         hand.recover(0.5);
-        assert!(!hand.attack_press(false, false, false, || 0.4), "nothing held");
+        assert!(
+            !hand.attack_press(false, false, false, || 0.4),
+            "nothing held"
+        );
         assert!(hand.attack_press(false, true, true, || panic!("mining arms nothing")));
     }
 

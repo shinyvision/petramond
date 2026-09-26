@@ -1,9 +1,8 @@
-
-use crate::mob::brain::{AiMob, TickInputs};
-use crate::mob::model_meta;
-use crate::mob::instance::{Begun, Footing, MobTickCtx, MotionStart, SpeciesMeta};
-use crate::mob::brain::ScriptedReplies;
 use crate::mob::anim::Expression;
+use crate::mob::brain::ScriptedReplies;
+use crate::mob::brain::{AiMob, TickInputs};
+use crate::mob::instance::{Begun, Footing, MobTickCtx, MotionStart, SpeciesMeta};
+use crate::mob::model_meta;
 use crate::mob::noise::{Noise, NoiseKind};
 use crate::mob::{def, defs, model, EntityRef, Instance, Mob};
 use crate::world::ServerWorld;
@@ -265,7 +264,14 @@ impl Mobs {
             let anchor = *nearest_anchor(anchors, mob.pos);
             let peer_obstacles = if d.collision == super::MobCollision::Solid {
                 supports.clear();
-                super::append_body_supports(mob.pos, mob.yaw, d.size, &solid, mob.id(), &mut supports);
+                super::append_body_supports(
+                    mob.pos,
+                    mob.yaw,
+                    d.size,
+                    &solid,
+                    mob.id(),
+                    &mut supports,
+                );
                 supports.as_slice()
             } else {
                 solid.as_slice()
@@ -279,8 +285,15 @@ impl Mobs {
                 solid: peer_obstacles,
                 solid_escape: &solid,
             };
-            let ctx = MobTickCtx { dt, inputs: &inputs, anchor: &anchor, def: d, meta };
-            turns[i].footing = Some(mob.perceive(&ctx, &mut confined_regions, steps[i] == lod::SimStep::Think));
+            let ctx = MobTickCtx {
+                dt,
+                inputs: &inputs,
+                anchor: &anchor,
+                def: d,
+                meta,
+            };
+            turns[i].footing =
+                Some(mob.perceive(&ctx, &mut confined_regions, steps[i] == lod::SimStep::Think));
         }
 
         // Gather in storage order, dispatch each scripted key once, then feed
@@ -288,16 +301,31 @@ impl Mobs {
         let mut requests = std::mem::take(&mut self.scripted_requests);
         requests.clear();
         for (i, mob) in self.list.iter_mut().enumerate() {
-            let Some(footing) = turns[i].footing else { continue };
-            if steps[i] != lod::SimStep::Think { continue; }
+            let Some(footing) = turns[i].footing else {
+                continue;
+            };
+            if steps[i] != lod::SimStep::Think {
+                continue;
+            }
             let d = def(mob.kind);
             let meta = &MOB_META.current()[mob.kind.0 as usize];
             let anchor = *nearest_anchor(anchors, mob.pos);
             let inputs = TickInputs {
-                world, players: anchors, noises: &self.heard, mobs: &ai_mobs,
-                path_budget: Some(&self.path_budget), solid: &solid, solid_escape: &solid,
+                world,
+                players: anchors,
+                noises: &self.heard,
+                mobs: &ai_mobs,
+                path_budget: Some(&self.path_budget),
+                solid: &solid,
+                solid_escape: &solid,
             };
-            let ctx = MobTickCtx { dt, inputs: &inputs, anchor: &anchor, def: d, meta };
+            let ctx = MobTickCtx {
+                dt,
+                inputs: &inputs,
+                anchor: &anchor,
+                def: d,
+                meta,
+            };
             let start = requests.len();
             mob.scripted_requests(&ctx, footing, &mut requests);
             turns[i].requests = start..requests.len();
@@ -307,25 +335,50 @@ impl Mobs {
         self.scripted_requests = requests;
 
         for (i, mob) in self.list.iter_mut().enumerate() {
-            let Some(footing) = turns[i].footing else { continue };
+            let Some(footing) = turns[i].footing else {
+                continue;
+            };
             let d = def(mob.kind);
             let meta = &MOB_META.current()[mob.kind.0 as usize];
             let anchor = *nearest_anchor(anchors, mob.pos);
             let peer_obstacles = if d.collision == super::MobCollision::Solid {
                 supports.clear();
-                super::append_body_supports(mob.pos, mob.yaw, d.size, &solid, mob.id(), &mut supports);
+                super::append_body_supports(
+                    mob.pos,
+                    mob.yaw,
+                    d.size,
+                    &solid,
+                    mob.id(),
+                    &mut supports,
+                );
                 supports.as_slice()
             } else {
                 solid.as_slice()
             };
             let inputs = TickInputs {
-                world, players: anchors, noises: &self.heard, mobs: &ai_mobs,
-                path_budget: Some(&self.path_budget), solid: peer_obstacles, solid_escape: &solid,
+                world,
+                players: anchors,
+                noises: &self.heard,
+                mobs: &ai_mobs,
+                path_budget: Some(&self.path_budget),
+                solid: peer_obstacles,
+                solid_escape: &solid,
             };
-            let ctx = MobTickCtx { dt, inputs: &inputs, anchor: &anchor, def: d, meta };
+            let ctx = MobTickCtx {
+                dt,
+                inputs: &inputs,
+                anchor: &anchor,
+                def: d,
+                meta,
+            };
             let think = steps[i] == lod::SimStep::Think;
             let range = turns[i].requests.clone();
-            let decision = mob.think(&ctx, footing, think, ScriptedReplies::new(&mut replies[range]));
+            let decision = mob.think(
+                &ctx,
+                footing,
+                think,
+                ScriptedReplies::new(&mut replies[range]),
+            );
             turns[i].start = mob.act(&ctx, footing, &decision, think);
             mob.apply_expression(dt, d, &meta.named_anims, &decision.into());
         }
@@ -334,7 +387,7 @@ impl Mobs {
         self.step_scratch = steps;
         self.turns = turns;
         self.solve_solids(world, solid);
-        let mut turns = std::mem::take(&mut self.turns);
+        let turns = std::mem::take(&mut self.turns);
 
         // Post-motion bookkeeping observes committed poses, never an
         // overlapping proposal that the pair solver subsequently shortened.
@@ -423,8 +476,6 @@ impl Mobs {
         self.retain_instances(|m| !m.is_despawned() && !m.is_distance_despawned());
         out
     }
-
-
 }
 
 /// Whether the terrain `mob` stands on has ARRIVED — the freeze gate shared

@@ -411,8 +411,7 @@ impl Instance {
         for (key, value) in writes {
             match value {
                 Some(v) => {
-                    if self.tags.len() >= crate::mob::MAX_MOB_TAGS && !self.tags.contains_key(key)
-                    {
+                    if self.tags.len() >= crate::mob::MAX_MOB_TAGS && !self.tags.contains_key(key) {
                         log::warn!(
                             "mob {} tag map full; decision write '{key}' dropped",
                             self.id
@@ -496,9 +495,7 @@ impl Instance {
                 inputs.players,
             )
         };
-        let immersion = world
-            .data()
-            .body_fluid(self.pos, d.size.height, d.buoyancy);
+        let immersion = world.data().body_fluid(self.pos, d.size.height, d.buoyancy);
         // A mod's horizontal drive is that mod's own steering (a player-driven
         // vehicle crosses whatever its driver steers it over).
         let driven = self
@@ -603,7 +600,11 @@ impl Instance {
     /// simulates, but the distance-despawn rule still applies, and the pose
     /// is held so the body rests exactly where it stopped instead of
     /// replaying its last interpolation step.
-    pub(in crate::mob) fn tick_frozen(&mut self, player_pos: WorldPos, despawn_radius: Option<f32>) {
+    pub(in crate::mob) fn tick_frozen(
+        &mut self,
+        player_pos: WorldPos,
+        despawn_radius: Option<f32>,
+    ) {
         self.snapshot_interp();
         self.check_distance_despawn(player_pos, despawn_radius);
     }
@@ -634,10 +635,8 @@ impl Instance {
                 if think {
                     self.scripted_requests(ctx, footing, &mut requests);
                 }
-                let mut replies = crate::modding::ai::dispatch_batch(
-                    ctx.inputs.world.current_tick(),
-                    &requests,
-                );
+                let mut replies =
+                    crate::modding::ai::dispatch_batch(ctx.inputs.world.current_tick(), &requests);
                 let decision = self.think(ctx, footing, think, ScriptedReplies::new(&mut replies));
                 let start = self.act(ctx, footing, &decision, think);
                 self.apply_expression(ctx.dt, ctx.def, &ctx.meta.named_anims, &decision.into());

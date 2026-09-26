@@ -16,13 +16,13 @@ pub use petramond_world::world::{
 pub mod actor;
 pub mod animated_block;
 mod block_deltas;
-pub(crate) mod cells;
 mod cell_change;
+pub(crate) mod cells;
 pub mod chest;
 mod column_heightmaps;
 pub mod construction;
-mod content;
 mod container;
+mod content;
 mod cursor;
 mod custom_bake;
 pub mod door;
@@ -77,14 +77,14 @@ pub use petramond_world::world::shape_bake_validate::ingest_shape_boxes;
 #[cfg(any(test, feature = "test-support"))]
 pub use stream::split_generated_column;
 
+pub use mirror::ReplicaMirror;
 pub use particle_emitters::{emitter_envelope, PlacedEmitter};
 pub use petramond_world::world::ladder::Climb;
 pub use petramond_world::world::query::CollisionShapeClass;
 pub use render_handoff::TerrainRenderHandoff;
+pub use side::{ReplicaSide, ServerSide, WorldSide};
 pub use store::LoadAnchor;
 pub use store::VERTICAL_LOAD_RADIUS;
-pub use mirror::ReplicaMirror;
-pub use side::{ReplicaSide, ServerSide, WorldSide};
 pub use store::{MemoryCensus, ReplicaWorld, ServerWorld, World, RENDER_DIST};
 pub use stream::StreamEvent;
 pub use tick::TICK_DT;

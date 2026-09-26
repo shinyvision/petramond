@@ -231,9 +231,11 @@ impl ChatUi {
             self.drag_anchor = None;
             return;
         }
-        let idx = self
-            .editor
-            .cursor_index_for_x(&ui_font(), lx - layout.text_x as f32, layout.visible_chars);
+        let idx = self.editor.cursor_index_for_x(
+            &ui_font(),
+            lx - layout.text_x as f32,
+            layout.visible_chars,
+        );
         self.drag_anchor = Some(self.editor.begin_drag(idx, layout.visible_chars, now));
     }
 
@@ -242,9 +244,11 @@ impl ChatUi {
             return;
         };
         let lx = x / layout.scale as f32;
-        let idx = self
-            .editor
-            .cursor_index_for_x(&ui_font(), lx - layout.text_x as f32, layout.visible_chars);
+        let idx = self.editor.cursor_index_for_x(
+            &ui_font(),
+            lx - layout.text_x as f32,
+            layout.visible_chars,
+        );
         self.editor.drag_to(anchor, idx, layout.visible_chars, now);
     }
 
@@ -576,7 +580,10 @@ mod tests {
         let mut chat = ChatUi::default();
         let long = "word ".repeat(40);
         for i in 0..MAX_HISTORY as u64 + 20 {
-            chat.push(line(i, if i % 3 == 0 { long.as_str() } else { "short" }), 0.0);
+            chat.push(
+                line(i, if i % 3 == 0 { long.as_str() } else { "short" }),
+                0.0,
+            );
         }
         assert_eq!(chat.visual_lines, fresh(&chat, chat.wrap_chars));
         assert!(chat.visual_lines > chat.history.len(), "long lines wrap");
@@ -592,7 +599,8 @@ mod tests {
         assert_eq!(chat.history[0].wrapped.as_ptr(), first);
         assert_eq!(
             chat.max_scroll_lines(),
-            chat.visual_lines.saturating_sub(open_history_visible_lines())
+            chat.visual_lines
+                .saturating_sub(open_history_visible_lines())
         );
     }
 
@@ -606,8 +614,7 @@ mod tests {
         };
         let visible = open_history_visible_lines();
         let first_y = open_history_first_line_y(panel, visible);
-        let last_y =
-            first_y + visible.saturating_sub(1) as i32 * ui_font().line_advance();
+        let last_y = first_y + visible.saturating_sub(1) as i32 * ui_font().line_advance();
 
         assert!(first_y >= panel.y + PAD);
         assert!(last_y + ui_font().line_h() <= panel.y + panel.h - PAD);

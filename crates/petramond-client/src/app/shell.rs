@@ -65,7 +65,9 @@ impl App {
             let now = now_seconds();
             let clipboard = self.ui.clipboard_mut();
             if let Some(session) = self.session.as_mut() {
-                session.chat.edit_key(key, false, false, Some(clipboard), now);
+                session
+                    .chat
+                    .edit_key(key, false, false, Some(clipboard), now);
             }
             return true;
         }
@@ -234,7 +236,11 @@ impl App {
         self.apply_particles();
         self.rebuild_action_table();
         self.renderer_world_clear_pending = false;
-        self.set_screen(if dead { AppScreen::Dead } else { AppScreen::Game });
+        self.set_screen(if dead {
+            AppScreen::Dead
+        } else {
+            AppScreen::Game
+        });
     }
 }
 

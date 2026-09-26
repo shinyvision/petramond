@@ -45,7 +45,7 @@ const PENETRATION_TOL: f32 = 0.1;
 /// keeps movement cost proportional to players + solid mobs, rather than
 /// their product just for snapshot construction. Borrows only what it
 /// touches: the world read-only, the sessions mutably.
-pub(in crate::server) fn tick_movements(world: &World, sessions: &mut SessionRegistry) {
+pub(in crate::server) fn tick_movements(world: &ServerWorld, sessions: &mut SessionRegistry) {
     let obstacles = world.mobs().solid_obstacles();
     for sess in sessions {
         integrate_session(world, sess, &obstacles);
@@ -109,8 +109,7 @@ fn integrate_session(
     // trusted ground contact for the fall tracker below (claim adoption
     // overwrites the transform before the tracker samples it).
     let integrated_ground_y = if spectator
-        || (sess.player.columns_loaded(world.data())
-            && body_terrain_final(&sess.player, world))
+        || (sess.player.columns_loaded(world.data()) && body_terrain_final(&sess.player, world))
     {
         sess.player
             .update_with_obstacles(TICK_DT, world.data(), input, obstacles);
@@ -148,7 +147,10 @@ fn integrate_session(
     let pos = sess.player.pos;
     let on_ground = sess.player.on_ground;
 
-    let immersion = world.data().body_fluid(pos, player::HEIGHT, petramond_world::fluid::Buoyancy::Swim);
+    let immersion =
+        world
+            .data()
+            .body_fluid(pos, player::HEIGHT, petramond_world::fluid::Buoyancy::Swim);
     let swimming = immersion.is_some();
     // On a ladder? Same feet-cell probe the shared physics uses (see
     // `Player::update`): a climbing body's descent is controlled, so the
@@ -157,7 +159,8 @@ fn integrate_session(
     // one fall the client physics never latched.
     let climbing = !swimming
         && world
-            .data().climb_at(
+            .data()
+            .climb_at(
                 pos.x.floor() as i32,
                 pos.y.floor() as i32,
                 pos.z.floor() as i32,
@@ -377,7 +380,11 @@ fn feet_supported(
 
 /// Whether the world AABB `[min, max]` overlaps any collision box of any cell
 /// it spans.
-pub fn aabb_hits_collision(world: &crate::world::ServerWorld, min: [f64; 3], max: [f64; 3]) -> bool {
+pub fn aabb_hits_collision(
+    world: &crate::world::ServerWorld,
+    min: [f64; 3],
+    max: [f64; 3],
+) -> bool {
     petramond_world::collision::aabb_hits_cells(min, max, |x, y, z| {
         world.data().collision_boxes_at(x, y, z)
     })

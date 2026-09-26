@@ -167,7 +167,8 @@ fn survival_cannot_use_creative_history_actions() {
     let before = server.sessions[0].player.inventory.selected().copied();
     for action in [CreativeAction::Undo, CreativeAction::Redo] {
         server.sessions[0]
-            .sim.creative
+            .sim
+            .creative
             .pending
             .push_back(Pending::Action(action));
         server.tick_creative(0, &mut TickEvents::default());
@@ -205,15 +206,24 @@ fn instant_mining_keeps_a_repeat_delay_and_creative_placement_keeps_the_stack() 
             .expect("room");
     }
     server.tick_mining(0, &mut events);
-    assert_eq!(server.world.data().chunk_block(a.x, a.y, a.z), Block::Air.id());
-    assert_eq!(server.world.data().chunk_block(b.x, b.y, b.z), Block::Stone.id());
+    assert_eq!(
+        server.world.data().chunk_block(a.x, a.y, a.z),
+        Block::Air.id()
+    );
+    assert_eq!(
+        server.world.data().chunk_block(b.x, b.y, b.z),
+        Block::Stone.id()
+    );
     server.world.restore_tick(server.world.current_tick() + 10);
     server.sessions[0]
         .input
         .queue_break_finished(request(3, b))
         .expect("room");
     server.tick_mining(0, &mut events);
-    assert_eq!(server.world.data().chunk_block(b.x, b.y, b.z), Block::Air.id());
+    assert_eq!(
+        server.world.data().chunk_block(b.x, b.y, b.z),
+        Block::Air.id()
+    );
     *server.sessions[0].player.inventory.slot_mut(0).unwrap() = Some(ItemStack::new(
         ItemType::Stone,
         ItemType::Stone.max_stack_size(),
@@ -323,7 +333,8 @@ fn creative_catalog_pickup_requires_a_creative_menu_and_authorized_player() {
     server.queue_menu_action(0, pick());
     server.tick_menu(0, &mut events);
     assert!(server.sessions[0].player.inventory.cursor().is_none());
-    server.queue_menu_action(0, 
+    server.queue_menu_action(
+        0,
         crate::server::player::PendingMenuAction::OpenGui {
             kind: petramond_world::gui_state::GuiKind::Creative,
             anchor: None,

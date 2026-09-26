@@ -34,7 +34,13 @@ pub(crate) fn line_clear_skipping(
     !ray_hits_collision(world, from, delta / dist, dist, skip)
 }
 
-fn ray_hits_collision(world: &ServerWorld, eye: WorldPos, dir: Vec3, max_t: f32, skip: &[IVec3]) -> bool {
+fn ray_hits_collision(
+    world: &ServerWorld,
+    eye: WorldPos,
+    dir: Vec3,
+    max_t: f32,
+    skip: &[IVec3],
+) -> bool {
     let mut ix = eye.x.floor() as i32;
     let mut iy = eye.y.floor() as i32;
     let mut iz = eye.z.floor() as i32;
@@ -78,11 +84,18 @@ fn ray_hits_collision(world: &ServerWorld, eye: WorldPos, dir: Vec3, max_t: f32,
     }
 }
 
-fn cell_hits_collision(world: &ServerWorld, eye: WorldPos, dir: Vec3, max_t: f32, cell: IVec3) -> bool {
+fn cell_hits_collision(
+    world: &ServerWorld,
+    eye: WorldPos,
+    dir: Vec3,
+    max_t: f32,
+    cell: IVec3,
+) -> bool {
     // In the eye's frame: the cell is within the ray's reach of it.
     let base = WorldPos::block_min(cell) - eye;
     world
-        .data().collision_boxes_at(cell.x, cell.y, cell.z)
+        .data()
+        .collision_boxes_at(cell.x, cell.y, cell.z)
         .iter()
         .any(|b| {
             let min = base + Vec3::from(b.min);

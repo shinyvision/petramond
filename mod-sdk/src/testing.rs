@@ -26,8 +26,8 @@ use std::marker::PhantomData;
 use std::rc::Rc;
 
 use mod_api::{
-    BlockId, ContainerAddress, HostCall, HostRet, ItemStackData, MobTagLookup, MobTagValue,
-    RuntimeSide,
+    BlockCall, BlockId, ContainerAddress, ContainerCall, CoreCall, HostCall, HostRet,
+    ItemStackData, KvCall, MobTagLookup, MobTagValue, RuntimeSide, TagCall,
 };
 
 type NativeHost = Box<dyn FnMut(&HostCall) -> HostRet>;
@@ -164,7 +164,11 @@ impl MockHost {
     }
 
     pub fn cell_kv(&self, pos: [i32; 3], key: &str) -> Option<Vec<u8>> {
-        self.state.borrow().cell_kv.get(&(pos, key.to_owned())).cloned()
+        self.state
+            .borrow()
+            .cell_kv
+            .get(&(pos, key.to_owned()))
+            .cloned()
     }
 
     /// Make mob `id` live (with no tags) so tag calls address it.
@@ -255,59 +259,66 @@ impl MockState {
     /// it.
     fn model(&mut self, call: &HostCall) -> Option<HostRet> {
         Some(match call {
-            HostCall::Log { msg } => {
+            HostCall::Core(CoreCall::Log { msg }) => {
                 self.logs.push(msg.clone());
                 HostRet::Unit
             }
-            HostCall::RuntimeSide => HostRet::RuntimeSide(RuntimeSide::Server),
-            HostCall::CurrentTick => HostRet::U64(self.tick),
-            HostCall::RngU64 { stream_key } => HostRet::U64(self.rng_next(stream_key)),
-            HostCall::RegisterTickSystem { .. }
-            | HostCall::RegisterEventHandler { .. }
-            | HostCall::RegisterHostileSpawner { .. }
-            | HostCall::RegisterBlockBehavior { .. }
-            | HostCall::RegisterAiNode { .. }
-            | HostCall::EmitEvent { .. } => HostRet::Unit,
-            HostCall::GetBlock { pos } => HostRet::Block(self.read_block(pos)),
-            HostCall::GetBlocks { positions } => {
+            HostCall::Core(CoreCall::RuntimeSide) => HostRet::RuntimeSide(RuntimeSide::Server),
+            HostCall::Core(CoreCall::CurrentTick) => HostRet::U64(self.tick),
+            HostCall::Core(CoreCall::RngU64 { stream_key }) => {
+                HostRet::U64(self.rng_next(stream_key))
+            }
+            HostCall::Core(CoreCall::RegisterTickSystem { .. })
+            | HostCall::Core(CoreCall::RegisterEventHandler { .. })
+            | HostCall::Core(CoreCall::RegisterHostileSpawner { .. })
+            | HostCall::Core(CoreCall::RegisterBlockBehavior { .. })
+            | HostCall::Core(CoreCall::RegisterAiNode { .. })
+            | HostCall::Core(CoreCall::EmitEvent { .. }) => HostRet::Unit,
+            HostCall::Block(BlockCall::GetBlock { pos }) => HostRet::Block(self.read_block(pos)),
+            HostCall::Block(BlockCall::GetBlocks { positions }) => {
                 HostRet::Blocks(positions.iter().map(|p| self.read_block(p)).collect())
             }
-            HostCall::IsLoaded { pos } => HostRet::Bool(self.loaded(pos)),
-            HostCall::SetBlock { pos, block } | HostCall::SwapBlock { pos, block } => {
+            HostCall::Block(BlockCall::IsLoaded { pos }) => HostRet::Bool(self.loaded(pos)),
+            HostCall::Block(BlockCall::SetBlock { pos, block })
+            | HostCall::Block(BlockCall::SwapBlock { pos, block }) => {
                 HostRet::Bool(self.write_block(*pos, *block))
             }
-            HostCall::SetBlocks { blocks } => HostRet::U64(
+            HostCall::Block(BlockCall::SetBlocks { blocks }) => HostRet::U64(
                 blocks
                     .iter()
                     .filter(|(pos, block)| self.write_block(*pos, *block))
                     .count() as u64,
             ),
-            HostCall::WorldKvGet { key } => HostRet::Bytes(self.world_kv.get(key).cloned()),
-            HostCall::WorldKvSet { key, value } => {
+            HostCall::Kv(KvCall::WorldKvGet { key }) => {
+                HostRet::Bytes(self.world_kv.get(key).cloned())
+            }
+            HostCall::Kv(KvCall::WorldKvSet { key, value }) => {
                 self.world_kv.insert(key.clone(), value.clone());
                 HostRet::Unit
             }
-            HostCall::WorldKvDelete { key } => HostRet::Bool(self.world_kv.remove(key).is_some()),
-            HostCall::SectionKvGet { pos, key } => {
+            HostCall::Kv(KvCall::WorldKvDelete { key }) => {
+                HostRet::Bool(self.world_kv.remove(key).is_some())
+            }
+            HostCall::Kv(KvCall::SectionKvGet { pos, key }) => {
                 HostRet::Bytes(self.cell_kv.get(&(*pos, key.clone())).cloned())
             }
-            HostCall::SectionKvSet { pos, key, value } => {
+            HostCall::Kv(KvCall::SectionKvSet { pos, key, value }) => {
                 let loaded = self.loaded(pos);
                 if loaded {
                     self.cell_kv.insert((*pos, key.clone()), value.clone());
                 }
                 HostRet::Bool(loaded)
             }
-            HostCall::SectionKvDelete { pos, key } => {
+            HostCall::Kv(KvCall::SectionKvDelete { pos, key }) => {
                 HostRet::Bool(self.cell_kv.remove(&(*pos, key.clone())).is_some())
             }
-            HostCall::SectionKvGetMany { key, positions } => HostRet::BytesMany(
+            HostCall::Kv(KvCall::SectionKvGetMany { key, positions }) => HostRet::BytesMany(
                 positions
                     .iter()
                     .map(|pos| self.cell_kv.get(&(*pos, key.clone())).cloned())
                     .collect(),
             ),
-            HostCall::SectionKvSetMany { key, writes } => HostRet::Bools(
+            HostCall::Kv(KvCall::SectionKvSetMany { key, writes }) => HostRet::Bools(
                 writes
                     .iter()
                     .map(|(pos, value)| match value {
@@ -320,38 +331,45 @@ impl MockState {
                     })
                     .collect(),
             ),
-            HostCall::MobTagGet { mob_id, key } => HostRet::MobTag(match self.mobs.get(mob_id) {
-                None => MobTagLookup::MissingMob,
-                Some(tags) => tags
-                    .get(key)
-                    .cloned()
-                    .map_or(MobTagLookup::Absent, MobTagLookup::Value),
-            }),
-            HostCall::MobTagSet { mob_id, key, value } => {
+            HostCall::Tag(TagCall::MobTagGet { mob_id, key }) => {
+                HostRet::MobTag(match self.mobs.get(mob_id) {
+                    None => MobTagLookup::MissingMob,
+                    Some(tags) => tags
+                        .get(key)
+                        .cloned()
+                        .map_or(MobTagLookup::Absent, MobTagLookup::Value),
+                })
+            }
+            HostCall::Tag(TagCall::MobTagSet { mob_id, key, value }) => {
                 HostRet::Bool(self.mobs.get_mut(mob_id).is_some_and(|tags| {
                     tags.insert(key.clone(), value.clone());
                     true
                 }))
             }
-            HostCall::MobTagDelete { mob_id, key } => HostRet::Bool(
+            HostCall::Tag(TagCall::MobTagDelete { mob_id, key }) => HostRet::Bool(
                 self.mobs
                     .get_mut(mob_id)
                     .is_some_and(|tags| tags.remove(key).is_some()),
             ),
-            HostCall::ContainerGet { at } => {
+            HostCall::Container(ContainerCall::ContainerGet { at }) => {
                 HostRet::ContainerSlots(self.containers.get(at).cloned())
             }
-            HostCall::ContainerGetMany { addresses } => HostRet::Containers(
-                addresses
-                    .iter()
-                    .map(|at| self.containers.get(at).cloned())
-                    .collect(),
-            ),
-            HostCall::ContainerSet { at, slots } => {
+            HostCall::Container(ContainerCall::ContainerGetMany { addresses }) => {
+                HostRet::Containers(
+                    addresses
+                        .iter()
+                        .map(|at| self.containers.get(at).cloned())
+                        .collect(),
+                )
+            }
+            HostCall::Container(ContainerCall::ContainerSet { at, slots }) => {
                 let Some(container) = self.containers.get_mut(at) else {
                     return Some(HostRet::Bool(false));
                 };
-                if slots.iter().any(|(index, _)| *index as usize >= container.len()) {
+                if slots
+                    .iter()
+                    .any(|(index, _)| *index as usize >= container.len())
+                {
                     return Some(HostRet::Bool(false));
                 }
                 for (index, stack) in slots {
@@ -377,7 +395,10 @@ mod tests {
             crate::log("hello");
         });
         assert_eq!(host.logs(), vec!["hello".to_owned()]);
-        assert!(matches!(host.calls()[0], HostCall::GetBlock { pos: [1, 2, 3] }));
+        assert!(matches!(
+            host.calls()[0],
+            HostCall::Block(BlockCall::GetBlock { pos: [1, 2, 3] })
+        ));
     }
 
     #[test]
@@ -396,7 +417,7 @@ mod tests {
     fn unmodelled_calls_can_be_answered_by_the_test() {
         let host = MockHost::new();
         host.on(|call| match call {
-            HostCall::CurrentTick => Some(HostRet::U64(42)),
+            HostCall::Core(CoreCall::CurrentTick) => Some(HostRet::U64(42)),
             _ => None,
         });
         host.run(|| assert_eq!(crate::current_tick(), 42));
@@ -408,15 +429,15 @@ mod tests {
         host.add_mob(3);
         host.queue_rng([11]);
         let (first, second) = host.run(|| {
-            crate::__rt::host_call(&HostCall::WorldKvSet {
+            crate::__rt::host_call(&HostCall::Kv(KvCall::WorldKvSet {
                 key: "m:k".into(),
                 value: vec![1],
-            });
-            crate::__rt::host_call(&HostCall::MobTagSet {
+            }));
+            crate::__rt::host_call(&HostCall::Tag(TagCall::MobTagSet {
                 mob_id: 3,
                 key: "m:t".into(),
                 value: MobTagValue::Bool(true),
-            });
+            }));
             (crate::rng_u64("s"), crate::rng_u64("s"))
         });
         assert_eq!(host.world_kv("m:k"), Some(vec![1]));
@@ -440,7 +461,10 @@ mod tests {
         host.set_container(at, vec![None, None]);
         host.run(|| {
             assert!(crate::container_set(at, vec![(1, Some(stack.clone()))]));
-            assert_eq!(crate::container_get(at), Some(vec![None, Some(stack.clone())]));
+            assert_eq!(
+                crate::container_get(at),
+                Some(vec![None, Some(stack.clone())])
+            );
             assert_eq!(
                 crate::container_get_many(vec![at, ContainerAddress::Mob(99)]),
                 vec![Some(vec![None, Some(stack)]), None]
@@ -452,6 +476,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "MockHost does not model")]
     fn unmodelled_calls_panic_with_the_call_named() {
-        MockHost::new().run(|| crate::__rt::host_call(&HostCall::Players));
+        MockHost::new()
+            .run(|| crate::__rt::host_call(&HostCall::Player(mod_api::PlayerCall::Players)));
     }
 }

@@ -11,7 +11,6 @@ use crate::world::{World, WorldSide};
 use petramond_math::math::IVec3;
 use petramond_world::container::Container;
 
-
 impl<S: WorldSide> World<S> {
     /// The container at a world block position, if one is stored there.
     pub fn container_at(&self, pos: IVec3) -> Option<&Container> {

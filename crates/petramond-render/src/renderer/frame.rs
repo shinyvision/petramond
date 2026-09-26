@@ -218,7 +218,8 @@ impl Renderer {
         // The reusable plan is taken out while `self` is read to fill it,
         // then put back (capacity retained next frame).
         let mut plan = std::mem::take(&mut self.frame_plan);
-        self.graph.plan(shape, |node| self.node_active(node, route), &mut plan);
+        self.graph
+            .plan(shape, |node| self.node_active(node, route), &mut plan);
         debug_assert_eq!(plan.validate(shape), Ok(()), "unrunnable frame plan");
         let mut enc = self
             .device

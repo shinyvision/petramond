@@ -157,11 +157,17 @@ mod tests {
     #[test]
     fn a_changed_graphics_value_dirties_the_renderer_once() {
         let mut options = OptionsState::new(ClientSettings::default());
-        assert!(options.take_renderer_dirty(), "a fresh app pushes its settings");
+        assert!(
+            options.take_renderer_dirty(),
+            "a fresh app pushes its settings"
+        );
         assert!(!options.take_renderer_dirty());
         let shake = options.settings.screen_shake;
         options.set_screen_shake(shake);
-        assert!(!options.renderer_dirty(), "an unchanged value is not a change");
+        assert!(
+            !options.renderer_dirty(),
+            "an unchanged value is not a change"
+        );
         options.set_screen_shake(!shake);
         assert!(options.take_renderer_dirty());
     }
@@ -182,7 +188,11 @@ mod tests {
         options.arm_mod(KeyCode::ShiftLeft);
         options.begin_remap("sneak");
         assert_eq!(options.remap(), Some("sneak"));
-        assert_eq!(options.armed_mod(), None, "switching drops the chord starter");
+        assert_eq!(
+            options.armed_mod(),
+            None,
+            "switching drops the chord starter"
+        );
         options.cancel_remap();
         assert_eq!(options.remap(), None);
     }

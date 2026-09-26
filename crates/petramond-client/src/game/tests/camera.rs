@@ -12,7 +12,8 @@ fn camera_eases_grounded_step_up_to_the_player_eye() {
     game.sync_camera_to_player_eye(1.0 / 60.0);
 
     let old_eye_y = game.local.player.eye().y;
-    let stepped_feet_y = game.local.player.pos.y + f64::from(petramond_world::collision::STEP_HEIGHT);
+    let stepped_feet_y =
+        game.local.player.pos.y + f64::from(petramond_world::collision::STEP_HEIGHT);
     game.local.player.pos.y = stepped_feet_y;
     game.local.player.vel.y = 0.0;
     game.local.player.on_ground = true;
@@ -86,7 +87,8 @@ fn a_seat_rising_up_a_slope_is_not_a_step_the_body_glides_behind() {
     game.local.player.on_ground = true;
     game.sync_camera_to_player_eye(1.0 / 60.0);
     let pos = game.local.player.pos;
-    game.replica.entities
+    game.replica
+        .entities
         .set_own_mount(Some(petramond::net::protocol::PlayerMount::Anchor {
             pos,
             yaw: 0.0,
@@ -98,7 +100,8 @@ fn a_seat_rising_up_a_slope_is_not_a_step_the_body_glides_behind() {
         game.local.player.pos.y += 0.05;
         game.sync_camera_to_player_eye(1.0 / 60.0);
         assert_eq!(
-            game.local.camera_rig.step_y_offset(), 0.0,
+            game.local.camera_rig.step_y_offset(),
+            0.0,
             "a carried body never lags its seat"
         );
     }

@@ -221,7 +221,11 @@ impl RemoteHub {
     /// Disconnect the sessions the pump evicted after a fault (their leave
     /// path already ran server-side): tell each why, drop its connection,
     /// and announce the leave to everyone else.
-    pub fn kick(&mut self, kicked: Vec<(PlayerId, Option<String>)>, local_tx: &Sender<ServerToClient>) {
+    pub fn kick(
+        &mut self,
+        kicked: Vec<(PlayerId, Option<String>)>,
+        local_tx: &Sender<ServerToClient>,
+    ) {
         for (id, name) in kicked {
             let Some(at) = self.clients.iter().position(|c| c.id == id) else {
                 continue;

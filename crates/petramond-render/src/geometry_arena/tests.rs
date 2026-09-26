@@ -81,7 +81,11 @@ fn emptied_blocks_are_released_past_one_spare() {
     let released = book.reclaim(placed[..4].iter().map(freed).collect());
     assert_eq!(released, [1], "block 0 stays as the spare");
     assert_eq!(book.block_count(), 2);
-    assert_eq!(book.free_bytes(), 2 * big, "only the spare's entries remain free");
+    assert_eq!(
+        book.free_bytes(),
+        2 * big,
+        "only the spare's entries remain free"
+    );
     // The spare's space is reused before any new block opens.
     let again = book.place(big);
     assert_eq!((again.block, again.new_block), (0, None));
@@ -96,7 +100,9 @@ fn reclaiming_without_emptying_a_block_releases_nothing() {
     let mut book = Book::new(4, BLOCK_BYTES);
     let a = book.place(1000);
     book.place(1000);
-    assert!(book.reclaim(vec![(a.capacity, a.block, a.offset)]).is_empty());
+    assert!(book
+        .reclaim(vec![(a.capacity, a.block, a.offset)])
+        .is_empty());
     assert_eq!(book.block_count(), 1);
     assert_eq!(book.free_bytes(), a.capacity);
 }

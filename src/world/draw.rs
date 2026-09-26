@@ -20,7 +20,6 @@ use mod_api::DrawPrim;
 
 use petramond_math::math::IVec3;
 
-
 /// A submitted prim list, SHARED. One block's set is stored once and every
 /// consumer after that — the section payload, the per-tick delta, and one copy
 /// per recipient session — takes a refcount bump.
@@ -528,12 +527,7 @@ impl<S: WorldSide> World<S> {
         if self.draws.block_draws.is_empty() {
             return;
         }
-        let Some(set) = self
-            .draws
-            .block_draws
-            .get(&pos)
-            .map(|p| Arc::clone(&p.set))
-        else {
+        let Some(set) = self.draws.block_draws.get(&pos).map(|p| Arc::clone(&p.set)) else {
             return;
         };
         let (frame, _) = self.draw_placement(pos, &set);
@@ -601,7 +595,8 @@ impl<S: WorldSide> World<S> {
     /// `BlockLocalToWorld`, which is what lets a mod ask for a world point off
     /// its own model instead of writing this transform out a second time.
     pub fn block_local_frame(&self, pos: IVec3) -> BlockLocalFrame {
-        let block = petramond_world::block::Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z));
+        let block =
+            petramond_world::block::Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z));
         if let Some(kind) = block.model_kind() {
             let offset = self.data.model_offset_at(pos.x, pos.y, pos.z);
             let facing = self.data.model_facing_at(pos.x, pos.y, pos.z);
@@ -692,7 +687,8 @@ impl ServerWorld {
     /// the batch is deterministic.
     pub fn take_block_draw_deltas(&mut self) -> Vec<crate::world::replication::BlockDrawDelta> {
         let mut out: Vec<_> = self
-            .side.replication
+            .side
+            .replication
             .block_draw_log
             .drain()
             .map(|pos| {
@@ -770,7 +766,9 @@ mod tests {
         let cells = w.model_group(base).expect("a placed group").2;
         let mut changes = Vec::new();
         for c in &cells {
-            let (chunk, lx, ly, lz) = w.data.chunk_at_world_mut(c.x, c.y, c.z)
+            let (chunk, lx, ly, lz) = w
+                .data
+                .chunk_at_world_mut(c.x, c.y, c.z)
                 .expect("a placed footprint cell");
             chunk.set_model_facing(lx, ly, lz, Facing::North);
             changes.push(crate::world::cell_change::CellChange::new(

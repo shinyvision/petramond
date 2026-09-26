@@ -13,7 +13,6 @@ use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 
-
 /// Break behaviour for fragile blocks (the cross-plants and the torch). A block update
 /// that takes away the block's support resolves the verdict at the update itself: the
 /// dispatch re-reads the cell (a later write in the same tick may have won it) and,
@@ -82,7 +81,7 @@ mod tests {
             let mut w = world();
             let p = IVec3::new(8, 64, 8);
             w.set_block_world(p.x, p.y, p.z, b);
-            petramond_world::block::full_face_at(&w, p, dir)
+            petramond_world::block::full_face_at(w.data(), p, dir)
         };
         // A one-texel cover: its floor is against the boundary, its top is not.
         assert_eq!(
@@ -475,14 +474,15 @@ mod tests {
         // this very tick shatters it, eating the item.
         let mut never_occupied = |_: IVec3, _: &[petramond_world::block::Aabb]| false;
         let mut plan = |w: &ServerWorld, p: IVec3, b: Block| {
-            w.data.finish_single_cell_placement(
-                b,
-                p,
-                petramond_world::block::ShapeState::NONE,
-                &[],
-                &mut never_occupied,
-            )
-            .is_some()
+            w.data
+                .finish_single_cell_placement(
+                    b,
+                    p,
+                    petramond_world::block::ShapeState::NONE,
+                    &[],
+                    &mut never_occupied,
+                )
+                .is_some()
         };
         assert!(
             !plan(&w, IVec3::new(4, 68, 4), vine),

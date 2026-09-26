@@ -199,12 +199,7 @@ pub struct Shortfall {
 impl fmt::Display for Shortfall {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let more = if self.more { " and more" } else { "" };
-        write!(
-            f,
-            "{MISSING}{}x {}{more}",
-            self.count,
-            self.name
-        )
+        write!(f, "{MISSING}{}x {}{more}", self.count, self.name)
     }
 }
 

@@ -130,19 +130,19 @@ fn crafting_outputs_replicate_per_session_and_remain_independent() {
         .inventory
         .add(ItemStack::new(ItemType::Coal, 1));
     game.session_at_mut(remote)
-        .player
+        .player_mut()
         .inventory
         .add(ItemStack::new(ItemType::Dirt, 1));
-    game.sim_mut().open_crafting_for(0, CraftingStation::Inventory);
+    game.sim_mut()
+        .open_crafting_for(0, CraftingStation::Inventory);
     game.sim_mut()
         .open_crafting_for(remote, CraftingStation::Inventory);
 
     game.send_to_server(ClientToServer::CraftRecipe {
-            recipe: "test:local".into(),
-            bulk: false,
-            request_id: 41,
-        },
-    );
+        recipe: "test:local".into(),
+        bulk: false,
+        request_id: 41,
+    });
     game.sim_mut().apply_message(
         remote,
         ClientToServer::CraftRecipe {
@@ -175,18 +175,17 @@ fn crafting_outputs_replicate_per_session_and_remain_independent() {
     ));
 
     game.send_to_server(ClientToServer::MenuClick {
-            slot: MenuSlotWire::from_menu_slot(&MenuSlot::CraftResult),
-            button: 0,
-            shift: false,
-            gather: false,
-            request_id: 43,
-        },
-    );
+        slot: MenuSlotWire::from_menu_slot(&MenuSlot::CraftResult),
+        button: 0,
+        shift: false,
+        gather: false,
+        request_id: 43,
+    });
     game.sim_mut().tick_menu(0, &mut events);
-    assert!(game.session().menu.craft_output().is_none());
+    assert!(game.session().menu().craft_output().is_none());
     assert_eq!(
         game.session_at(remote)
-            .menu
+            .menu()
             .craft_output()
             .map(|s| s.item),
         Some(ItemType::Glass),
@@ -201,7 +200,7 @@ fn self_state_ships_the_inventory_only_when_the_revision_moved() {
     let mut game = game_on_empty_chunk();
 
     let up1 = pump_one_tick(&mut game);
-    let s1 = up1.self_state.as_ref().expect("self state every batch");
+    let s1 = up1.self_state().expect("self state every batch");
     assert!(
         s1.inventory.is_some(),
         "the first update after join always carries the inventory"
@@ -213,7 +212,7 @@ fn self_state_ships_the_inventory_only_when_the_revision_moved() {
     );
 
     let up2 = pump_one_tick(&mut game);
-    let s2 = up2.self_state.as_ref().expect("self state every batch");
+    let s2 = up2.self_state().expect("self state every batch");
     assert!(
         s2.inventory.is_none(),
         "an unchanged revision ships no inventory body"
@@ -223,7 +222,7 @@ fn self_state_ships_the_inventory_only_when_the_revision_moved() {
         .inventory
         .add(ItemStack::new(ItemType::Stone, 5));
     let up3 = pump_one_tick(&mut game);
-    let s3 = up3.self_state.as_ref().expect("self state every batch");
+    let s3 = up3.self_state().expect("self state every batch");
     let slots = s3
         .inventory
         .as_ref()
@@ -246,7 +245,8 @@ fn chest_viewer_transitions_emit_events_only_at_zero_boundaries() {
 
     let mut game = super::common::game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
-    game.server_world_mut().set_block_world(3, 64, 3, Block::Chest);
+    game.server_world_mut()
+        .set_block_world(3, 64, 3, Block::Chest);
     game.server_world_mut()
         .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
     let s1 = game
@@ -282,9 +282,11 @@ fn a_remote_sessions_chest_open_reaches_the_local_batch_exactly_once() {
 
     let mut game = super::common::game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
-    game.server_world_mut().set_block_world(3, 64, 3, Block::Chest);
+    game.server_world_mut()
+        .set_block_world(3, 64, 3, Block::Chest);
     game.server_world_mut()
         .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
+    game.sim_mut().mark_section_sent_for_test(0, pos);
     let s1 = game
         .sim_mut()
         .add_session_for_test(petramond::player::Player::new(WorldPos::new(
@@ -293,22 +295,33 @@ fn a_remote_sessions_chest_open_reaches_the_local_batch_exactly_once() {
 
     // Session 1 right-clicked the chest (latched edge + look, as its
     // PlayerUpdate/UseClick messages would leave them).
-    game.session_at_mut(s1).look = Some(super::common::hit(pos, IVec3::Y));
+    game.session_at_mut(s1).input_mut().look = Some(super::common::hit(pos, IVec3::Y));
     game.sim_mut().queue_place_click_for_test(s1);
 
     let update = pump_one_tick(&mut game);
     assert!(
-        update.open_chests.contains(&pos),
+        update
+            .open_chests()
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+            .contains(&pos),
         "the other player's open lifts the replicated lid set"
     );
     let opened: Vec<_> = update
-        .events
+        .events()
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
         .iter()
         .filter(|e| matches!(e, WorldEventMsg::ChestOpened { pos: p } if *p == pos))
         .collect();
     assert_eq!(opened.len(), 1, "exactly one ChestOpened event broadcast");
     assert_eq!(
-        update.self_events.open_screen, None,
+        update
+            .self_events()
+            .cloned()
+            .unwrap_or_default()
+            .open_screen,
+        None,
         "the non-opening recipient gets no open-screen one-shot"
     );
 }
@@ -324,25 +337,30 @@ fn menu_sync_ships_on_change_only() {
 
     let mut game = super::common::game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
-    game.server_world_mut().set_block_world(3, 64, 3, Block::Chest);
+    game.server_world_mut()
+        .set_block_world(3, 64, 3, Block::Chest);
     game.server_world_mut()
         .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
 
     let up1 = pump_one_tick(&mut game);
     let sync = up1
-        .menu_sync
+        .menu_sync()
+        .cloned()
         .expect("the first batch ships the initial view");
     assert_eq!(sync.target, MenuTargetWire::None);
     let up2 = pump_one_tick(&mut game);
     assert!(
-        up2.menu_sync.is_none(),
+        up2.menu_sync().cloned().is_none(),
         "unchanged (closed) menu ships nothing"
     );
 
     let mut ev = TickEvents::default();
     game.sim_mut().open_chest_screen_for(0, pos, &mut ev);
     let up3 = pump_one_tick(&mut game);
-    let sync = up3.menu_sync.expect("the open ships the new view");
+    let sync = up3
+        .menu_sync()
+        .cloned()
+        .expect("the open ships the new view");
     assert!(
         matches!(&sync.target, MenuTargetWire::Container { anchor, kind_key, .. }
             if *anchor == Some(pos.into()) && kind_key == "petramond:chest"),
@@ -351,7 +369,7 @@ fn menu_sync_ships_on_change_only() {
     );
     let up4 = pump_one_tick(&mut game);
     assert!(
-        up4.menu_sync.is_none(),
+        up4.menu_sync().cloned().is_none(),
         "a still-open, untouched chest ships nothing"
     );
 }
@@ -369,37 +387,44 @@ fn a_slot_click_forces_the_authoritative_pair_even_as_a_noop() {
 
     let mut game = super::common::game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
-    game.server_world_mut().set_block_world(3, 64, 3, Block::Chest);
+    game.server_world_mut()
+        .set_block_world(3, 64, 3, Block::Chest);
     game.server_world_mut()
         .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
     let mut ev = TickEvents::default();
     game.sim_mut().open_chest_screen_for(0, pos, &mut ev);
     pump_one_tick(&mut game);
     let quiet = pump_one_tick(&mut game);
-    assert!(quiet.menu_sync.is_none(), "baseline: nothing changes");
+    assert!(
+        quiet.menu_sync().cloned().is_none(),
+        "baseline: nothing changes"
+    );
 
     // Empty cursor onto an empty chest slot: a server-side no-op.
     game.send_to_server(ClientToServer::MenuClick {
-            slot: MenuSlotWire::Container(0),
-            button: petramond::net::protocol::button_to_wire(
-                petramond_world::gui_state::PointerButton::Secondary,
-            ),
-            shift: false,
-            gather: false,
-            request_id: 11,
-        },
-    );
+        slot: MenuSlotWire::Container(0),
+        button: petramond::net::protocol::button_to_wire(
+            petramond_world::gui_state::PointerButton::Secondary,
+        ),
+        shift: false,
+        gather: false,
+        request_id: 11,
+    });
     let up = pump_one_tick(&mut game);
     assert!(
-        up.action_outcomes.iter().any(|o| o.id == 11 && o.accepted),
+        up.action_outcomes()
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+            .iter()
+            .any(|o| o.id == 11 && o.accepted),
         "the click is answered in the same batch"
     );
     assert!(
-        up.menu_sync.is_some(),
+        up.menu_sync().cloned().is_some(),
         "the outcome batch forces the menu view"
     );
     assert!(
-        up.self_state.is_some_and(|s| s.inventory.is_some()),
+        up.self_state().is_some_and(|s| s.inventory.is_some()),
         "the outcome batch forces the inventory body"
     );
 }
@@ -419,7 +444,8 @@ fn gui_state_ships_in_menu_sync_only_on_arc_change() {
     game.sim_mut().open_registered_gui_screen_for(0, kind, None);
 
     let up = pump_one_tick(&mut game);
-    let MenuTargetWire::Container { gui_state, .. } = up.menu_sync.expect("the open ships").target
+    let MenuTargetWire::Container { gui_state, .. } =
+        up.menu_sync().cloned().expect("the open ships").target
     else {
         panic!("expected a Container target");
     };
@@ -430,18 +456,21 @@ fn gui_state_ships_in_menu_sync_only_on_arc_change() {
     );
 
     let up = pump_one_tick(&mut game);
-    assert!(up.menu_sync.is_none(), "no writes → no sync");
+    assert!(up.menu_sync().cloned().is_none(), "no writes → no sync");
 
     // What a mod's GuiStateSet HostCall does on the tick: a copy-on-write
     // write against the session's map.
     petramond_world::gui_state::gui_state_set(
-        &mut game.session_mut().gui_state,
+        &mut game.session_mut().sim_mut().gui_state,
         "modtest:v".into(),
         GuiValue::I32(7),
     );
     let up = pump_one_tick(&mut game);
-    let MenuTargetWire::Container { gui_state, .. } =
-        up.menu_sync.expect("the write ships a sync").target
+    let MenuTargetWire::Container { gui_state, .. } = up
+        .menu_sync()
+        .cloned()
+        .expect("the write ships a sync")
+        .target
     else {
         panic!("expected a Container target");
     };
@@ -452,7 +481,10 @@ fn gui_state_ships_in_menu_sync_only_on_arc_change() {
     );
 
     let up = pump_one_tick(&mut game);
-    assert!(up.menu_sync.is_none(), "same Arc → nothing ships");
+    assert!(
+        up.menu_sync().cloned().is_none(),
+        "same Arc → nothing ships"
+    );
 }
 
 #[test]
@@ -473,7 +505,7 @@ fn host_written_mod_gui_state_syncs_to_matching_remote_session() {
     game.sim_mut()
         .open_registered_gui_screen_for(remote, kind, Some(pos.into()));
     petramond_world::gui_state::gui_state_set(
-        &mut game.session_mut().gui_state,
+        &mut game.session_mut().sim_mut().gui_state,
         "kitchen:cook01".into(),
         GuiValue::F32(0.5),
     );
@@ -505,7 +537,7 @@ fn open_screen_one_shot_maps_back_onto_game_events() {
     let pos = IVec3::new(3, 64, 3);
     // The tick's request site (interaction arm) writes this outbox field;
     // seed it directly to isolate the SelfEvents → GameEvents pipe.
-    game.session_mut().request_open_gui =
+    game.session_mut().replication_mut().request_open_gui =
         Some((petramond_world::gui_state::GuiKind::Chest, Some(pos.into())));
 
     let events = game.tick(TICK_DT, &GameInput::default());
@@ -515,7 +547,7 @@ fn open_screen_one_shot_maps_back_onto_game_events() {
         "the one-shot rode SelfEvents.open_screen into GameEvents"
     );
     assert!(
-        game.session().request_open_gui.is_none(),
+        game.session().replication().request_open_gui.is_none(),
         "the request outbox is consumed by the batch"
     );
 

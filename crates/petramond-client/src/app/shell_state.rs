@@ -118,7 +118,11 @@ fn pack_rows() -> Vec<ModPackRow> {
 
 /// Flip one pack row's enabled state in `settings`. Returns false for
 /// content-only packs (no id — always on) and out-of-range rows.
-pub(super) fn toggle_pack_row(rows: &[ModPackRow], settings: &mut WorldSettings, row: usize) -> bool {
+pub(super) fn toggle_pack_row(
+    rows: &[ModPackRow],
+    settings: &mut WorldSettings,
+    row: usize,
+) -> bool {
     let Some(Some(id)) = rows.get(row).map(|pack| pack.id.clone()) else {
         return false;
     };
@@ -395,15 +399,26 @@ mod tests {
     fn selection_moves_within_the_list() {
         let mut shell = ShellState::default();
         shell.move_world_selection(1);
-        assert_eq!(shell.selected_world(), None, "an empty list selects nothing");
+        assert_eq!(
+            shell.selected_world(),
+            None,
+            "an empty list selects nothing"
+        );
         shell.set_worlds_for_test(vec![world("a"), world("b")]);
         shell.move_world_selection(1);
-        assert_eq!(shell.selected_world(), Some(0), "the first move selects the top");
+        assert_eq!(
+            shell.selected_world(),
+            Some(0),
+            "the first move selects the top"
+        );
         shell.move_world_selection(5);
         assert_eq!(shell.selected_world(), Some(1), "clamped at the end");
         shell.move_world_selection(-5);
         assert_eq!(shell.selected_world(), Some(0), "clamped at the start");
-        assert_eq!(shell.selected_world_info().map(|w| w.name.as_str()), Some("a"));
+        assert_eq!(
+            shell.selected_world_info().map(|w| w.name.as_str()),
+            Some("a")
+        );
     }
 
     #[test]

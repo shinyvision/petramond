@@ -11,7 +11,8 @@ impl ServerWorld {
     /// section back until this holds, so every install lands light-complete
     /// and the replica performs NO light work of its own.
     pub fn section_light_final(&self, sp: SectionPos) -> bool {
-        self.data.sections
+        self.data
+            .sections
             .get(&sp)
             .is_some_and(|s| s.has_baked_light() || s.all_opaque())
     }

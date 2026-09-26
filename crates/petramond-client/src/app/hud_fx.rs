@@ -177,9 +177,16 @@ mod tests {
     #[test]
     fn a_health_change_wiggles_the_changed_hearts_for_a_moment() {
         let mut fx = HudFx::default();
-        assert_eq!(fx.heart_wiggle(health(20), 0.0), None, "first sight is not a change");
+        assert_eq!(
+            fx.heart_wiggle(health(20), 0.0),
+            None,
+            "first sight is not a change"
+        );
         assert_eq!(fx.heart_wiggle(health(17), 1.0), Some((17, 20, 0.0)));
-        assert_eq!(fx.heart_wiggle(health(17), 1.1).map(|w| (w.0, w.1)), Some((17, 20)));
+        assert_eq!(
+            fx.heart_wiggle(health(17), 1.1).map(|w| (w.0, w.1)),
+            Some((17, 20))
+        );
         assert_eq!(fx.heart_wiggle(health(17), 1.3), None, "the burst ends");
     }
 

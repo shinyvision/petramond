@@ -47,13 +47,15 @@ fn pose_with(
 ) -> SkinBatch {
     let mut batch = SkinBatch::default();
     let range = pose_mob_instances(
-        model,
-        scale,
+        MobPoseSpecies {
+            model,
+            scale,
+            rig,
+            cache: &mut MobPoseCache::default(),
+        },
         insts,
         layers,
         petramond_math::math::IVec3::ZERO,
-        rig,
-        &mut MobPoseCache::default(),
         &mut batch,
         &mut Vec::new(),
     );
@@ -107,16 +109,18 @@ fn each_instance_gets_its_own_palette_run() {
     // Species draw ranges follow on from whatever is already in the batch.
     let mut batch = batch;
     let range = pose_mob_instances(
-        &m,
-        0.25,
+        MobPoseSpecies {
+            model: &m,
+            scale: 0.25,
+            rig: &rig,
+            cache: &mut MobPoseCache::default(),
+        },
         std::slice::from_ref(&instance(0.0, false)),
         MobLayers {
             arena: &crate::MobArena::default(),
             names: &crate::AnimNames::default(),
         },
         petramond_math::math::IVec3::ZERO,
-        &rig,
-        &mut MobPoseCache::default(),
         &mut batch,
         &mut Vec::new(),
     );
@@ -181,7 +185,10 @@ fn the_species_mesh_is_whole_quads_with_matched_indices() {
     assert!(mesh.index_count() > 0);
     assert_eq!(mesh.verts.len() % 4, 0);
     assert_eq!(mesh.verts.len() / 4 * 6, mesh.indices.len());
-    assert!(mesh.indices.iter().all(|&ix| (ix as usize) < mesh.verts.len()));
+    assert!(mesh
+        .indices
+        .iter()
+        .all(|&ix| (ix as usize) < mesh.verts.len()));
     assert!(mesh.verts.iter().all(|v| v.bone < bone_slots(&m)));
 }
 
@@ -361,9 +368,7 @@ fn anim_clips_follow_the_table_that_names_the_id() {
     assert_eq!(ptr(cache.resolve(&m, theirs.names(), id)), None);
     assert_eq!(ptr(cache.resolve(&m, ours.names(), id)), walk);
     assert!(
-        cache
-            .resolve(&m, ours.names(), crate::AnimId(9))
-            .is_none(),
+        cache.resolve(&m, ours.names(), crate::AnimId(9)).is_none(),
         "an id outside the table resolves to nothing"
     );
 }

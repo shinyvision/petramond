@@ -118,7 +118,10 @@ fn an_anchored_tooltip_follows_the_hover_anchor() {
     let mut state = base_state();
     let (reused, fresh, _) = reexpand(&mut state, (None, Some("anchor")), |_| {});
     assert_eq!(reused, fresh);
-    assert!(fresh.iter().any(|l| l.contains("Some(\"help\")")), "{fresh:#?}");
+    assert!(
+        fresh.iter().any(|l| l.contains("Some(\"help\")")),
+        "{fresh:#?}"
+    );
 
     let (reused, fresh, _) = reexpand(&mut state, (Some("anchor"), None), |_| {});
     assert_eq!(reused, fresh);

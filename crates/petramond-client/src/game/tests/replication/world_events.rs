@@ -16,14 +16,17 @@ fn unpredicted_placement_keeps_the_initiators_world_event() {
     use petramond_world::block::Block;
 
     let mut game = super::common::game_on_empty_chunk();
-    game.server_player_mut().pos = WorldPos::new(8.5, 64.0, 8.5);
+    game.server_player_mut().pos = WorldPos::new(3.5, 64.0, 5.5);
     let floor = IVec3::new(3, 63, 3);
     game.server_world_mut()
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone);
+    game.sim_mut()
+        .mark_section_sent_for_test(0, floor + IVec3::Y);
     game.server_player_mut().inventory = filled_inventory();
-    game.session_mut().look = Some(super::common::hit(floor, IVec3::Y));
+    game.session_mut().input_mut().look = Some(super::common::hit(floor, IVec3::Y));
     game.sim_mut().queue_place_click_for_test(0);
     game.session_mut()
+        .input_mut()
         .pending_use_click
         .as_mut()
         .expect("click queued")
@@ -41,12 +44,17 @@ fn unpredicted_placement_keeps_the_initiators_world_event() {
         })
         .expect("local session batch");
     assert!(
-        initiator.events.iter().any(|e| matches!(
-            e,
-            WorldEventMsg::BlockPlaced { pos, .. } if *pos == placed_at
-        )),
+        initiator
+            .events()
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+            .iter()
+            .any(|e| matches!(
+                e,
+                WorldEventMsg::BlockPlaced { pos, .. } if *pos == placed_at
+            )),
         "an unpredicted place must keep the initiator's BlockPlaced, got {:?}",
-        initiator.events
+        initiator.events().map(Vec::as_slice).unwrap_or(&[])
     );
 }
 
@@ -61,7 +69,7 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
     use petramond_world::block::Block;
 
     let mut game = super::common::game_on_empty_chunk();
-    game.server_player_mut().pos = WorldPos::new(8.5, 64.0, 8.5);
+    game.server_player_mut().pos = WorldPos::new(3.5, 64.0, 5.5);
     let floor = IVec3::new(3, 63, 3);
     game.server_world_mut()
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone);
@@ -71,9 +79,13 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
         .add_session_for_test(petramond::player::Player::new(WorldPos::new(
             2.5, 64.0, 2.5,
         )));
+    game.sim_mut()
+        .mark_section_sent_for_test(0, floor + IVec3::Y);
+    game.sim_mut()
+        .mark_section_sent_for_test(observer, floor + IVec3::Y);
 
     // Place: a latched use click against the floor's top face.
-    game.session_mut().look = Some(super::common::hit(floor, IVec3::Y));
+    game.session_mut().input_mut().look = Some(super::common::hit(floor, IVec3::Y));
     game.sim_mut().queue_place_click_for_test(0);
     let mut inbox = Vec::new();
     let out = game.sim_mut().pump(TICK_DT, &mut inbox);
@@ -87,14 +99,19 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
         })
         .expect("local session batch");
     assert!(
-        initiator.events.iter().all(|e| !matches!(
-            e,
-            WorldEventMsg::BlockPlaced { pos, .. } if *pos == placed_at
-        )),
+        initiator
+            .events()
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+            .iter()
+            .all(|e| !matches!(
+                e,
+                WorldEventMsg::BlockPlaced { pos, .. } if *pos == placed_at
+            )),
         "initiator must not re-hear their own BlockPlaced, got {:?}",
-        initiator.events
+        initiator.events().map(Vec::as_slice).unwrap_or(&[])
     );
-    let observer_id = game.session_at(observer).id;
+    let observer_id = game.session_at(observer).id();
     let observer_batch = out
         .remote
         .iter()
@@ -107,13 +124,18 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
         })
         .expect("observer batch");
     assert!(
-        observer_batch.events.iter().any(|e| matches!(
-            e,
-            WorldEventMsg::BlockPlaced { pos, block_id }
-                if *pos == placed_at && *block_id == Block::Dirt.0
-        )),
+        observer_batch
+            .events()
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+            .iter()
+            .any(|e| matches!(
+                e,
+                WorldEventMsg::BlockPlaced { pos, block_id }
+                    if *pos == placed_at && *block_id == Block::Dirt.0
+            )),
         "observers still receive the placement, got {:?}",
-        observer_batch.events
+        observer_batch.events().map(Vec::as_slice).unwrap_or(&[])
     );
 
     // Break: a PURE hold-path finish — no BreakFinished was ever sent, so the
@@ -122,9 +144,9 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
     // BlockBroken; stripping it here was the silent-break bug. A predicted
     // finish merely in flight presents once regardless: the client's own
     // suppress belt (`PredictionLedger::mark_presented`) drops the wire copy.
-    game.session_mut().look = Some(super::common::hit(placed_at, IVec3::Y));
-    game.session_mut().intent_gameplay = true;
-    game.session_mut().intent_break_held = true;
+    game.session_mut().input_mut().look = Some(super::common::hit(placed_at, IVec3::Y));
+    game.session_mut().input_mut().intent_gameplay = true;
+    game.session_mut().input_mut().intent_break_held = true;
     let mut initiator_heard = false;
     let mut observer_heard = false;
     for _ in 0..200 {
@@ -135,18 +157,24 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
             _ => None,
         });
         if let Some(u) = local {
-            if u.events.iter().any(|e| {
-                matches!(
-                    e,
-                    WorldEventMsg::BlockBroken { pos, .. } if *pos == placed_at
-                )
-            }) {
+            if u.events()
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+                .iter()
+                .any(|e| {
+                    matches!(
+                        e,
+                        WorldEventMsg::BlockBroken { pos, .. } if *pos == placed_at
+                    )
+                })
+            {
                 initiator_heard = true;
             }
-            if Block::from_id(
-                game.server_world()
-                    .chunk_block(placed_at.x, placed_at.y, placed_at.z),
-            ) == Block::Air
+            if Block::from_id(game.server_world().data().chunk_block(
+                placed_at.x,
+                placed_at.y,
+                placed_at.z,
+            )) == Block::Air
             {
                 let obs = out
                     .remote
@@ -159,13 +187,18 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
                         })
                     });
                 if let Some(u) = obs {
-                    observer_heard = u.events.iter().any(|e| {
-                        matches!(
-                            e,
-                            WorldEventMsg::BlockBroken { pos, block_id, .. }
-                                if *pos == placed_at && *block_id == Block::Dirt.0
-                        )
-                    });
+                    observer_heard = u
+                        .events()
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[])
+                        .iter()
+                        .any(|e| {
+                            matches!(
+                                e,
+                                WorldEventMsg::BlockBroken { pos, block_id, .. }
+                                    if *pos == placed_at && *block_id == Block::Dirt.0
+                            )
+                        });
                 }
                 break;
             }
@@ -199,7 +232,9 @@ fn wire_break_for_a_presented_cell_is_suppressed_while_its_request_is_pending() 
     game.game.prediction.mark_presented(presented);
 
     let update = TickUpdate {
-        events: vec![
+        tick: 0,
+        clock: 0,
+        sections: vec![petramond::net::protocol::TickSection::Events(vec![
             WorldEventMsg::BlockBroken {
                 pos: presented,
                 block_id: Block::Stone.0,
@@ -212,8 +247,7 @@ fn wire_break_for_a_presented_cell_is_suppressed_while_its_request_is_pending() 
                 normal: None,
                 tint: None,
             },
-        ],
-        ..Default::default()
+        ])],
     };
     game.send_server_message(ServerToClient::Tick(Box::new(update)));
 
@@ -243,23 +277,23 @@ fn multiple_tick_updates_in_one_frame_accumulate_not_overwrite() {
 
     let mut game = super::common::game();
 
-    let mut first = TickUpdate {
-        tick: 10,
-        ..Default::default()
-    };
-    first.self_events.picked_up_item = true;
-    first.events.push(WorldEventMsg::ChestOpened {
-        pos: petramond_math::math::IVec3::new(1, 65, 1),
-    });
+    let first = TickUpdate::new(10, 0)
+        .with(petramond::net::protocol::SelfEvents {
+            picked_up_item: true,
+            ..Default::default()
+        })
+        .with(vec![WorldEventMsg::ChestOpened {
+            pos: petramond_math::math::IVec3::new(1, 65, 1),
+        }]);
 
-    let mut second = TickUpdate {
-        tick: 11,
-        ..Default::default()
-    };
-    second.self_events.player_damaged = true;
-    second.events.push(WorldEventMsg::ChestClosed {
-        pos: petramond_math::math::IVec3::new(1, 65, 1),
-    });
+    let second = TickUpdate::new(11, 0)
+        .with(petramond::net::protocol::SelfEvents {
+            player_damaged: true,
+            ..Default::default()
+        })
+        .with(vec![WorldEventMsg::ChestClosed {
+            pos: petramond_math::math::IVec3::new(1, 65, 1),
+        }]);
 
     game.apply_tick_update(Box::new(first));
     game.apply_tick_update(Box::new(second));

@@ -33,7 +33,12 @@ pub(crate) fn build_session_inline(
     new_seed: u32,
     render_dist: i32,
 ) -> (ServerGame, ClientBootstrap) {
-    build_session_with_pool(world_name, new_seed, render_dist, Arc::new(JobPool::inline()))
+    build_session_with_pool(
+        world_name,
+        new_seed,
+        render_dist,
+        Arc::new(JobPool::inline()),
+    )
 }
 
 fn build_session_with_pool(
@@ -43,14 +48,8 @@ fn build_session_with_pool(
     pool: Arc<JobPool>,
 ) -> (ServerGame, ClientBootstrap) {
     let (key, name) = local_player();
-    let (server, session) = petramond::local_host::build_in_process(
-        world_name,
-        new_seed,
-        render_dist,
-        key,
-        name,
-        pool,
-    );
+    let (server, session) =
+        petramond::local_host::build_in_process(world_name, new_seed, render_dist, key, name, pool);
     (
         server,
         ClientBootstrap::local(world_name, render_dist, session),

@@ -213,5 +213,7 @@ pub(super) fn augmentable_tools() -> HashMap<String, (ToolSlots, ToolStats)> {
 /// The items carrying `key` at all — membership is the whole vocabulary for
 /// the socket gem and the innately gentle tools.
 pub(super) fn items_with(key: &str) -> HashSet<String> {
-    read_rows::<serde::de::IgnoredAny>(key).into_keys().collect()
+    read_rows::<serde::de::IgnoredAny>(key)
+        .into_keys()
+        .collect()
 }

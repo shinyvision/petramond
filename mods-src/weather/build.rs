@@ -17,7 +17,9 @@ fn main() {
     println!("cargo:rerun-if-changed={}", shader.display());
 
     let source = fs::read_to_string(&shader).expect("read clouds.wgsl");
-    let (prefix, rest) = source.split_once(BEGIN).expect("weather constants begin marker");
+    let (prefix, rest) = source
+        .split_once(BEGIN)
+        .expect("weather constants begin marker");
     let (_, suffix) = rest.split_once(END).expect("weather constants end marker");
     let constants = format!(
         "const WRAP: f32 = {:?};\n\

@@ -83,7 +83,6 @@ pub fn terrain_solid_at(seed: u32, positions: &[[i32; 3]]) -> Vec<bool> {
         .collect()
 }
 
-
 /// [`terrain_solid_at`] telling air from fluid, without loading neighbouring
 /// sections: a cell holding the sea, an aquifer, a pool or a fall is neither
 /// ground to stand on nor room to grow into.
@@ -264,13 +263,10 @@ pub fn surface_biome_at(seed: u32, columns: &[[i32; 2]]) -> Vec<u8> {
         let [x, _, z] = clamp_query([columns[i as usize][0], 0, columns[i as usize][1]]);
         let at = (x.div_euclid(TILE), z.div_euclid(TILE));
         if !matches!(&tile, Some((k, _)) if *k == at) {
-            tile = Some((
-                at,
-                feature::cached_tile_biomes(&surface, &caves, at.0, at.1),
-            ));
+            tile = Some((at, feature::cached_tile_biomes(surface, caves, at.0, at.1)));
         }
         let biomes = &tile.as_ref().expect("tile just filled").1;
-        out[i as usize] = biomes[((z - at.1 * TILE) * TILE + (x - at.0 * TILE)) as usize] as u8;
+        out[i as usize] = biomes[((z - at.1 * TILE) * TILE + (x - at.0 * TILE)) as usize].id();
     }
     out
 }

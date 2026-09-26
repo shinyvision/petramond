@@ -497,9 +497,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
             mob_id,
             player_id,
             seat,
-        } => sim_query(|ctx| {
-            HostRet::Bool(ctx.world.try_mount_player(player_id.0, mob_id, seat))
-        }),
+        } => sim_query(|ctx| HostRet::Bool(ctx.world.try_mount_player(player_id.0, mob_id, seat))),
         EntityCall::PlayerPoseSet {
             player_id,
             anchor,
@@ -527,9 +525,9 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
                 ))
             })
         }
-        EntityCall::MobDismount { player_id } => sim_query(|ctx| {
-            HostRet::Bool(ctx.world.riding_mut().dismount(player_id.0).is_some())
-        }),
+        EntityCall::MobDismount { player_id } => {
+            sim_query(|ctx| HostRet::Bool(ctx.world.riding_mut().dismount(player_id.0).is_some()))
+        }
         EntityCall::MobRiders { mob_id } => sim_query(|ctx| {
             let Some(mob) = live_mob(ctx, mob_id) else {
                 return HostRet::Riders(None);
@@ -556,13 +554,24 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
                     return err;
                 }
             }
-            sim_query(|ctx| HostRet::Bools(drives.into_iter().map(|d| intents::apply_drive(ctx, d)).collect()))
+            sim_query(|ctx| {
+                HostRet::Bools(
+                    drives
+                        .into_iter()
+                        .map(|d| intents::apply_drive(ctx, d))
+                        .collect(),
+                )
+            })
         }
         EntityCall::MobKinematicMany { poses } => {
             if let Some(err) = batch_guard("MobKinematicMany pose", poses.len()) {
                 return err;
             }
-            let tilts = match poses.iter().map(intents::kinematic_guard).collect::<Result<Vec<_>, _>>() {
+            let tilts = match poses
+                .iter()
+                .map(intents::kinematic_guard)
+                .collect::<Result<Vec<_>, _>>()
+            {
                 Ok(tilts) => tilts,
                 Err(err) => return err,
             };
@@ -586,13 +595,22 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
                     return err;
                 }
             }
-            sim_query(|ctx| HostRet::Bools(ops.iter().map(|op| intents::apply_anim(ctx, op)).collect()))
+            sim_query(|ctx| {
+                HostRet::Bools(ops.iter().map(|op| intents::apply_anim(ctx, op)).collect())
+            })
         }
         EntityCall::MobRidersMany { mob_ids } => {
             if let Some(err) = batch_guard("MobRidersMany mob", mob_ids.len()) {
                 return err;
             }
-            sim_query(|ctx| HostRet::RidersMany(mob_ids.into_iter().map(|id| intents::riders(ctx, id)).collect()))
+            sim_query(|ctx| {
+                HostRet::RidersMany(
+                    mob_ids
+                        .into_iter()
+                        .map(|id| intents::riders(ctx, id))
+                        .collect(),
+                )
+            })
         }
         EntityCall::BlockModelGroup { pos } => sim_query(|ctx| {
             let p = petramond_math::math::IVec3::new(pos[0], pos[1], pos[2]);
@@ -705,7 +723,9 @@ fn spawn_item_stacks(
     let cell = pos.block();
     let sky = ctx.world.data().skylight6_at_world(cell.x, cell.y, cell.z);
     let block = petramond_world::light::BlockLight6::from_x2(
-        ctx.world.data().blocklight_rgb_at_world(cell.x, cell.y, cell.z),
+        ctx.world
+            .data()
+            .blocklight_rgb_at_world(cell.x, cell.y, cell.z),
     );
     let mut remaining = count;
     let mut i = 0u32;
@@ -869,12 +889,14 @@ mod tests {
             queue: &mut queue,
         };
         scope::enter(&mut ctx, || {
-            let checked = |pos| HostCall::from(calls::SpawnMob {
-                key: "petramond:owl".into(),
-                pos,
-                yaw: 0.0,
-                checked: true,
-            });
+            let checked = |pos| {
+                HostCall::from(calls::SpawnMob {
+                    key: "petramond:owl".into(),
+                    pos,
+                    yaw: 0.0,
+                    checked: true,
+                })
+            };
             assert_eq!(
                 handle_host_call(&mut data, checked([8.5, 64.0, 8.5])),
                 HostRet::SpawnedMob(None),
@@ -985,52 +1007,52 @@ mod tests {
             );
         };
 
-        rejected(HostCall::from(calls::MobAnimSet {
+        rejected(calls::MobAnimSet {
             mob_id: 1,
             anim: "a".repeat(MAX_MOB_ANIM_NAME_BYTES + 1),
             active: true,
-        }));
-        rejected(HostCall::from(calls::MobAnimRate {
+        });
+        rejected(calls::MobAnimRate {
             mob_id: 1,
             anim: "row".into(),
             rate: MAX_MOB_ANIM_RATE_MAGNITUDE * 2.0,
-        }));
-        rejected(HostCall::from(calls::MobAnimSeek {
+        });
+        rejected(calls::MobAnimSeek {
             mob_id: 1,
             anim: "row".into(),
             phase: MAX_MOB_ANIM_PHASE_MAGNITUDE * 2.0,
             rate: 1.0,
-        }));
-        rejected(HostCall::from(calls::MobAnimSeek {
+        });
+        rejected(calls::MobAnimSeek {
             mob_id: 1,
             anim: "row".into(),
             phase: 0.0,
             rate: MAX_MOB_ANIM_RATE_MAGNITUDE * 2.0,
-        }));
-        rejected(HostCall::from(calls::MobDrive {
+        });
+        rejected(calls::MobDrive {
             mob_id: 1,
             horizontal: Some([super::MAX_MOB_DRIVE_SPEED * 2.0, 0.0]),
             vertical: None,
             yaw: None,
             while_walking: false,
             gait: false,
-        }));
-        rejected(HostCall::from(calls::MobDrive {
+        });
+        rejected(calls::MobDrive {
             mob_id: 1,
             horizontal: None,
             vertical: Some(super::MAX_MOB_DRIVE_SPEED * 2.0),
             yaw: None,
             while_walking: false,
             gait: false,
-        }));
-        rejected(HostCall::from(calls::MobDrive {
+        });
+        rejected(calls::MobDrive {
             mob_id: 1,
             horizontal: Some([1.0, 0.0]),
             vertical: Some(1.0),
             yaw: None,
             while_walking: true,
             gait: false,
-        }));
+        });
     }
 
     #[test]
@@ -1054,7 +1076,10 @@ mod tests {
 
         scope::enter(&mut ctx, || {
             assert_eq!(
-                handle_host_call(&mut data, HostCall::from(calls::MobRiders { mob_id: u64::MAX })),
+                handle_host_call(
+                    &mut data,
+                    HostCall::from(calls::MobRiders { mob_id: u64::MAX })
+                ),
                 HostRet::Riders(None)
             );
             assert_eq!(

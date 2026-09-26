@@ -1,12 +1,12 @@
 use super::{cursor_over_menu, test_recipe};
 use crate::app::App;
-use petramond::server::game::ServerGame;
 use petramond::net::handle::LoopbackServer;
+use petramond::server::game::ServerGame;
+use petramond_math::world_pos::WorldPos;
+use petramond_render::camera::Camera;
 use petramond_world::gui_state::{MenuSlot, PointerButton};
 use petramond_world::inventory::Inventory;
 use petramond_world::item::{ItemStack, ItemType};
-use petramond_math::world_pos::WorldPos;
-use petramond_render::camera::Camera;
 
 /// The app test fixture: a real [`App`] whose game session rides a LOOPBACK
 /// server pipe, with the `ServerGame` held here — the same shape as the game
@@ -41,8 +41,7 @@ impl TestApp {
     /// ended. This exercises the real adoption path and fresh session scope.
     pub(super) fn restart_session(&mut self) {
         assert!(self.app.session.is_none());
-        let (server, bootstrap) =
-            crate::game::tests::bootstrap::build_session_inline("", 1, 1);
+        let (server, bootstrap) = crate::game::tests::bootstrap::build_session_inline("", 1, 1);
         let (handle, pipe) = petramond::net::handle::ServerHandle::loopback();
         let game = crate::game::Game::assemble(
             Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0),
@@ -55,16 +54,13 @@ impl TestApp {
     }
 
     pub(super) fn set_server_player_mode(&mut self, mode: petramond::player::PlayerMode) {
-        self.server.sessions[0].player.set_mode(mode);
+        self.server.sessions_mut()[0].player_mut().set_mode(mode);
     }
 
     pub(super) fn sync_server_self_state(&mut self) {
         let state = self.server.build_self_state(0);
         self.app.game_mut().apply_tick_update(Box::new(
-            petramond::net::protocol::TickUpdate {
-                self_state: Some(state),
-                ..Default::default()
-            },
+            petramond::net::protocol::TickUpdate::new(0, 0).with(state),
         ));
     }
 
@@ -83,15 +79,15 @@ impl TestApp {
     }
 
     pub(super) fn mark_lan_opened(&mut self) {
-        self.server.lan_ever_opened = true;
+        self.server.open_to_lan_for_test();
     }
 
     pub(super) fn set_server_player_pos(&mut self, pos: petramond_math::world_pos::WorldPos) {
-        self.server.sessions[0].player.pos = pos;
+        self.server.sessions_mut()[0].player_mut().pos = pos;
     }
 
     pub(super) fn server_craft_craftable_only(&self) -> bool {
-        self.server.sessions[0].player.craft_craftable_only
+        self.server.sessions()[0].player().craft_craftable_only
     }
 
     /// Click the open document menu at the current cursor and then apply the
@@ -194,7 +190,9 @@ impl TestApp {
         }
         self.server.apply_latched_actions_for_test();
         // Refresh the replicated self/menu views the way the next batch would.
-        self.server.sessions[0].last_sent_inventory_revision = None;
+        self.server.sessions_mut()[0]
+            .replication_mut()
+            .last_sent_inventory_revision = None;
         let state = self.server.build_self_state(0);
         let sync = self.server.build_menu_sync(0);
         game.apply_views_for_test(&state, sync);
@@ -217,18 +215,22 @@ impl TestApp {
 
     /// The SESSION inventory — the authoritative one the sim mutates.
     pub(super) fn inventory(&self) -> &Inventory {
-        &self.server.sessions[0].player.inventory
+        &self.server.sessions()[0].player().inventory
     }
 
     pub(super) fn add_to_inventory(&mut self, stack: ItemStack) {
-        self.server.sessions[0].player.inventory.add(stack);
+        self.server.sessions_mut()[0]
+            .player_mut()
+            .inventory
+            .add(stack);
         // Recipe affordance is presentation-side and therefore reads the
         // replicated inventory, just like the real client after a batch.
-        self.server.sessions[0].last_sent_inventory_revision = None;
+        self.server.sessions_mut()[0]
+            .replication_mut()
+            .last_sent_inventory_revision = None;
         let state = self.server.build_self_state(0);
         let sync = self.server.build_menu_sync(0);
-        self.app.game_mut()
-            .apply_views_for_test(&state, sync);
+        self.app.game_mut().apply_views_for_test(&state, sync);
     }
 
     pub(super) fn install_test_crafting_catalog(
@@ -240,10 +242,9 @@ impl TestApp {
                 recipes.clone(),
                 Vec::new(),
             ));
-        self.app.game_mut()
-            .set_crafting_catalog_for_test(petramond_world::crafting::CraftingCatalog::new(
-                recipes,
-            ));
+        self.app.game_mut().set_crafting_catalog_for_test(
+            petramond_world::crafting::CraftingCatalog::new(recipes),
+        );
     }
 
     pub(super) fn install_test_crafting_recipe(&mut self) {

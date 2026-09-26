@@ -325,7 +325,7 @@ impl PackSet {
         let enabled: Vec<Pack> = self
             .installed
             .iter()
-            .filter(|p| p.id.as_ref().map_or(true, |id| !off.contains(id)))
+            .filter(|p| p.id.as_ref().is_none_or(|id| !off.contains(id)))
             .cloned()
             .collect();
         PackSet {

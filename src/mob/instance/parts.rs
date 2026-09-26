@@ -30,6 +30,7 @@ use super::super::EntityRef;
 /// Last tick's render pose: the renderer interpolates from here to the
 /// instance's current pose, so motion is smooth at any frame rate.
 #[derive(Copy, Clone, Debug)]
+#[allow(dead_code)] // Retained as one complete pose for future interpolation consumers.
 pub(in crate::mob) struct Interp {
     pub pos: WorldPos,
     pub yaw: f32,

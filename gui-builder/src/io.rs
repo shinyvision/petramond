@@ -286,10 +286,8 @@ mod tests {
 
     #[test]
     fn document_images_resolve_beside_the_project_before_the_layers() {
-        let root = std::env::temp_dir().join(format!(
-            "gui-builder-io-images-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("gui-builder-io-images-{}", std::process::id()));
         let base = root.join("assets");
         let project = root.join("project");
         std::fs::create_dir_all(base.join("ui/documents")).unwrap();

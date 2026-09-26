@@ -25,9 +25,9 @@ pub mod graph;
 pub mod hooks;
 mod noise;
 pub mod parity;
-mod queries;
 #[cfg(feature = "tools")]
 pub mod preview;
+mod queries;
 pub mod region;
 pub mod rng;
 pub(crate) mod salts;
@@ -239,7 +239,6 @@ mod tests {
     }
 
     #[test]
-
     #[ignore = "slow sweep; `make test-worldgen` runs it"]
     fn generated_underwater_terrain_has_no_grass_blocks() {
         for &seed in &[0x1234_5678u32, 1, 0xDEAD_BEEF, 7] {
@@ -261,5 +260,4 @@ mod tests {
             }
         }
     }
-
 }

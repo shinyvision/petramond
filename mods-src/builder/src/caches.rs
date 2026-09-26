@@ -57,7 +57,11 @@ mod tests {
         let mut caches = Caches::default();
         assert_eq!(caches.max_stack(crate::keys::BLUEPRINT), 1);
         assert_eq!(caches.max_stack("petramond:stone"), 64);
-        assert_eq!(caches.max_stack("nobody:nothing"), 64, "unknown: as most stack");
+        assert_eq!(
+            caches.max_stack("nobody:nothing"),
+            64,
+            "unknown: as most stack"
+        );
         assert_eq!(caches.display_name("petramond:oak_planks"), "Oak Planks");
         assert_eq!(caches.display_name("nobody:nothing"), "nobody:nothing");
         assert_eq!(caches.block(STONE).map(|b| b.hardness), Some(1.5));

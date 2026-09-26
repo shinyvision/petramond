@@ -77,7 +77,10 @@ mod tests {
         assert!(placement_blocked_by_bodies(cell, cube, [away, inside]));
         assert!(!placement_blocked_by_bodies(cell, cube, [away]));
         assert!(!placement_blocked_by_bodies(cell, &[], [inside]));
-        assert!(player_occupies(true, false, true), "the placer always counts");
+        assert!(
+            player_occupies(true, false, true),
+            "the placer always counts"
+        );
         assert!(player_occupies(false, true, false));
         assert!(!player_occupies(false, false, false), "the dead do not");
         assert!(!player_occupies(false, true, true), "spectators do not");
@@ -86,7 +89,10 @@ mod tests {
     #[test]
     fn the_front_faces_back_toward_the_player() {
         assert_eq!(facing_from_forward(Vec3::new(0.0, 0.0, 1.0)), Facing::North);
-        assert_eq!(facing_from_forward(Vec3::new(0.0, 0.0, -1.0)), Facing::South);
+        assert_eq!(
+            facing_from_forward(Vec3::new(0.0, 0.0, -1.0)),
+            Facing::South
+        );
         assert_eq!(facing_from_forward(Vec3::new(1.0, 0.0, 0.0)), Facing::West);
         assert_eq!(facing_from_forward(Vec3::new(-1.0, 0.0, 0.0)), Facing::East);
     }

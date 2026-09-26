@@ -346,21 +346,22 @@ pub(super) fn handle_memo_call(data: &ModStoreData, call: MemoCall) -> HostRet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mod_api::calls;
 
     fn put(mod_id: &str, seed: u32, key: &[u8], value: &[u8]) -> HostRet {
         let data = ModStoreData::new(mod_id, seed);
         handle_memo_call(
             &data,
-            HostCall::from(calls::MemoPut {
+            calls::MemoPut {
                 key: key.to_vec(),
                 value: value.to_vec(),
-            }),
+            },
         )
     }
 
     fn get(mod_id: &str, seed: u32, key: &[u8]) -> Option<Vec<u8>> {
         let data = ModStoreData::new(mod_id, seed);
-        match handle_memo_call(&data, HostCall::from(calls::MemoGet { key: key.to_vec() })) {
+        match handle_memo_call(&data, calls::MemoGet { key: key.to_vec() }) {
             HostRet::Bytes(v) => v,
             other => panic!("{other:?}"),
         }
@@ -371,9 +372,9 @@ mod tests {
         let data = ModStoreData::new("lease", 3);
         let claim = |data: &ModStoreData| match handle_memo_call(
             data,
-            HostCall::from(calls::MemoClaim {
+            calls::MemoClaim {
                 key: b"cell".to_vec(),
-            }),
+            },
         ) {
             HostRet::MemoClaim(c) => c,
             other => panic!("{other:?}"),
@@ -440,10 +441,10 @@ mod tests {
         assert_eq!(
             handle_memo_call(
                 &data,
-                HostCall::from(calls::MemoPut {
+                calls::MemoPut {
                     key: b"fact".to_vec(),
                     value: b"v".to_vec(),
-                }),
+                },
             ),
             HostRet::Bool(true)
         );
@@ -508,9 +509,7 @@ mod tests {
         // The thread-level entry point waits on (and consumes) the key the
         // last pending claim recorded.
         let data = ModStoreData::new("wait", 11);
-        let claim = |key: &[u8]| {
-            handle_memo_call(&data, HostCall::from(calls::MemoClaim { key: key.to_vec() }))
-        };
+        let claim = |key: &[u8]| handle_memo_call(&data, calls::MemoClaim { key: key.to_vec() });
         clear_pending_key();
         assert_eq!(claim(b"own"), HostRet::MemoClaim(MemoClaim::Lease));
         assert_eq!(claim(b"own"), HostRet::MemoClaim(MemoClaim::Pending));

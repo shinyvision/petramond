@@ -51,8 +51,8 @@ pub fn viewport_overflow(
     let mut issues = Vec::new();
     for (i, inst) in tree.insts.iter().enumerate() {
         let Some(p) = inst.parent else { continue };
-        scrolled[i] = scrolled[p as usize]
-            || matches!(tree.get(p).node.kind, NodeKind::Scroll { .. });
+        scrolled[i] =
+            scrolled[p as usize] || matches!(tree.get(p).node.kind, NodeKind::Scroll { .. });
         let rect = solved.rects[i];
         if solved.overlay[i] || rect.h == 0 || inst.layout.abs.is_some() {
             continue;

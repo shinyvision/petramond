@@ -96,7 +96,7 @@ impl<'de> Deserialize<'de> for Node {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         use serde::de::Error as _;
 
-        #[derive(Deserialize)]
+        #[derive(Default, Deserialize)]
         #[serde(default, deny_unknown_fields)]
         struct Common {
             id: Option<String>,
@@ -108,32 +108,37 @@ impl<'de> Deserialize<'de> for Node {
             children: Vec<Node>,
         }
 
-        impl Default for Common {
-            fn default() -> Self {
-                Self {
-                    id: None,
-                    layout: LayoutProps::default(),
-                    compact_layout: None,
-                    style: None,
-                    overlay: false,
-                    bind: Bindings::default(),
-                    children: Vec::new(),
-                }
-            }
-        }
-
         let mut value = serde_json::Value::deserialize(deserializer)?;
         let object = value
             .as_object_mut()
             .ok_or_else(|| D::Error::custom("a document node must be an object"))?;
         let mut common = serde_json::Map::new();
-        for key in ["id", "layout", "compact_layout", "style", "overlay", "bind", "children"] {
+        for key in [
+            "id",
+            "layout",
+            "compact_layout",
+            "style",
+            "overlay",
+            "bind",
+            "children",
+        ] {
             if let Some(value) = object.remove(key) {
                 common.insert(key.to_owned(), value);
             }
         }
-        let common: Common = serde_json::from_value(serde_json::Value::Object(common))
-            .map_err(D::Error::custom)?;
+        let common: Common =
+            serde_json::from_value(serde_json::Value::Object(common)).map_err(D::Error::custom)?;
+        // Serde's internally tagged unit variants accept stray object keys
+        // even with deny_unknown_fields on the enum. These kinds have no
+        // kind-specific fields, so only the tag may remain here.
+        if matches!(
+            object.get("type").and_then(serde_json::Value::as_str),
+            Some("frame" | "row" | "column" | "spacer" | "checkbox" | "hook")
+        ) {
+            if let Some(key) = object.keys().find(|key| key.as_str() != "type") {
+                return Err(D::Error::custom(format!("unknown node field '{key}'")));
+            }
+        }
         let kind = serde_json::from_value(value).map_err(D::Error::custom)?;
         Ok(Node {
             id: common.id,
@@ -1189,7 +1194,10 @@ mod tests {
             r#"{ "type": "frame", "children": [ { "type": "button", "txet": "Go" } ] }"#,
         ] {
             let json = root.replace("%s", node);
-            assert!(Document::from_json(&json).is_err(), "accepted typo in {node}");
+            assert!(
+                Document::from_json(&json).is_err(),
+                "accepted typo in {node}"
+            );
         }
     }
 

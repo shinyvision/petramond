@@ -222,13 +222,16 @@ impl Instance {
         if name.len() > MAX_MOB_ANIM_NAME_BYTES {
             return None;
         }
-        self.anim_search(name).ok().map(|at| &self.presentation.active_anims[at])
+        self.anim_search(name)
+            .ok()
+            .map(|at| &self.presentation.active_anims[at])
     }
 
     /// Position of one named layer in the sorted `active_anims` (`Ok` =
     /// active at that index, `Err` = the insertion point).
     fn anim_search(&self, name: &str) -> Result<usize, usize> {
-        self.presentation.active_anims
+        self.presentation
+            .active_anims
             .binary_search_by(|a| a.name.as_str().cmp(name))
     }
 
@@ -315,7 +318,8 @@ impl Instance {
         // mid-stroke while another plays.
         match kind {
             AnimKind::Walk => {
-                self.anim_time += d.walk_anim_rate * self.motion.walk_speed_scale * self.motion.gait_pace * dt
+                self.anim_time +=
+                    d.walk_anim_rate * self.motion.walk_speed_scale * self.motion.gait_pace * dt
             }
             AnimKind::Idle(_) => self.anim_time += dt,
             AnimKind::Rest => {}

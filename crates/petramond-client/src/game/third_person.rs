@@ -42,7 +42,10 @@ impl Game {
         if self.local.third_person.enabled {
             // Entering third person: face the body where the player looks and
             // restart the walk cycle, so the model never pops in mid-turn.
-            self.local.third_person.pose.reset_facing(self.local.player.yaw);
+            self.local
+                .third_person
+                .pose
+                .reset_facing(self.local.player.yaw);
             // Place the boom camera NOW: the toggle can land between the game
             // tick and the render, and a frame rendered with the body visible
             // but the camera still at the eye looks out from inside the head.
@@ -81,7 +84,10 @@ impl Game {
         // flag reads the replicated self view; `sleep_head_yaw` derives from
         // the session's bed cell against the REPLICA's model group.
         if self.replica.self_view.sleeping.is_some() {
-            let head_yaw = self.replica.sleep_head_yaw().unwrap_or(self.local.player.yaw);
+            let head_yaw = self
+                .replica
+                .sleep_head_yaw()
+                .unwrap_or(self.local.player.yaw);
             self.local.third_person.pose.lie(head_yaw);
             let mut cam = self.local.cam.clone();
             cam.yaw = head_yaw;
@@ -108,8 +114,12 @@ impl Game {
                 velocity: self.local.player.vel,
                 yaw: self.local.player.yaw,
                 grounded: self.local.player.on_ground,
-                medium: super::body_pose::movement_medium(&self.replica.world, self.local.player.pos),
-                enabled: !self.local.player.is_spectator() && self.replica.entities.own_mount().is_none(),
+                medium: super::body_pose::movement_medium(
+                    self.replica.world.data(),
+                    self.local.player.pos,
+                ),
+                enabled: !self.local.player.is_spectator()
+                    && self.replica.entities.own_mount().is_none(),
                 sneaking: self.local.predicted_input.sneak,
             },
         );

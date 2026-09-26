@@ -30,7 +30,6 @@ use petramond_math::math::{IVec3, Vec3};
 use petramond_world::chunk::SectionPos;
 use petramond_world::item::ItemStack;
 
-
 mod influence;
 mod step;
 mod sweep;
@@ -220,7 +219,9 @@ impl DroppedItems {
             if before != after {
                 it.skylight = world.data.skylight6_at_world(after.x, after.y, after.z);
                 it.blocklight = petramond_world::light::BlockLight6::from_x2(
-                    world.data.blocklight_rgb_at_world(after.x, after.y, after.z),
+                    world
+                        .data
+                        .blocklight_rgb_at_world(after.x, after.y, after.z),
                 );
             }
             // Fluid contact reads the real fluid volume at the item's center, so
@@ -621,7 +622,8 @@ impl ServerWorld {
             self.side.entities.dropped_items.change_seq = self.changes_end();
             return ItemStep::default();
         }
-        let (next, changed, overflow) = self.changes_since(self.side.entities.dropped_items.change_seq);
+        let (next, changed, overflow) =
+            self.changes_since(self.side.entities.dropped_items.change_seq);
         self.side.entities.dropped_items.change_seq = next;
         let freeze_unloaded = self.side.save.is_some();
         let mut drops = std::mem::take(&mut self.side.entities.dropped_items);
@@ -661,7 +663,10 @@ fn chunk_xz(pos: petramond_math::world_pos::WorldPos) -> (i32, i32) {
 /// drop simulated against that absent floor reads air, falls through it and
 /// is out of the world a second later — a corpse pile spilled where a player
 /// died on floor the server had not regenerated yet.
-fn terrain_under_drop_is_final(world: &ServerWorld, pos: petramond_math::world_pos::WorldPos) -> bool {
+fn terrain_under_drop_is_final(
+    world: &ServerWorld,
+    pos: petramond_math::world_pos::WorldPos,
+) -> bool {
     let c = pos.block();
     c.y >= petramond_world::chunk::WORLD_MIN_Y
         && world.physics_cell_final_at(c.x, c.y, c.z)

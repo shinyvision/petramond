@@ -103,7 +103,7 @@ impl TerrainRenderHandoff<'_> {
     /// CPU geometry was released recover through
     /// [`needs_repack_remeshes`](Self::needs_repack_remeshes).
     pub fn request_full_reupload(&mut self) {
-        let terrain = &mut self.world.terrain;
+        let terrain = &mut self.world.side.terrain;
         terrain
             .mesh_upload_dirty_columns
             .extend(terrain.mesh_columns.iter().copied());
@@ -151,7 +151,8 @@ mod tests {
         assert!(world.side.terrain.mesh_release_after.contains_key(&column));
 
         // Fast-forward past the quiet window onto a sweep frame.
-        world.side.terrain.mesh_pump_frame += super::super::mesh_queue::MESH_RELEASE_DELAY_FRAMES * 2;
+        world.side.terrain.mesh_pump_frame +=
+            super::super::mesh_queue::MESH_RELEASE_DELAY_FRAMES * 2;
         world.side.terrain.mesh_pump_frame -= world.side.terrain.mesh_pump_frame % 64;
         world.side.terrain.mesh_pump_frame -= 1;
         world.tick_mesh_budget(0);
@@ -206,10 +207,18 @@ mod tests {
         world.insert_section_for_test(pos, section);
         world.mesh_section_blocking_for_test(pos);
         world.terrain_render_handoff().mark_column_uploaded(column);
-        assert!(!world.side.terrain.mesh_upload_dirty_columns.contains(&column));
+        assert!(!world
+            .side
+            .terrain
+            .mesh_upload_dirty_columns
+            .contains(&column));
 
         world.terrain_render_handoff().request_full_reupload();
-        assert!(world.side.terrain.mesh_upload_dirty_columns.contains(&column));
+        assert!(world
+            .side
+            .terrain
+            .mesh_upload_dirty_columns
+            .contains(&column));
         let mut dirty = Vec::new();
         world
             .terrain_render_handoff()

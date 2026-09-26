@@ -24,7 +24,10 @@ fn a_golem_rises_out_of_the_ground_and_takes_its_plans_from_the_table() {
     assert!(deeds.contains(&Deed::Sound("petramond:dirt_break".into())));
     assert!(session.world.state().mobs[&golem].anims.contains(EMERGE));
     let feet = session.world.mob_pos(golem).unwrap();
-    assert!((feet[1] + BURROW_DEPTH).abs() < 1e-9, "still under the ground");
+    assert!(
+        (feet[1] + BURROW_DEPTH).abs() < 1e-9,
+        "still under the ground"
+    );
 
     at_work(&mut session, id, |_, projects, job| {
         job.crew.step = Step::Emerge { t: EMERGE_TICKS };
@@ -35,8 +38,16 @@ fn a_golem_rises_out_of_the_ground_and_takes_its_plans_from_the_table() {
         session.builder.projects.get(id).map(|p| p.phase()),
         Some(Phase::Working)
     );
-    assert_eq!(session.world.count(ContainerAddress::Mob(golem), BLUEPRINT), 1);
-    assert_eq!(session.world.count(ContainerAddress::Block(TABLE_AT), BLUEPRINT), 0);
+    assert_eq!(
+        session.world.count(ContainerAddress::Mob(golem), BLUEPRINT),
+        1
+    );
+    assert_eq!(
+        session
+            .world
+            .count(ContainerAddress::Block(TABLE_AT), BLUEPRINT),
+        0
+    );
     assert!(session.world.state().mobs[&golem].anims.is_empty());
 }
 
@@ -58,10 +69,15 @@ fn a_golem_called_off_hands_its_plans_back_before_it_sinks() {
     });
     let tabled = session.world.container(ContainerAddress::Block(TABLE_AT))[0].clone();
     assert_eq!(
-        tabled.as_ref().and_then(|s| session.builder.projects.bound(s)),
+        tabled
+            .as_ref()
+            .and_then(|s| session.builder.projects.bound(s)),
         Some(id)
     );
-    assert_eq!(session.world.count(ContainerAddress::Mob(golem), BLUEPRINT), 0);
+    assert_eq!(
+        session.world.count(ContainerAddress::Mob(golem), BLUEPRINT),
+        0
+    );
 
     let body = session.body(golem);
     at_work(&mut session, id, |_, projects, job| {
@@ -69,7 +85,10 @@ fn a_golem_called_off_hands_its_plans_back_before_it_sinks() {
         burrow(projects, job, &body);
         assert_eq!(job.crew.mob, None);
     });
-    assert!(session.world.mob_pos(golem).is_none(), "gone into the ground");
+    assert!(
+        session.world.mob_pos(golem).is_none(),
+        "gone into the ground"
+    );
     assert_eq!(
         session.builder.projects.get(id).map(|p| p.phase()),
         Some(Phase::Cancelled)
@@ -92,7 +111,10 @@ fn plans_the_table_has_no_room_for_are_left_on_the_ground() {
         .world
         .deeds()
         .contains(&Deed::Dropped(BLUEPRINT.into(), 1)));
-    assert_eq!(session.world.count(ContainerAddress::Mob(golem), BLUEPRINT), 0);
+    assert_eq!(
+        session.world.count(ContainerAddress::Mob(golem), BLUEPRINT),
+        0
+    );
 }
 
 #[test]

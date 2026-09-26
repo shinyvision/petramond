@@ -197,7 +197,9 @@ impl ChunkMesh {
         }
         // A chunk holding ONLY a bbmodel block (empty packed buffers) is NOT empty —
         // its geometry lives in the model stream, which must still upload + draw.
-        QuadLayer::ALL.iter().all(|&layer| self.quad_len(layer) == 0)
+        QuadLayer::ALL
+            .iter()
+            .all(|&layer| self.quad_len(layer) == 0)
             && self.model_idx.is_empty()
             && self.model_blend_idx.is_empty()
             && self.contact.is_empty()
@@ -234,7 +236,7 @@ impl ChunkMesh {
 
     /// Used bytes of one quad stream in whichever form it is held.
     fn quad_bytes(&self, layer: QuadLayer) -> u64 {
-        (self.quads(layer).len() * std::mem::size_of::<Vertex>()
+        (std::mem::size_of_val(self.quads(layer))
             + self.sealed_quads[layer.index()].len() * std::mem::size_of::<TerrainVertex>())
             as u64
     }

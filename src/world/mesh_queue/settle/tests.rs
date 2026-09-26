@@ -1,6 +1,6 @@
-use crate::world::ReplicaWorld;
 use super::*;
 use crate::world::store::LoadTarget;
+use crate::world::ReplicaWorld;
 use petramond_world::section::Section;
 
 #[test]

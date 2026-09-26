@@ -16,8 +16,14 @@ fn a_golem_thinks_a_while_before_it_counts_as_stuck() {
     let working = project();
     let crew = Crew::default();
     assert_eq!(trouble::of(&working, &crew, THINK_AFTER), None);
-    assert_eq!(trouble::of(&working, &crew, THINK_AFTER + 1), Some(Trouble::Thinking));
-    assert_eq!(trouble::of(&working, &crew, STUCK_AFTER + 1), Some(Trouble::Stuck));
+    assert_eq!(
+        trouble::of(&working, &crew, THINK_AFTER + 1),
+        Some(Trouble::Thinking)
+    );
+    assert_eq!(
+        trouble::of(&working, &crew, STUCK_AFTER + 1),
+        Some(Trouble::Stuck)
+    );
 
     let getting_out = Crew {
         step: Step::Hop {
@@ -26,7 +32,10 @@ fn a_golem_thinks_a_while_before_it_counts_as_stuck() {
         },
         ..Crew::default()
     };
-    assert_eq!(trouble::of(&working, &getting_out, 1), Some(Trouble::Thinking));
+    assert_eq!(
+        trouble::of(&working, &getting_out, 1),
+        Some(Trouble::Thinking)
+    );
 
     let mut asked = Crew::default();
     asked.presence.asked_about = Some(None);
@@ -41,13 +50,22 @@ fn a_golem_thinks_a_while_before_it_counts_as_stuck() {
 fn only_a_hold_the_player_can_lift_is_trouble() {
     let mut paused = project();
     paused.hold_for(Hold::Player, Note::Paused);
-    assert_eq!(trouble::of(&paused, &Crew::default(), STUCK_AFTER + 1), None);
+    assert_eq!(
+        trouble::of(&paused, &Crew::default(), STUCK_AFTER + 1),
+        None
+    );
     let mut short = project();
     short.hold_for(Hold::Supplies, short_of_stone(3));
-    assert_eq!(trouble::of(&short, &Crew::default(), 1), Some(Trouble::Stuck));
+    assert_eq!(
+        trouble::of(&short, &Crew::default(), 1),
+        Some(Trouble::Stuck)
+    );
     let mut rising = project();
     rising.summon(HOME);
-    assert_eq!(trouble::of(&rising, &Crew::default(), STUCK_AFTER + 1), None);
+    assert_eq!(
+        trouble::of(&rising, &Crew::default(), STUCK_AFTER + 1),
+        None
+    );
 }
 
 #[test]
@@ -64,8 +82,10 @@ fn the_reason_is_whatever_was_last_said_or_what_it_is_doing() {
     );
     assert_eq!(trouble::reason(&working, &crew, None), "Building");
 
-    let mut waiting = Crew::default();
-    waiting.why = Waiting::Resupply;
+    let waiting = Crew {
+        why: Waiting::Resupply,
+        ..Crew::default()
+    };
     assert_eq!(
         trouble::reason(&working, &waiting, Some(Trouble::Stuck)),
         "Waiting for materials"

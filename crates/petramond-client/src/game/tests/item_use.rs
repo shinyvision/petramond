@@ -60,7 +60,8 @@ fn right_click_at_mob(game: &mut super::common::TestGame, index: usize) -> TickE
 fn stone_shelf(game: &mut super::common::TestGame, y: i32) {
     for x in 2..=14 {
         for z in 2..=14 {
-            game.server_world_mut().set_block_world(x, y, z, Block::Stone);
+            game.server_world_mut()
+                .set_block_world(x, y, z, Block::Stone);
         }
     }
 }
@@ -97,16 +98,12 @@ fn filling_the_bucket_scoops_the_source_and_swaps_the_held_item() {
     );
     assert!(events.player_at(0).placed_block.is_none());
     assert_eq!(
-        Block::from_id(game.server_world().chunk_block(p.x, p.y, p.z)),
+        Block::from_id(game.server_world().data().chunk_block(p.x, p.y, p.z)),
         Block::Air,
         "the source should be scooped out of the world"
     );
     assert_eq!(
-        game.server_player()
-            .inventory
-            .selected()
-            .unwrap()
-            .item,
+        game.server_player().inventory.selected().unwrap().item,
         ItemType::WaterBucket
     );
 }
@@ -127,7 +124,11 @@ fn filling_while_aiming_at_flowing_water_does_nothing() {
     run_water_ticks(&mut game, 30);
     let flow = src + IVec3::X;
     assert_eq!(
-        Block::from_id(game.server_world().chunk_block(flow.x, flow.y, flow.z)),
+        Block::from_id(
+            game.server_world()
+                .data()
+                .chunk_block(flow.x, flow.y, flow.z)
+        ),
         Block::Water,
         "the source should have spread onto the shelf"
     );
@@ -145,11 +146,7 @@ fn filling_while_aiming_at_flowing_water_does_nothing() {
         "the source elsewhere in the body must be untouched"
     );
     assert_eq!(
-        game.server_player()
-            .inventory
-            .selected()
-            .unwrap()
-            .item,
+        game.server_player().inventory.selected().unwrap().item,
         ItemType::WoodenBucket
     );
 }
@@ -169,7 +166,9 @@ fn fill_ray_reads_through_flowing_water_to_the_source_behind_it() {
         .set_block_world(src.x, src.y, src.z, Block::Water);
     run_water_ticks(&mut game, 30);
     assert!(!game.server_world().is_water_source_world(src + IVec3::X));
-    assert!(!game.server_world().is_water_source_world(src + IVec3::X * 2));
+    assert!(!game
+        .server_world()
+        .is_water_source_world(src + IVec3::X * 2));
 
     set_player_eye(
         &mut game,
@@ -188,15 +187,11 @@ fn fill_ray_reads_through_flowing_water_to_the_source_behind_it() {
         "the source behind the flow must be scooped"
     );
     assert_eq!(
-        Block::from_id(game.server_world().chunk_block(src.x, src.y, src.z)),
+        Block::from_id(game.server_world().data().chunk_block(src.x, src.y, src.z)),
         Block::Air
     );
     assert_eq!(
-        game.server_player()
-            .inventory
-            .selected()
-            .unwrap()
-            .item,
+        game.server_player().inventory.selected().unwrap().item,
         ItemType::WaterBucket
     );
 }
@@ -218,16 +213,12 @@ fn filling_needs_a_source_within_reach() {
 
     assert!(!events.player_at(0).used_item);
     assert_eq!(
-        Block::from_id(game.server_world().chunk_block(p.x, p.y, p.z)),
+        Block::from_id(game.server_world().data().chunk_block(p.x, p.y, p.z)),
         Block::Water,
         "out-of-reach water must stay"
     );
     assert_eq!(
-        game.server_player()
-            .inventory
-            .selected()
-            .unwrap()
-            .item,
+        game.server_player().inventory.selected().unwrap().item,
         ItemType::WoodenBucket
     );
 }
@@ -255,11 +246,7 @@ fn pouring_places_a_source_against_the_clicked_face_and_empties_the_bucket() {
         "the clicked face's cell should hold a still source"
     );
     assert_eq!(
-        game.server_player()
-            .inventory
-            .selected()
-            .unwrap()
-            .item,
+        game.server_player().inventory.selected().unwrap().item,
         ItemType::WoodenBucket,
         "the emptied bucket returns to the hand"
     );
@@ -292,11 +279,7 @@ fn pouring_onto_flowing_water_firms_it_into_a_source() {
         "the flowing cell firms into a still source"
     );
     assert_eq!(
-        game.server_player()
-            .inventory
-            .selected()
-            .unwrap()
-            .item,
+        game.server_player().inventory.selected().unwrap().item,
         ItemType::WoodenBucket
     );
 }
@@ -318,11 +301,7 @@ fn pouring_onto_a_source_still_empties_the_bucket() {
     assert!(events.player_at(0).used_item);
     assert!(game.server_world().is_water_source_world(p));
     assert_eq!(
-        game.server_player()
-            .inventory
-            .selected()
-            .unwrap()
-            .item,
+        game.server_player().inventory.selected().unwrap().item,
         ItemType::WoodenBucket
     );
 }
@@ -340,11 +319,7 @@ fn pouring_with_nothing_in_reach_keeps_the_water() {
 
     assert!(!events.player_at(0).used_item);
     assert_eq!(
-        game.server_player()
-            .inventory
-            .selected()
-            .unwrap()
-            .item,
+        game.server_player().inventory.selected().unwrap().item,
         ItemType::WaterBucket,
         "a refused pour must keep the water in the bucket"
     );
@@ -417,7 +392,8 @@ fn shearing_needs_the_shears_in_hand() {
 fn walled_pool(game: &mut super::common::TestGame, fluid: Block) {
     for x in 4..=12 {
         for z in 4..=12 {
-            game.server_world_mut().set_block_world(x, 64, z, Block::Stone);
+            game.server_world_mut()
+                .set_block_world(x, 64, z, Block::Stone);
             let wall = x == 4 || x == 12 || z == 4 || z == 12;
             for y in 65..=66 {
                 let b = if wall { Block::Stone } else { fluid };
@@ -431,7 +407,7 @@ fn walled_pool(game: &mut super::common::TestGame, fluid: Block) {
 const POOL_TOP: IVec3 = IVec3::new(8, 66, 8);
 
 fn block_at(game: &super::common::TestGame, p: IVec3) -> Block {
-    Block::from_id(game.server_world().chunk_block(p.x, p.y, p.z))
+    Block::from_id(game.server_world().data().chunk_block(p.x, p.y, p.z))
 }
 
 #[test]
@@ -455,11 +431,7 @@ fn filling_the_empty_bucket_from_a_lava_source_yields_the_lava_bucket() {
     );
     assert_eq!(block_at(&game, p), Block::Air, "the lava source is scooped");
     assert_eq!(
-        game.server_player()
-            .inventory
-            .selected()
-            .unwrap()
-            .item,
+        game.server_player().inventory.selected().unwrap().item,
         ItemType::by_name("petramond:lava_bucket").unwrap()
     );
 }
@@ -491,11 +463,7 @@ fn pouring_lava_at_a_pond_surface_acts_at_the_surface() {
         "the cell beneath stays water"
     );
     assert_eq!(
-        game.server_player()
-            .inventory
-            .selected()
-            .unwrap()
-            .item,
+        game.server_player().inventory.selected().unwrap().item,
         ItemType::WoodenBucket
     );
 

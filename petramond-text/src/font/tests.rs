@@ -75,8 +75,15 @@ fn the_body_span_is_the_text_band_not_the_whole_line() {
 
     // It spans exactly cap-top to descender-bottom.
     assert_eq!(top, ink_rows(&font, 'M').0, "body starts at the cap line");
-    assert_eq!(top + h, ink_rows(&font, 'g').1, "body ends at the descender");
-    assert!(ink_rows(&font, '\u{c4}').0 < top, "the accent is above the body");
+    assert_eq!(
+        top + h,
+        ink_rows(&font, 'g').1,
+        "body ends at the descender"
+    );
+    assert!(
+        ink_rows(&font, '\u{c4}').0 < top,
+        "the accent is above the body"
+    );
 
     // The built-in table has no accents or descenders: body IS the line.
     let builtin = Font::builtin();
@@ -94,7 +101,10 @@ fn measure_uses_line_advance_between_wrapped_lines() {
 
 #[test]
 fn atlas_pixels_match_every_glyph_bitmap() {
-    for f in [Font::builtin(), Font::from_ttf(&shipped_font_bytes(), 11.0).unwrap()] {
+    for f in [
+        Font::builtin(),
+        Font::from_ttf(&shipped_font_bytes(), 11.0).unwrap(),
+    ] {
         for ch in ['A', 'g', '\u{c4}', '🙂'] {
             let _ = f.glyph(ch);
         }
@@ -133,7 +143,10 @@ fn coverage_comes_from_the_face_not_a_latin_list() {
             .filter(|ch| (*ch as u32) >= 0x250 && !ch.is_control())
             .collect()
     };
-    assert!(!mapped_beyond_latin.is_empty(), "the face maps non-Latin codepoints");
+    assert!(
+        !mapped_beyond_latin.is_empty(),
+        "the face maps non-Latin codepoints"
+    );
     for ch in mapped_beyond_latin {
         assert!(font.has_glyph(ch), "{ch:?} is in the face but not the font");
     }
@@ -182,8 +195,16 @@ fn a_fallback_face_fills_gaps_without_changing_the_line_box() {
     ])
     .unwrap();
     assert!(!alone.has_glyph('\u{c4}') && chain.has_glyph('\u{c4}'));
-    assert_eq!(chain.line_h(), alone.line_h(), "the fallback never grows the line");
-    assert_eq!(chain.advance('A'), alone.advance('A'), "the primary wins its codepoints");
+    assert_eq!(
+        chain.line_h(),
+        alone.line_h(),
+        "the fallback never grows the line"
+    );
+    assert_eq!(
+        chain.advance('A'),
+        alone.advance('A'),
+        "the primary wins its codepoints"
+    );
     // The big fallback glyph keeps its own size instead of every glyph
     // growing to it.
     assert!(chain.glyph('\u{c4}').bounds()[3] > chain.glyph('A').bounds()[3] * 3 / 2);

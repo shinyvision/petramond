@@ -84,7 +84,8 @@ impl Scene {
             size,
             cells,
             sections: world
-                .data().sections
+                .data()
+                .sections
                 .iter()
                 .map(|(p, s)| (*p, s.clone()))
                 .collect(),

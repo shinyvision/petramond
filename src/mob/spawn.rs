@@ -137,8 +137,9 @@ pub(super) fn attempt(
     let want = d.spawn_group.roll(rng).min(room_for(kind));
 
     let (wx, wz) = random_column(rng, cx, cz, r)?;
-    let site =
-        |world: &ServerWorld, kind: Mob, wx: i32, wz: i32| spawn_site(world, player_pos, kind, wx, wz);
+    let site = |world: &ServerWorld, kind: Mob, wx: i32, wz: i32| {
+        spawn_site(world, player_pos, kind, wx, wz)
+    };
     let first = spawn_with(world, kind, wx, wz, rng, &site)?;
     // Climate rarity: the species' per-biome spawn chance gates the WHOLE
     // attempt with one roll — never per group member, so rarity thins spawn
@@ -302,8 +303,9 @@ impl HostileSpawnCache {
             .zip(&self.census_ready)
             .filter_map(|(chunk, &ready)| ready.then_some(chunk))
             .collect();
-        self.spawnable_chunks =
-            hostile_spawnable_chunks(&chunks, |chunk| world.data().chunk_loaded(chunk.cx, chunk.cz));
+        self.spawnable_chunks = hostile_spawnable_chunks(&chunks, |chunk| {
+            world.data().chunk_loaded(chunk.cx, chunk.cz)
+        });
         self.key = Some(key);
     }
 }
@@ -489,7 +491,8 @@ fn hostile_candidate_at(
         || !body_cell_open(world, wx, y + 1, wz)
         || !world.data().block_is_full_spawn_support(wx, y - 1, wz)
         || world
-            .data().physics_block(wx, y - 1, wz)
+            .data()
+            .physics_block(wx, y - 1, wz)
             .has_tag(petramond_world::block::BlockTag::NAV_HAZARD)
     {
         return None;
@@ -728,7 +731,9 @@ fn choose_kind(
 mod tests {
     use super::*;
 
-    fn flat_grass_spawn_world(extra: impl FnOnce(&mut petramond_world::chunk::Chunk)) -> ServerWorld {
+    fn flat_grass_spawn_world(
+        extra: impl FnOnce(&mut petramond_world::chunk::Chunk),
+    ) -> ServerWorld {
         let mut world = ServerWorld::new(0, 1);
         let mut chunk = petramond_world::chunk::Chunk::new(0, 0);
         for z in 0..CHUNK_SZ {

@@ -2,11 +2,11 @@ use super::{at_work, unit, working};
 use crate::host::fake::rows::{AIR, DIRT, STONE};
 use crate::host::fake::Deed;
 use crate::host::prelude::*;
-use crate::worker::Job;
 use crate::project::Projects;
 use crate::survey::Known;
 use crate::worker::act::{begin, dig, settle};
 use crate::worker::tuning::waits::FACELESS_SPACING;
+use crate::worker::Job;
 use crate::worker::{acted, Ctx, Step, Task};
 
 /// Where the golem stands: in front of the middle of the row, in reach of
@@ -58,7 +58,12 @@ fn a_block_in_reach_and_in_hand_is_laid_and_then_waited_on() {
         assert!(job.crew.built.contains(&middle));
     });
     assert_eq!(session.world.block([1, 0, 0]), STONE);
-    assert_eq!(session.world.count(ContainerAddress::Mob(golem), "petramond:stone"), 2);
+    assert_eq!(
+        session
+            .world
+            .count(ContainerAddress::Mob(golem), "petramond:stone"),
+        2
+    );
     assert!(session
         .world
         .deeds()
@@ -88,7 +93,11 @@ fn a_placement_landing_settles_its_unit_and_wakes_its_neighbours() {
             matches!(job.crew.step, Step::Await { .. }),
             "another cell's outcome"
         );
-        assert_eq!(ctx.routes.len(), 1, "a block laid anywhere may close a route");
+        assert_eq!(
+            ctx.routes.len(),
+            1,
+            "a block laid anywhere may close a route"
+        );
         acted(ctx, projects, job, [1, 0, 0], ActorAction::Place, None);
         assert_eq!(job.crew.step, Step::Plan);
         assert!(job.crew.built.contains(&middle));
@@ -123,30 +132,68 @@ fn a_refusal_says_why_and_sets_the_work_aside_as_long_as_it_calls_for() {
     let task = Task::Unit(unit(&session, id, [1, 0, 0]));
     at_work(&mut session, id, |ctx, projects, job| {
         let now = ctx.now;
-        refuse(ctx, projects, job, task, [1, 0, 0], ActionRefusal::OutOfReach);
+        refuse(
+            ctx,
+            projects,
+            job,
+            task,
+            [1, 0, 0],
+            ActionRefusal::OutOfReach,
+        );
         assert!(job.crew.deferrals.blind(task, AT), "never from here again");
         assert!(job.crew.deferrals.deferred(task, now + 9));
         assert!(!job.crew.deferrals.deferred(task, now + 10));
         assert_eq!(job.crew.note, "");
 
-        refuse(ctx, projects, job, task, [1, 0, 0], ActionRefusal::BodyInTheWay);
+        refuse(
+            ctx,
+            projects,
+            job,
+            task,
+            [1, 0, 0],
+            ActionRefusal::BodyInTheWay,
+        );
         assert_eq!(job.crew.note, "Someone is standing where a block goes");
         assert!(job.crew.deferrals.deferred(task, now + 39));
 
-        refuse(ctx, projects, job, task, [1, 0, 0], ActionRefusal::Unbreakable);
+        refuse(
+            ctx,
+            projects,
+            job,
+            task,
+            [1, 0, 0],
+            ActionRefusal::Unbreakable,
+        );
         assert_eq!(job.crew.note, "Something unbreakable is in the way");
         assert!(job.crew.deferrals.deferred(task, now + 2399));
 
         job.crew.note.clear();
         let scaffold = Task::Scaffold([4, 0, 4]);
-        refuse(ctx, projects, job, scaffold, [4, 0, 4], ActionRefusal::Unbreakable);
+        refuse(
+            ctx,
+            projects,
+            job,
+            scaffold,
+            [4, 0, 4],
+            ActionRefusal::Unbreakable,
+        );
         assert!(job.crew.deferrals.deferred(scaffold, now + 39));
         assert!(!job.crew.deferrals.deferred(scaffold, now + 40));
         assert_eq!(job.crew.note, "", "scaffolding just waits");
 
         let fresh = Task::Unit(unit_at(job, [0, 0, 0]));
-        refuse(ctx, projects, job, fresh, [0, 0, 0], ActionRefusal::MissingItems);
-        assert!(!job.crew.deferrals.deferred(fresh, now), "fetched, not waited for");
+        refuse(
+            ctx,
+            projects,
+            job,
+            fresh,
+            [0, 0, 0],
+            ActionRefusal::MissingItems,
+        );
+        assert!(
+            !job.crew.deferrals.deferred(fresh, now),
+            "fetched, not waited for"
+        );
     });
 }
 
@@ -196,7 +243,9 @@ fn a_dig_in_reach_breaks_the_block_and_waits_on_the_outcome() {
     });
     assert_eq!(session.world.block([1, 0, -1]), AIR);
     assert_eq!(
-        session.world.count(ContainerAddress::Mob(golem), "petramond:dirt"),
+        session
+            .world
+            .count(ContainerAddress::Mob(golem), "petramond:dirt"),
         0,
         "cut overgrowth is not carried off"
     );

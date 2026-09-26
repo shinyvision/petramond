@@ -132,7 +132,10 @@ impl PackIndex {
 
     fn add_document(&mut self, file_name: &str, value: &Value) {
         if file_name.ends_with(".gui.json") {
-            let kind = value.get("kind").and_then(Value::as_str).unwrap_or_default();
+            let kind = value
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             self.insert(PackKeyKind::GuiKind, kind);
             self.walk_gui(kind, value);
             return;
@@ -149,8 +152,7 @@ impl PackIndex {
     }
 
     fn insert_widget(&mut self, doc_kind: &str, id: &str) {
-        self.entries
-            .insert((widget_label(doc_kind), id.to_owned()));
+        self.entries.insert((widget_label(doc_kind), id.to_owned()));
     }
 
     fn walk_gui(&mut self, doc_kind: &str, value: &Value) {

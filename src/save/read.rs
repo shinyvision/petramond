@@ -130,7 +130,10 @@ impl ReadQueues {
             if state.shutdown {
                 return None;
             }
-            state = self.wake.wait(state).unwrap_or_else(PoisonError::into_inner);
+            state = self
+                .wake
+                .wait(state)
+                .unwrap_or_else(PoisonError::into_inner);
         }
     }
 }

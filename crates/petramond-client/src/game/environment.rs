@@ -37,7 +37,13 @@ impl Game {
             fog,
             eye_fluid,
             time: (now % 3600.0) as f32,
-            shader_params: self.replica.world.data().environment().shader_params().clone(),
+            shader_params: self
+                .replica
+                .world
+                .data()
+                .environment()
+                .shader_params()
+                .clone(),
         }
     }
 }
@@ -61,7 +67,10 @@ pub fn camera_fog(
 }
 
 /// The fluid the camera eye is inside, judged by its medium's `eye_margin`.
-fn camera_eye_fluid(world: &ReplicaWorld, eye: petramond_math::world_pos::WorldPos) -> Option<Block> {
+fn camera_eye_fluid(
+    world: &ReplicaWorld,
+    eye: petramond_math::world_pos::WorldPos,
+) -> Option<Block> {
     let cell = eye.block();
     let fluid = Block::from_id(world.data().chunk_block(cell.x, cell.y, cell.z)).fluid()?;
     let margin = fluid.fluid_def()?.medium.eye_margin;
@@ -169,14 +178,16 @@ mod tests {
         // The environment reads the REPLICA (what the camera sees); a full
         // empty column (every section present) so a fluid write at any Y lands.
         game.replica.world.clear_world();
-        game.replica.world
+        game.replica
+            .world
             .insert_empty_column_for_test(ChunkPos::new(0, 0));
         game
     }
 
     fn set_fluid(game: &mut Game, pos: IVec3, meta: u8) {
         let section = game
-            .replica.world
+            .replica
+            .world
             .section_at_world_mut_for_test(pos.x, pos.y, pos.z)
             .expect("test section must be installed");
         section.set_fluid(

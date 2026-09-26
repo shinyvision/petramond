@@ -217,6 +217,7 @@ pub struct LocomotionTable {
 impl LocomotionTable {
     /// A table with no layers: bodies stand in their rest pose, and the body
     /// animator still plays over it.
+    #[cfg(test)]
     fn empty() -> Self {
         Self {
             derived: Box::new([]),
@@ -227,6 +228,7 @@ impl LocomotionTable {
 
     /// Read and merge every asset layer of the table. A missing or malformed
     /// table is an error for the caller to report, never a panic.
+    #[cfg(test)]
     pub fn load() -> Result<Self, String> {
         let layers = petramond_world::assets::read_layers(TABLE_ASSET);
         if layers.is_empty() {
@@ -383,7 +385,10 @@ pub static TABLE: petramond_world::content::Slot<LocomotionTable> =
 
 fn load_table(reg: &petramond_world::content::ContentRegistry) -> Result<LocomotionTable, String> {
     petramond_world::registry::read_catalog(
-        reg.packs(), TABLE_ASSET, "player locomotion", LocomotionTable::parse_layers,
+        reg.packs(),
+        TABLE_ASSET,
+        "player locomotion",
+        LocomotionTable::parse_layers,
     )
 }
 

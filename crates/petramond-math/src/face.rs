@@ -136,7 +136,11 @@ mod tests {
             assert!(n.dot(face.dir().as_vec3()) > 0.0, "{face:?} winds CCW");
             // Every corner lies on the face's own side of the unit cell.
             let axis = face.dir().abs().as_vec3();
-            let side = if face.dir().element_sum() > 0 { 1.0 } else { 0.0 };
+            let side = if face.dir().element_sum() > 0 {
+                1.0
+            } else {
+                0.0
+            };
             for c in q {
                 assert_eq!(c.dot(axis), side, "{face:?} corner {c} on its plane");
             }

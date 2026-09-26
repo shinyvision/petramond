@@ -208,6 +208,11 @@ mod tests {
     use crate::net::protocol::PlayerUpdate;
     use petramond_math::math::Vec3;
 
+    // A full debug suite can saturate the worldgen workers while these real
+    // server threads are starting. Keep the lifecycle assertion bounded but
+    // allow enough time for the first streamed tick under that contention.
+    const SERVER_THREAD_DEADLINE: Duration = Duration::from_secs(30);
+
     /// A real, fully-built ServerGame (no save attached), as `Game::new`
     /// builds it.
     fn server_game() -> crate::server::game::ServerGame {
@@ -267,10 +272,8 @@ mod tests {
             .expect("live server accepts messages");
         handle.send(ClientToServer::KeepAlive).expect("live server");
 
-        let first = recv_tick(&handle, petramond_util::test_time::TEST_HARD_DEADLINE)
-            .expect("a TickUpdate arrives");
-        let second = recv_tick(&handle, petramond_util::test_time::TEST_HARD_DEADLINE)
-            .expect("ticks keep coming");
+        let first = recv_tick(&handle, SERVER_THREAD_DEADLINE).expect("a TickUpdate arrives");
+        let second = recv_tick(&handle, SERVER_THREAD_DEADLINE).expect("ticks keep coming");
         assert!(
             second.tick > first.tick,
             "the self-clocked loop advances the world tick"
@@ -295,8 +298,7 @@ mod tests {
         handle
             .send(ClientToServer::PlayerUpdate(update))
             .expect("live server");
-        let _ = recv_tick(&handle, petramond_util::test_time::TEST_HARD_DEADLINE)
-            .expect("running before the pause");
+        let _ = recv_tick(&handle, SERVER_THREAD_DEADLINE).expect("running before the pause");
 
         handle
             .send(ClientToServer::Pause(true))
@@ -328,8 +330,7 @@ mod tests {
         handle
             .send(ClientToServer::Pause(false))
             .expect("live server");
-        let resumed = recv_tick(&handle, petramond_util::test_time::TEST_HARD_DEADLINE)
-            .expect("ticks resume");
+        let resumed = recv_tick(&handle, SERVER_THREAD_DEADLINE).expect("ticks resume");
         if let Some(last) = last_tick {
             assert!(resumed.tick > last, "the world advances again");
             // Pausing must not bank catch-up ticks (the accumulator is pinned).

@@ -181,7 +181,9 @@ fn load_list(current: Option<&[u8]>, legacy: Option<&[u8]>) -> Vec<Waypoint> {
         (Some(bytes), _) => match decode_versioned::<WaypointList>(bytes) {
             Ok(list) => list.0,
             Err(error) => {
-                log(&format!("minimap: stored waypoints are unreadable ({error})"));
+                log(&format!(
+                    "minimap: stored waypoints are unreadable ({error})"
+                ));
                 Vec::new()
             }
         },
@@ -265,8 +267,11 @@ mod tests {
 
     #[test]
     fn a_newer_builds_list_is_not_misread() {
+        let host = mod_sdk::testing::MockHost::new();
+        let _host_guard = host.install();
         let mut bytes = encode_versioned(&WaypointList(sample()));
         bytes[0] = WaypointList::VERSION + 1;
         assert!(load_list(Some(&bytes), None).is_empty());
+        assert!(host.logs().iter().any(|line| line.contains("unreadable")));
     }
 }

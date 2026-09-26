@@ -69,8 +69,16 @@ mod tests {
                 "{kind:?} appears twice in the claim order"
             );
         }
-        assert_eq!(order.first(), Some(&ConsumerKind::Registered), "mods claim first");
-        assert_eq!(order.last(), Some(&ConsumerKind::Place), "placement claims last");
+        assert_eq!(
+            order.first(),
+            Some(&ConsumerKind::Registered),
+            "mods claim first"
+        );
+        assert_eq!(
+            order.last(),
+            Some(&ConsumerKind::Place),
+            "placement claims last"
+        );
     }
 
     #[test]

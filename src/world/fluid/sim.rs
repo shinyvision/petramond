@@ -1,10 +1,13 @@
-use crate::world::{ServerWorld, World, WorldSide};
 use crate::world::WorldData;
+use crate::world::{ServerWorld, World, WorldSide};
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 use petramond_world::chunk::WORLD_MIN_Y;
 
-use super::{amount, block_at, contact, fill_with_fluid, fillable, flowing, fluid_of, is_source, opposite, FluidAnnounce, FluidReads, CARDINALS, DOWN, FALLING, SLOPE_FIND_DIST, UP};
+use super::{
+    amount, block_at, contact, fill_with_fluid, fillable, flowing, fluid_of, is_source, opposite,
+    FluidAnnounce, FluidReads, CARDINALS, DOWN, FALLING, SLOPE_FIND_DIST, UP,
+};
 use petramond_world::fluid::FluidDef;
 
 impl<S: WorldSide> World<S> {
@@ -14,6 +17,7 @@ impl<S: WorldSide> World<S> {
     /// any neighbour across a shared border, whose culled faces change), the
     /// relight and the neighbour block updates. Returns false if the target
     /// section is not writable.
+    #[cfg(test)]
     pub(in crate::world) fn set_fluid_world(&mut self, pos: IVec3, block: Block, meta: u8) -> bool {
         let mut announce = FluidAnnounce::default();
         let written = self.write_fluid_cell(pos, block, meta, &mut announce);
@@ -54,7 +58,8 @@ impl<S: WorldSide> World<S> {
             // The flow chose this cell reading the ABSENT section as air; the
             // materialized base is authoritative and may hold terrain (or its own
             // generated fluid) there. Only genuinely open cells accept the flow.
-            if block != Block::Air && self.data.chunk_block(pos.x, pos.y, pos.z) != Block::Air.id() {
+            if block != Block::Air && self.data.chunk_block(pos.x, pos.y, pos.z) != Block::Air.id()
+            {
                 return false;
             }
         }
@@ -93,7 +98,12 @@ pub(super) struct FluidSim;
 
 impl FluidSim {
     /// The fluid flow update for the cell at `pos` (a scheduled tick).
-    pub(super) fn flow_check(&self, world: &mut ServerWorld, pos: IVec3, announce: &mut FluidAnnounce) {
+    pub(super) fn flow_check(
+        &self,
+        world: &mut ServerWorld,
+        pos: IVec3,
+        announce: &mut FluidAnnounce,
+    ) {
         let Some(fluid) = fluid_of(block_at(world, pos)) else {
             return; // no longer fluid
         };
@@ -144,7 +154,12 @@ impl FluidSim {
     ///      drop-off step — dead when that reaches zero. Every chain of
     ///      flowing fluid therefore leans on a real source or falling column;
     ///      there is no state in which flow sustains itself.
-    fn recompute(&self, reads: &FluidReads<'_>, pos: IVec3, fluid: &'static FluidDef) -> Option<u8> {
+    fn recompute(
+        &self,
+        reads: &FluidReads<'_>,
+        pos: IVec3,
+        fluid: &'static FluidDef,
+    ) -> Option<u8> {
         let fluid_block = fluid.block;
         let mut max_amount = 0u8;
         let mut sources = 0;
@@ -225,8 +240,8 @@ impl FluidSim {
                 // cross of falls. A FLOWING cell over fluid is a column joining
                 // the body under it and must not creep either: that would let
                 // flow climb over itself and advance where no source pushes it.
-                let sideways = below_block != fluid.block
-                    || (is_source(meta) && is_source(reads.meta(below)));
+                let sideways =
+                    below_block != fluid.block || (is_source(meta) && is_source(reads.meta(below)));
                 (None, sideways)
             }
         };

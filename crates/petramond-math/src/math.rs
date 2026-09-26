@@ -76,48 +76,6 @@ pub const FACE_NEIGHBORS: [IVec3; 6] = [
     IVec3::new(0, 0, -1),
 ];
 
-pub fn lerp(self, to: Tilt, t: f32) -> Tilt {
-        Tilt {
-            pitch: self.pitch + (to.pitch - self.pitch) * t,
-            roll: self.roll + (to.roll - self.roll) * t,
-        }
-    }
-
-    /// Ease toward level by at most `max_step` radians on each axis.
-    pub fn toward_level(self, max_step: f32) -> Tilt {
-        Tilt {
-            pitch: self.pitch - self.pitch.clamp(-max_step, max_step),
-            roll: self.roll - self.roll.clamp(-max_step, max_step),
-        }
-    }
-
-    /// The rotation inside the yaw: `Rx(pitch) · Rz(roll)`. Built through
-    /// [`crate::detmath`], like [`body_frame`](Self::body_frame): a
-    /// replicated frame must be the same matrix on every peer.
-    pub fn rotation(self) -> Mat4 {
-        crate::detmath::mat4_rotation_x(self.pitch) * crate::detmath::mat4_rotation_z(self.roll)
-    }
-
-    /// The whole body frame for a mob-convention `yaw` (`0` faces `-Z`):
-    /// `Ry(yaw) · Rx(pitch) · Rz(roll)`.
-    pub fn body_frame(self, yaw: f32) -> Mat4 {
-        crate::detmath::mat4_rotation_y(yaw) * self.rotation()
-    }
-}
-
-/// The six axis-aligned face-neighbour offsets in canonical face order
-/// (`+X, -X, +Y, -Y, +Z, -Z`) — the one shared cardinal-direction table.
-/// `mesh::Face::ALL` lists faces in this same order and `Face::dir` indexes
-/// into this table, so face/offset correspondence holds by construction.
-pub const FACE_NEIGHBORS: [IVec3; 6] = [
-    IVec3::new(1, 0, 0),
-    IVec3::new(-1, 0, 0),
-    IVec3::new(0, 1, 0),
-    IVec3::new(0, -1, 0),
-    IVec3::new(0, 0, 1),
-    IVec3::new(0, 0, -1),
-];
-
 pub const MAX_SELECTION_BOXES: usize = 3;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -248,7 +206,10 @@ mod tests {
     #[test]
     fn voxel_at_floors_negative_coordinates() {
         assert_eq!(voxel_at(Vec3::new(0.5, 1.999, 2.0)), IVec3::new(0, 1, 2));
-        assert_eq!(voxel_at(Vec3::new(-0.5, -1.0, -1.001)), IVec3::new(-1, -1, -2));
+        assert_eq!(
+            voxel_at(Vec3::new(-0.5, -1.0, -1.001)),
+            IVec3::new(-1, -1, -2)
+        );
         assert_eq!(voxel_at(Vec3::splat(-0.0)), IVec3::ZERO);
     }
 

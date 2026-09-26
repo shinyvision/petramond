@@ -20,8 +20,8 @@
 
 use petramond_ui::contract;
 use petramond_ui::{
-    Anchor, AnchorEdge, DocClass, Document, LayoutProps, Node, NodeKind, SlotContract, UiMap,
-    UiState, UiValue, FORMAT_VERSION,
+    Anchor, AnchorEdge, DocClass, Document, LayoutProps, Node, NodeKind, UiMap, UiState, UiValue,
+    FORMAT_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -77,7 +77,7 @@ impl Project {
     /// start as a slotless screen.
     pub fn new(kind: &str) -> Project {
         let engine = contract::engine_kind(kind);
-        let contract = engine.map(|k| k.contract()).unwrap_or_else(SlotContract::default);
+        let contract = engine.map(|k| k.contract()).unwrap_or_default();
         let mut root = Node::leaf(NodeKind::Column);
         root.style = Some("panel.large".into());
         root.layout = LayoutProps {

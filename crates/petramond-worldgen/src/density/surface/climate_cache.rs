@@ -178,9 +178,13 @@ impl<'a> ClimateCellCache<'a> {
         self.base.insert(cell, base);
         if is_default {
             CLIMATE_MEMO.with(|memo| {
-                memo.update(climate_memo_hash(seed, cell), &(seed, cell), |(_, memoized)| {
-                    *memoized = Some(base);
-                });
+                memo.update(
+                    climate_memo_hash(seed, cell),
+                    &(seed, cell),
+                    |(_, memoized)| {
+                        *memoized = Some(base);
+                    },
+                );
             });
         }
         base

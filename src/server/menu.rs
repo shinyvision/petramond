@@ -12,8 +12,8 @@ use crate::events::PostEvent;
 use crate::net::protocol::{GuiValueWire, ItemSlotWire, MenuSyncMsg, MenuTargetWire};
 use petramond_math::math::IVec3;
 use petramond_world::crafting::CraftingStation;
-use petramond_world::gui_state::PointerButton;
 use petramond_world::gui_state::MenuSlot;
+use petramond_world::gui_state::PointerButton;
 use petramond_world::item::ItemStack;
 
 use super::game::ServerGame;
@@ -149,8 +149,12 @@ impl ServerGame {
                 } => {
                     let dropped = {
                         let sess = &mut self.sessions[s];
-                        sess.sim.menu
-                            .drop_slot(&mut self.world, &mut sess.player.inventory, slot, all)
+                        sess.sim.menu.drop_slot(
+                            &mut self.world,
+                            &mut sess.player.inventory,
+                            slot,
+                            all,
+                        )
                     };
                     if let Some(stack) = dropped {
                         self.sessions[s].sim.drop_queue.queue_stack(stack);
@@ -267,7 +271,8 @@ impl ServerGame {
         match kind {
             GuiKind::Creative if self.sessions[s].player.abilities().item_catalog => {
                 self.sessions[s]
-                    .sim.menu
+                    .sim
+                    .menu
                     .open_document_gui(&mut self.world, kind, None);
                 self.emit_container_opened(s);
             }
@@ -388,7 +393,9 @@ impl ServerGame {
         }
         let sess = &mut self.sessions[s];
         petramond_world::gui_state::gui_state_clear(&mut sess.sim.gui_state);
-        sess.sim.menu.open_document_gui(&mut self.world, kind, anchor);
+        sess.sim
+            .menu
+            .open_document_gui(&mut self.world, kind, anchor);
         self.emit_container_opened(s);
     }
 
@@ -398,7 +405,8 @@ impl ServerGame {
     pub(super) fn close_menus_on_absent_anchors(&mut self, events: &mut TickEvents) {
         for s in 0..self.sessions.len() {
             let gone = self.sessions[s]
-                .sim.menu
+                .sim
+                .menu
                 .target()
                 .anchor()
                 .is_some_and(|anchor| !anchor.present(&self.world));
@@ -456,7 +464,8 @@ impl ServerGame {
     fn close_crafting_for(&mut self, s: usize) {
         let mut overflow = Vec::new();
         let sess = &mut self.sessions[s];
-        sess.sim.menu
+        sess.sim
+            .menu
             .close_crafting(&mut sess.player.inventory, |stack| overflow.push(stack));
         for stack in overflow {
             sess.sim.drop_queue.queue_stack(stack);
@@ -466,7 +475,8 @@ impl ServerGame {
     /// End the mod GUI session and clear its state map.
     fn close_registered_gui_for(&mut self, s: usize) {
         if self.sessions[s]
-            .sim.menu
+            .sim
+            .menu
             .target()
             .kind()
             .is_some_and(|kind| kind.is_registered())
@@ -482,7 +492,8 @@ impl ServerGame {
 
     fn any_registered_gui_open(&self) -> bool {
         self.sessions.iter().any(|sess| {
-            sess.sim.menu
+            sess.sim
+                .menu
                 .target()
                 .kind()
                 .is_some_and(|kind| kind.is_registered())
@@ -519,7 +530,8 @@ impl ServerGame {
                             .to_string(),
                         anchor,
                         slots: sess
-                            .sim.menu
+                            .sim
+                            .menu
                             .open_container_view(&self.world)
                             .map(|v| v.slots.iter().map(|s| slot_wire(*s)).collect()),
                         gui_state: (!gauges.is_empty()).then(|| {
@@ -577,21 +589,27 @@ mod tests {
 
     fn open_on_mob(server: &mut ServerGame, mob: u64, events: &mut TickEvents) {
         let kind = intern_kind("anchortest:pack").unwrap();
-        server.queue_menu_action(0, PendingMenuAction::OpenGui {
+        server.queue_menu_action(
+            0,
+            PendingMenuAction::OpenGui {
                 kind,
                 anchor: Some(MenuAnchor::Mob(mob)),
-            });
+            },
+        );
         server.tick_menu(0, events);
     }
 
     fn click(server: &mut ServerGame, slot: MenuSlot, events: &mut TickEvents) {
-        server.queue_menu_action(0, PendingMenuAction::SlotClick {
+        server.queue_menu_action(
+            0,
+            PendingMenuAction::SlotClick {
                 slot,
                 button: PointerButton::Primary,
                 shift: false,
                 gather: false,
                 request_id: 0,
-            });
+            },
+        );
         server.tick_menu(0, events);
     }
 

@@ -136,8 +136,16 @@ mod tests {
         let found = shortfalls(needs, &limits(2048, 1 << 27, 8192));
         assert_eq!(found.len(), 1);
         assert!(found[0].fatal);
-        assert!(found[0].message.contains("1500 atlas tiles"), "{}", found[0].message);
-        assert!(found[0].message.contains("at most 1024 tiles"), "{}", found[0].message);
+        assert!(
+            found[0].message.contains("1500 atlas tiles"),
+            "{}",
+            found[0].message
+        );
+        assert!(
+            found[0].message.contains("at most 1024 tiles"),
+            "{}",
+            found[0].message
+        );
     }
 
     /// Icons degrade rather than stop the game.
@@ -150,7 +158,11 @@ mod tests {
         let found = shortfalls(needs, &limits(2048, 1 << 27, 2048));
         assert_eq!(found.len(), 1);
         assert!(!found[0].fatal);
-        assert!(found[0].message.contains("1000 items"), "{}", found[0].message);
+        assert!(
+            found[0].message.contains("1000 items"),
+            "{}",
+            found[0].message
+        );
     }
 
     #[test]
@@ -160,6 +172,8 @@ mod tests {
             items: 1,
         };
         let found = shortfalls(needs, &limits(2048, 1024, 8192));
-        assert!(found.iter().any(|s| s.fatal && s.message.contains("uv table")));
+        assert!(found
+            .iter()
+            .any(|s| s.fatal && s.message.contains("uv table")));
     }
 }

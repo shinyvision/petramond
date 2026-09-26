@@ -308,13 +308,36 @@ fn an_overlay_layer_composes_over_the_base_kit() {
     .expect("stack loads");
     assert_eq!(t.pages().len(), 2);
     assert_eq!(t.page_size(1), (32, 32));
-    let panel = t.part("panel.large").unwrap().face(FaceState::Default).unwrap();
+    let panel = t
+        .part("panel.large")
+        .unwrap()
+        .face(FaceState::Default)
+        .unwrap();
     assert_eq!(panel.page, 0, "untouched base part stays on the base page");
-    let button = t.part("button.default").unwrap().face(FaceState::Default).unwrap();
-    assert_eq!((button.page, button.rect), (1, [1, 1, 6, 6]), "overlay replaces by key");
-    assert_eq!(t.part("mymod.gear").unwrap().face(FaceState::Default).unwrap().page, 1);
+    let button = t
+        .part("button.default")
+        .unwrap()
+        .face(FaceState::Default)
+        .unwrap();
+    assert_eq!(
+        (button.page, button.rect),
+        (1, [1, 1, 6, 6]),
+        "overlay replaces by key"
+    );
+    assert_eq!(
+        t.part("mymod.gear")
+            .unwrap()
+            .face(FaceState::Default)
+            .unwrap()
+            .page,
+        1
+    );
     assert!(t.has_color("rust") && t.has_color("text"));
-    assert_eq!((t.metrics.slot, t.metrics.button_h), (24, 22), "metrics merge by key");
+    assert_eq!(
+        (t.metrics.slot, t.metrics.button_h),
+        (24, 22),
+        "metrics merge by key"
+    );
 }
 
 /// Typos in a manifest are errors that name the offending key, not silent
@@ -333,11 +356,19 @@ fn manifest_mistakes_are_load_errors() {
     assert_eq!(load(r#""p": { "rect": [0,0,1,1] }"#, ""), Ok(()));
     let err = load(r#""p": { "rect": [0,0,1,1], "slcie": [1,1,1,1] }"#, "").unwrap_err();
     assert!(err.contains("slcie"), "{err}");
-    let err = load(r#""p": { "states": { "hovered": { "rect": [0,0,1,1] } } }"#, "").unwrap_err();
+    let err = load(
+        r#""p": { "states": { "hovered": { "rect": [0,0,1,1] } } }"#,
+        "",
+    )
+    .unwrap_err();
     assert!(err.contains("unknown face state 'hovered'"), "{err}");
     let err = load(r#""p": { "rect": [0,0,1,1], "label_color": "txet" }"#, "").unwrap_err();
     assert!(err.contains("label_color 'txet'"), "{err}");
-    let err = load(r#""p": { "rect": [0,0,1,1] }"#, r#", "metrics": { "slto": 3 }"#).unwrap_err();
+    let err = load(
+        r#""p": { "rect": [0,0,1,1] }"#,
+        r#", "metrics": { "slto": 3 }"#,
+    )
+    .unwrap_err();
     assert!(err.contains("slto"), "{err}");
     let no_selection = r##"{ "format": 1, "palette": { "text": "#FFFFFF" } }"##;
     let err = Theme::load(no_selection, &read).map(|_| ()).unwrap_err().0;

@@ -43,13 +43,21 @@ fn digest_lines(case: &str, mesh: &ChunkMesh, out: &mut BTreeMap<String, String>
         mesh.far_opaque_len as usize,
         &mesh.far_opaque_len.to_le_bytes(),
     );
-    put("transparent", mesh.transparent.len(), &verts(&mesh.transparent));
+    put(
+        "transparent",
+        mesh.transparent.len(),
+        &verts(&mesh.transparent),
+    );
     put(
         "transparent_two_sided",
         mesh.transparent_two_sided.len(),
         &verts(&mesh.transparent_two_sided),
     );
-    put("translucent", mesh.translucent.len(), &verts(&mesh.translucent));
+    put(
+        "translucent",
+        mesh.translucent.len(),
+        &verts(&mesh.translucent),
+    );
     put(
         "model",
         mesh.model.len(),
@@ -120,6 +128,17 @@ fn parse(text: &str) -> BTreeMap<String, String> {
 
 #[test]
 fn representative_section_meshes_match_their_golden_digests() {
+    // The golden records the engine catalog. The canonical test suite stages
+    // bundled packs, while a direct mesh-crate test may have no packs at all;
+    // pin the same base-only registry for both runs.
+    let packs = petramond_world::assets::PackSet::discover(
+        &petramond_world::assets::PackRoots::with_mods(Vec::new()),
+    );
+    let content = petramond_world::content::ContentLoader::new(packs)
+        .stages(&petramond_worldgen::data::content_stages())
+        .load()
+        .expect("base mesh snapshot content loads");
+    let _pin = petramond_world::content::pin(content);
     let mut digests = BTreeMap::new();
     for (case, mesh) in cases() {
         digest_lines(&case, &mesh, &mut digests);
@@ -134,7 +153,10 @@ fn representative_section_meshes_match_their_golden_digests() {
         )
         .expect("create snapshot dir");
         std::fs::write(SNAPSHOT_FILE, render(&digests)).expect("write mesh digests");
-        eprintln!("blessed {} mesh digests into {SNAPSHOT_FILE}", digests.len());
+        eprintln!(
+            "blessed {} mesh digests into {SNAPSHOT_FILE}",
+            digests.len()
+        );
         return;
     };
     let golden = parse(&golden);

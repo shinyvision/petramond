@@ -73,10 +73,16 @@ fn every_engine_contract_role_is_listed_once() {
 #[test]
 fn the_creative_screen_pins_its_hotbar() {
     let creative = engine_kind("petramond:creative").expect("creative is an engine kind");
-    assert_eq!(creative.contract(), SlotContract::new(&[("hotbar", HOTBAR_SLOTS)]));
+    assert_eq!(
+        creative.contract(),
+        SlotContract::new(&[("hotbar", HOTBAR_SLOTS)])
+    );
     let empty = doc("petramond:creative", "container", r#"{ "type": "column" }"#);
     let issues = validate_for_engine(&empty, &check(None, &no_images));
-    assert!(messages(&issues).contains("role 'hotbar' missing"), "{issues:?}");
+    assert!(
+        messages(&issues).contains("role 'hotbar' missing"),
+        "{issues:?}"
+    );
 }
 
 #[test]
@@ -102,7 +108,10 @@ fn a_namespaced_kind_must_ship_from_its_own_pack() {
     let d = doc("doctest:owned", "screen", r#"{ "type": "column" }"#);
     assert!(validate_for_engine(&d, &check(Some("doctest"), &no_images)).is_empty());
     let issues = validate_for_engine(&d, &check(Some("otherpack"), &no_images));
-    assert!(messages(&issues).contains("does not belong to pack"), "{issues:?}");
+    assert!(
+        messages(&issues).contains("does not belong to pack"),
+        "{issues:?}"
+    );
 }
 
 #[test]
@@ -148,13 +157,19 @@ fn slot_semantics_follow_the_engine_rules() {
     let issues = slot_semantics_issues(&slot("container", r#"{"data": "metal"}"#), &tags);
     assert!(issues[0].contains("namespaced"), "{issues:?}");
     let issues = slot_semantics_issues(&slot("hotbar", r#""petramond:fuel""#), &tags);
-    assert!(issues[0].contains("apply only to 'container'"), "{issues:?}");
+    assert!(
+        issues[0].contains("apply only to 'container'"),
+        "{issues:?}"
+    );
 
     let many: Vec<String> = (0..=MAX_SLOT_FILTERS)
         .map(|i| format!(r#"{{"data": "doctest:f{i}"}}"#))
         .collect();
     let issues = slot_semantics_issues(&slot("container", &many.join(", ")), &tags);
-    assert!(issues[0].contains("accepts filters; the cap is"), "{issues:?}");
+    assert!(
+        issues[0].contains("accepts filters; the cap is"),
+        "{issues:?}"
+    );
 }
 
 #[test]

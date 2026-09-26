@@ -77,13 +77,31 @@ mod tests {
     #[test]
     fn a_placed_front_faces_back_toward_the_viewer() {
         // Looking north (-Z) places a front facing south (+Z), and so on.
-        assert_eq!(Facing::toward_viewer(Vec3::new(0.0, 0.0, -1.0)), Facing::South);
-        assert_eq!(Facing::toward_viewer(Vec3::new(0.0, 0.0, 1.0)), Facing::North);
-        assert_eq!(Facing::toward_viewer(Vec3::new(1.0, 0.0, 0.0)), Facing::West);
-        assert_eq!(Facing::toward_viewer(Vec3::new(-1.0, 0.0, 0.0)), Facing::East);
+        assert_eq!(
+            Facing::toward_viewer(Vec3::new(0.0, 0.0, -1.0)),
+            Facing::South
+        );
+        assert_eq!(
+            Facing::toward_viewer(Vec3::new(0.0, 0.0, 1.0)),
+            Facing::North
+        );
+        assert_eq!(
+            Facing::toward_viewer(Vec3::new(1.0, 0.0, 0.0)),
+            Facing::West
+        );
+        assert_eq!(
+            Facing::toward_viewer(Vec3::new(-1.0, 0.0, 0.0)),
+            Facing::East
+        );
         // The vertical look component never matters; the larger horizontal
         // axis wins and an exact diagonal favours X.
-        assert_eq!(Facing::toward_viewer(Vec3::new(0.2, -0.9, -0.6)), Facing::South);
-        assert_eq!(Facing::toward_viewer(Vec3::new(0.5, 0.0, 0.5)), Facing::West);
+        assert_eq!(
+            Facing::toward_viewer(Vec3::new(0.2, -0.9, -0.6)),
+            Facing::South
+        );
+        assert_eq!(
+            Facing::toward_viewer(Vec3::new(0.5, 0.0, 0.5)),
+            Facing::West
+        );
     }
 }

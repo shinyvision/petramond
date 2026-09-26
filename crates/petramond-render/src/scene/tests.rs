@@ -202,7 +202,10 @@ fn a_copied_mob_arena_answers_the_gathers_ranges() {
         ..Default::default()
     };
     scene.copy_from(&gather);
-    assert_eq!(scene, gather, "stale rows are gone, the gather's are in place");
+    assert_eq!(
+        scene, gather,
+        "stale rows are gone, the gather's are in place"
+    );
     let range = crate::ArenaRange { start: 0, len: 1 };
     assert_eq!(range.of(&scene.anims)[0].anim, oar);
     assert_eq!(

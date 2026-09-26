@@ -187,7 +187,7 @@ impl<'d> InstTree<'d> {
         state: &UiState,
         compact: bool,
         hover: Option<&str>,
-        mut prev: Option<&mut Prev>,
+        prev: Option<&mut Prev>,
     ) -> InstTree<'d> {
         let mut tree = InstTree { insts: Vec::new() };
         let mut grow = Grow {
@@ -196,7 +196,7 @@ impl<'d> InstTree<'d> {
             state,
             compact,
             hover,
-            prev: prev.as_deref_mut(),
+            prev,
         };
         grow.node(
             &doc.root,
@@ -370,7 +370,10 @@ impl<'d> Grow<'_, 'd, '_> {
             // could be adopted next frame without the child that should
             // have appeared.
             if let Some(p) = at.parent {
-                self.tree.insts[p as usize].data.deps.append(&mut reads.deps);
+                self.tree.insts[p as usize]
+                    .data
+                    .deps
+                    .append(&mut reads.deps);
             }
             return None;
         }

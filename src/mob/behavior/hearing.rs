@@ -110,11 +110,9 @@ impl ChaseSoundAi {
     /// Only the noises within hearing are visited (see `NoiseField::near`);
     /// equally distant noises break ties on batch order.
     fn acquire(&mut self, ctx: &mut AiCtx) {
-        let nearest_player = nearest(
-            ctx,
-            self.radius,
-            |n: &Noise| matches!(n.source, EntityRef::Player(_)),
-        );
+        let nearest_player = nearest(ctx, self.radius, |n: &Noise| {
+            matches!(n.source, EntityRef::Player(_))
+        });
         if let Some(source) = nearest_player {
             self.target = Some(source);
             self.silent_ticks = 0;

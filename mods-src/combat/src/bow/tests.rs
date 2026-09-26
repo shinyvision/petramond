@@ -295,7 +295,10 @@ fn an_incomplete_row_is_refused_whole() {
         r#"{"draw_ticks": 0, "strain_ticks": 8, "draw_speed_scale": 0.7, "launch_speed": [5, 45]}"#,
     )
     .unwrap();
-    assert!(Draw::from_spec(&no_draw).is_err(), "a zero-tick draw is no draw");
+    assert!(
+        Draw::from_spec(&no_draw).is_err(),
+        "a zero-tick draw is no draw"
+    );
     assert!(
         bow(r#"{"draw_ticks": 12, "strain_ticks": 8, "draw_speed_scale": 0.7, "launch_speed": [5, 45], "pul": []}"#)
             .is_err(),
@@ -303,12 +306,16 @@ fn an_incomplete_row_is_refused_whole() {
     );
 
     let arrow = |text: &str| parse_row_data::<ArrowSpec>(text).unwrap();
-    let good = arrow(r#"{"damage_weak": [1, 2], "damage_full": [9, 18], "speed_weak": 5, "speed_full": 45}"#);
+    let good = arrow(
+        r#"{"damage_weak": [1, 2], "damage_full": [9, 18], "speed_weak": 5, "speed_full": 45}"#,
+    );
     assert_eq!(
         ArrowRow::from_spec(ItemId(13), "m:arrow".into(), &good),
         Ok(rows().arrows[0].clone())
     );
-    let inverted = arrow(r#"{"damage_weak": [1, 2], "damage_full": [9, 18], "speed_weak": 45, "speed_full": 5}"#);
+    let inverted = arrow(
+        r#"{"damage_weak": [1, 2], "damage_full": [9, 18], "speed_weak": 45, "speed_full": 5}"#,
+    );
     assert!(ArrowRow::from_spec(ItemId(13), "m:arrow".into(), &inverted).is_err());
 }
 

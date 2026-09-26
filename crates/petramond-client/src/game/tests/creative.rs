@@ -31,7 +31,7 @@ fn creative_mode_inventory_and_double_jump_follow_server_authority() {
         game.tick(0.05, &GameInput::default());
     }
     assert_eq!(
-        game.session().menu.target().kind(),
+        game.session().menu().target().kind(),
         Some(GuiKind::Creative)
     );
 }
@@ -41,8 +41,7 @@ fn wand_removes_selected_air_and_undo_restores_it_without_breaking_world_blocks(
     use petramond_math::world_pos::WorldPos;
     use petramond_world::item::{ItemStack, ItemType};
     let mut game = game_on_empty_chunk();
-    game.server_player_mut()
-        .set_mode(PlayerMode::Creative);
+    game.server_player_mut().set_mode(PlayerMode::Creative);
     game.local.player.set_mode(PlayerMode::Creative);
     let wand = ItemType::by_name("petramond:schematic_wand").unwrap();
     game.server_player_mut()
@@ -54,7 +53,8 @@ fn wand_removes_selected_air_and_undo_restores_it_without_breaking_world_blocks(
     game.local.cam.pos = WorldPos::new(8.5, 80.5, 0.5);
     game.local.cam.yaw = 0.0;
     game.local.cam.pitch = 0.0;
-    game.tools.world
+    game.tools
+        .world
         .selection
         .selection
         .region([8, 80, 5], [8, 80, 6], false)
@@ -68,7 +68,8 @@ fn wand_removes_selected_air_and_undo_restores_it_without_breaking_world_blocks(
     game.world_tool_input(&mut input);
     assert!(!input.place_clicked && !input.use_held);
     assert_eq!(
-        game.tools.world
+        game.tools
+            .world
             .selection
             .selection
             .cells()
@@ -112,9 +113,13 @@ fn schematic_preview_and_placement_share_the_rotated_footprint_center_and_height
     let mut game = game_on_empty_chunk();
     game.local.player.set_mode(PlayerMode::Creative);
     game.game
-        .replica.world
+        .replica
+        .world
         .insert_empty_column_for_test(ChunkPos::new(0, 0));
-    game.game.replica.world.set_block_world(8, 80, 6, Block::Stone);
+    game.game
+        .replica
+        .world
+        .set_block_world(8, 80, 6, Block::Stone);
     game.local.cam.pos = WorldPos::new(8.5, 80.5, 0.5);
     game.local.cam.yaw = 0.0;
     game.local.cam.pitch = 0.0;

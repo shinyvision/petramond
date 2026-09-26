@@ -95,10 +95,9 @@ impl ServerGame {
                 DeferredAction::ActorInteract { mob_id, pos } => {
                     self.apply_actor_interact(mob_id, pos, events)
                 }
-                DeferredAction::ContainerHold { mob_id, pos, open } => {
-                    self.containers
-                        .set_mob_hold(&self.world, mob_id, pos, open, events)
-                }
+                DeferredAction::ContainerHold { mob_id, pos, open } => self
+                    .containers
+                    .set_mob_hold(&self.world, mob_id, pos, open, events),
                 DeferredAction::SchematicChoose { player, tag } => {
                     self.open_schematic_choice(player, tag)
                 }

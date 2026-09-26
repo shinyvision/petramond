@@ -108,13 +108,17 @@ impl Deref for ScratchLease {
     type Target = MeshScratch;
 
     fn deref(&self) -> &MeshScratch {
-        self.0.as_ref().expect("a lease holds its scratch until dropped")
+        self.0
+            .as_ref()
+            .expect("a lease holds its scratch until dropped")
     }
 }
 
 impl DerefMut for ScratchLease {
     fn deref_mut(&mut self) -> &mut MeshScratch {
-        self.0.as_mut().expect("a lease holds its scratch until dropped")
+        self.0
+            .as_mut()
+            .expect("a lease holds its scratch until dropped")
     }
 }
 

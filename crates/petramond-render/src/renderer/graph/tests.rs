@@ -60,7 +60,12 @@ fn plan(shape: FrameShape, active: &[N]) -> FramePlan<N> {
 fn labels(plan: &FramePlan<N>) -> Vec<Vec<&'static str>> {
     plan.groups
         .iter()
-        .map(|g| plan.nodes[g.nodes.clone()].iter().map(|&(_, l)| l).collect())
+        .map(|g| {
+            plan.nodes[g.nodes.clone()]
+                .iter()
+                .map(|&(_, l)| l)
+                .collect()
+        })
         .collect()
 }
 
@@ -78,7 +83,15 @@ const ALL: [N; 7] = [
 fn nodes_are_ordered_by_phase_not_declaration() {
     assert_eq!(
         graph().order().collect::<Vec<_>>(),
-        [N::First, N::Stamp, N::Sampler, N::Late, N::Hand, N::Out, N::Chrome]
+        [
+            N::First,
+            N::Stamp,
+            N::Sampler,
+            N::Late,
+            N::Hand,
+            N::Out,
+            N::Chrome
+        ]
     );
 }
 
@@ -137,18 +150,35 @@ fn a_clearing_node_always_opens_its_own_pass() {
         [vec!["first", "stamp"], vec!["hand"], vec!["out"]]
     );
     assert!(p.groups[1].depth.unwrap().clear);
-    assert!(!p.groups[1].depth.unwrap().store, "nothing reads the hand's depth");
-    assert!(p.groups[1].color.unwrap().store, "the post pass samples the world");
+    assert!(
+        !p.groups[1].depth.unwrap().store,
+        "nothing reads the hand's depth"
+    );
+    assert!(
+        p.groups[1].color.unwrap().store,
+        "the post pass samples the world"
+    );
 }
 
 #[test]
 fn msaa_resolves_on_the_last_world_pass_and_discards_the_samples() {
     let p = plan(MSAA, &ALL);
-    let resolving: Vec<_> = p.groups.iter().filter(|g| g.resolve).map(|g| g.label).collect();
+    let resolving: Vec<_> = p
+        .groups
+        .iter()
+        .filter(|g| g.resolve)
+        .map(|g| g.label)
+        .collect();
     assert_eq!(resolving, ["hand"]);
     let hand = &p.groups[3];
-    assert!(!hand.color.unwrap().store, "the resolve carries the image on");
-    assert!(p.groups[0].color.unwrap().store, "later world passes load it");
+    assert!(
+        !hand.color.unwrap().store,
+        "the resolve carries the image on"
+    );
+    assert!(
+        p.groups[0].color.unwrap().store,
+        "later world passes load it"
+    );
     assert_eq!(p.validate(MSAA), Ok(()));
 }
 
@@ -214,8 +244,11 @@ fn validation_catches_a_load_before_any_write() {
 #[test]
 fn declarations_that_cannot_run_are_rejected() {
     assert_eq!(
-        FrameGraph::new(vec![world(N::First, "a", Phase::Opaque), world(N::First, "b", Phase::Sky)])
-            .err(),
+        FrameGraph::new(vec![
+            world(N::First, "a", Phase::Opaque),
+            world(N::First, "b", Phase::Sky)
+        ])
+        .err(),
         Some(GraphError::DuplicateNode("b"))
     );
     assert_eq!(
@@ -223,8 +256,10 @@ fn declarations_that_cannot_run_are_rejected() {
         Some(GraphError::NoAttachment("bare"))
     );
     assert_eq!(
-        FrameGraph::new(vec![world(N::First, "loop", Phase::Opaque).sampling(&[Sampled::Depth])])
-            .err(),
+        FrameGraph::new(vec![
+            world(N::First, "loop", Phase::Opaque).sampling(&[Sampled::Depth])
+        ])
+        .err(),
         Some(GraphError::Feedback("loop"))
     );
 }

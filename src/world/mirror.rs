@@ -11,7 +11,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
-
 /// What has been shipped so far: per-column payload revision and the set of
 /// installed sections. Columns ship before their sections, sections ship once
 /// their light is final (the same gate the terrain sender applies), and every

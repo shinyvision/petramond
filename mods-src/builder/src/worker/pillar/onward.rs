@@ -7,12 +7,12 @@ use super::Pillar;
 use crate::content::GOLEM;
 use crate::fx::HashSet;
 use crate::geometry::{feet_of, manhattan, offset, reaches, SIDES};
-use crate::worker::Job;
 use crate::project::Project;
 use crate::worker::route::{self, Hubs};
 use crate::worker::stance::Search;
 use crate::worker::step::Task;
 use crate::worker::tuning::reach::{ONWARD_SPAN, ONWARD_STANCES, ONWARD_TOPS};
+use crate::worker::Job;
 use crate::worker::{sight, Body, Ctx};
 
 /// Where the standing room level with `stance` (a roof course, a wall top)

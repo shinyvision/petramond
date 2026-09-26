@@ -113,9 +113,11 @@ impl Game {
         // Loopback skips the remap, so the local vocabulary IS the session's
         // — binding it keys this cache for a later harvest (a remote join to
         // a server with identical tables may legitimately claim it).
-        game.replica.section_cache.adopt_session(section_cache_registry_key(
-            &petramond::net::remap::local_name_tables(),
-        ));
+        game.replica
+            .section_cache
+            .adopt_session(section_cache_registry_key(
+                &petramond::net::remap::local_name_tables(),
+            ));
         log::debug!(
             target: "petramond::join::perf",
             "Game::new: {:.1} ms",
@@ -178,8 +180,7 @@ impl Game {
 
     /// Assemble the client half around an already-connected server handle.
     pub fn assemble(cam: Camera, handle: ServerHandle, bootstrap: ClientBootstrap) -> Self {
-        let entities =
-            super::replicated::EntityReplica::new(bootstrap.self_id, bootstrap.players);
+        let entities = super::replicated::EntityReplica::new(bootstrap.self_id, bootstrap.players);
         Self {
             jobs: bootstrap.jobs,
             notice: String::new(),

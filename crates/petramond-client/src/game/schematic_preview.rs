@@ -3,13 +3,13 @@
 //! commits with the place click — as a paste, or as the answer to a
 //! positioning the server opened.
 
-use petramond_world::world::raycast;
 use super::{Game, GameInput};
 use petramond::net::protocol::{ClientToServer, PlayerAction};
 use petramond::player::{RayFilter, RaycastHit};
 use petramond::schematic::share::SchematicRequest;
 use petramond::schematic::store::Digest;
 use petramond::schematic::{Scene, Schematic, PLACEMENT_REACH};
+use petramond_world::world::raycast;
 use std::sync::Arc;
 
 /// The positioning a preview answers instead of pasting.
@@ -135,7 +135,8 @@ impl Game {
     /// A preview is up that this mode may commit: a paste in creative, or a
     /// positioning in any mode.
     pub fn schematic_preview_active(&self) -> bool {
-        self.tools.preview
+        self.tools
+            .preview
             .held
             .as_ref()
             .is_some_and(|held| self.local.player.is_creative() || held.positioning.is_some())
@@ -195,7 +196,8 @@ impl Game {
         };
         let turns = held.turns;
         if let Some(Positioning { tag, digest, .. }) = held.positioning.take() {
-            self.net.queue(ClientToServer::Action(PlayerAction::Schematic(
+            self.net
+                .queue(ClientToServer::Action(PlayerAction::Schematic(
                     SchematicRequest::Positioned {
                         tag,
                         digest,
@@ -218,7 +220,8 @@ impl Game {
         };
         let (schematic, turns) = (held.schematic.clone(), held.turns);
         let current = self
-            .tools.preview
+            .tools
+            .preview
             .scene_key
             .as_ref()
             .is_some_and(|(s, t)| *t == turns && Arc::ptr_eq(s, &schematic));

@@ -41,7 +41,8 @@ impl ServerGame {
     pub fn tick_mining(&mut self, s: usize, events: &mut TickEvents) {
         let now = self.world.current_tick();
         self.sessions[s]
-            .input.pending_break_ack
+            .input
+            .pending_break_ack
             .retain(|_, broke_at| now.saturating_sub(*broke_at) <= BREAK_ACK_TTL_TICKS);
         // Last tick's single-block edits have had their hooks run by now.
         self.close_open_edit(s, events);
@@ -91,7 +92,8 @@ impl ServerGame {
             // belt in `game/replicated.rs`).
             let broken_pos = event.pos;
             let deferred = self.sessions[s]
-                .input.deferred_break_finished
+                .input
+                .deferred_break_finished
                 .take_if(|d| d.pos == broken_pos);
             let presented = deferred.is_some_and(|d| d.predicted);
             if self.finish_player_break(s, event, events, presented) {
@@ -121,13 +123,18 @@ impl ServerGame {
             return;
         };
         let still_mining = self.sessions[s]
-            .sim.mining
+            .sim
+            .mining
             .progress()
             .is_some_and(|(target, _)| target == req.pos);
         if still_mining {
             return;
         }
-        let req = self.sessions[s].input.deferred_break_finished.take().unwrap();
+        let req = self.sessions[s]
+            .input
+            .deferred_break_finished
+            .take()
+            .unwrap();
         self.deny_break_finished(
             s,
             req.request_id,
@@ -177,7 +184,12 @@ impl ServerGame {
         // BreakFinished arrives. If THIS session broke it, accept — never
         // deny/restore (that re-spawns the block and invites a second break).
         if block == Block::Air {
-            if self.sessions[s].input.pending_break_ack.remove(&pos).is_some() {
+            if self.sessions[s]
+                .input
+                .pending_break_ack
+                .remove(&pos)
+                .is_some()
+            {
                 if let Some(old) = self.sessions[s].input.deferred_break_finished.take() {
                     if old.pos != pos {
                         self.deny_break_finished(
@@ -204,7 +216,8 @@ impl ServerGame {
         if self.sessions[s].player.abilities().instant_break {
             let now = self.world.current_tick();
             if self.sessions[s]
-                .sim.last_instant_break
+                .sim
+                .last_instant_break
                 .is_some_and(|last| now.saturating_sub(last) < INSTANT_BREAK_REPEAT_TICKS)
             {
                 self.deny_break_finished(s, request_id, pos, ActionDenyReason::TooFast);
@@ -272,7 +285,8 @@ impl ServerGame {
         let expected = petramond_world::mining::break_time(block, auth_tool);
         if expected > 0.0 {
             let observed = self.sessions[s]
-                .sim.mining
+                .sim
+                .mining
                 .progress()
                 .and_then(|(target, elapsed)| (target == pos).then_some(elapsed));
             if observed.is_none_or(|elapsed| elapsed + 3.0 * TICK_DT < expected) {
@@ -332,7 +346,10 @@ impl ServerGame {
     /// Authoritative footprint of `pos` into the session's corrective sync.
     fn queue_break_corrective_cells(&mut self, s: usize, pos: IVec3) {
         let cells = self.world.break_footprint_cells(pos);
-        self.sessions[s].replication.pending_corrective_cells.extend(cells);
+        self.sessions[s]
+            .replication
+            .pending_corrective_cells
+            .extend(cells);
     }
 
     /// Apply a finished player break: the shared break funnel as that
@@ -352,7 +369,8 @@ impl ServerGame {
         initiator_presented: bool,
     ) -> bool {
         let hit_normal = self.sessions[s]
-            .input.look
+            .input
+            .look
             .filter(|h| h.block == event.pos && h.normal != IVec3::ZERO)
             .map(|h| h.normal);
         self.touch_edit_cells(s, self.world.break_footprint_cells(event.pos));
@@ -377,12 +395,18 @@ impl ServerGame {
         // needs the event, and one whose finish is in flight suppresses the
         // wire copy itself. Observers get the shared event either way.
         if initiator_presented {
-            self.sessions[s].replication.presented_breaks.push(event.pos);
+            self.sessions[s]
+                .replication
+                .presented_breaks
+                .push(event.pos);
         }
         // A lagged BreakFinished for this already-cleared cell must accept,
         // not deny/restore. Tick-stamped for the ack TTL.
         let now = self.world.current_tick();
-        self.sessions[s].input.pending_break_ack.insert(event.pos, now);
+        self.sessions[s]
+            .input
+            .pending_break_ack
+            .insert(event.pos, now);
         true
     }
 
@@ -440,7 +464,8 @@ impl ServerGame {
         // The engine asks the family; it does not know a slab from a stair.
         let part_drops = self
             .world
-            .data().cell_parts(event.pos)
+            .data()
+            .cell_parts(event.pos)
             .map(|parts| self.part_drop_stacks(event.pos, &parts));
         // A mod container is keyed at the block's container anchor — resolved
         // BEFORE the removal below clears the model-group metadata the anchor
@@ -580,7 +605,10 @@ impl ServerGame {
                 // KV) before this drain — no tint to sample.
                 tint: None,
             });
-            let (sky, blk) = self.world.data().dynamic_light_at_world(pos.x, pos.y, pos.z);
+            let (sky, blk) = self
+                .world
+                .data()
+                .dynamic_light_at_world(pos.x, pos.y, pos.z);
             // A natural break yields exactly what a bare-hand break would: most
             // fragile blocks are tier-0 (short grass yields nothing, a
             // flower/torch yields itself), while a tool-gated drop (the snow

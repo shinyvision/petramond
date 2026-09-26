@@ -47,9 +47,7 @@ fn bytes(
     buffer: ColumnBuffer,
 ) -> Vec<u8> {
     column.buffer(buffer).map_or_else(Vec::new, |l| {
-        arenas
-            .get(buffer)
-            .readback(device, queue, &l.alloc, l.len)
+        arenas.get(buffer).readback(device, queue, &l.alloc, l.len)
     })
 }
 
@@ -171,7 +169,11 @@ fn a_packed_column_tiles_every_region_in_section_order() {
             assert_eq!(p.destination, next, "{buffer:?} spans tile the buffer");
             next += p.count;
         }
-        assert_eq!(next, len[buffer.index()], "{buffer:?} spans cover the buffer");
+        assert_eq!(
+            next,
+            len[buffer.index()],
+            "{buffer:?} spans cover the buffer"
+        );
     }
     // Blend indices rebase onto their own section's model vertices.
     let index_plan = &plans[ColumnBuffer::ModelIndices.index()];

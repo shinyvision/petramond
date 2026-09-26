@@ -98,14 +98,14 @@ impl EntityRecord {
     /// resumes with its saved motion, lifetime and spin (the random spawn
     /// "pop" is bypassed); a restored lodged item's anchor is unverified
     /// (see `Stuck::verified`).
-    fn resolve(self, pal: &Palette) -> Result<Option<DroppedItem>, EntityRecord> {
+    fn resolve(self, pal: &Palette) -> Result<Option<DroppedItem>, Box<EntityRecord>> {
         if !self.unknown.is_empty() {
-            return Err(self);
+            return Err(Box::new(self));
         }
         let stack = match self.slot.clone().resolve(pal) {
             Ok(Some(stack)) => stack,
             Ok(None) => return Ok(None),
-            Err(_) => return Err(self),
+            Err(_) => return Err(Box::new(self)),
         };
         let motion = match (MotionKind::from_u8(self.motion), self.stuck) {
             (MotionKind::Flight, _) => Motion::flying(self.vel, None),
@@ -129,7 +129,12 @@ impl EntityRecord {
 
 /// Append the entity list: the live drops, then the records kept from an
 /// earlier load.
-pub fn put_entities(buf: &mut Vec<u8>, items: &[DroppedItem], kept: &[EntityRecord], pal: &Palette) {
+pub fn put_entities(
+    buf: &mut Vec<u8>,
+    items: &[DroppedItem],
+    kept: &[EntityRecord],
+    pal: &Palette,
+) {
     let records: Vec<EntityRecord> = items
         .iter()
         .map(|it| EntityRecord::of(it, pal))
@@ -150,7 +155,7 @@ pub fn get_entities(
         match record.resolve(pal) {
             Ok(Some(drop)) => live.push(drop),
             Ok(None) => {}
-            Err(record) => kept.push(record),
+            Err(record) => kept.push(*record),
         }
     }
     Some((live, kept))
@@ -310,7 +315,10 @@ mod tests {
         let mut record = Vec::new();
         let mut w = TaggedWriter::new(&mut record);
         w.field(1, &WorldPos::new(4.0, 64.0, 4.0));
-        w.field(3, &DiskSlot::of(Some(ItemStack::new(ItemType::Stone, 3)), &pal));
+        w.field(
+            3,
+            &DiskSlot::of(Some(ItemStack::new(ItemType::Stone, 3)), &pal),
+        );
         w.finish();
         let mut list = to_bytes(&1u32);
         list.extend(record);

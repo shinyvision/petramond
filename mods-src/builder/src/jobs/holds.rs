@@ -110,8 +110,7 @@ impl Builder {
             });
             if gone {
                 self.cancel(id);
-                self.projects
-                    .update(id, |p| p.note = Note::TableGone);
+                self.projects.update(id, |p| p.note = Note::TableGone);
             }
         }
     }

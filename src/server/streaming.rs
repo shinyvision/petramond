@@ -326,6 +326,17 @@ impl TerrainSync {
 }
 
 impl ServerGame {
+    /// Fixture setup for tests that inspect a tick's event batch without
+    /// first driving the terrain transport through its multi-pump install.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn mark_section_sent_for_test(&mut self, session: usize, cell: IVec3) {
+        let section = SectionPos::from_world(cell.x, cell.y, cell.z).expect("valid test cell");
+        self.sessions[session]
+            .transport
+            .terrain
+            .sent_insert(section);
+    }
+
     /// Every session's streaming anchor: the player's eye section.
     fn load_anchors(&self) -> Vec<LoadAnchor> {
         self.sessions
@@ -385,7 +396,8 @@ impl ServerGame {
         for (s, msgs) in per_session.iter_mut().enumerate() {
             self.bank_light_refreshes(s, &relit);
             self.sessions[s]
-                .transport.terrain
+                .transport
+                .terrain
                 .configure_loopback(s == 0 && local_at_zero);
             self.send_batch_for(s, anchors[s], dt, queue_room[s], msgs);
         }

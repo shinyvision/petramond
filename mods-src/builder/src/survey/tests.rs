@@ -44,7 +44,10 @@ fn nothing_is_summed_until_every_unit_was_measured() {
     let summary = survey.summary().expect("the first pass is over");
     assert_eq!((summary.open, summary.unchecked), (3, 0));
     assert_eq!(bill(&survey), vec![(stone(), 3)]);
-    assert!(survey.known.iter().all(|k| *k == Known::Place(vec![stack("petramond:stone", 1)])));
+    assert!(survey
+        .known
+        .iter()
+        .all(|k| *k == Known::Place(vec![stack("petramond:stone", 1)])));
 }
 
 #[test]
@@ -152,7 +155,11 @@ fn a_bill_counts_items_by_their_exact_data() {
         ..stack("petramond:stone", 5)
     };
     let mut summary = Summary::default();
-    summary.count(&Known::Place(vec![plain.clone(), marked.clone()]), &[], true);
+    summary.count(
+        &Known::Place(vec![plain.clone(), marked.clone()]),
+        &[],
+        true,
+    );
     summary.count(&Known::Place(vec![plain.clone()]), &[], true);
     assert_eq!(summary.bill.get(&key_of(&plain)), Some(&4));
     assert_eq!(summary.bill.get(&key_of(&marked)), Some(&5));

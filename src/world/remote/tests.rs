@@ -1,10 +1,10 @@
-use crate::world::{ReplicaWorld, ServerWorld};
 use crate::world::remote::payload::SectionPayloadExt;
 use crate::world::WorldData;
+use crate::world::{ReplicaWorld, ServerWorld};
 use std::sync::Arc;
 
-use crate::world::replication::BlockDelta;
 use crate::worker::JobPool;
+use crate::world::replication::BlockDelta;
 use crate::world::store::LoadTarget;
 use petramond_math::facing::Facing;
 use petramond_math::math::IVec3;
@@ -143,7 +143,9 @@ fn replica_converges_on_payloads_and_deltas() {
         StairState::new(Facing::South, StairHalf::Top),
     ));
     assert!(server.set_block_world(7, 65, 7, Block::Torch));
-    server.data.insert_torch(IVec3::new(7, 65, 7), TorchPlacement::East);
+    server
+        .data
+        .insert_torch(IVec3::new(7, 65, 7), TorchPlacement::East);
     assert!(server.place_log(IVec3::new(1, 65, 6), Block::OakLog, LogAxis::X));
     assert!(server.set_block_world(2, 65, 6, Block::OakSapling));
     assert!(server.set_block_world(1, 65, 1, Block::Chest));
@@ -179,13 +181,15 @@ fn replica_converges_on_payloads_and_deltas() {
         "fixture: deep stone loaded"
     );
     let columns: Vec<_> = server
-        .data.columns
+        .data
+        .columns
         .keys()
         .copied()
         .map(|cp| server.column_payload(cp).expect("column loaded"))
         .collect();
     let sections: Vec<_> = server
-        .data.sections
+        .data
+        .sections
         .iter()
         .filter(|(sp, _)| **sp != held_back)
         .map(|(_, s)| s.to_payload())
@@ -328,12 +332,18 @@ fn deltas_carry_cell_state_and_replicas_converge_on_it() {
     // Converge on the pristine floor first (the delta path needs installed
     // sections on the replica).
     let columns: Vec<_> = server
-        .data.columns
+        .data
+        .columns
         .keys()
         .copied()
         .map(|cp| server.column_payload(cp).expect("column loaded"))
         .collect();
-    let sections: Vec<_> = server.data.sections.values().map(|s| s.to_payload()).collect();
+    let sections: Vec<_> = server
+        .data
+        .sections
+        .values()
+        .map(|s| s.to_payload())
+        .collect();
     for c in columns {
         replica.install_remote_column(c);
     }
@@ -484,12 +494,18 @@ fn door_toggles_replicate_the_open_bit_without_a_block_change() {
     let base = IVec3::new(5, 65, 5);
     assert!(server.place_door(base, Block::OakDoor, Facing::East));
     let columns: Vec<_> = server
-        .data.columns
+        .data
+        .columns
         .keys()
         .copied()
         .map(|cp| server.column_payload(cp).expect("column loaded"))
         .collect();
-    let sections: Vec<_> = server.data.sections.values().map(|s| s.to_payload()).collect();
+    let sections: Vec<_> = server
+        .data
+        .sections
+        .values()
+        .map(|s| s.to_payload())
+        .collect();
     for c in columns {
         replica.install_remote_column(c);
     }
@@ -525,7 +541,10 @@ fn door_toggles_replicate_the_open_bit_without_a_block_change() {
 
 /// A hand-built column payload: flat maps, all-unknown summaries, and the
 /// given deep band floor — the minimum a replica needs to classify deep.
-fn column_payload_fixture(pos: ChunkPos, deep_band_lo: i32) -> crate::world::replication::ColumnPayload {
+fn column_payload_fixture(
+    pos: ChunkPos,
+    deep_band_lo: i32,
+) -> crate::world::replication::ColumnPayload {
     use crate::world::replication::{ColumnPayload, SectionBytes};
     use petramond_world::chunk::SECTION_SIZE;
     let flat = |n: usize| SectionBytes(Arc::from(vec![0u8; n].into_boxed_slice()));

@@ -230,11 +230,12 @@ pub(super) fn generated_sections() -> Vec<(SectionPos, Section, Scene)> {
         yhi: i32,
     }
     let seed = 0x1234_5678u32;
+    let generator = petramond_worldgen::parity::engine_generator(seed);
     let columns: Rc<HashMap<(i32, i32), LitColumn>> = Rc::new(
         (-1..=1)
             .flat_map(|cz| (-1..=1).map(move |cx| (cx, cz)))
             .map(|(cx, cz)| {
-                let chunk = petramond_worldgen::generate_chunk(seed, cx, cz);
+                let chunk = petramond_worldgen::generate_chunk_with(&generator, cx, cz);
                 let (band, ylo, yhi) = compute_chunk_skylight(&chunk);
                 (
                     (cx, cz),
@@ -279,8 +280,9 @@ pub(super) fn generated_sections() -> Vec<(SectionPos, Section, Scene)> {
                     _ => 0,
                 }),
                 biome: Box::new(move |wx, wz| {
-                    g.get(&(wx >> 4, wz >> 4))
-                        .map_or(0, |lc| lc.chunk.biome_at((wx & 15) as usize, (wz & 15) as usize))
+                    g.get(&(wx >> 4, wz >> 4)).map_or(0, |lc| {
+                        lc.chunk.biome_at((wx & 15) as usize, (wz & 15) as usize)
+                    })
                 }),
                 sky: Box::new(move |wx, wy, wz| {
                     if wy < 0 {
@@ -312,9 +314,9 @@ pub(super) fn catalog_sections() -> Vec<Section> {
     let slots: Vec<(usize, usize, usize)> = (1..SECTION_SIZE)
         .step_by(2)
         .flat_map(|y| {
-            (1..SECTION_SIZE).step_by(2).flat_map(move |z| {
-                (1..SECTION_SIZE).step_by(2).map(move |x| (x, y, z))
-            })
+            (1..SECTION_SIZE)
+                .step_by(2)
+                .flat_map(move |z| (1..SECTION_SIZE).step_by(2).map(move |x| (x, y, z)))
         })
         .collect();
     let blocks: Vec<Block> = Block::all()

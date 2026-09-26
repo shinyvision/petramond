@@ -161,7 +161,11 @@ impl HeldRotation {
         let Some(block) = selected.and_then(ItemType::as_block) else {
             return HeldBlockState::None;
         };
-        if let Some(held) = block.shape_kind_def().placement.held_state(block, self, selected) {
+        if let Some(held) = block
+            .shape_kind_def()
+            .placement
+            .held_state(block, self, selected)
+        {
             return held;
         }
         if block.is_log() {

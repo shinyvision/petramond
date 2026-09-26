@@ -16,7 +16,8 @@ fn game_with_bed() -> (super::common::TestGame, IVec3) {
     let mut game = game_on_empty_chunk();
     for x in 0..16 {
         for z in 0..16 {
-            game.server_world_mut().set_block_world(x, 63, z, Block::Stone);
+            game.server_world_mut()
+                .set_block_world(x, 63, z, Block::Stone);
         }
     }
     let base = IVec3::new(7, 64, 7);
@@ -25,7 +26,7 @@ fn game_with_bed() -> (super::common::TestGame, IVec3) {
 }
 
 fn interact_with_bed(game: &mut super::common::TestGame, base: IVec3) -> TickEvents {
-    game.session_mut().look = Some(hit(base, IVec3::Y));
+    game.session_mut().input_mut().look = Some(hit(base, IVec3::Y));
     game.sim_mut().queue_place_click_for_test(0);
     let mut events = TickEvents::default();
     game.sim_mut().tick_place(0, &mut events);
@@ -42,6 +43,7 @@ fn make_night(game: &mut super::common::TestGame) {
 fn clock(game: &super::common::TestGame) -> u64 {
     u64::from_le_bytes(
         game.server_world()
+            .data()
             .world_kv_get(CLOCK_KEY)
             .expect("core day/night publishes a clock")
             .try_into()
@@ -72,7 +74,7 @@ fn interacting_with_a_bed_at_night_sets_the_spawn_and_starts_the_sleep() {
         "bed clicks drive the interact hand jab"
     );
     assert!(
-        game.session().request_open_sleep,
+        game.session().replication().request_open_sleep,
         "asks the app for the sleep overlay"
     );
     // `sleep_progress01` reads the replicated self view; stage-driven tests
@@ -80,7 +82,8 @@ fn interacting_with_a_bed_at_night_sets_the_spawn_and_starts_the_sleep() {
     game.sync_self_view_for_test();
     assert_eq!(game.sleep_progress01(), Some(0.0), "sleep starts at zero");
     assert_eq!(
-        game.server_player().pitch, PITCH_LIMIT,
+        game.server_player().pitch,
+        PITCH_LIMIT,
         "sleep starts looking up"
     );
     // The camera mirror is client-side, applied off the replicated sleep-open
@@ -92,8 +95,12 @@ fn interacting_with_a_bed_at_night_sets_the_spawn_and_starts_the_sleep() {
         open_screen: Some(petramond::net::protocol::OpenScreen::Sleep),
         ..Default::default()
     });
-    assert_eq!(game.local.cam.pitch, PITCH_LIMIT, "camera mirrors the sleep look");
-    let bs = game.server_player()
+    assert_eq!(
+        game.local.cam.pitch, PITCH_LIMIT,
+        "camera mirrors the sleep look"
+    );
+    let bs = game
+        .server_player()
         .bed_spawn
         .expect("one interaction sets the spawn");
     assert_eq!(bs.bed, base);
@@ -108,7 +115,7 @@ fn interacting_with_a_bed_at_night_sets_the_spawn_and_starts_the_sleep() {
 fn a_mounted_player_sets_spawn_but_cannot_start_sleeping() {
     let (mut game, base) = game_with_bed();
     make_night(&mut game);
-    let player_id = game.session().id.0;
+    let player_id = game.session().id().0;
     let before = game.server_player().pos;
     assert!(game.server_world_mut().riding_mut().mount(
         player_id,
@@ -123,10 +130,11 @@ fn a_mounted_player_sets_spawn_but_cannot_start_sleeping() {
         game.server_player().bed_spawn.is_some(),
         "the bed still updates the respawn point"
     );
-    assert!(game.session().sleep.is_none());
-    assert!(!game.session().request_open_sleep);
+    assert!(game.session().sim().sleep.is_none());
+    assert!(!game.session().replication().request_open_sleep);
     assert_eq!(
-        game.server_player().pos, before,
+        game.server_player().pos,
+        before,
         "sleep never creates a second transform while the seat owns the body"
     );
     assert!(
@@ -152,7 +160,7 @@ fn daytime_bed_interaction_sets_the_spawn_but_never_sleeps() {
     game.sync_self_view_for_test();
     assert_eq!(game.sleep_progress01(), None, "sleeping is night-only");
     assert!(
-        !game.session().request_open_sleep,
+        !game.session().replication().request_open_sleep,
         "no sleep overlay by day"
     );
 }

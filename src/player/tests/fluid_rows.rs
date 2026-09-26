@@ -76,7 +76,10 @@ fn immersion_follows_the_probe_and_the_real_flow_height() {
         let mut world = pool(Block::Air, FLOOR_Y - 1);
         set_flow(&mut world, 8, 8, fluid, 6);
         assert_eq!(
-            world.data().body_fluid(feet, HEIGHT, Buoyancy::Swim).is_some(),
+            world
+                .data()
+                .body_fluid(feet, HEIGHT, Buoyancy::Swim)
+                .is_some(),
             probe_reaches_a_thin_flow,
             "{name}: a thin flow immerses exactly the probes below its surface"
         );

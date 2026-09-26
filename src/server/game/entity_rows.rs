@@ -208,7 +208,8 @@ impl ServerGame {
             mining: sess.sim.mining.overlay(),
             eating: sess.sim.eating.is_some(),
             eating_off_hand: sess
-                .sim.eating
+                .sim
+                .eating
                 .as_ref()
                 .is_some_and(|eat| eat.hand == Hand::Off),
             // Mod-set held-item poses (`SetPlayerHeldPose`), already resolved
@@ -229,7 +230,8 @@ impl ServerGame {
             hurt_recent: events.player_at(s).player_damaged,
             snap: sess.replication.tick_teleported,
             mount: sess
-                .sim.mount
+                .sim
+                .mount
                 .map(crate::net::protocol::PlayerMount::from_mount),
         }
     }

@@ -277,10 +277,19 @@ mod tests {
         let (mut handle, server) = ServerHandle::loopback();
         handle.send(ClientToServer::KeepAlive).expect("pipe open");
         handle.send(ClientToServer::Pause(true)).expect("pipe open");
-        assert!(matches!(server.inbox.try_recv(), Ok(ClientToServer::KeepAlive)));
-        assert!(matches!(server.inbox.try_recv(), Ok(ClientToServer::Pause(true))));
+        assert!(matches!(
+            server.inbox.try_recv(),
+            Ok(ClientToServer::KeepAlive)
+        ));
+        assert!(matches!(
+            server.inbox.try_recv(),
+            Ok(ClientToServer::Pause(true))
+        ));
 
-        server.outbox.send(ServerToClient::KeepAlive).expect("handle alive");
+        server
+            .outbox
+            .send(ServerToClient::KeepAlive)
+            .expect("handle alive");
         let mut got = Vec::new();
         handle.drain(&mut got);
         assert_eq!(got.len(), 1);

@@ -63,9 +63,22 @@ pub struct MobKinematicData {
 /// form of `MobAnimSet` / `MobAnimRate` / `MobAnimSeek`, applied in order.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum MobAnimOp {
-    Set { mob_id: u64, anim: String, active: bool },
-    Rate { mob_id: u64, anim: String, rate: f32 },
-    Seek { mob_id: u64, anim: String, phase: f32, rate: f32 },
+    Set {
+        mob_id: u64,
+        anim: String,
+        active: bool,
+    },
+    Rate {
+        mob_id: u64,
+        anim: String,
+        rate: f32,
+    },
+    Seek {
+        mob_id: u64,
+        anim: String,
+        phase: f32,
+        rate: f32,
+    },
 }
 
 /// One tag write, for [`TagCall::MobTagsWrite`](crate::TagCall::MobTagsWrite):

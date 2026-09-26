@@ -1,12 +1,13 @@
 //! Directional stairs at the world level: position-aware facing lookup and placement.
 
-use crate::world::{ServerWorld, World, WorldSide};
+#[cfg(test)]
+use crate::world::ServerWorld;
+use crate::world::{World, WorldSide};
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 use petramond_world::block_state::StairState;
 
 use super::cell_change::{CellChange, ChangeKind};
-
 
 impl<S: WorldSide> World<S> {
     /// Place a single-cell stair and record its facing before relighting/remeshing.

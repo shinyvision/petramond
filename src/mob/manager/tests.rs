@@ -41,7 +41,14 @@ fn a_frozen_tick_discards_its_drive_intent() {
     let world = ServerWorld::new(0, 1);
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.5, 64.0, 8.5), 0.0));
-    assert!(mobs.set_mob_drive(id_at(&mobs, 0), Some([2.0, 0.0]), None, Some(1.0), false, false));
+    assert!(mobs.set_mob_drive(
+        id_at(&mobs, 0),
+        Some([2.0, 0.0]),
+        None,
+        Some(1.0),
+        false,
+        false
+    ));
     assert!(mobs.instances()[0].drive_pending());
 
     mobs.tick(
@@ -135,7 +142,11 @@ fn mob_tags_survive_section_unload_and_reload() {
     // restored instance (the on-disk byte layer is covered by `save::mobs`).
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(2.5, 64.0, 2.5), 0.5));
-    assert!(mobs.set_mob_tag(id_at(&mobs, 0), "zombies:anger".into(), MobTagValue::Int(31)));
+    assert!(mobs.set_mob_tag(
+        id_at(&mobs, 0),
+        "zombies:anger".into(),
+        MobTagValue::Int(31)
+    ));
 
     let taken = mobs.take_in_section(SectionPos::new(0, 4, 0));
     assert_eq!(taken.len(), 1);
@@ -195,7 +206,9 @@ fn shearing_a_sheep_yields_wool_once_until_the_coat_regrows() {
         .shear
         .expect("sheep are shearable");
 
-    let drop = mobs.shear_mob(id_at(&mobs, 0)).expect("a coated sheep shears");
+    let drop = mobs
+        .shear_mob(id_at(&mobs, 0))
+        .expect("a coated sheep shears");
     assert_eq!(drop.item, spec.drop);
     assert!(
         (spec.min..=spec.max).contains(&drop.count),
@@ -203,7 +216,10 @@ fn shearing_a_sheep_yields_wool_once_until_the_coat_regrows() {
         drop.count
     );
     assert!(mobs.instances()[0].is_shorn());
-    assert!(mobs.shear_mob(id_at(&mobs, 0)).is_none(), "no double-shear while shorn");
+    assert!(
+        mobs.shear_mob(id_at(&mobs, 0)).is_none(),
+        "no double-shear while shorn"
+    );
 
     // The coat regrows on the tick, within the spec's rolled range.
     let mut ticks: u32 = 0;
@@ -496,22 +512,37 @@ fn the_tag_cap_refuses_new_keys_but_never_replacements() {
     assert!(spawn_tags >= 1, "spawn tags include petramond:health");
     for i in 0..crate::mob::MAX_MOB_TAGS - spawn_tags {
         assert!(
-            mobs.set_mob_tag(id_at(&mobs, 0), format!("farm:k{i}"), MobTagValue::Int(i as i64)),
+            mobs.set_mob_tag(
+                id_at(&mobs, 0),
+                format!("farm:k{i}"),
+                MobTagValue::Int(i as i64)
+            ),
             "key {i} fits under the cap"
         );
     }
     assert!(
-        !mobs.set_mob_tag(id_at(&mobs, 0), "farm:one_too_many".into(), MobTagValue::Int(0)),
+        !mobs.set_mob_tag(
+            id_at(&mobs, 0),
+            "farm:one_too_many".into(),
+            MobTagValue::Int(0)
+        ),
         "a NEW key past the cap is refused"
     );
     assert!(
         mobs.set_mob_tag(id_at(&mobs, 0), "farm:k0".into(), MobTagValue::Int(-1)),
         "replacing an existing key is always allowed"
     );
-    assert_eq!(mobs.mob_tag(id_at(&mobs, 0), "farm:k0"), Some(&MobTagValue::Int(-1)));
+    assert_eq!(
+        mobs.mob_tag(id_at(&mobs, 0), "farm:k0"),
+        Some(&MobTagValue::Int(-1))
+    );
     assert!(mobs.remove_mob_tag(id_at(&mobs, 0), "farm:k1"));
     assert!(
-        mobs.set_mob_tag(id_at(&mobs, 0), "farm:back_under".into(), MobTagValue::Int(0)),
+        mobs.set_mob_tag(
+            id_at(&mobs, 0),
+            "farm:back_under".into(),
+            MobTagValue::Int(0)
+        ),
         "a deletion frees a slot again"
     );
 }
@@ -705,9 +736,8 @@ fn handles_stay_stable_across_every_live_set_mutation() {
     for &(id, pos) in &spawned {
         assert!(mobs.set_mob_tag(id, "test:x".into(), MobTagValue::Float(pos.x)));
     }
-    let names_itself = |mobs: &Mobs, id: MobId, x: f64| {
-        mobs.mob_tag(id, "test:x") == Some(&MobTagValue::Float(x))
-    };
+    let names_itself =
+        |mobs: &Mobs, id: MobId, x: f64| mobs.mob_tag(id, "test:x") == Some(&MobTagValue::Float(x));
 
     // Removing a middle mob swap-removes the LAST one into its slot; the
     // moved mob's handle still names it, and the removed handle is dead.
@@ -719,7 +749,10 @@ fn handles_stay_stable_across_every_live_set_mutation() {
     assert!(!mobs.set_mob_tag(removed, "test:y".into(), MobTagValue::Int(0)));
     assert_consistent(&mobs);
     for &(id, pos) in spawned.iter().filter(|(id, _)| *id != removed) {
-        assert!(names_itself(&mobs, id, pos.x), "handle {id} still names its mob");
+        assert!(
+            names_itself(&mobs, id, pos.x),
+            "handle {id} still names its mob"
+        );
     }
 
     let harvested = mobs.take_in_section(SectionPos::new(0, 4, 0));
@@ -752,6 +785,9 @@ fn handles_stay_stable_across_every_live_set_mutation() {
     assert_eq!(mobs.len(), 3);
     assert_consistent(&mobs);
     for &(id, pos) in &spawned[3..] {
-        assert!(names_itself(&mobs, id, pos.x), "survivor {id} keeps its handle");
+        assert!(
+            names_itself(&mobs, id, pos.x),
+            "survivor {id} keeps its handle"
+        );
     }
 }

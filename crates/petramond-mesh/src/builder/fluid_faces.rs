@@ -61,10 +61,7 @@ pub(super) fn emit_fluid_cell(
     let full = fills(pos);
     // A submerged cell draws nothing; ocean and lava-sea interiors are the
     // bulk of every fluid cell, so one test beats six culled faces.
-    if resident
-        && full
-        && FACES.iter().all(|f| nb.fluid_fills(pos + f.dir(), fluid))
-    {
+    if resident && full && FACES.iter().all(|f| nb.fluid_fills(pos + f.dir(), fluid)) {
         return;
     }
     let opaque = medium.is_opaque();

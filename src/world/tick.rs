@@ -434,7 +434,12 @@ impl ServerWorld {
             .last_load_target
             .iter()
             .chain(&self.data.extra_load_targets)
-            .map(|t| (t.center, RANDOM_TICK_CHUNK_RADIUS.min((t.render_dist - 2).max(0))))
+            .map(|t| {
+                (
+                    t.center,
+                    RANDOM_TICK_CHUNK_RADIUS.min((t.render_dist - 2).max(0)),
+                )
+            })
             .collect();
 
         // Gather phase: choose the cells to tick WITHOUT holding a section-map
@@ -553,7 +558,8 @@ mod tests {
         let mut out: std::collections::BTreeMap<(i32, i32), u32> = Default::default();
         for (pos, section) in &world.data.sections {
             if section.has_random_tickable() {
-                *out.entry((pos.cx, pos.cz)).or_insert(0) |= crate::world::store::column_cy_bit(pos.cy);
+                *out.entry((pos.cx, pos.cz)).or_insert(0) |=
+                    crate::world::store::column_cy_bit(pos.cy);
             }
         }
         out.into_iter()

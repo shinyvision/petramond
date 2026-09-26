@@ -35,7 +35,11 @@ fn extent(v: &[Vertex], axis: usize) -> f32 {
 
 #[test]
 fn each_model_bakes_one_box_per_part() {
-    for (block, boxes) in [(Block::Chest, 3), (Block::OakDoor, 2), (Block::OakTrapdoor, 1)] {
+    for (block, boxes) in [
+        (Block::Chest, 3),
+        (Block::OakDoor, 2),
+        (Block::OakTrapdoor, 1),
+    ] {
         let (v, i) = bake(&[inst(block, Facing::North, 0, 0.0)]);
         assert_eq!(v.len(), boxes * 24, "{block:?}: 24 verts per box");
         assert_eq!(i.len(), boxes * 36, "{block:?}: 36 indices per box");
@@ -45,7 +49,9 @@ fn each_model_bakes_one_box_per_part() {
 #[test]
 fn empty_input_and_a_modelless_block_produce_no_geometry() {
     assert!(bake(&[]).0.is_empty());
-    assert!(bake(&[inst(Block::Stone, Facing::North, 0, 0.0)]).0.is_empty());
+    assert!(bake(&[inst(Block::Stone, Facing::North, 0, 0.0)])
+        .0
+        .is_empty());
 }
 
 #[test]
@@ -144,7 +150,10 @@ fn a_swung_panel_keeps_to_its_own_cell() {
 #[test]
 fn the_chest_item_is_the_closed_model_centred_in_its_cube() {
     let model = item_model(Block::Chest).expect("the chest's item draws its model");
-    assert!(item_model(Block::OakDoor).is_none(), "a door's item is a sprite");
+    assert!(
+        item_model(Block::OakDoor).is_none(),
+        "a door's item is a sprite"
+    );
     let (mut v, mut i) = (Vec::new(), Vec::new());
     push_item(
         &mut v,

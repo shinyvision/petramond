@@ -103,7 +103,8 @@ impl<S: WorldSide> World<S> {
         // exactly as it now stands.
         let mut sky_changed: HashMap<(i32, i32), SkyCoverChange> = HashMap::new();
         for (c, &new) in changes.iter().zip(&news) {
-            if let Some(change) = self.update_column_heights_after_set(c.pos.x, c.pos.y, c.pos.z, new)
+            if let Some(change) =
+                self.update_column_heights_after_set(c.pos.x, c.pos.y, c.pos.z, new)
             {
                 if c.kind == ChangeKind::Remote {
                     continue;

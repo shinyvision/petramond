@@ -11,8 +11,8 @@ use crate::host::prelude::*;
 use super::tuning::hands::SCAFFOLD_STOCK;
 use super::{cargo, hands, Body, Ctx};
 use crate::content::ScaffoldKind;
-use crate::worker::Job;
 use crate::survey::ItemKey;
+use crate::worker::Job;
 
 fn key(kind: &ScaffoldKind) -> ItemKey {
     (kind.item.clone(), Vec::new())

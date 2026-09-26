@@ -39,9 +39,9 @@ pub(super) fn handle(call: ItemMotionCall) -> HostRet {
                 .collect();
             match deltas {
                 Err(error) => error,
-                Ok(deltas) => sim_query(|ctx| {
-                    HostRet::Bools(ctx.world.impulse_item_entities(&deltas))
-                }),
+                Ok(deltas) => {
+                    sim_query(|ctx| HostRet::Bools(ctx.world.impulse_item_entities(&deltas)))
+                }
             }
         }
     }

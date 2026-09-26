@@ -809,6 +809,3 @@ pub fn names() -> &'static ContentNames {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod name_tests;

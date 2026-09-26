@@ -4,8 +4,8 @@
 //! action can never sound twice (once locally, once via its broadcast event).
 
 use super::app;
-use crate::app::client_audio::MobSoundState;
 use crate::animation::FootstepSource;
+use crate::app::client_audio::MobSoundState;
 use crate::game::presentation::MobPresentation;
 use crate::game::{GameEvents, WorldEvent};
 use petramond_audio::SpatialListener;
@@ -85,7 +85,10 @@ fn idle_sound_deadlines_are_consumed_while_inventory_is_open() {
             },
         );
     }
-    test_app.sess_mut().sounds.set_mob_positions_for_test(positions);
+    test_app
+        .sess_mut()
+        .sounds
+        .set_mob_positions_for_test(positions);
     let first_handle = test_app.sess_mut().sounds.next_handle();
     let listener = SpatialListener {
         pos: WorldPos::ZERO,

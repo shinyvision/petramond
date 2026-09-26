@@ -5,7 +5,9 @@
 //! the renderer derives transient particles from that. This keeps visual particles
 //! out of simulation, saves, and the fixed tick.
 
-use crate::world::{ServerWorld, World, WorldSide};
+#[cfg(test)]
+use crate::world::ServerWorld;
+use crate::world::{World, WorldSide};
 use petramond_math::facing::Facing;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::view_volume::ViewVolume;
@@ -234,8 +236,9 @@ impl<S: WorldSide> World<S> {
                         continue;
                     }
                     let sample = origin.block();
-                    let (sky, block_light) =
-                        self.data.dynamic_light_at_world(sample.x, sample.y, sample.z);
+                    let (sky, block_light) = self
+                        .data
+                        .dynamic_light_at_world(sample.x, sample.y, sample.z);
                     let floor_y = if emitter.lands {
                         self.emitter_floor_y(origin, &emitter)
                     } else {

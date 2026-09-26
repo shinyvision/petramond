@@ -21,9 +21,20 @@ yanked = "deny"
 # Vulnerabilities always fail. An unmaintained notice fails only for a crate
 # we depend on directly (we can act on those); deep transitive ones surface
 # in the report without blocking. A deliberate exception goes in `ignore`
-# with the advisory id and the reason it does not apply.
+# with the advisory id and the reason the remaining risk is accepted.
 unmaintained = "workspace"
-ignore = []
+ignore = [
+    # The GUI builder's eframe 0.29 accessibility stack pins zbus_xml 4 to
+    # quick-xml 0.30; the game does not link this chain. wayland-scanner 0.31
+    # pins quick-xml 0.39 for compile-time protocol generation. Both upstream
+    # ranges exclude the fixed 0.41 line. Revisit when those stacks move.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml is pinned by the GUI builder accessibility and Wayland scanner dependency ranges" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml is pinned by the GUI builder accessibility and Wayland scanner dependency ranges" },
+    # Bincode 1 is a persisted format contract here; this advisory reports
+    # maintenance status and has no compatible upgrade. A codec migration
+    # needs its own versioned save-format change.
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1 is a persisted format contract with no compatible upgrade" },
+]
 
 [licenses]
 version = 2

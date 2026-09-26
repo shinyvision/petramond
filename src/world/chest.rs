@@ -14,7 +14,6 @@ use petramond_math::facing::Facing;
 use petramond_math::math::IVec3;
 use petramond_world::container::Container;
 
-
 /// A chest's slot count (the classic 3×9 grid).
 pub const CHEST_SLOTS: usize = 27;
 

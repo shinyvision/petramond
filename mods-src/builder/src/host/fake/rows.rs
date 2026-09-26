@@ -212,7 +212,13 @@ pub fn items() -> Vec<ItemRow> {
             blueprint
         },
         item("petramond:raw_copper", "Raw Copper", None),
-        tool("petramond:stone_pickaxe", "Stone Pickaxe", "pickaxe", 2, 4.0),
+        tool(
+            "petramond:stone_pickaxe",
+            "Stone Pickaxe",
+            "pickaxe",
+            2,
+            4.0,
+        ),
         tool("petramond:stone_shovel", "Stone Shovel", "shovel", 2, 4.0),
         tool("petramond:stone_axe", "Stone Axe", "axe", 2, 4.0),
     ]

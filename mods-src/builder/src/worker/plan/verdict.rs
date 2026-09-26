@@ -5,12 +5,12 @@ use crate::host::prelude::*;
 
 use super::{defer_task, places};
 use crate::geometry::{offset, FACES};
-use crate::worker::Job;
 use crate::survey::Known;
 use crate::worker::tuning::patience::{BURY_ROUNDS, DUE_PATIENCE};
 use crate::worker::tuning::waits::{BURY_WAIT, REFUSED, SEALED_WAIT, UNLOADED, UNREAD};
 use crate::worker::tuning::window::DUE_CHAIN;
 use crate::worker::upkeep::open_block;
+use crate::worker::Job;
 use crate::worker::{pocket, Body, Ctx, Task};
 
 /// What the world answers a planned task, asked before the golem is sent:

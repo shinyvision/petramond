@@ -177,12 +177,21 @@ mod tests {
         let ulpsf = |a: f32, b: f32| (a.to_bits() as i32 - b.to_bits() as i32).unsigned_abs();
         for i in 1..200 {
             let x = f64::from(i) * 0.137;
-            assert!(ulps(sin(x), x.sin()) <= 2 || sin(x).abs() < 1e-3, "sin({x})");
-            assert!(ulps(cos(x), x.cos()) <= 2 || cos(x).abs() < 1e-3, "cos({x})");
+            assert!(
+                ulps(sin(x), x.sin()) <= 2 || sin(x).abs() < 1e-3,
+                "sin({x})"
+            );
+            assert!(
+                ulps(cos(x), x.cos()) <= 2 || cos(x).abs() < 1e-3,
+                "cos({x})"
+            );
             assert!(ulps(exp(-x), (-x).exp()) <= 2, "exp(-{x})");
             assert!(ulps(pow(x, 0.85), x.powf(0.85)) <= 2, "pow({x}, 0.85)");
             let xf = x as f32;
-            assert!(ulpsf(sinf(xf), xf.sin()) <= 2 || sinf(xf).abs() < 1e-3, "sinf({xf})");
+            assert!(
+                ulpsf(sinf(xf), xf.sin()) <= 2 || sinf(xf).abs() < 1e-3,
+                "sinf({xf})"
+            );
             assert!(ulpsf(powf(xf, 1.7), xf.powf(1.7)) <= 2, "powf({xf}, 1.7)");
             assert!(ulpsf(cbrtf(xf), xf.cbrt()) <= 2, "cbrtf({xf})");
         }

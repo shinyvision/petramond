@@ -114,7 +114,8 @@ impl ServerGame {
     /// so the fixed tick can still apply the user's throw.
     pub fn close_cursor_stack_for(&mut self, s: usize) {
         let sess = &mut self.sessions[s];
-        sess.sim.drop_queue
+        sess.sim
+            .drop_queue
             .close_cursor_stack(&mut sess.player.inventory);
     }
 

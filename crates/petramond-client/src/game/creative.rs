@@ -60,12 +60,14 @@ impl Game {
     }
 
     pub fn toggle_creative_mode(&mut self) {
-        self.net.queue(ClientToServer::Action(PlayerAction::ToggleCreative));
+        self.net
+            .queue(ClientToServer::Action(PlayerAction::ToggleCreative));
     }
 
     pub fn jump_pressed(&mut self, now: f64) {
         if self.local.player.is_creative() && self.local.flight_toggle.press(now) {
-            self.net.queue(ClientToServer::Action(PlayerAction::ToggleFlight));
+            self.net
+                .queue(ClientToServer::Action(PlayerAction::ToggleFlight));
         }
     }
 
@@ -88,7 +90,8 @@ impl Game {
     }
 
     fn send_creative(&mut self, action: CreativeAction) {
-        self.net.queue(ClientToServer::Action(PlayerAction::Creative(action)));
+        self.net
+            .queue(ClientToServer::Action(PlayerAction::Creative(action)));
     }
 
     /// Ask the server to capture the selection as `name`; the cells come

@@ -73,10 +73,7 @@ impl KeptCells {
 
     /// The cell-state records to write: every live state, and each kept
     /// block's stored record in its cell.
-    pub(super) fn cell_states<'a>(
-        &'a self,
-        live: &'a CellMap<ShapeState>,
-    ) -> CellMap<Stored<'a>> {
+    pub(super) fn cell_states<'a>(&'a self, live: &'a CellMap<ShapeState>) -> CellMap<Stored<'a>> {
         let mut states: CellMap<Stored<'a>> = live
             .iter()
             .filter(|(idx, _)| !self.blocks.contains_key(*idx))

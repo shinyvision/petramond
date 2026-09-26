@@ -330,7 +330,8 @@ impl GenHooks {
         ) {
             Ok(inst) => inst,
             Err(e) => {
-                m.health.disable(&format!("worldgen instance failed to instantiate: {e}"));
+                m.health
+                    .disable(&format!("worldgen instance failed to instantiate: {e}"));
                 return None;
             }
         };

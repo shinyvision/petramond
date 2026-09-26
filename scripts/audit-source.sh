@@ -21,7 +21,7 @@ failed=0
 
 while IFS= read -r file; do
     case "$file" in
-        */tests/* | */tests.rs | src/world/relocated_world_crate_tests.rs)
+        */tests/* | */tests.rs | src/world/relocated_world_crate_tests.rs | mod-api/src/wire_pin.rs)
             continue
             ;;
         mod-api/src/protocol/host.rs)
@@ -68,8 +68,23 @@ fi
 # the player, the shared rules and the mod host — they depend on it, never
 # the other way round (value types they share live in `world` or lower,
 # e.g. `world::replication`, `world::session`).
-if world_refs=$(rg -n 'crate::(net|server|events|player|modding|rules)\b' src/world); then
+if world_refs=$(rg -n 'crate::(net|server|events|player|modding|rules)\b' src/world \
+    -g '!**/tests/**' -g '!**/tests.rs' -g '!relocated_world_crate_tests.rs'); then
     printf 'world names a module layered above it:\n%s\n' "$world_refs" >&2
+    failed=1
+fi
+
+# Crate- or module-wide lint exemptions hide new debt in unrelated items.
+# Dedicated test files are outside the production policy.
+if inner_allows=$(rg -n '^#!\[allow\(' \
+    src crates mods-src gui-builder mod-sdk mod-api petramond-ui petramond-text \
+    -g '*.rs' -g '!**/tests/**' -g '!**/tests.rs' -g '!src/world/relocated_world_crate_tests.rs' \
+    -g '!mod-api/src/wire_pin.rs'); then
+    printf 'production inner lint allows are forbidden:\n%s\n' "$inner_allows" >&2
+    failed=1
+fi
+
+if ! python3 scripts/audit-workspaces.py; then
     failed=1
 fi
 

@@ -40,10 +40,19 @@ fn artifact_roundtrip_and_stale_gc() {
 
     std::fs::write(&source, &wasm_b).unwrap();
     let second = CacheEntry::for_source(&source, &wasm_b).unwrap();
-    assert_ne!(first.artifact, second.artifact, "content change changes the key");
+    assert_ne!(
+        first.artifact, second.artifact,
+        "content change changes the key"
+    );
     assert_eq!(load_module_traced(&source).unwrap().1, Origin::Compiled);
-    assert!(second.artifact.exists(), "recompile stores the new artifact");
-    assert!(!first.artifact.exists(), "stale artifact of the same path is GC'd");
+    assert!(
+        second.artifact.exists(),
+        "recompile stores the new artifact"
+    );
+    assert!(
+        !first.artifact.exists(),
+        "stale artifact of the same path is GC'd"
+    );
     assert!(!first.manifest_path.exists(), "with its manifest");
 }
 
@@ -111,6 +120,9 @@ fn artifact_without_manifest_is_not_loaded() {
 #[test]
 fn engine_fingerprint_is_stable_within_a_build() {
     assert_eq!(engine_fingerprint(), engine_fingerprint());
-    assert_eq!(unhex(&hex(&engine_fingerprint())), Some(engine_fingerprint()));
+    assert_eq!(
+        unhex(&hex(&engine_fingerprint())),
+        Some(engine_fingerprint())
+    );
     assert_eq!(unhex("zz"), None);
 }

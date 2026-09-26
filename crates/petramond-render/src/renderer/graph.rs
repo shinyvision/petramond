@@ -292,7 +292,8 @@ impl PassGroup {
     }
 
     fn attached(&self, shape: FrameShape) -> u8 {
-        self.attachments(shape).fold(0, |bits, (r, _)| bits | r.bit())
+        self.attachments(shape)
+            .fold(0, |bits, (r, _)| bits | r.bit())
     }
 }
 

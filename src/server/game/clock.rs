@@ -42,7 +42,7 @@ impl FrameClock {
         self.paused
     }
 
-    /// Whether the server was ever open to remote players.
+    #[cfg(test)]
     pub fn lan_ever_opened(&self) -> bool {
         self.lan_ever_opened
     }
@@ -111,7 +111,11 @@ mod tests {
     fn tick_debt_is_capped_and_pause_honors_the_lan_gate() {
         let mut clock = FrameClock::new(false);
         assert_eq!(clock.due_ticks(TICK_DT * 2.5), 2);
-        assert_eq!(clock.due_ticks(10.0), MAX_TICKS_PER_FRAME, "a stall is capped");
+        assert_eq!(
+            clock.due_ticks(10.0),
+            MAX_TICKS_PER_FRAME,
+            "a stall is capped"
+        );
         assert!(clock.until_next_tick() >= 0.0);
 
         clock.request_pause(true);

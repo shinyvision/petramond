@@ -38,7 +38,11 @@ impl ReplicaWorld {
             return;
         };
         let guarded: Vec<_> = work.guards.iter().map(|guard| guard.pos).collect();
-        let requeue = self.side.terrain.prediction_terrain.cancel_overlapping(&guarded);
+        let requeue = self
+            .side
+            .terrain
+            .prediction_terrain
+            .cancel_overlapping(&guarded);
         self.requeue_prediction_meshes(&requeue);
         let pool = Arc::clone(self.side.terrain.prediction_terrain.pool());
         let result = run_prediction_terrain_synchronously(work, &pool)
@@ -84,7 +88,8 @@ impl ReplicaWorld {
             .iter()
             .copied()
             .filter(|pos| {
-                self.data.sections
+                self.data
+                    .sections
                     .get(pos)
                     .is_some_and(|section| section.light_dirty && !section.all_opaque())
             })
@@ -109,7 +114,11 @@ impl ReplicaWorld {
                 let job = snapshot_batch(base, &members, &self.data.sections, &self.data.columns)?;
                 let mut prev = Vec::with_capacity(members.len());
                 for pos in job.member_positions() {
-                    let section = self.data.sections.get(&pos).expect("batch members are loaded");
+                    let section = self
+                        .data
+                        .sections
+                        .get(&pos)
+                        .expect("batch members are loaded");
                     prev.push((section.skylight_arc(), section.blocklight_arc()));
                 }
                 lights.push(PredictionLightUnit::Batch { job, prev });
@@ -330,12 +339,16 @@ impl ReplicaWorld {
             })
         });
         let lights_fresh = result.lights.iter().all(|light| {
-            self.data.sections.get(&light.result.pos).is_some_and(|section| {
-                section.light_dirty && section.light_revision == light.result.revision
-            })
+            self.data
+                .sections
+                .get(&light.result.pos)
+                .is_some_and(|section| {
+                    section.light_dirty && section.light_revision == light.result.revision
+                })
         });
         let meshes_fresh = result.meshes.iter().all(|mesh| {
-            self.data.sections
+            self.data
+                .sections
                 .get(&mesh.pos())
                 .is_some_and(|section| section.mesh_revision == mesh.revision())
         });
@@ -390,14 +403,18 @@ impl ReplicaWorld {
                 }
                 PredictionMeshResult::Remove { .. } => {
                     if self.side.terrain.remove_mesh(pos) {
-                        self.side.terrain
+                        self.side
+                            .terrain
                             .mesh_upload_dirty_columns
                             .insert(pos.chunk_pos());
                     }
                 }
             }
             installed.insert(pos);
-            self.side.terrain.upload_urgent_columns.insert(pos.chunk_pos());
+            self.side
+                .terrain
+                .upload_urgent_columns
+                .insert(pos.chunk_pos());
             self.side.terrain.dirty_meshes.remove(pos);
             self.side.terrain.light_blocked_meshes.remove(&pos);
             self.side.terrain.hidden_parked.remove(&pos);

@@ -435,11 +435,12 @@ impl IconGeometry {
                         push_block_item_cube(v, ix, block, Vec3::splat(-0.5), 1.0)
                     })
                 }
-                ItemRenderKind::Sprite(tile) => {
-                    geometry.push_cube_icon(cell, twin, flat_icon_mvp(screen, cell_rect), |v, ix| {
-                        push_billboard_quad(v, ix, tile, Vec3::ZERO, 1.0)
-                    })
-                }
+                ItemRenderKind::Sprite(tile) => geometry.push_cube_icon(
+                    cell,
+                    twin,
+                    flat_icon_mvp(screen, cell_rect),
+                    |v, ix| push_billboard_quad(v, ix, tile, Vec3::ZERO, 1.0),
+                ),
                 ItemRenderKind::Model(kind) => {
                     let mvp = model_icon_mvp(screen, cell_rect, kind);
                     geometry.push_model_icon(cell, twin, |v, ix| {
@@ -701,7 +702,10 @@ mod tests {
         for item in items {
             let id = item.id() as u32;
             assert!(unique.contains(&cell_of(id)), "item {id} has no icon");
-            assert!(unique.contains(&cell_of(count + id)), "item {id} has no dyed twin");
+            assert!(
+                unique.contains(&cell_of(count + id)),
+                "item {id} has no dyed twin"
+            );
         }
         for pair in geometry.cube_icons.chunks_exact(2) {
             assert_eq!(pair[0].mvp_offset, pair[1].mvp_offset);

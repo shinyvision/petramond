@@ -1,5 +1,5 @@
-use crate::world::ServerWorld;
 use crate::schematic::{CellData, ResolvedCell, Schematic, SchematicBuilder, SelectionBox};
+use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 use petramond_world::{
     block::{Block, ShapeState},
@@ -218,7 +218,10 @@ fn footprint(p: [i32; 3], data: &ResolvedCell) -> Vec<[i32; 3]> {
     data.block
         .compound_members(IVec3::from_array(p), data.state)
         .map_or_else(Vec::new, |members| {
-            members.into_iter().map(|(cell, _)| cell.to_array()).collect()
+            members
+                .into_iter()
+                .map(|(cell, _)| cell.to_array())
+                .collect()
         })
 }
 

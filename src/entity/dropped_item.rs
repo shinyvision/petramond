@@ -360,7 +360,9 @@ impl DroppedItem {
         let cells = world.cursor();
         let boxes = |x: i32, y: i32, z: i32| cells.collision_boxes_xyz(x, y, z);
         let feet = self.pos - Vec3::Y * ITEM_HALF_EXTENT;
-        let immersion = world.data().body_fluid(feet, 2.0 * ITEM_HALF_EXTENT, Buoyancy::Swim);
+        let immersion = world
+            .data()
+            .body_fluid(feet, 2.0 * ITEM_HALF_EXTENT, Buoyancy::Swim);
         let current = world.data().fluid_current_at(self.pos);
         self.integrate_with_flow(dt, magnet_target, &boxes, immersion, current);
     }

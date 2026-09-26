@@ -219,8 +219,15 @@ mod tests {
         registry.join(session(2));
         assert_eq!(registry.leave(1).id, PlayerId(1));
         assert_eq!(registry[0].id, PlayerId(0), "the local session never moves");
-        assert_eq!(registry.index_of(PlayerId(2)), Some(1), "the survivor took the slot");
-        assert!(registry.by_id(PlayerId(1)).is_none(), "the leaver's id is free");
+        assert_eq!(
+            registry.index_of(PlayerId(2)),
+            Some(1),
+            "the survivor took the slot"
+        );
+        assert!(
+            registry.by_id(PlayerId(1)).is_none(),
+            "the leaver's id is free"
+        );
 
         let roster: &mut dyn PlayerRoster = &mut registry;
         assert_eq!(roster.len(), 2);

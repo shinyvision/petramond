@@ -79,7 +79,9 @@ fn find_lit_air(world: &crate::world::ServerWorld, sp: SectionPos) -> Option<(i3
     (0..16)
         .flat_map(|y| (0..16).flat_map(move |z| (0..16).map(move |x| (x, y, z))))
         .map(|(x, y, z)| (ox + x, oy + y, oz + z))
-        .find(|&(x, y, z)| world.data().chunk_block(x, y, z) == 0 && world.data().skylight_at_world(x, y, z) > 0)
+        .find(|&(x, y, z)| {
+            world.data().chunk_block(x, y, z) == 0 && world.data().skylight_at_world(x, y, z) > 0
+        })
 }
 
 /// The allowance shuts off below the reserve and the section budget never
@@ -309,7 +311,12 @@ fn light_refreshes_defer_for_starved_sessions_and_ship_later() {
         ),
         "edit lands inside the streamed section"
     );
-    while !server.sessions[s].transport.terrain.pending_light.contains(&lit) {
+    while !server.sessions[s]
+        .transport
+        .terrain
+        .pending_light
+        .contains(&lit)
+    {
         assert!(Instant::now() < deadline, "the rebake never landed");
         // `inbox` CARRIES phase 1's final acks into this first starved
         // pump: a window slot widowed by an undelivered ack would stay

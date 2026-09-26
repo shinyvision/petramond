@@ -167,9 +167,18 @@ fn a_family_poses_its_model_from_the_cell_state() {
         .expect("a trapdoor draws itself");
     assert_eq!(pose.variant, 1, "a ceiling panel draws the ceiling variant");
     let front = crate::block_state::EntityFront(Facing::East).to_cell();
-    let (_, pose) = Block::Chest.animated_pose(front).expect("a chest draws itself");
-    assert_eq!(pose.facing, Facing::East, "a chest faces its placement front");
-    assert!(!pose.open, "a chest's lid follows its viewers, not its state");
+    let (_, pose) = Block::Chest
+        .animated_pose(front)
+        .expect("a chest draws itself");
+    assert_eq!(
+        pose.facing,
+        Facing::East,
+        "a chest faces its placement front"
+    );
+    assert!(
+        !pose.open,
+        "a chest's lid follows its viewers, not its state"
+    );
 }
 
 #[test]

@@ -95,13 +95,16 @@ impl Game {
     ) -> u8 {
         match slot {
             MenuSlot::Inventory(i) => self
-                .replica.self_view
+                .replica
+                .self_view
                 .inventory
                 .raw_slots()
                 .get(i)
                 .map(|cell| slot_capacity(cell, held))
                 .unwrap_or(0),
-            MenuSlot::OffHand => slot_capacity(&self.replica.self_view.inventory.off_hand().copied(), held),
+            MenuSlot::OffHand => {
+                slot_capacity(&self.replica.self_view.inventory.off_hand().copied(), held)
+            }
             // The same question the server's `drag_capacity` asks, through the
             // same helper: a slot one side counts and the other refuses does
             // not just snap that leg back — the split is by the NUMBER of
@@ -114,7 +117,8 @@ impl Game {
                     self.replica.menu_view.gui_state.as_deref(),
                 ) =>
             {
-                self.replica.menu_view
+                self.replica
+                    .menu_view
                     .container
                     .as_ref()
                     .and_then(|container| container.slots.get(i))
@@ -201,7 +205,8 @@ impl Game {
                     && !gather
                     && v.container.is_some()
                     && v.container_kind.is_some()
-                    && !self.mask_decides(i, self.replica.self_view.inventory.cursor().map(|c| c.item))
+                    && !self
+                        .mask_decides(i, self.replica.self_view.inventory.cursor().map(|c| c.item))
             }
             _ => false,
         }
@@ -287,7 +292,8 @@ impl Game {
                 };
                 let specs = petramond::menu::slot_specs_for_kind(kind);
                 if let Some(cell) = self
-                    .replica.menu_view
+                    .replica
+                    .menu_view
                     .container
                     .as_mut()
                     .and_then(|container| container.slots.get_mut(i))
@@ -419,7 +425,8 @@ impl Game {
                     let kind = self.replica.menu_view.container_kind.expect("gated above");
                     let specs = petramond::menu::slot_specs_for_kind(kind);
                     if let Some(cell) = self
-                        .replica.menu_view
+                        .replica
+                        .menu_view
                         .container
                         .as_mut()
                         .and_then(|container| container.slots.get_mut(i))
@@ -447,7 +454,8 @@ impl Game {
             MenuSlot::OffHand => self.replica.self_view.inventory.off_hand().is_some(),
             MenuSlot::CraftResult => self.replica.menu_view.craft_output.is_some(),
             MenuSlot::Container(i) => self
-                .replica.menu_view
+                .replica
+                .menu_view
                 .container
                 .as_ref()
                 .and_then(|container| container.slots.get(i).copied().flatten())

@@ -199,4 +199,3 @@ fn registry_caps_at_its_declared_ceiling() {
         "a byte-capped catalog is held to 256, not to the wide ceiling"
     );
 }
-

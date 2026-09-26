@@ -8,12 +8,12 @@ use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
 use petramond_world::column::{Column, NO_SURFACE};
 use petramond_world::section::Section;
 
-
 impl<S: WorldSide> World<S> {
     /// Whether the column is loaded, and if so its payload revision — the
     /// change-detection half of [`client_surface_column`](Self::client_surface_column).
     pub fn client_surface_column_revision(&self, pos: ChunkPos) -> Option<u64> {
-        self.data.columns
+        self.data
+            .columns
             .contains_key(&pos)
             .then(|| self.data.column_payload_revision(pos))
     }
@@ -51,9 +51,10 @@ impl<S: WorldSide> World<S> {
                     Some((_, section)) => *section,
                     None => {
                         let sp = SectionPos::new(pos.cx, cy, pos.cz);
-                        let section = (SectionPos::cy_in_range(cy) && self.data.stream_writable(sp))
-                            .then(|| self.data.sections.get(&sp).map(Arc::as_ref))
-                            .flatten();
+                        let section = (SectionPos::cy_in_range(cy)
+                            && self.data.stream_writable(sp))
+                        .then(|| self.data.sections.get(&sp).map(Arc::as_ref))
+                        .flatten();
                         sections.push((cy, section));
                         section
                     }
@@ -97,7 +98,13 @@ impl<'a> SurfaceTintGrids<'a> {
         let halo = world
             .column_gen(pos)
             .map(|column| column.mesh_biome_slice())
-            .or_else(|| world.data.column_biome_halos.get(&pos).map(|halo| halo.as_ref()))
+            .or_else(|| {
+                world
+                    .data
+                    .column_biome_halos
+                    .get(&pos)
+                    .map(|halo| halo.as_ref())
+            })
             .filter(|halo| halo.len() == 20 * 20);
         Self {
             halo,

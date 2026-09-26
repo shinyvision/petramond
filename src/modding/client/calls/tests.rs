@@ -383,10 +383,7 @@ fn client_image_blit_mutates_in_place_and_validates_bounds() {
             rgba: vec![0; 4],
         }),
     ] {
-        assert!(matches!(
-            handle_host_call(&mut data, bad),
-            HostRet::Err(_)
-        ));
+        assert!(matches!(handle_host_call(&mut data, bad), HostRet::Err(_)));
     }
 }
 
@@ -403,18 +400,20 @@ fn client_surface_columns_gate_on_revision_and_pack_cells() {
     world.insert_section_for_test(sp, petramond_world::section::Section::new(0, 4, 0));
     assert!(world.set_block_world(3, 64, 5, petramond_world::block::Block::Stone));
 
-    let query = |revision| HostCall::from(calls::ClientSurfaceColumns {
-        queries: vec![
-            mod_api::ClientSurfaceQuery {
-                coord: [0, 0],
-                revision,
-            },
-            mod_api::ClientSurfaceQuery {
-                coord: [9, 9],
-                revision: 0,
-            },
-        ],
-    });
+    let query = |revision| {
+        HostCall::from(calls::ClientSurfaceColumns {
+            queries: vec![
+                mod_api::ClientSurfaceQuery {
+                    coord: [0, 0],
+                    revision,
+                },
+                mod_api::ClientSurfaceQuery {
+                    coord: [9, 9],
+                    revision: 0,
+                },
+            ],
+        })
+    };
     let HostRet::ClientSurfaceColumns(replies) =
         super::client_scope::enter(&world, || handle_host_call(&mut data, query(0)))
     else {
@@ -471,9 +470,11 @@ fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
     world.insert_section_for_test(sp, petramond_world::section::Section::new(0, 4, 0));
     assert!(world.set_block_world(3, 64, 5, petramond_world::block::Block::Stone));
 
-    let query = || HostCall::from(calls::ClientBlocksAt {
-        positions: vec![[3, 64, 5], [3, 65, 5], [150, 64, 5]],
-    });
+    let query = || {
+        HostCall::from(calls::ClientBlocksAt {
+            positions: vec![[3, 64, 5], [3, 65, 5], [150, 64, 5]],
+        })
+    };
     let HostRet::Blocks(blocks) =
         super::client_scope::enter(&world, || handle_host_call(&mut data, query()))
     else {

@@ -403,7 +403,9 @@ fn put_block_cube(
 /// Inverse of [`put_block_cube`]: each cell's runtime block through the save
 /// palette, plus `(cell, disk id)` for every cell whose block this build
 /// cannot resolve (those cells read as air).
-fn get_block_cube(r: &mut Reader, pal: &palette::Palette) -> Option<(Vec<u16>, Vec<(u16, u16)>)> {
+type BlockCube = (Vec<u16>, Vec<(u16, u16)>);
+
+fn get_block_cube(r: &mut Reader, pal: &palette::Palette) -> Option<BlockCube> {
     let distinct = r.u16()? as usize;
     if distinct == 0 || distinct > petramond_world::registry::WIDE_ID_CAP {
         return None;

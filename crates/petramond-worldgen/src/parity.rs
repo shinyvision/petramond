@@ -28,7 +28,7 @@ use crate::driver::ChunkGenerator;
 /// The checked-in parity hash of [`combined_hash`] over the shipped catalogs
 /// with no packs installed. Update it only together with a change that is
 /// meant to alter generation.
-pub const EXPECTED_COMBINED: u64 = 0x731e_2503_a634_c9fb;
+pub const EXPECTED_COMBINED: u64 = 0x41e6_984b_18b1_e46a;
 
 /// The sampled seeds: chosen so forests, wooded hills, riverbank plains and
 /// redwood stands all fall inside the sample.

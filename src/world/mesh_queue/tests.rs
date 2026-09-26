@@ -19,7 +19,10 @@ fn solid_section(pos: SectionPos) -> Section {
 
 fn insert_solid_section(world: &mut ReplicaWorld, pos: SectionPos) {
     world.data.ensure_column(pos.chunk_pos());
-    world.data.sections.insert(pos, Arc::new(solid_section(pos)));
+    world
+        .data
+        .sections
+        .insert(pos, Arc::new(solid_section(pos)));
     world.note_section_loaded(pos);
 }
 
@@ -48,8 +51,7 @@ fn mesh_job_uses_the_replicated_biome_tint_halo() {
     let pos = SectionPos::new(0, 0, 0);
     insert_solid_section(&mut world, pos);
     // The halo column generation captures and the ColumnPayload ships.
-    let gen =
-        petramond_worldgen::ChunkGenerator::new(0).generate_column_gen(pos.cx, pos.cz);
+    let gen = petramond_worldgen::ChunkGenerator::new(0).generate_column_gen(pos.cx, pos.cz);
     world
         .data
         .column_biome_halos
@@ -76,7 +78,10 @@ fn stale_rejected_light_bake_requests_a_rebake() {
     let mut section = solid_section(pos);
     section.set_block(8, 8, 8, Block::Air);
     world.insert_section_for_test(pos, section);
-    assert!(world.data.sections[&pos].light_dirty, "fixture: bake wanted");
+    assert!(
+        world.data.sections[&pos].light_dirty,
+        "fixture: bake wanted"
+    );
 
     world
         .light_bakes
@@ -143,7 +148,8 @@ fn all_air_transition_removes_stale_ghost_mesh() {
     world.mesh_section_blocking_for_test(center);
     assert!(
         world
-            .side.terrain
+            .side
+            .terrain
             .meshes
             .get(&center)
             .is_some_and(|m| !m.is_empty()),
@@ -163,7 +169,8 @@ fn all_air_transition_removes_stale_ghost_mesh() {
     );
     assert!(
         world
-            .data.sections
+            .data
+            .sections
             .get(&center)
             .is_some_and(|s| s.mesh_revision > before_revision),
         "settling to no-mesh must invalidate in-flight jobs built from the old blocks"
@@ -174,7 +181,8 @@ fn all_air_transition_removes_stale_ghost_mesh() {
     );
     assert!(
         world
-            .side.terrain
+            .side
+            .terrain
             .mesh_upload_dirty_columns
             .contains(&center.chunk_pos()),
         "the render column must be marked for GPU repack"
@@ -221,7 +229,8 @@ fn sealed_section_around_player_still_meshes_and_remeshes() {
     world.mesh_section_blocking_for_test(center);
     assert!(
         world
-            .side.terrain
+            .side
+            .terrain
             .meshes
             .get(&center)
             .is_some_and(|mesh| !mesh.is_empty()),
@@ -229,7 +238,9 @@ fn sealed_section_around_player_still_meshes_and_remeshes() {
     );
 
     let before = world.side.terrain.mesh_upload_revisions[&center.chunk_pos()];
-    world.data.section_mut(center)
+    world
+        .data
+        .section_mut(center)
         .unwrap()
         .set_block(9, 8, 8, Block::Air);
     world.queue_dirty_mesh(center);
@@ -245,7 +256,9 @@ fn far_sealed_section_requeues_when_player_approaches() {
     let mut world = ReplicaWorld::new(0, 16);
     let center = SectionPos::new(0, 0, 0);
     insert_sealed_cavity(&mut world, center);
-    world.data.section_mut(center)
+    world
+        .data
+        .section_mut(center)
         .unwrap()
         .set_skylight(Arc::from(vec![0u8; SECTION_VOLUME].into_boxed_slice()));
     world.data.last_load_target = Some(LoadTarget::new(8, 0, 0, 16));
@@ -386,7 +399,9 @@ fn forced_repack_remesh_bypasses_sealed_parking() {
     let mut world = ReplicaWorld::new(0, 16);
     let center = SectionPos::new(0, 0, 0);
     insert_sealed_cavity(&mut world, center);
-    world.data.section_mut(center)
+    world
+        .data
+        .section_mut(center)
         .unwrap()
         .set_skylight(Arc::from(vec![0u8; SECTION_VOLUME].into_boxed_slice()));
     world.data.last_load_target = Some(LoadTarget::new(8, 0, 0, 16));
@@ -418,7 +433,10 @@ fn a_panicking_mesh_build_releases_its_in_flight_slot() {
 
     let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     while world.side.terrain.mesh_jobs_in_flight > 0 {
-        assert!(std::time::Instant::now() < deadline, "the failure never reported");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the failure never reported"
+        );
         world.drain_finished_meshes();
         std::thread::yield_now();
     }

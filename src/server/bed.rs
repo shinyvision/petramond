@@ -123,7 +123,8 @@ impl ServerGame {
     /// reads its `SelfView` mirror.
     pub fn sleep_progress01(&self, s: usize) -> Option<f32> {
         self.sessions[s]
-            .sim.sleep
+            .sim
+            .sleep
             .as_ref()
             .map(|st| (st.progress as f32 / SLEEP_TICKS as f32).clamp(0.0, 1.0))
     }
@@ -169,7 +170,8 @@ impl ServerGame {
             sess.sim.sleep.is_some() || sess.player.is_spectator() || sess.player.health() == 0
         });
         let any_done = self.sessions.iter().any(|sess| {
-            sess.sim.sleep
+            sess.sim
+                .sleep
                 .as_ref()
                 .is_some_and(|st| st.progress >= SLEEP_TICKS)
         });
@@ -278,7 +280,8 @@ impl ServerGame {
             let Some(bs) = self.sessions[s].player.bed_spawn else {
                 continue;
             };
-            if self.world.data().chunk_loaded(bs.bed.x >> 4, bs.bed.z >> 4) && !bed_at(&self.world, bs.bed)
+            if self.world.data().chunk_loaded(bs.bed.x >> 4, bs.bed.z >> 4)
+                && !bed_at(&self.world, bs.bed)
             {
                 self.sessions[s].player.bed_spawn = None;
             }
@@ -365,8 +368,14 @@ fn wake_spot_clear(world: &ServerWorld, c: IVec3) -> bool {
         return false;
     }
     world.data().collision_boxes_at(c.x, c.y, c.z).is_empty()
-        && world.data().collision_boxes_at(c.x, c.y + 1, c.z).is_empty()
-        && !world.data().collision_boxes_at(c.x, c.y - 1, c.z).is_empty()
+        && world
+            .data()
+            .collision_boxes_at(c.x, c.y + 1, c.z)
+            .is_empty()
+        && !world
+            .data()
+            .collision_boxes_at(c.x, c.y - 1, c.z)
+            .is_empty()
 }
 
 #[cfg(test)]
@@ -412,8 +421,14 @@ mod tests {
                 .any(|c| (c.x - spot.x).abs().max((c.z - spot.z).abs()) == 1),
             "adjacent to a bed cell: {spot:?}"
         );
-        assert!(w.data().collision_boxes_at(spot.x, spot.y, spot.z).is_empty());
-        assert!(!w.data().collision_boxes_at(spot.x, spot.y - 1, spot.z).is_empty());
+        assert!(w
+            .data()
+            .collision_boxes_at(spot.x, spot.y, spot.z)
+            .is_empty());
+        assert!(!w
+            .data()
+            .collision_boxes_at(spot.x, spot.y - 1, spot.z)
+            .is_empty());
     }
 
     #[test]

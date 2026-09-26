@@ -39,7 +39,9 @@ fn window(server: &mut ServerGame) -> Vec<Batch> {
                 mobs: update.mobs().cloned().unwrap_or_default(),
                 items: update.items().cloned().unwrap_or_default(),
                 players: update.players().cloned().unwrap_or_default(),
-                sleep_tally: *update.sleep_tally().expect("the headcount rides every batch"),
+                sleep_tally: *update
+                    .sleep_tally()
+                    .expect("the headcount rides every batch"),
             }
         })
         .collect()
@@ -60,17 +62,8 @@ fn spawn_sheep(server: &mut ServerGame, x: f64) -> u64 {
         .expect("spawned")
 }
 
-fn move_mob(server: &mut ServerGame, id: u64, x: f64) {
-    server
-        .world
-        .mobs_mut()
-        .set_mob_kinematic(
-            id,
-            WorldPos::new(x, 65.0, 0.5),
-            0.0,
-            petramond_math::math::Tilt::LEVEL,
-        )
-        .unwrap();
+fn move_host(server: &mut ServerGame, x: f64) {
+    server.sessions[0].player.pos = WorldPos::new(x, 65.0, 0.5);
 }
 
 /// Far-apart players pay nothing for each other's surroundings: each batch
@@ -106,10 +99,10 @@ fn far_apart_sessions_only_receive_what_is_near_them() {
 #[test]
 fn mobs_spawn_on_entry_hold_through_the_band_and_despawn_on_exit_or_removal() {
     let (mut server, _) = two_sessions(1000.0);
-    let id = spawn_sheep(&mut server, 200.5);
+    let id = spawn_sheep(&mut server, 139.5);
     assert!(mob_ids(&window(&mut server)[0]).is_empty(), "out of view");
 
-    move_mob(&mut server, id, 40.5);
+    move_host(&mut server, 100.5);
     let host = &window(&mut server)[0];
     assert_eq!(
         host.mobs.spawned.iter().map(|r| r.id).collect::<Vec<_>>(),
@@ -117,7 +110,7 @@ fn mobs_spawn_on_entry_hold_through_the_band_and_despawn_on_exit_or_removal() {
     );
 
     // Past the 64-block entry radius, inside the 16-block band: kept.
-    move_mob(&mut server, id, 75.5);
+    move_host(&mut server, 64.5);
     let host = &window(&mut server)[0];
     assert_eq!(
         host.mobs.updated.iter().map(|r| r.id).collect::<Vec<_>>(),
@@ -125,12 +118,12 @@ fn mobs_spawn_on_entry_hold_through_the_band_and_despawn_on_exit_or_removal() {
     );
     assert!(host.mobs.despawned.is_empty());
 
-    move_mob(&mut server, id, 90.5);
+    move_host(&mut server, 49.5);
     let host = &window(&mut server)[0];
     assert_eq!(host.mobs.despawned, [id], "left the band: despawned");
     assert!(mob_ids(host).is_empty());
 
-    move_mob(&mut server, id, 10.5);
+    move_host(&mut server, 129.5);
     assert_eq!(
         window(&mut server)[0].mobs.spawned.len(),
         1,

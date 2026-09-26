@@ -7,7 +7,6 @@
 //! are named `features.json` rows, so a pack-added tree species is placed by
 //! naming it here. A row without `trees` roots nothing.
 
-
 use petramond_world::biome::Biome;
 use serde::Deserialize;
 

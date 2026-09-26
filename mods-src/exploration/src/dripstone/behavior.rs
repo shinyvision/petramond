@@ -122,7 +122,13 @@ fn come_down(d: &Dripstone, pos: [i32; 3], block: BlockId) {
         pos[2] as f64 + 0.5,
     ];
     if d.run_of(block) == Some(Run::Hanging) {
-        launch_item(keys::POINTED_DRIPSTONE_ITEM, centre, [0.0, -FALL_SPEED, 0.0], None, &[]);
+        launch_item(
+            keys::POINTED_DRIPSTONE_ITEM,
+            centre,
+            [0.0, -FALL_SPEED, 0.0],
+            None,
+            &[],
+        );
     } else {
         spawn_item(keys::POINTED_DRIPSTONE_ITEM, 1, centre);
     }
@@ -255,7 +261,7 @@ fn stalagmite_target(d: &Dripstone, c: [i32; 3], b: BlockId, k: i32) -> Option<[
 mod tests {
     use super::*;
     use std::collections::{BTreeMap, BTreeSet};
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::Mutex;
 
     const AIR: BlockId = BlockId::AIR;
     const STALACTITE: BlockId = BlockId(101);
@@ -395,47 +401,51 @@ mod tests {
         HOST.with(|slot| {
             slot.borrow_mut().get_or_insert_with(|| {
                 mod_sdk::testing::install_host(|call| match call {
-                HostCall::Block(mod_sdk::BlockCall::GetBlock { pos }) => HostRet::Block(with(|f| f.seen(*pos))),
-                HostCall::Block(mod_sdk::BlockCall::SetBlock { pos, block }) => {
-                    with(|f| f.write(*pos, *block));
-                    HostRet::Bool(true)
-                }
-                HostCall::Block(mod_sdk::BlockCall::CollisionShapeAt { pos }) => HostRet::CollisionShape(with(|f| {
-                    f.blocks.get(pos).map(|id| {
-                        if *id == ROCK.0 || *id == DRIPSTONE.0 {
-                            CollisionShape::Full
-                        } else {
-                            CollisionShape::Empty
-                        }
-                    })
-                })),
-                HostCall::Block(mod_sdk::BlockCall::SwapBlock { pos, block }) => {
-                    with(|f| f.blocks.insert(*pos, block.0));
-                    HostRet::Bool(true)
-                }
-                HostCall::Kv(mod_sdk::KvCall::SectionKvGet { pos, key }) => {
-                    HostRet::Bytes(with(|f| f.kv.get(&(*pos, key.clone())).cloned()))
-                }
-                HostCall::Kv(mod_sdk::KvCall::SectionKvSet { pos, key, value }) => {
-                    with(|f| f.kv.insert((*pos, key.clone()), value.clone()));
-                    HostRet::Bool(true)
-                }
-                HostCall::Core(mod_sdk::CoreCall::RngU64 { .. }) => HostRet::U64(with(|f| {
-                    if f.rolls.is_empty() {
-                        0
-                    } else {
-                        f.rolls.remove(0)
+                    HostCall::Block(mod_sdk::BlockCall::GetBlock { pos }) => {
+                        HostRet::Block(with(|f| f.seen(*pos)))
                     }
-                })),
-                HostCall::Entity(mod_sdk::EntityCall::LaunchItem { pos, .. }) => {
-                    with(|f| f.launched.push(cell(*pos)));
-                    HostRet::U64(1)
-                }
-                HostCall::Entity(mod_sdk::EntityCall::SpawnItem { pos, .. }) => {
-                    with(|f| f.dropped.push(cell(*pos)));
-                    HostRet::Bool(true)
-                }
-                other => panic!("the fake world does not model {other:?}"),
+                    HostCall::Block(mod_sdk::BlockCall::SetBlock { pos, block }) => {
+                        with(|f| f.write(*pos, *block));
+                        HostRet::Bool(true)
+                    }
+                    HostCall::Block(mod_sdk::BlockCall::CollisionShapeAt { pos }) => {
+                        HostRet::CollisionShape(with(|f| {
+                            f.blocks.get(pos).map(|id| {
+                                if *id == ROCK.0 || *id == DRIPSTONE.0 {
+                                    CollisionShape::Full
+                                } else {
+                                    CollisionShape::Empty
+                                }
+                            })
+                        }))
+                    }
+                    HostCall::Block(mod_sdk::BlockCall::SwapBlock { pos, block }) => {
+                        with(|f| f.blocks.insert(*pos, block.0));
+                        HostRet::Bool(true)
+                    }
+                    HostCall::Kv(mod_sdk::KvCall::SectionKvGet { pos, key }) => {
+                        HostRet::Bytes(with(|f| f.kv.get(&(*pos, key.clone())).cloned()))
+                    }
+                    HostCall::Kv(mod_sdk::KvCall::SectionKvSet { pos, key, value }) => {
+                        with(|f| f.kv.insert((*pos, key.clone()), value.clone()));
+                        HostRet::Bool(true)
+                    }
+                    HostCall::Core(mod_sdk::CoreCall::RngU64 { .. }) => HostRet::U64(with(|f| {
+                        if f.rolls.is_empty() {
+                            0
+                        } else {
+                            f.rolls.remove(0)
+                        }
+                    })),
+                    HostCall::Entity(mod_sdk::EntityCall::LaunchItem { pos, .. }) => {
+                        with(|f| f.launched.push(cell(*pos)));
+                        HostRet::U64(1)
+                    }
+                    HostCall::Entity(mod_sdk::EntityCall::SpawnItem { pos, .. }) => {
+                        with(|f| f.dropped.push(cell(*pos)));
+                        HostRet::Bool(true)
+                    }
+                    other => panic!("the fake world does not model {other:?}"),
                 })
             });
         });

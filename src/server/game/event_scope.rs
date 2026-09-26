@@ -87,9 +87,7 @@ pub(super) fn reach(ev: &WorldEventMsg) -> Reach {
             Reach::Cell(pos)
         }
         WorldEventMsg::PanelToggled { anchor, .. } => Reach::Cell(anchor),
-        WorldEventMsg::ChestOpened { pos } | WorldEventMsg::ChestClosed { pos } => {
-            Reach::Cell(pos)
-        }
+        WorldEventMsg::ChestOpened { pos } | WorldEventMsg::ChestClosed { pos } => Reach::Cell(pos),
         WorldEventMsg::ItemPickedUp { pos, .. } | WorldEventMsg::MobSound { pos, .. } => {
             Reach::Heard {
                 at: pos,
@@ -105,7 +103,8 @@ pub(super) fn reach(ev: &WorldEventMsg) -> Reach {
         },
         WorldEventMsg::EmitterBurst { pos, .. } => Reach::Seen { at: pos },
         WorldEventMsg::SpatialSound(cmd) => match cmd {
-            SpatialSoundMsg::PlayAt { sound_id, .. } | SpatialSoundMsg::PlayOnMob { sound_id, .. }
+            SpatialSoundMsg::PlayAt { sound_id, .. }
+            | SpatialSoundMsg::PlayOnMob { sound_id, .. }
                 if is_looped(sound_id) =>
             {
                 Reach::Loop
@@ -263,15 +262,24 @@ mod tests {
             normal: None,
             tint: None,
         };
-        assert!(near.perceives(reach(&broke)), "the holder of the cell sees the burst");
-        assert!(!far.perceives(reach(&broke)), "a recipient without the section does not");
+        assert!(
+            near.perceives(reach(&broke)),
+            "the holder of the cell sees the burst"
+        );
+        assert!(
+            !far.perceives(reach(&broke)),
+            "a recipient without the section does not"
+        );
 
         let range = range_of_row_zero();
         let sound = |x: f64| WorldEventMsg::Sound {
             sound_id: 0,
             pos: Some(WorldPos::new(x, 64.0, 0.0)),
         };
-        assert!(near.perceives(reach(&sound(range))), "at the edge of its range");
+        assert!(
+            near.perceives(reach(&sound(range))),
+            "at the edge of its range"
+        );
         assert!(
             !near.perceives(reach(&sound(range + HEARING_MARGIN_BLOCKS + 1.0))),
             "past where the audio fades to silence"
@@ -280,9 +288,15 @@ mod tests {
             sound_id: 0,
             pos: None,
         };
-        assert!(far.perceives(reach(&ui)), "a non-spatial sound reaches everyone");
+        assert!(
+            far.perceives(reach(&ui)),
+            "a non-spatial sound reaches everyone"
+        );
         let stop = WorldEventMsg::SpatialSound(SpatialSoundMsg::Stop { handle: 3 });
-        assert!(far.perceives(reach(&stop)), "handle commands reach everyone");
+        assert!(
+            far.perceives(reach(&stop)),
+            "handle commands reach everyone"
+        );
 
         let burst = WorldEventMsg::EmitterBurst {
             emitter_id: 0,
@@ -360,22 +374,37 @@ mod tests {
         let mut heard = FxHashSet::default();
 
         let (starts, stops) = sync_loops(&listener, &mut heard, &loops(range + 100.0));
-        assert!(starts.is_empty() && stops.is_empty(), "out of earshot: nothing");
+        assert!(
+            starts.is_empty() && stops.is_empty(),
+            "out of earshot: nothing"
+        );
 
         let (starts, _) = sync_loops(&listener, &mut heard, &loops(1.0));
-        assert_eq!(starts, vec![WorldEventMsg::SpatialSound(play)], "entering earshot starts it");
+        assert_eq!(
+            starts,
+            vec![WorldEventMsg::SpatialSound(play)],
+            "entering earshot starts it"
+        );
         let (starts, stops) = sync_loops(&listener, &mut heard, &loops(1.0));
-        assert!(starts.is_empty() && stops.is_empty(), "a heard loop is not restarted");
+        assert!(
+            starts.is_empty() && stops.is_empty(),
+            "a heard loop is not restarted"
+        );
 
         let band = range + HEARING_MARGIN_BLOCKS + LOOP_HYSTERESIS_BLOCKS / 2.0;
         let (_, stops) = sync_loops(&listener, &mut heard, &loops(band));
-        assert!(stops.is_empty(), "inside the hysteresis band it keeps playing");
+        assert!(
+            stops.is_empty(),
+            "inside the hysteresis band it keeps playing"
+        );
 
         let gone = range + HEARING_MARGIN_BLOCKS + LOOP_HYSTERESIS_BLOCKS + 1.0;
         let (_, stops) = sync_loops(&listener, &mut heard, &loops(gone));
         assert_eq!(
             stops,
-            vec![WorldEventMsg::SpatialSound(SpatialSoundMsg::Stop { handle: 7 })],
+            vec![WorldEventMsg::SpatialSound(SpatialSoundMsg::Stop {
+                handle: 7
+            })],
             "leaving earshot stops it for this recipient"
         );
 

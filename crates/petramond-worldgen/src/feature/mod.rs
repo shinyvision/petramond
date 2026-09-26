@@ -28,10 +28,10 @@ pub(crate) use tree_select::place_feature_origins as place_trees;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use self::field::{cached_tile_raw, RegionTile, TileKey};
 pub use self::field::{
     cached_feature_region, cached_tile_biomes, ColumnFeatureField, FeatureField, SurfaceHeights,
 };
+pub(crate) use self::field::{cached_tile_raw, RegionTile, TileKey};
 pub use self::sink::*;
 
 use petramond_world::block::Block;
@@ -70,8 +70,7 @@ pub const TREELINE: i32 = 118;
 pub const MAX_TREE_REACH_ABOVE: i32 = 64;
 
 pub fn feature_region_bounds(ox: i32, oz: i32) -> (i32, i32, usize, usize) {
-    let pad =
-        MARGIN + biome::trees::MAX_TREE_SPACING_RADIUS + REDWOOD_BASE_SUPPORT_REACH;
+    let pad = MARGIN + biome::trees::MAX_TREE_SPACING_RADIUS + REDWOOD_BASE_SUPPORT_REACH;
     feature_bounds_with_pad(ox, oz, pad)
 }
 

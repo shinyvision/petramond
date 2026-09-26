@@ -100,7 +100,10 @@ mod tests {
         assert!(!r.should_reclaim(false, at(5_100)), "quiet stretch starts");
         assert!(!r.should_reclaim(false, at(7_000)), "1.9 s quiet");
         assert!(r.should_reclaim(false, at(7_100)), "2 s quiet");
-        assert!(!r.should_reclaim(false, at(20_000)), "one collect per cycle");
+        assert!(
+            !r.should_reclaim(false, at(20_000)),
+            "one collect per cycle"
+        );
 
         // A busy frame mid-stretch restarts the clock.
         assert!(!r.should_reclaim(true, at(21_000)));

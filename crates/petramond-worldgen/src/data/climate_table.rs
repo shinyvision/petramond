@@ -246,7 +246,10 @@ fn row_axes<'a>(
             HUMIDITY => Some(h),
             _ => None,
         });
-        let stated: Vec<&str> = [from_grid, at[axis], row[axis]].into_iter().flatten().collect();
+        let stated: Vec<&str> = [from_grid, at[axis], row[axis]]
+            .into_iter()
+            .flatten()
+            .collect();
         *spec = match stated.as_slice() {
             [one] => *one,
             [] => return Err(format!("a row leaves the {} axis unset", AXES[axis])),
@@ -269,7 +272,7 @@ fn resolve_rect(bands: &Bands, specs: [&str; 5], offset: f32) -> Result<ClimateR
 }
 
 /// The biome of grid cell `(i, j)`, `None` for a `null` cell.
-fn cell<'a>(cells: &'a RawCells, i: usize, j: usize) -> Option<&'a str> {
+fn cell(cells: &RawCells, i: usize, j: usize) -> Option<&str> {
     match cells {
         RawCells::Uniform(key) => Some(key.as_str()),
         RawCells::PerTemperature(rows) => match &rows[i] {
@@ -310,7 +313,10 @@ fn resolve_group(bands: &Bands, group: &RawGroup) -> Result<Vec<(ClimateRect, Bi
             if row.biomes.is_some() {
                 return Err("a plain group row names `biome`, not a `biomes` grid".into());
             }
-            let key = row.biome.as_deref().ok_or("a plain group row needs a `biome`")?;
+            let key = row
+                .biome
+                .as_deref()
+                .ok_or("a plain group row needs a `biome`")?;
             let rect = resolve_rect(bands, row_axes(None, at, row.by_axis())?, row.offset)?;
             out.push((rect, biome_named(key)?));
         }
@@ -325,7 +331,9 @@ fn resolve_group(bands: &Bands, group: &RawGroup) -> Result<Vec<(ClimateRect, Bi
             return Err("a grid group row names `biomes`, not one `biome`".into());
         }
         check_cell_shape(
-            row.biomes.as_ref().ok_or("a grid group row needs `biomes`")?,
+            row.biomes
+                .as_ref()
+                .ok_or("a grid group row needs `biomes`")?,
             temps.len(),
             hums.len(),
         )?;

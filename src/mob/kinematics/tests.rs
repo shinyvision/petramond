@@ -318,7 +318,10 @@ fn an_airborne_drive_cannot_replace_carry_or_yaw() {
 
     assert!(owl.pos.x > 0.5, "airborne carry wins over driven -X");
     assert_eq!(owl.yaw, 0.25, "airborne drive yaw is ignored too");
-    assert!(owl.motion.drive.is_none(), "the rejected intent still expires");
+    assert!(
+        owl.motion.drive.is_none(),
+        "the rejected intent still expires"
+    );
 }
 
 #[test]
@@ -425,7 +428,10 @@ fn knockback_stagger_overrides_a_drive_intent() {
         owl.pos.x
     );
     assert_eq!(owl.yaw, 0.0, "stagger rejects the drive yaw as well");
-    assert!(owl.motion.drive.is_none(), "the rejected intent still expires");
+    assert!(
+        owl.motion.drive.is_none(),
+        "the rejected intent still expires"
+    );
 }
 
 #[test]
@@ -646,7 +652,10 @@ fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
         owl.on_ground() && owl.vel().y <= 0.0,
         "the stale gated intent is dropped: no parting bounce"
     );
-    assert!(owl.motion.drive.is_none(), "the dropped intent still expires");
+    assert!(
+        owl.motion.drive.is_none(),
+        "the dropped intent still expires"
+    );
 
     // Premise holds: same intent on a walking tick launches.
     assert!(owl.set_drive(DriveIntent {
@@ -762,7 +771,10 @@ fn a_kinematic_pose_is_refused_on_a_dead_body_and_discarded_with_the_drive() {
         tilt: Tilt::LEVEL
     }));
     owl.clear_drive();
-    assert!(owl.motion.kinematic.is_none(), "a frozen tick discards the pose");
+    assert!(
+        owl.motion.kinematic.is_none(),
+        "a frozen tick discards the pose"
+    );
     owl.damage(100.0, None, true, None, &default_feedback());
     assert!(!owl.set_kinematic(KinematicPose {
         pos: WorldPos::ZERO,

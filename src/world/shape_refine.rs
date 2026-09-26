@@ -23,13 +23,12 @@
 //! Authoritative deltas ship the server's refined bytes; the drain re-read
 //! plus the cascade's own delta capture cover every changed cell.
 
-use crate::world::{ServerWorld, World, WorldSide};
+use crate::world::{World, WorldSide};
 use std::collections::VecDeque;
 
 use petramond_math::math::{IVec3, FACE_NEIGHBORS};
 use petramond_world::block::{Block, ShapeNeighborhood};
 use petramond_world::chunk::{section_idx, section_local, SectionPos, SECTION_SIZE};
-
 
 /// Runaway backstop for one cascade. Real cascades touch a handful of cells
 /// (the dependency chain is two layers deep — see the module doc).
@@ -66,9 +65,13 @@ impl<S: WorldSide> World<S> {
                 continue;
             };
             let cur = c.cell_state(lx, ly, lz);
-            let next = k
-                .sim
-                .refine_state(&k.params, &self.data as &dyn ShapeNeighborhood, p, block, cur);
+            let next = k.sim.refine_state(
+                &k.params,
+                &self.data as &dyn ShapeNeighborhood,
+                p,
+                block,
+                cur,
+            );
             if next == cur {
                 continue;
             }
@@ -207,8 +210,13 @@ mod tests {
         let block = Block::from_id(world.data.chunk_block(p.x, p.y, p.z));
         let k = block.shape_kind_def();
         let cur = world.data.shape_state(p);
-        k.sim
-            .refine_state(&k.params, &world.data as &dyn ShapeNeighborhood, p, block, cur)
+        k.sim.refine_state(
+            &k.params,
+            &world.data as &dyn ShapeNeighborhood,
+            p,
+            block,
+            cur,
+        )
     }
 
     /// Loading a section must RE-REFINE its refining cells (and the facing

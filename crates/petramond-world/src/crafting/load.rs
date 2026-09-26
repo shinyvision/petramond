@@ -60,7 +60,10 @@ struct RawCraftingIngredient {
 enum Converted {
     /// A row plus its own raw `data` map — compiled AFTER all layers parse, so
     /// patch rows from later packs can target it.
-    Crafting(CraftingRecipe, serde_json::Map<String, serde_json::Value>),
+    Crafting(
+        Box<CraftingRecipe>,
+        serde_json::Map<String, serde_json::Value>,
+    ),
     Processing(ProcessingRecipe, serde_json::Map<String, serde_json::Value>),
 }
 
@@ -229,7 +232,7 @@ fn parse_for(
             continue;
         }
         match convert(raw, owner) {
-            Ok(Converted::Crafting(recipe, data)) => crafting.push((recipe, data)),
+            Ok(Converted::Crafting(recipe, data)) => crafting.push((*recipe, data)),
             Ok(Converted::Processing(recipe, data)) => processing.push((recipe, data)),
             Err(error) => log::error!("skipping recipe #{index}: {error}"),
         }
@@ -255,12 +258,12 @@ fn convert(raw: RawRecipe, owner: Option<&str>) -> Result<Converted, String> {
                 .collect::<Result<_, _>>()?;
             let result_item = resolve_item(&result.item)?;
             Ok(Converted::Crafting(
-                CraftingRecipe::try_new(
+                Box::new(CraftingRecipe::try_new(
                     recipe,
                     station,
                     ingredients,
                     ItemStack::new(result_item, result.count),
-                )?,
+                )?),
                 data,
             ))
         }
@@ -447,7 +450,8 @@ mod tests {
 
     #[test]
     fn shipped_catalog_parses_both_interaction_models() {
-        let (crafting, processing) = parse(EMBEDDED);
+        let (text, _) = crate::assets::read_base_text("recipes.json").expect("shipped recipes");
+        let (crafting, processing) = parse(&text);
         assert!(!crafting.is_empty());
         assert!(!processing.is_empty());
         assert!(crafting

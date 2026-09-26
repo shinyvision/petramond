@@ -158,7 +158,9 @@ fn status(
         },
         (Phase::Emerging, _) => ("The golem is digging itself out".into(), Tone::Plain),
         (_, Some(Hold::Player)) if working => ("Paused".into(), Tone::Muted),
-        (_, Some(Hold::Worker | Hold::Table)) if working => (project.note.to_string(), Tone::Danger),
+        (_, Some(Hold::Worker | Hold::Table)) if working => {
+            (project.note.to_string(), Tone::Danger)
+        }
         _ if working && away => ("The golem is outside the loaded world".into(), Tone::Warn),
         (_, Some(_)) if working => (format!("Waiting: {percent}% done"), Tone::Warn),
         (Phase::Working, _) => (format!("Building: {percent}% done"), Tone::Plain),

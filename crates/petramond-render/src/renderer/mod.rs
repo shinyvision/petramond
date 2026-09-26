@@ -1,8 +1,8 @@
 use super::gpu_timer;
 use crate::camera::{Camera, Containment, Frustum, ViewVolume};
 use petramond::world::TerrainRenderHandoff;
-use petramond_world::selection::SelectionShape;
 use petramond_world::chunk::ChunkPos;
+use petramond_world::selection::SelectionShape;
 
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
@@ -15,12 +15,12 @@ mod column_store;
 use column_store::{ColumnSlot, ColumnStore};
 mod construct;
 mod error;
-pub use error::{RenderFailure, RenderInitError};
 use error::DeviceHealth;
+pub use error::{RenderFailure, RenderInitError};
 mod ghosts;
 mod graph;
-use graph::{FrameGraph, FramePlan};
 pub use ghosts::GhostPiece;
+use graph::{FrameGraph, FramePlan};
 mod schematic_thumbnail;
 pub use schematic_thumbnail::SchematicThumbnailer;
 mod doc_ui;
@@ -53,8 +53,8 @@ use lod::far_leaf_lod_active;
 pub use offscreen::new_offscreen_renderer;
 pub use offscreen::RenderedFrame;
 
-use super::break_overlay::build_break_overlays;
 use super::block_entity_model::push_block_entities;
+use super::break_overlay::build_break_overlays;
 use super::crosshair::crosshair_vertices;
 use super::entity_shadow::{build_entity_shadows, ShadowVertex};
 use super::item_entity::build_item_entities;
@@ -66,7 +66,6 @@ use super::resources::{
     create_atlas, create_atlas_array, create_gui_panel, create_model_texture, create_scene_color,
     upload_column_mesh, ColumnOrigins, GpuSectionMesh, SectionStream, Span,
 };
-use draw_plan::{QuadPass, SectionOcclusion, TerrainDraws};
 use super::selection::outline_vertices;
 use super::ui::{build_ui, UiBuild, UiVertex};
 use super::uniforms::Uniforms;
@@ -75,6 +74,7 @@ use super::{
     LocalFrame, MobRenderInstance, ParticleEmitterInstance, ParticleInstance, PlayerBodyRender,
     SolidParticleInstance, UiFrame,
 };
+use draw_plan::{QuadPass, SectionOcclusion, TerrainDraws};
 use petramond::gui::{UiSnapshot, UiViewport};
 use petramond_world::bbmodel::Model;
 

@@ -566,8 +566,9 @@ fn a_route_probe_cut_short_is_undecided_never_closed() {
         world.set_block_world(x, 65, 1, Block::Stone);
     }
     let (from, to) = (IVec3::new(0, 64, 0), IVec3::new(0, 64, 2));
-    let probe =
-        |world: &ServerWorld, nodes| route_probe(world, crate::mob::Mob::Sheep, from, to, &[], nodes);
+    let probe = |world: &ServerWorld, nodes| {
+        route_probe(world, crate::mob::Mob::Sheep, from, to, &[], nodes)
+    };
     assert_eq!(probe(&world, 4), Some(Route::Undecided));
     assert_eq!(probe(&world, 400), Some(Route::Open));
     world.set_block_world(11, 64, 1, Block::Stone);
@@ -1317,7 +1318,7 @@ fn unreachable_goal_backs_off_consecutive_same_goal_repaths() {
 #[test]
 fn goal_cell_change_resets_unreachable_backoff_immediately() {
     let (world, start, unreachable) = pillar_world();
-    let reachable = IVec3::new(2, 64, 1);
+    let reachable = IVec3::new(2, 64, 3);
     let mut nav = Navigator::new(1, 0.25, 0.9);
 
     nav.update_goal_when_supported(Some(unreachable), start, &world, true, &NavInputs::none());
@@ -1328,6 +1329,10 @@ fn goal_cell_change_resets_unreachable_backoff_immediately() {
         nav.recomputes(),
         2,
         "the unreachable goal has entered backoff"
+    );
+    assert!(
+        !nav.path().contains(&reachable),
+        "exercise a new route, not a reusable waypoint"
     );
 
     nav.update_goal_when_supported(Some(reachable), start, &world, true, &NavInputs::none());

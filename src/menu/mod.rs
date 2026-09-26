@@ -35,8 +35,7 @@ mod tests {
     /// which no other test would catch.
     #[test]
     fn the_chest_derives_its_slot_specs_from_its_document() {
-        let specs =
-            super::slot_specs_for_kind(petramond_world::gui_state::GuiKind::Chest);
+        let specs = super::slot_specs_for_kind(petramond_world::gui_state::GuiKind::Chest);
         assert_eq!(
             specs.len(),
             crate::world::chest::CHEST_SLOTS,
@@ -56,9 +55,7 @@ mod tests {
     #[test]
     fn the_furnace_derives_its_slot_specs_from_its_document() {
         use petramond_world::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
-        let specs = super::slot_specs_for_kind(
-            petramond_world::gui_state::GuiKind::Furnace,
-        );
+        let specs = super::slot_specs_for_kind(petramond_world::gui_state::GuiKind::Furnace);
         assert_eq!(specs.len(), petramond_world::furnace::FURNACE_SLOTS);
         assert!(specs[SLOT_INPUT]
             .accepts

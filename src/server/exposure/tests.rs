@@ -62,10 +62,13 @@ fn record_player_damage(
 ) -> std::sync::Arc<std::sync::Mutex<Vec<DamageSource>>> {
     let hits = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = hits.clone();
-    server.mods.bus_mut().on_player_damage_pre(0, move |_, hit| {
-        sink.lock().unwrap().push(hit.source);
-        crate::events::Outcome::Continue
-    });
+    server
+        .mods
+        .bus_mut()
+        .on_player_damage_pre(0, move |_, hit| {
+            sink.lock().unwrap().push(hit.source);
+            crate::events::Outcome::Continue
+        });
     hits
 }
 

@@ -221,8 +221,7 @@ pub struct SessionReplication {
     /// The `gui_state` map allocation the last sync shipped. Holding the
     /// `Arc` is what makes identity comparison sound: the next tick-side
     /// write is forced to copy-on-write onto a fresh allocation.
-    pub last_sent_gui_state:
-        Option<std::sync::Arc<petramond_world::gui_state::GuiStateMap>>,
+    pub last_sent_gui_state: Option<std::sync::Arc<petramond_world::gui_state::GuiStateMap>>,
     /// The transform of the last `PlayerUpdate` this session applied — what
     /// the CLIENT last claimed. After the ticks, a session transform that no
     /// longer matches it means the tick moved the player (teleport,

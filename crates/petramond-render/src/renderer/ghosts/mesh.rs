@@ -15,12 +15,7 @@ pub(super) struct GhostPipelines {
 
 impl GhostPipelines {
     pub fn new(r: &Renderer) -> Self {
-        let uniform_layout = r
-            .block_entity
-            .draw
-            .pipeline
-            .get(1)
-            .get_bind_group_layout(0);
+        let uniform_layout = r.block_entity.draw.pipeline.get(1).get_bind_group_layout(0);
         let pipeline = |model| {
             crate::pipeline::world_overlay::ghost(
                 &r.device,

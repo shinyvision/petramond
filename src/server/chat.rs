@@ -299,7 +299,11 @@ mod tests {
         let long = "é".repeat(MAX_CHAT_CHARS * 50);
         let out = clean_text(&long).expect("non-empty");
         assert_eq!(out.chars().count(), MAX_CHAT_CHARS);
-        assert_eq!(clean_text(" \u{7}\n "), None, "controls alone trim to nothing");
+        assert_eq!(
+            clean_text(" \u{7}\n "),
+            None,
+            "controls alone trim to nothing"
+        );
     }
 
     #[test]

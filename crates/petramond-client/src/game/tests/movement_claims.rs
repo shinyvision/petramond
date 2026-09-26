@@ -115,7 +115,7 @@ fn movement_claim_validation_cases() {
         game.sim_mut().tick_movement(0);
 
         let sess = game.session();
-        let after = sess.player.pos;
+        let after = sess.player().pos;
         match case.expect {
             Expect::Accepted { adopts_vel } => {
                 assert_eq!(
@@ -125,7 +125,8 @@ fn movement_claim_validation_cases() {
                 );
                 if adopts_vel {
                     assert_eq!(
-                        sess.player.vel, claim.transform.vel,
+                        sess.player().vel,
+                        claim.transform.vel,
                         "[{}] the accepted claim's velocity is adopted",
                         case.label
                     );
@@ -145,7 +146,9 @@ fn movement_claim_validation_cases() {
 #[test]
 fn claim_inside_solid_geometry_is_rejected() {
     let mut game = game_on_empty_chunk();
-    assert!(game.server_world_mut().set_block_world(8, 64, 8, Block::Stone));
+    assert!(game
+        .server_world_mut()
+        .set_block_world(8, 64, 8, Block::Stone));
     game.server_player_mut().pos = WorldPos::new(8.5, 66.0, 8.5);
     let mut u = player_update(&game, true);
     u.transform.pos = WorldPos::new(8.5, 64.3, 8.5); // feet well inside the stone cell
@@ -163,18 +166,18 @@ fn claim_inside_solid_geometry_is_rejected() {
 fn transform_corrections_ship_only_on_real_divergence() {
     let mut game = game_on_empty_chunk();
     let sess = game.session_mut();
-    sess.player.pos = WorldPos::new(8.5, 70.0, 8.5);
-    sess.player.vel = Vec3::new(0.0, -1.4, 0.0);
+    sess.player_mut().pos = WorldPos::new(8.5, 70.0, 8.5);
+    sess.player_mut().vel = Vec3::new(0.0, -1.4, 0.0);
     // The server free-ran a little past the client's last claim: small pos
     // phase drift, one tick of gravity — time-phase, not divergence.
-    sess.last_reported_transform = Some(SelfTransform {
+    sess.replication_mut().last_reported_transform = Some(SelfTransform {
         transform: petramond::net::protocol::Transform {
-            pos: sess.player.pos + Vec3::new(0.4, 0.5, 0.0),
+            pos: sess.player().pos + Vec3::new(0.4, 0.5, 0.0),
             vel: Vec3::ZERO,
-            yaw: sess.player.yaw,
-            pitch: sess.player.pitch,
+            yaw: sess.player().yaw,
+            pitch: sess.player().pitch,
         },
-        on_ground: sess.player.on_ground,
+        on_ground: sess.player().on_ground,
     });
     assert!(
         game.sim_mut().build_self_state(0).transform.is_none(),
@@ -225,25 +228,25 @@ fn far_claim_does_not_grant_reach() {
     u.target = Some(hit(far, IVec3::Y));
     game.send_to_server(ClientToServer::PlayerUpdate(u));
     assert!(
-        game.session().look.is_none(),
+        game.session().look().is_none(),
         "an implausible claim must not validate a far look target"
     );
 
     game.send_to_server(ClientToServer::Action(PlayerAction::BreakFinished {
-            request_id: 30,
-            pos: far,
-            tool_item_id: None,
-            predicted: true,
-        }),
-    );
+        request_id: 30,
+        pos: far,
+        tool_item_id: None,
+        predicted: true,
+    }));
     game.sim_mut().tick_mining(0, &mut TickEvents::default());
     assert_eq!(
-        Block::from_id(game.server_world().chunk_block(far.x, far.y, far.z)),
+        Block::from_id(game.server_world().data().chunk_block(far.x, far.y, far.z)),
         Block::Stone,
         "remote reach must not break the block"
     );
     assert!(
         game.session()
+            .replication()
             .pending_action_outcomes
             .iter()
             .any(|o| o.id == 30 && !o.accepted && o.reason == Some(ActionDenyReason::OutOfReach)),
@@ -254,10 +257,12 @@ fn far_claim_does_not_grant_reach() {
 #[test]
 fn fake_on_ground_claims_do_not_evade_fall_damage() {
     let mut game = game_on_empty_chunk();
-    assert!(game.server_world_mut().set_block_world(8, 64, 8, Block::Stone));
+    assert!(game
+        .server_world_mut()
+        .set_block_world(8, 64, 8, Block::Stone));
     game.server_player_mut().pos = WorldPos::new(8.5, 80.0, 8.5);
-    game.session_mut().claim_pos = game.server_player().pos;
-    game.session_mut().fall.reset(80.0);
+    game.session_mut().input_mut().claim_pos = game.server_player().pos;
+    game.session_mut().sim_mut().fall.reset(80.0);
 
     // Descend claiming on_ground every tick — the mid-air flag is fabricated
     // (no support under the feet), so the peak must survive to the landing.
@@ -270,9 +275,9 @@ fn fake_on_ground_claims_do_not_evade_fall_damage() {
         game.sim_mut().tick_movement(0);
     }
     assert!(
-        game.session().pending_fall >= 14.0,
+        game.session().sim().pending_fall >= 14.0,
         "faked grounded claims must not reset the fall (measured {})",
-        game.session().pending_fall
+        game.session().sim().pending_fall
     );
 }
 
@@ -291,13 +296,15 @@ fn sprint_descent_down_steps_is_not_one_tall_fall() {
         ));
     }
     for x in 14..16 {
-        assert!(game.server_world_mut().set_block_world(x, 58, 8, Block::Stone));
+        assert!(game
+            .server_world_mut()
+            .set_block_world(x, 58, 8, Block::Stone));
     }
 
     let start = WorldPos::new(2.3, 71.0, 8.5);
     game.server_player_mut().pos = start;
-    game.session_mut().claim_pos = start;
-    game.session_mut().fall.reset(start.y);
+    game.session_mut().input_mut().claim_pos = start;
+    game.session_mut().sim_mut().fall.reset(start.y);
 
     // The client's own 60 fps physics sprints down the staircase. Each step
     // contact lasts only a frame or two, so the once-per-tick report can
@@ -315,7 +322,7 @@ fn sprint_descent_down_steps_is_not_one_tall_fall() {
     for _ in 0..400 {
         let mut report = None;
         for _ in 0..3 {
-            client.update(1.0 / 60.0, game.server_world(), input);
+            client.update(1.0 / 60.0, game.server_world().data(), input);
             if !client.on_ground || report.is_none() {
                 report = Some((client.pos, client.vel, client.on_ground));
             }
@@ -350,7 +357,7 @@ fn sprint_descent_down_steps_is_not_one_tall_fall() {
         game.sim_mut().tick_movement(0);
     }
 
-    let measured = game.session().pending_fall;
+    let measured = game.session().sim().pending_fall;
     assert_eq!(
         petramond::server::health::fall_damage_health(measured),
         0,

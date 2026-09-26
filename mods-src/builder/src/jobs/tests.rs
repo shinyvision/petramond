@@ -45,7 +45,11 @@ fn a_design_compiles_within_the_ticks_sections_and_names_the_project() {
     assert_eq!(sections, 0, "two stored sections spent");
     assert!(session.builder.jobs.map[&id].survey.is_none());
     session.builder.compile(id, &mut sections);
-    assert_eq!(session.builder.jobs.map[&id].design.compiled(), 2, "none left to spend");
+    assert_eq!(
+        session.builder.jobs.map[&id].design.compiled(),
+        2,
+        "none left to spend"
+    );
 
     let mut sections = 8;
     session.builder.compile(id, &mut sections);
@@ -76,7 +80,10 @@ fn a_design_that_failed_is_not_compiled_again() {
     session.builder.jobs.attend(&project, 1);
     let mut sections = 8;
     session.builder.compile(id, &mut sections);
-    assert_eq!(session.builder.jobs.map[&id].failed.as_deref(), Some("Corrupt"));
+    assert_eq!(
+        session.builder.jobs.map[&id].failed.as_deref(),
+        Some("Corrupt")
+    );
     assert_eq!(
         session.builder.admission(&project, 1),
         Err(Refusal::Design("Corrupt".into()))
@@ -92,14 +99,21 @@ fn a_repositioned_draft_starts_its_design_afresh() {
         .projects
         .update(id, |p| p.origin = Some([4, 0, 4]));
     let project = brief(&mut session, id);
-    let job = session.builder.jobs.attend(&project, 2).expect("still anchored");
+    let job = session
+        .builder
+        .jobs
+        .attend(&project, 2)
+        .expect("still anchored");
     assert_eq!(job.design.origin, [4, 0, 4]);
     assert!(!job.design.complete && job.survey.is_none());
     session.builder.jobs.map.get_mut(&id).unwrap().crew.last_mob = Some(55);
     assert_eq!(session.builder.jobs.by_mob(55).map(|j| j.id), Some(id));
     assert!(session.builder.jobs.by_mob(56).is_none());
     session.builder.jobs.map.get_mut(&id).unwrap().crew.last_mob = Some(57);
-    assert!(session.builder.jobs.by_mob(55).is_none(), "the memo is checked");
+    assert!(
+        session.builder.jobs.by_mob(55).is_none(),
+        "the memo is checked"
+    );
     assert_eq!(session.builder.jobs.by_mob(57).map(|j| j.id), Some(id));
 }
 
@@ -112,7 +126,10 @@ fn start_is_refused_until_the_chests_cover_the_bill() {
         Err(Refusal::CheckingSite)
     );
     session.job(id);
-    assert_eq!(session.builder.admission(&project, 2), Err(short(3, "Stone")));
+    assert_eq!(
+        session.builder.admission(&project, 2),
+        Err(short(3, "Stone"))
+    );
     assert_eq!(project_done(&session, id), 0.0);
     stock(&session, "petramond:stone", 3);
     assert_eq!(
@@ -166,7 +183,10 @@ fn start_never_breaks_a_chest_holding_items() {
         .give(ContainerAddress::Block([0, 0, 0]), "petramond:dirt", 1);
     session.job(id);
     let project = brief(&mut session, id);
-    assert_eq!(session.builder.admission(&project, 2), Err(Refusal::Guarded));
+    assert_eq!(
+        session.builder.admission(&project, 2),
+        Err(Refusal::Guarded)
+    );
 }
 
 #[test]
@@ -205,10 +225,7 @@ fn what_another_working_job_sharing_the_chests_still_needs_is_not_offered() {
     let (mut session, a) = row_site();
     let other_table = [2, 0, -3];
     session.world.set(other_table, TABLE);
-    let b = session
-        .builder
-        .projects
-        .create(OWNER.into(), other_table);
+    let b = session.builder.projects.create(OWNER.into(), other_table);
     session.builder.projects.update(b, |p| {
         p.asset = Some(ASSET);
         p.origin = Some([0, 0, 5]);
@@ -220,8 +237,14 @@ fn what_another_working_job_sharing_the_chests_still_needs_is_not_offered() {
     stock(&session, "petramond:stone", 4);
     let project = brief(&mut session, a);
     let offered = session.builder.available(&project, 2);
-    assert_eq!(offered.get(&("petramond:stone".into(), Vec::new())), Some(&1));
-    assert_eq!(session.builder.admission(&project, 2), Err(short(2, "Stone")));
+    assert_eq!(
+        offered.get(&("petramond:stone".into(), Vec::new())),
+        Some(&1)
+    );
+    assert_eq!(
+        session.builder.admission(&project, 2),
+        Err(short(2, "Stone"))
+    );
 }
 
 #[test]
@@ -242,7 +265,10 @@ fn start_summons_a_golem_beside_the_table_once() {
         session.world.tag(golem, crate::worker::FULL_HEALTH_TAG),
         Some(MobTagValue::F64(60.0))
     );
-    assert_eq!(session.builder.jobs.map[&id].crew.step, Step::Emerge { t: 0 });
+    assert_eq!(
+        session.builder.jobs.map[&id].crew.step,
+        Step::Emerge { t: 0 }
+    );
     let feet = session.world.mob_pos(golem).unwrap();
     assert!(feet[1] < 0.0, "it starts under the ground");
     assert_eq!(session.builder.start(id), Err(Refusal::AlreadyStarted));
@@ -284,10 +310,16 @@ fn pause_and_resume_hold_and_release_a_working_job() {
     at_work(&mut session, id);
     session.builder.pause(id);
     let project = session.builder.projects.get(id).unwrap();
-    assert_eq!((project.hold(), &project.note), (Some(Hold::Player), &Note::Paused));
+    assert_eq!(
+        (project.hold(), &project.note),
+        (Some(Hold::Player), &Note::Paused)
+    );
     assert_eq!(session.builder.resume(id, [3, 0, -3]), Ok(()));
     let project = session.builder.projects.get(id).unwrap();
-    assert_eq!((project.hold(), &project.note, project.table), (None, &Note::None, [3, 0, -3]));
+    assert_eq!(
+        (project.hold(), &project.note, project.table),
+        (None, &Note::None, [3, 0, -3])
+    );
     assert_eq!(session.builder.resume(id, TABLE_AT), Ok(()), "nothing held");
 
     session
@@ -298,7 +330,10 @@ fn pause_and_resume_hold_and_release_a_working_job() {
         session.builder.resume(id, TABLE_AT),
         Err(Refusal::GolemLostBlueprint)
     );
-    assert_eq!(session.builder.resume(99, TABLE_AT), Err(Refusal::NoProject));
+    assert_eq!(
+        session.builder.resume(99, TABLE_AT),
+        Err(Refusal::NoProject)
+    );
 }
 
 #[test]
@@ -324,7 +359,10 @@ fn a_working_job_keeps_its_missing_note_current() {
     at_work(&mut session, id);
     let project = brief(&mut session, id);
     session.builder.check_supplies(&project, 2);
-    assert_eq!(session.builder.projects.get(id).unwrap().note, short_of_stone(3));
+    assert_eq!(
+        session.builder.projects.get(id).unwrap().note,
+        short_of_stone(3)
+    );
 
     session
         .builder
@@ -351,7 +389,10 @@ fn a_storage_hold_lifts_once_a_chest_has_room() {
         .update(id, |p| p.hold_for(Hold::Storage, Note::ChestsFull));
     let project = brief(&mut session, id);
     session.builder.check_supplies(&project, 2);
-    assert_eq!(session.builder.projects.get(id).unwrap().hold(), Some(Hold::Storage));
+    assert_eq!(
+        session.builder.projects.get(id).unwrap().hold(),
+        Some(Hold::Storage)
+    );
     session
         .world
         .put(ContainerAddress::Block(CHEST_AT), 3, None);
@@ -366,7 +407,11 @@ fn a_dead_golem_holds_its_job() {
     session.job(id);
     let golem = session.golem(id, HOME, HOME);
     session.builder.died(golem + 1);
-    assert_eq!(session.builder.jobs.map[&id].crew.mob, Some(golem), "another mob");
+    assert_eq!(
+        session.builder.jobs.map[&id].crew.mob,
+        Some(golem),
+        "another mob"
+    );
     session.builder.died(golem);
     assert_eq!(session.builder.jobs.map[&id].crew.mob, None);
     let project = brief(&mut session, id);
@@ -388,7 +433,10 @@ fn a_job_whose_table_is_broken_is_called_off() {
     assert!(!brief(&mut session, id).cancelling, "not its tick");
     session.builder.cancel_tableless(&[id], 41);
     let project = session.builder.projects.get(id).unwrap();
-    assert_eq!((project.phase(), project.cancelling()), (Phase::Returning, true));
+    assert_eq!(
+        (project.phase(), project.cancelling()),
+        (Phase::Returning, true)
+    );
     assert_eq!(project.note, Note::TableGone);
 }
 
@@ -411,5 +459,8 @@ fn a_watched_draft_is_compiled_surveyed_and_ghosted_in_one_tick() {
     assert!(session
         .world
         .deeds()
-        .contains(&crate::host::fake::Deed::Ghost(crate::project::tag_of(id), true)));
+        .contains(&crate::host::fake::Deed::Ghost(
+            crate::project::tag_of(id),
+            true
+        )));
 }

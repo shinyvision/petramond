@@ -6,8 +6,8 @@ use super::tuning::patience::{
 };
 use super::tuning::waits::WALK_FAILED;
 use super::{arrive, centre, rescue, route, Body, Ctx, Step, Task, Then};
-use crate::worker::Job;
 use crate::project::Projects;
+use crate::worker::Job;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn walk(

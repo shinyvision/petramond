@@ -372,10 +372,13 @@ impl Fake {
                 let mut out = Vec::new();
                 for (pos, name) in chunk {
                     let record = record(name);
-                    let index = palette.iter().position(|r| *r == record).unwrap_or_else(|| {
-                        palette.push(record);
-                        palette.len() - 1
-                    });
+                    let index = palette
+                        .iter()
+                        .position(|r| *r == record)
+                        .unwrap_or_else(|| {
+                            palette.push(record);
+                            palette.len() - 1
+                        });
                     out.push((*pos, index as u16));
                 }
                 SchematicCellsData {
@@ -456,12 +459,16 @@ mod bridge {
     pub fn answer(world: &Fake, call: &HostCall) -> HostRet {
         let mut state = world.state_mut();
         match call {
-            HostCall::Kv(mod_sdk::KvCall::WorldKvGet { key }) => HostRet::Bytes(state.kv.get(key).cloned()),
+            HostCall::Kv(mod_sdk::KvCall::WorldKvGet { key }) => {
+                HostRet::Bytes(state.kv.get(key).cloned())
+            }
             HostCall::Kv(mod_sdk::KvCall::WorldKvSet { key, value }) => {
                 state.kv.insert(key.clone(), value.clone());
                 HostRet::Unit
             }
-            HostCall::Kv(mod_sdk::KvCall::WorldKvDelete { key }) => HostRet::Bool(state.kv.remove(key).is_some()),
+            HostCall::Kv(mod_sdk::KvCall::WorldKvDelete { key }) => {
+                HostRet::Bool(state.kv.remove(key).is_some())
+            }
             HostCall::Block(mod_sdk::BlockCall::BlockChangesSince { since }) => {
                 HostRet::BlockChanges(super::answers::changes_since(&state, *since))
             }

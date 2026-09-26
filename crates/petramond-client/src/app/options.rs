@@ -298,7 +298,9 @@ impl App {
     /// fleck system now, the renderer's emitter density on the next render.
     pub(super) fn apply_particles(&mut self) {
         if let Some(session) = self.session.as_mut() {
-            session.game.set_particles_mode(self.options.settings.particles);
+            session
+                .game
+                .set_particles_mode(self.options.settings.particles);
         }
         self.options.mark_renderer_dirty();
     }
@@ -338,10 +340,13 @@ impl App {
     /// knows no settings and holds no terrain: hand it the graphics settings
     /// and queue every meshed column of the world for upload again.
     pub(crate) fn renderer_recreated(&mut self, renderer: &mut petramond_render::Renderer) {
-        self.renderer_options_dirty = true;
+        self.options.mark_renderer_dirty();
         self.apply_graphics(renderer);
-        if let Some(game) = self.game.as_mut() {
-            game.terrain_render_handoff().request_full_reupload();
+        if let Some(session) = self.session.as_mut() {
+            session
+                .game
+                .terrain_render_handoff()
+                .request_full_reupload();
         }
     }
 }

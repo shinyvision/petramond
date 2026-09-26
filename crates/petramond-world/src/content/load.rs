@@ -199,12 +199,15 @@ impl ContentLoader {
                 if let Err(message) = stage.build(reg) {
                     report
                         .errors
-                        .extend(message.lines().filter(|l| !l.trim().is_empty()).map(|line| {
-                            ContentError {
-                                stage: stage.name(),
-                                message: line.to_owned(),
-                            }
-                        }));
+                        .extend(
+                            message
+                                .lines()
+                                .filter(|l| !l.trim().is_empty())
+                                .map(|line| ContentError {
+                                    stage: stage.name(),
+                                    message: line.to_owned(),
+                                }),
+                        );
                     failed.push(stage.name());
                 }
             }

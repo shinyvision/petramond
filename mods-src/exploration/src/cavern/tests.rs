@@ -244,7 +244,9 @@ fn open_section(section: [i32; 3]) -> GenCtx {
 fn the_bottom_row_asks_the_terrain_for_the_support_it_cannot_see() {
     let ctx = open_section([0, -3, 0]);
     let origin = ctx.origin_world();
-    let Dressing { floors, ceilings, .. } = Dressing::gather(&test_content(), &ctx, ctx.seed());
+    let Dressing {
+        floors, ceilings, ..
+    } = Dressing::gather(&test_content(), &ctx, ctx.seed());
     let bottom: Vec<&Dress> = floors.iter().filter(|d| d.p[1] == origin[1]).collect();
     assert!(
         !bottom.is_empty(),
@@ -278,7 +280,9 @@ fn the_bottom_row_asks_the_terrain_for_the_support_it_cannot_see() {
 #[test]
 fn a_candidate_that_can_see_both_neighbours_costs_no_probe() {
     let ctx = split_section([0, -3, 0]);
-    let Dressing { floors, ceilings, .. } = Dressing::gather(&test_content(), &ctx, ctx.seed());
+    let Dressing {
+        floors, ceilings, ..
+    } = Dressing::gather(&test_content(), &ctx, ctx.seed());
     let mut inner = 0;
     for d in floors.iter().chain(&ceilings) {
         let ly = d.p[1] - ctx.origin_world()[1];
@@ -390,7 +394,10 @@ fn a_dressing_block_never_replaces_a_structural_block() {
         out.push_if_clear([root[0] + dx, root[1] + dy, root[2] + dz], block);
     });
     let structural: Vec<GenWrite> = out.writes().to_vec();
-    assert!(!structural.is_empty(), "the giant emitted nothing into the section");
+    assert!(
+        !structural.is_empty(),
+        "the giant emitted nothing into the section"
+    );
 
     // now let every dressing pass in the module try to take those cells
     for &(p, _) in &structural {
@@ -475,8 +482,7 @@ fn a_curtain_picks_each_segment_from_that_cell_alone() {
         for (&cell, &block) in curtain.iter().zip(&run) {
             assert!(
                 block == content.vine
-                    || block
-                        == pick_species(&content, seed, cell[0], cell[1], cell[2]).glow_vine,
+                    || block == pick_species(&content, seed, cell[0], cell[1], cell[2]).glow_vine,
                 "the bloom at {cell:?} is not the colour of the stand it hangs in"
             );
         }

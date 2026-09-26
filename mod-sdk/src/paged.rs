@@ -48,7 +48,10 @@ mod tests {
         });
         assert_eq!(pages, [SIM_BATCH_MAX, SIM_BATCH_MAX, 7]);
         assert_eq!(out.len(), items.len(), "every element is answered");
-        assert!(out.iter().enumerate().all(|(i, &v)| v == i * 2), "order held");
+        assert!(
+            out.iter().enumerate().all(|(i, &v)| v == i * 2),
+            "order held"
+        );
     }
 
     #[test]

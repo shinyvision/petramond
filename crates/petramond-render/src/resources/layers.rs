@@ -179,17 +179,15 @@ pub(crate) fn far_len(mesh: &ChunkMesh) -> usize {
 pub(crate) fn mesh_bytes(mesh: &ChunkMesh, stream: SectionStream) -> &[u8] {
     let far = far_len(mesh);
     match stream {
-        SectionStream::OpaqueFar => {
-            bytemuck::cast_slice(&mesh.gpu_quads(QuadLayer::Opaque)[..far])
-        }
+        SectionStream::OpaqueFar => bytemuck::cast_slice(&mesh.gpu_quads(QuadLayer::Opaque)[..far]),
         SectionStream::OpaqueTail => {
             bytemuck::cast_slice(&mesh.gpu_quads(QuadLayer::Opaque)[far..])
         }
         SectionStream::Transparent
         | SectionStream::TransparentTwoSided
-        | SectionStream::Translucent => bytemuck::cast_slice(
-            mesh.gpu_quads(stream.quad_layer().expect("a quad stream")),
-        ),
+        | SectionStream::Translucent => {
+            bytemuck::cast_slice(mesh.gpu_quads(stream.quad_layer().expect("a quad stream")))
+        }
         SectionStream::ModelVertices => bytemuck::cast_slice(&mesh.model),
         SectionStream::Contact => bytemuck::cast_slice(&mesh.contact),
         SectionStream::ModelIndices | SectionStream::ModelBlendIndices => {

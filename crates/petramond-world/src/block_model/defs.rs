@@ -336,7 +336,9 @@ fn load(reg: &crate::content::ContentRegistry) -> Result<ModelDefs, String> {
     check_shared_part_lists(rows)?;
     Ok(ModelDefs {
         rows,
-        kinds: (0..rows.len()).map(|id| BlockModelKind(id as u16)).collect(),
+        kinds: (0..rows.len())
+            .map(|id| BlockModelKind(id as u16))
+            .collect(),
     })
 }
 

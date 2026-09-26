@@ -36,7 +36,11 @@ fn every_buffer_is_fed_by_a_stream() {
 #[test]
 fn every_stride_is_copy_aligned() {
     for buffer in ColumnBuffer::ALL {
-        assert_eq!(buffer.stride() % wgpu::COPY_BUFFER_ALIGNMENT, 0, "{buffer:?}");
+        assert_eq!(
+            buffer.stride() % wgpu::COPY_BUFFER_ALIGNMENT,
+            0,
+            "{buffer:?}"
+        );
     }
 }
 

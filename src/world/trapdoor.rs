@@ -7,10 +7,11 @@
 //! its animated block model and its collision is read live from the state, so a
 //! toggle needs no remesh.
 
-use crate::world::{ServerWorld, World, WorldSide};
+#[cfg(test)]
+use crate::world::ServerWorld;
+use crate::world::{World, WorldSide};
 use petramond_math::math::IVec3;
 use petramond_world::trapdoor::TrapdoorState;
-
 
 impl<S: WorldSide> World<S> {
     /// The trapdoor state at world `pos`, or `None` when no trapdoor is

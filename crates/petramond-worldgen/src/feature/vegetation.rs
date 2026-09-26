@@ -348,7 +348,6 @@ fn cover_cluster_allows(cluster: Option<CoverCluster>, seed: u32, wx: i32, wz: i
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

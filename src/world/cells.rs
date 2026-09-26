@@ -382,7 +382,9 @@ impl ServerWorld {
     fn install_cells(&mut self, cells: &[(IVec3, &ResolvedCell)]) {
         let mut changes = Vec::with_capacity(cells.len());
         for (p, data) in cells {
-            let (s, x, y, z) = self.data.chunk_at_world_mut(p.x, p.y, p.z)
+            let (s, x, y, z) = self
+                .data
+                .chunk_at_world_mut(p.x, p.y, p.z)
                 .expect("materialized edit");
             changes.push(CellChange::new(*p, s.block(x, y, z), ChangeKind::Replace));
             s.take_container(x, y, z);
@@ -403,7 +405,9 @@ impl ServerWorld {
         // Neighbours see the completed edit; the copied cells retain their
         // authored connection/corner state until a later world edit changes it.
         for (p, data) in cells {
-            let (s, x, y, z) = self.data.chunk_at_world_mut(p.x, p.y, p.z)
+            let (s, x, y, z) = self
+                .data
+                .chunk_at_world_mut(p.x, p.y, p.z)
                 .expect("materialized edit");
             if s.cell_state(x, y, z) != data.state {
                 s.set_cell_state(x, y, z, data.state);

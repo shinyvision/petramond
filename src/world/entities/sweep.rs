@@ -8,9 +8,9 @@ use petramond_world::world::raycast;
 use std::collections::HashMap;
 
 use crate::mob::EntityRef;
-use petramond_world::world::raycast::RayFilter;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
+use petramond_world::world::raycast::RayFilter;
 
 use super::step::StepCtx;
 use super::ImpactTarget;
@@ -107,17 +107,17 @@ pub(super) fn sweep(
     }
     let dir = motion / length;
     let world = ctx.world;
-    let terrain =
-        raycast::filtered(from, dir, length, RayFilter::Collidable, world.data())
-            .map(|(hit, distance)| {
-                (
-                    distance,
-                    ImpactTarget::Block {
-                        cell: hit.block,
-                        face: hit.normal,
-                    },
-                )
-            });
+    let terrain = raycast::filtered(from, dir, length, RayFilter::Collidable, world.data()).map(
+        |(hit, distance)| {
+            (
+                distance,
+                ImpactTarget::Block {
+                    cell: hit.block,
+                    face: hit.normal,
+                },
+            )
+        },
+    );
     let limit = terrain.map_or(length, |(d, _)| d);
     let mut body: Option<(f32, ImpactTarget)> = None;
     let mut consider = |distance: f32, target: ImpactTarget| {

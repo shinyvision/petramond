@@ -323,29 +323,30 @@ impl UiPass {
         let screen = self.prepared_viewport.size;
         pass.set_vertex_buffer(0, vbuf.slice(..));
         for batch in batches {
-            let bind = match batch.tex {
-                petramond_ui::TexId::Solid => &self.icon_atlas.bind,
-                petramond_ui::TexId::ThemePage(i) => match binds.pages.get(i as usize) {
-                    Some(bind) => bind,
-                    None => continue,
-                },
-                petramond_ui::TexId::Font => &binds.font,
-                petramond_ui::TexId::DocImage(i) => {
-                    match self.doc_ui.frame_images.get(i as usize).and_then(
-                        |source| match source {
-                            petramond::gui::DocImageSource::Path(path) => {
-                                self.doc_ui.image_binds.get(path)
-                            }
-                            petramond::gui::DocImageSource::Dynamic { key, .. } => {
-                                self.doc_ui.dynamic_binds.get(key).map(|entry| &entry.bind)
-                            }
-                        },
-                    ) {
+            let bind =
+                match batch.tex {
+                    petramond_ui::TexId::Solid => &self.icon_atlas.bind,
+                    petramond_ui::TexId::ThemePage(i) => match binds.pages.get(i as usize) {
                         Some(bind) => bind,
                         None => continue,
+                    },
+                    petramond_ui::TexId::Font => &binds.font,
+                    petramond_ui::TexId::DocImage(i) => {
+                        match self.doc_ui.frame_images.get(i as usize).and_then(|source| {
+                            match source {
+                                petramond::gui::DocImageSource::Path(path) => {
+                                    self.doc_ui.image_binds.get(path)
+                                }
+                                petramond::gui::DocImageSource::Dynamic { key, .. } => {
+                                    self.doc_ui.dynamic_binds.get(key).map(|entry| &entry.bind)
+                                }
+                            }
+                        }) {
+                            Some(bind) => bind,
+                            None => continue,
+                        }
                     }
-                }
-            };
+                };
             match batch.clip {
                 Some([x, y, w, h]) => {
                     let x0 = x.clamp(0, screen.0 as i32) as u32;

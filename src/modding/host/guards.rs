@@ -120,7 +120,10 @@ fn read_only_refusal() -> HostRet {
 
 /// The reply when no guest dispatch published a simulation context.
 fn no_context() -> HostRet {
-    HostRet::error(ErrorCode::NoContext, "no simulation context is active".into())
+    HostRet::error(
+        ErrorCode::NoContext,
+        "no simulation context is active".into(),
+    )
 }
 
 /// Whether `call` is legal inside a READ-ONLY dispatch (the shape

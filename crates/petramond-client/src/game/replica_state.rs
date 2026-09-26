@@ -12,8 +12,8 @@ use petramond::player;
 use petramond::world::ReplicaWorld;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
-use petramond_world::collision::DynBox;
 use petramond_world::chunk::SectionPos;
+use petramond_world::collision::DynBox;
 use petramond_world::crafting::CraftingCatalog;
 use petramond_worldgen::density::surface::SurfaceDensitySystem;
 
@@ -144,7 +144,12 @@ impl ReplicaState {
     /// distance; skips dead corpses and the own mount. `max_dist` is the block
     /// hit distance, so a mob *behind* the block isn't targeted (the block
     /// occludes it).
-    pub(super) fn closest_mob(&self, eye: WorldPos, dir: Vec3, max_dist: f32) -> Option<(u64, f32)> {
+    pub(super) fn closest_mob(
+        &self,
+        eye: WorldPos,
+        dir: Vec3,
+        max_dist: f32,
+    ) -> Option<(u64, f32)> {
         let limit = max_dist.min(player::REACH);
         let own_mount = self.own_mount_mob();
         let alpha = self.entities.alpha();

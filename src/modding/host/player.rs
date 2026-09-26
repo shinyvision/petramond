@@ -215,14 +215,16 @@ pub(super) fn handle_player_call(mod_id: &str, call: PlayerCall) -> HostRet {
                 })
             }
         },
-        PlayerCall::ApplyKnockback { impulse } => match finite3(impulse, "ApplyKnockback.impulse") {
-            Err(e) => e,
-            Ok(impulse) => sim_mutate(|ctx| {
-                let id = actor_for(ctx, "ApplyKnockback", "ApplyKnockbackTo")?;
-                ctx.with_player(id, |p| p.apply_knockback(impulse));
-                Ok(())
-            }),
-        },
+        PlayerCall::ApplyKnockback { impulse } => {
+            match finite3(impulse, "ApplyKnockback.impulse") {
+                Err(e) => e,
+                Ok(impulse) => sim_mutate(|ctx| {
+                    let id = actor_for(ctx, "ApplyKnockback", "ApplyKnockbackTo")?;
+                    ctx.with_player(id, |p| p.apply_knockback(impulse));
+                    Ok(())
+                }),
+            }
+        }
         PlayerCall::ApplyKnockbackTo { player, impulse } => {
             match finite3(impulse, "ApplyKnockbackTo.impulse") {
                 Err(e) => e,
@@ -349,25 +351,25 @@ pub(super) fn handle_player_call(mod_id: &str, call: PlayerCall) -> HostRet {
         // Atomic: only an acting-hand stack holding at least `count` of `item`
         // consumes. During the ladder's off-hand pass this spends the
         // off-hand.
-        PlayerCall::ConsumeHeld { item, count } => sim_query(|ctx| {
-            match actor_for(ctx, "ConsumeHeld", "ConsumeHeldBy") {
+        PlayerCall::ConsumeHeld { item, count } => {
+            sim_query(|ctx| match actor_for(ctx, "ConsumeHeld", "ConsumeHeldBy") {
                 Ok(id) => HostRet::Bool(consume_held(ctx, id, item, count)),
                 Err(e) => e,
-            }
-        }),
+            })
+        }
         PlayerCall::ConsumeHeldBy {
             player,
             item,
             count,
-        } => sim_query(|ctx| {
-            HostRet::Bool(consume_held(ctx, PlayerId(player.0), item, count))
-        }),
-        PlayerCall::ReplaceHeldOne { item, replacement } => sim_query(|ctx| {
-            match actor_for(ctx, "ReplaceHeldOne", "ReplaceHeldOneBy") {
-                Ok(id) => HostRet::Bool(replace_held_one(ctx, mod_id, id, item, &replacement)),
-                Err(e) => e,
-            }
-        }),
+        } => sim_query(|ctx| HostRet::Bool(consume_held(ctx, PlayerId(player.0), item, count))),
+        PlayerCall::ReplaceHeldOne { item, replacement } => {
+            sim_query(
+                |ctx| match actor_for(ctx, "ReplaceHeldOne", "ReplaceHeldOneBy") {
+                    Ok(id) => HostRet::Bool(replace_held_one(ctx, mod_id, id, item, &replacement)),
+                    Err(e) => e,
+                },
+            )
+        }
         PlayerCall::ReplaceHeldOneBy {
             player,
             item,
@@ -415,21 +417,23 @@ pub(super) fn handle_player_call(mod_id: &str, call: PlayerCall) -> HostRet {
         }
         // Status effects are player-state primitives like SetHealth: direct
         // mutation, no events.
-        PlayerCall::EffectApply { key, ticks } => sim_query(|ctx| {
-            match actor_for(ctx, "EffectApply", "EffectApplyTo") {
+        PlayerCall::EffectApply { key, ticks } => {
+            sim_query(|ctx| match actor_for(ctx, "EffectApply", "EffectApplyTo") {
                 Ok(id) => HostRet::Bool(apply_effect(ctx, mod_id, id, &key, ticks)),
                 Err(e) => e,
-            }
-        }),
+            })
+        }
         PlayerCall::EffectApplyTo { player, key, ticks } => sim_query(|ctx| {
             HostRet::Bool(apply_effect(ctx, mod_id, PlayerId(player.0), &key, ticks))
         }),
-        PlayerCall::EffectsActive => sim_query(|ctx| {
-            match actor_for(ctx, "EffectsActive", "EffectsActiveOf") {
-                Ok(id) => HostRet::Effects(effects_of(ctx, id).unwrap_or_default()),
-                Err(e) => e,
-            }
-        }),
+        PlayerCall::EffectsActive => {
+            sim_query(
+                |ctx| match actor_for(ctx, "EffectsActive", "EffectsActiveOf") {
+                    Ok(id) => HostRet::Effects(effects_of(ctx, id).unwrap_or_default()),
+                    Err(e) => e,
+                },
+            )
+        }
         PlayerCall::EffectsActiveOf { player } => {
             sim_query(|ctx| HostRet::EffectsOf(effects_of(ctx, PlayerId(player.0))))
         }
@@ -558,9 +562,9 @@ pub(super) fn handle_player_call(mod_id: &str, call: PlayerCall) -> HostRet {
 /// `client::handle_body_call`).
 pub(super) fn handle_body_call(mod_id: &str, call: BodyCall) -> HostRet {
     match call {
-        BodyCall::ActingPlayer => sim_read(|ctx| {
-            HostRet::ActingPlayer(ctx.actor.map(|id| mod_api::PlayerId(id.0)))
-        }),
+        BodyCall::ActingPlayer => {
+            sim_read(|ctx| HostRet::ActingPlayer(ctx.actor.map(|id| mod_api::PlayerId(id.0))))
+        }
         BodyCall::PlayerState => sim_query(|ctx| {
             let id = match actor_for(ctx, "PlayerState", "PlayerStateOf") {
                 Ok(id) => id,
@@ -618,9 +622,9 @@ pub(super) fn handle_body_call(mod_id: &str, call: BodyCall) -> HostRet {
                 }) {
                     None => HostRet::Bool(false),
                     Some(true) => HostRet::Bool(true),
-                    Some(false) => {
-                        HostRet::invalid("SetPlayerAnimatorPlays: non-finite progress or rate".into())
-                    }
+                    Some(false) => HostRet::invalid(
+                        "SetPlayerAnimatorPlays: non-finite progress or rate".into(),
+                    ),
                 }
             })
         }
@@ -700,9 +704,9 @@ pub(super) fn handle_body_call(mod_id: &str, call: BodyCall) -> HostRet {
 fn display_item(name: &Option<String>) -> Result<Option<ItemType>, HostRet> {
     match name {
         None => Ok(None),
-        Some(name) => item_by_name(name)
-            .map(Some)
-            .ok_or_else(|| HostRet::invalid(format!("SetPlayerHeldDisplay: unknown item '{name}'"))),
+        Some(name) => item_by_name(name).map(Some).ok_or_else(|| {
+            HostRet::invalid(format!("SetPlayerHeldDisplay: unknown item '{name}'"))
+        }),
     }
 }
 
@@ -1125,7 +1129,9 @@ mod tests {
                 handle_host_call(&mut data, HostCall::from(calls::ActingPlayer)),
                 HostRet::ActingPlayer(Some(mod_api::PlayerId(1)))
             );
-            let HostRet::Player(state) = handle_host_call(&mut data, HostCall::from(calls::PlayerState)) else {
+            let HostRet::Player(state) =
+                handle_host_call(&mut data, HostCall::from(calls::PlayerState))
+            else {
                 panic!("the actor's snapshot");
             };
             assert_eq!(state.id, Some(mod_api::PlayerId(1)));
@@ -1182,7 +1188,11 @@ mod tests {
             };
             assert_eq!(state.health, 5);
         });
-        assert_eq!(first.health(), 7, "only the explicit write reached session 0");
+        assert_eq!(
+            first.health(),
+            7,
+            "only the explicit write reached session 0"
+        );
         assert_eq!(second.health(), 5);
     }
 }

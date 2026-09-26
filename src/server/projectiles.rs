@@ -68,7 +68,8 @@ impl ServerGame {
             mods,
             ..
         } = self;
-        mods.bus_mut().projectile_hit(world, sessions, actor, events, ev);
+        mods.bus_mut()
+            .projectile_hit(world, sessions, actor, events, ev);
     }
 
     /// The settled fate, on the entity: a lodge needs the block it struck,

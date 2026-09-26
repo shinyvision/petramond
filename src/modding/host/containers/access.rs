@@ -99,6 +99,10 @@ pub(super) fn owner_name(ctx: &SimCtx<'_>, target: Target) -> Option<&'static st
             let block = ctx.world.block_if_stream_final(p.x, p.y, p.z)?;
             petramond_world::registry::names().blocks.name(block.id())
         }
-        Target::Mob(id) => ctx.world.mobs().get(id).map(|m| crate::mob::def(m.kind).name),
+        Target::Mob(id) => ctx
+            .world
+            .mobs()
+            .get(id)
+            .map(|m| crate::mob::def(m.kind).name),
     }
 }

@@ -52,7 +52,9 @@ pub fn declared_kinds() -> Vec<(&'static str, usize)> {
     let mut out: Vec<_> = table()
         .by_kind
         .iter()
-        .filter_map(|(kind, specs)| Some((petramond_world::gui_state::kind_key(*kind)?, specs.len())))
+        .filter_map(|(kind, specs)| {
+            Some((petramond_world::gui_state::kind_key(*kind)?, specs.len()))
+        })
         .collect();
     out.sort_unstable();
     out
@@ -148,7 +150,10 @@ fn declaring_files() -> Vec<(PathBuf, Option<String>)> {
         }
     }
     files.sort_by(|a, b| a.0.cmp(&b.0));
-    files.into_iter().map(|(_, path, pack)| (path, pack)).collect()
+    files
+        .into_iter()
+        .map(|(_, path, pack)| (path, pack))
+        .collect()
 }
 
 fn load() -> SlotTable {
@@ -198,7 +203,9 @@ mod tests {
     #[test]
     fn the_table_is_built_once_and_covers_the_engine_containers() {
         let declared = declared_kinds();
-        assert!(declared.iter().any(|(key, n)| key.ends_with("chest") && *n > 0));
+        assert!(declared
+            .iter()
+            .any(|(key, n)| key.ends_with("chest") && *n > 0));
         assert!(declared
             .iter()
             .any(|(key, n)| key.ends_with("furnace") && *n == FURNACE_SLOTS));

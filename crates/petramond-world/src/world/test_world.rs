@@ -163,7 +163,10 @@ impl TestWorld {
         }
         let mut budget = REFINE_BUDGET;
         while let Some(p) = queue.pop_front() {
-            assert!(budget > 0, "shape refine cascade overran its budget at {p:?}");
+            assert!(
+                budget > 0,
+                "shape refine cascade overran its budget at {p:?}"
+            );
             budget -= 1;
             let block = Block::from_id(self.data.chunk_block(p.x, p.y, p.z));
             if !block.shape_refines() {
@@ -174,9 +177,13 @@ impl TestWorld {
                 continue;
             };
             let cur = c.cell_state(lx, ly, lz);
-            let next = k
-                .sim
-                .refine_state(&k.params, &self.data as &dyn ShapeNeighborhood, p, block, cur);
+            let next = k.sim.refine_state(
+                &k.params,
+                &self.data as &dyn ShapeNeighborhood,
+                p,
+                block,
+                cur,
+            );
             if next == cur {
                 continue;
             }

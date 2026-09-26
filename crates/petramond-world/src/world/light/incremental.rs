@@ -293,7 +293,10 @@ impl<'a> Region<'a> {
             let mut states = Vec::new();
             collect_light_overrides(section, section_idx, &mut states);
             // Later entries win, exactly as the gathers' densify does.
-            let overrides = states.into_iter().map(|s| (s.idx as u16, s.masks)).collect();
+            let overrides = states
+                .into_iter()
+                .map(|s| (s.idx as u16, s.masks))
+                .collect();
             index.insert(pos, works.len());
             works.push(Work {
                 pos,
@@ -525,7 +528,15 @@ impl<'a> Region<'a> {
     }
 
     #[inline]
-    fn raise(&mut self, w: usize, i: usize, n: IVec3, ch: usize, next: u8, add: &mut VecDeque<IVec3>) {
+    fn raise(
+        &mut self,
+        w: usize,
+        i: usize,
+        n: IVec3,
+        ch: usize,
+        next: u8,
+        add: &mut VecDeque<IVec3>,
+    ) {
         let cell = &mut self.works[w].block[i];
         if channel(*cell, ch) < next {
             *cell = with_channel(*cell, ch, next);

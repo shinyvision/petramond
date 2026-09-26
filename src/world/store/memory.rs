@@ -10,7 +10,6 @@
 use crate::world::{World, WorldSide};
 use std::collections::HashSet;
 
-
 #[derive(Default, Debug, Clone, Copy)]
 pub struct MemoryCensus {
     pub sections: usize,
@@ -153,9 +152,11 @@ impl<S: WorldSide> World<S> {
                     *dst += src;
                 }
             }
-            c.index_bytes += map_bytes::<petramond_world::chunk::SectionPos, petramond_mesh::ChunkMesh>(
-                t.meshes.len(),
-            ) + map_bytes::<petramond_world::chunk::ChunkPos, u32>(t.mesh_column_cys.len())
+            c.index_bytes += map_bytes::<
+                petramond_world::chunk::SectionPos,
+                petramond_mesh::ChunkMesh,
+            >(t.meshes.len())
+                + map_bytes::<petramond_world::chunk::ChunkPos, u32>(t.mesh_column_cys.len())
                 + map_bytes::<petramond_world::chunk::ChunkPos, u64>(t.mesh_upload_revisions.len())
                 + map_bytes::<petramond_world::chunk::ChunkPos, ()>(t.mesh_columns.len())
                 + map_bytes::<petramond_world::chunk::SectionPos, ()>(t.deep_sections.len())

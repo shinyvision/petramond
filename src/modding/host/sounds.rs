@@ -292,7 +292,10 @@ mod tests {
                     other => panic!("SoundPlayOnMob returned {other:?}"),
                 };
                 assert_eq!(
-                    handle_host_call(&mut data, HostCall::from(calls::SoundStop { handle: handles.0 })),
+                    handle_host_call(
+                        &mut data,
+                        HostCall::from(calls::SoundStop { handle: handles.0 })
+                    ),
                     HostRet::Unit
                 );
                 assert_eq!(

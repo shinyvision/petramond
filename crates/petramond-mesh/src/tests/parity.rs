@@ -367,10 +367,10 @@ fn random_scene(seed: u64) -> (Section, fixtures::Scene) {
             )
         }),
         loaded: Box::new(move |x, y, z| {
-            (0..n).contains(&y) || cell_hash(seed ^ 5, x, y, z) % 8 != 0
+            (0..n).contains(&y) || !cell_hash(seed ^ 5, x, y, z).is_multiple_of(8)
         }),
         dyed: Box::new(move |x, y, z| {
-            !in_section(x, y, z) && cell_hash(seed ^ 6, x, y, z) % 5 == 0
+            !in_section(x, y, z) && cell_hash(seed ^ 6, x, y, z).is_multiple_of(5)
         }),
     };
     (section, scene)

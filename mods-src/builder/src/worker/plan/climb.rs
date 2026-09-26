@@ -4,11 +4,11 @@ use super::sealing::cutting;
 use super::unreached::fall_out;
 use super::verdict::waits_there;
 use super::{defer_task, places, task_cells, walk_via, Flow, Round};
-use crate::worker::Job;
 use crate::project::Projects;
 use crate::worker::route::{self, Hubs};
 use crate::worker::tuning::waits::{FOOT_UNWALKED, SCAFFOLD_WAIT, SEALED_WAIT};
 use crate::worker::waiting::{Probe, Waiting};
+use crate::worker::Job;
 use crate::worker::{pillar, scaffold, stance, Body, Ctx, Task, Then};
 
 /// Walk to a pillar's foot to climb it (in legs when the way is long); `None`

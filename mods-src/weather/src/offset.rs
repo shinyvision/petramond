@@ -44,7 +44,9 @@ fn parse(bytes: &[u8]) -> Option<[f64; 2]> {
     match decode_versioned_or_legacy::<Stored>(bytes, LEGACY_LEN) {
         Ok(stored) => Some(stored.0),
         Err(error) => {
-            log(&format!("weather: {KV_OFF} is unreadable ({error}); the deck starts at rest"));
+            log(&format!(
+                "weather: {KV_OFF} is unreadable ({error}); the deck starts at rest"
+            ));
             None
         }
     }

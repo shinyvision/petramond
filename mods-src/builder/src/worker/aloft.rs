@@ -248,7 +248,17 @@ fn way_to(
     };
     let longest = longest_walkway(outlook, unreachable, walk);
     let walkway = (longest > 0)
-        .then(|| bridge::plan(ctx, job, body, task, cells, longest, outlook.walkway.as_ref()))
+        .then(|| {
+            bridge::plan(
+                ctx,
+                job,
+                body,
+                task,
+                cells,
+                longest,
+                outlook.walkway.as_ref(),
+            )
+        })
         .flatten();
     match walkway {
         Some(path) => Some(Way::Walkway(path)),

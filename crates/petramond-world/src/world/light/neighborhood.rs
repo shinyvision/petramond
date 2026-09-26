@@ -38,11 +38,7 @@ fn span_idx(span: usize, dx: usize, dy: usize, dz: usize) -> usize {
 /// is `low`.
 #[inline]
 fn window_pos(low: SectionPos, dx: usize, dy: usize, dz: usize) -> SectionPos {
-    SectionPos::new(
-        low.cx + dx as i32,
-        low.cy + dy as i32,
-        low.cz + dz as i32,
-    )
+    SectionPos::new(low.cx + dx as i32, low.cy + dy as i32, low.cz + dz as i32)
 }
 
 impl Snapshot {

@@ -57,6 +57,10 @@ jobs:
       - name: Lints (every workspace)
         run: make clippy
 
+  deny:
+    name: Dependency audit
+    uses: ./.github/workflows/dependency-audit.yml
+
   # The bundled wasm guests, built once and staged the way the game discovers
   # packs; every test job below reads them through PETRAMOND_MODS.
   test-mods:

@@ -405,8 +405,14 @@ fn vegetation_snow_and_flags_match_the_compiled_profiles() {
         assert_eq!(v.grass_tuft, compiled.tuft, "{biome:?} tuft");
         assert_eq!(v.grass_density, compiled.grass_density, "{biome:?} grass");
         assert_eq!(v.flower_palette, compiled.flowers, "{biome:?} flowers");
-        assert_eq!(v.flower_coverage, compiled.flower_coverage, "{biome:?} coverage");
-        assert_eq!(v.flower_density, compiled.flower_density, "{biome:?} flower density");
+        assert_eq!(
+            v.flower_coverage, compiled.flower_coverage,
+            "{biome:?} coverage"
+        );
+        assert_eq!(
+            v.flower_density, compiled.flower_density,
+            "{biome:?} flower density"
+        );
         assert_eq!(v.hemp_anchor_chance, compiled.hemp, "{biome:?} hemp");
         assert_eq!(v.cover_cluster, compiled.cluster, "{biome:?} cluster");
         assert_same_picks(biome, "sand", v.sand_cover, compiled.sand);
@@ -429,9 +435,7 @@ fn vegetation_snow_and_flags_match_the_compiled_profiles() {
 fn malformed_generation_rules_are_refused() {
     let biome = Biome::PLAINS;
     assert!(parse(biome, None).is_err());
-    let with = |extra: &str| {
-        format!(r#"{{"surface": "petramond:stone"{extra}}}"#)
-    };
+    let with = |extra: &str| format!(r#"{{"surface": "petramond:stone"{extra}}}"#);
     assert!(parse(biome, Some(&with(""))).is_ok());
     for bad in [
         r#", "vegetation": {"sand_cover": {"chance": 0.5, "roll": [[50, "petramond:cactus"]]}}"#,
@@ -445,7 +449,9 @@ fn malformed_generation_rules_are_refused() {
     }
     let spec = parse(
         biome,
-        Some(&with(r#", "snow": {"above_surface_y": 90}, "flags": ["wet", "no_beach"]"#)),
+        Some(&with(
+            r#", "snow": {"above_surface_y": 90}, "flags": ["wet", "no_beach"]"#,
+        )),
     )
     .expect("valid rules load");
     assert_eq!(spec.snow_cover, SnowCover::AboveSurfaceY(90));
@@ -506,7 +512,11 @@ fn a_covers_entry_reproduces_the_compiled_mycelium_roll() {
         let mut code = data;
         let picked = covers[0].roll.pick(&mut data);
         assert_eq!(picked, compiled(&mut code), "column {i}");
-        assert_eq!(data.next_u64(), code.next_u64(), "column {i}: same draw count");
+        assert_eq!(
+            data.next_u64(),
+            code.next_u64(),
+            "column {i}: same draw count"
+        );
         planted += usize::from(picked.is_some());
     }
     assert!(planted > 0);

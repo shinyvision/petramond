@@ -8,7 +8,7 @@ use petramond_world::block::Block;
 use petramond_world::chunk::{WORLD_MAX_Y, WORLD_MIN_Y};
 
 mod projection;
-pub(super) use projection::{AnchorKey, ChunkAnchors, PlaneKey};
+pub(in crate::noise::cave_field) use projection::{AnchorKey, ChunkAnchors, PlaneKey};
 
 struct Plan<'a> {
     site: Site,
