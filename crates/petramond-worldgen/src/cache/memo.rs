@@ -119,18 +119,33 @@ impl<K, V> Slot<K, V> {
     }
 }
 
-/// Publishes the derivation's marker as abandoned if the deriving closure
-/// unwinds, so the workers waiting on it take the derivation over at once
-/// instead of waiting on a value that will never come.
+/// The one worker deriving a key. It either publishes the value or, when the
+/// deriving closure unwinds (or the derivation is otherwise dropped
+/// unpublished), withdraws the in-flight marker and wakes every waiter at
+/// once, so they take the derivation over (meeting the same panic in their
+/// own thread if the input is bad) instead of waiting on a value that will
+/// never come.
 struct Derivation<'a, K: Eq, V> {
     slot: &'a Slot<K, V>,
     key: &'a K,
     flight: Arc<Flight>,
+    published: bool,
+}
+
+impl<K: Eq + Clone, V: Clone> Derivation<'_, K, V> {
+    fn publish(mut self, value: V) -> V {
+        self.slot
+            .write()
+            .store(self.key.clone(), Entry::Ready(value.clone()));
+        self.published = true;
+        self.flight.finish();
+        value
+    }
 }
 
 impl<K: Eq, V> Drop for Derivation<'_, K, V> {
     fn drop(&mut self) {
-        if std::thread::panicking() {
+        if !self.published {
             self.slot.write().abandon(self.key, &self.flight);
             self.flight.finish();
         }
@@ -211,11 +226,10 @@ impl<K: Eq + Hash + Clone, V: Clone> SharedMemo<K, V> {
                             slot,
                             key: &key,
                             flight,
+                            published: false,
                         };
                         let value = compute.take().expect("one derivation per call")();
-                        slot.write().store(key.clone(), Entry::Ready(value.clone()));
-                        derivation.flight.finish();
-                        return value;
+                        return derivation.publish(value);
                     }
                 }
             };
@@ -467,6 +481,42 @@ mod tests {
             assert!(doomed.join().is_err());
         });
         assert_eq!(memo.get(&3), Some(9));
+    }
+
+    /// A key whose derivation always fails wakes every waiter the moment it
+    /// fails; each retries, fails in its own thread and wakes the rest, so
+    /// the panic reaches every caller without any of them stalling.
+    #[test]
+    fn a_failing_derivation_propagates_to_every_waiter_promptly() {
+        let memo: SharedMemo<i32, i32> = SharedMemo::new(WAYS);
+        let (started, attempts) = (std::sync::Barrier::new(5), AtomicUsize::new(0));
+        let begun = std::time::Instant::now();
+        std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..5)
+                .map(|_| {
+                    scope.spawn(|| {
+                        started.wait();
+                        memo.get_or_insert(4, || {
+                            attempts.fetch_add(1, Ordering::Relaxed);
+                            std::thread::sleep(Duration::from_millis(10));
+                            panic!("bad input");
+                        })
+                    })
+                })
+                .collect();
+            for worker in workers {
+                assert!(worker.join().is_err(), "every caller sees the panic");
+            }
+        });
+        assert_eq!(attempts.load(Ordering::Relaxed), 5);
+        assert!(
+            begun.elapsed() < Duration::from_secs(2),
+            "waiters were woken on unwind, not by a timeout: {:?}",
+            begun.elapsed()
+        );
+        // The key is left free rather than poisoned: a good derivation succeeds.
+        assert_eq!(memo.get(&4), None);
+        assert_eq!(memo.get_or_insert(4, || 11), 11);
     }
 
     #[test]

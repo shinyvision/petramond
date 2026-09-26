@@ -82,3 +82,33 @@ fn particle_emitter_hint_tracks_incremental_and_bulk_blocks() {
     section.recompute_opaque_count();
     check(&section);
 }
+
+/// Sparse state walks in ascending cell order however it was inserted, so
+/// what a walk feeds (furnace reskins into block writes, save records, wire
+/// payloads) is the same on every run and every peer.
+#[test]
+fn sparse_maps_walk_in_cell_order_whatever_the_insertion_order() {
+    const CELLS: usize = 24;
+    fn build(order: impl Iterator<Item = usize>) -> Section {
+        let mut section = Section::new(0, 0, 0);
+        for i in order {
+            let (x, y, z) = (i % 16, i / 16, (i * 5) % 16);
+            // A lit skin over an unlit furnace: every tick asks for a reskin.
+            section.set_block(x, y, z, Block::FurnaceLit);
+            section.insert_furnace(x, y, z, Furnace::default());
+            section.insert_container(x, y, z, Container::with_len(3));
+        }
+        section
+    }
+    let mut forward = build(0..CELLS);
+    let mut reverse = build((0..CELLS).rev());
+    assert!(forward.furnaces().keys().is_sorted());
+    assert!(reverse.containers().keys().is_sorted());
+    let reskin = forward.tick_furnaces(|_| None);
+    assert_eq!(reskin.len(), CELLS);
+    assert!(reskin
+        .iter()
+        .map(|&(x, y, z, _)| section_idx(x, y, z))
+        .is_sorted());
+    assert_eq!(reskin, reverse.tick_furnaces(|_| None));
+}

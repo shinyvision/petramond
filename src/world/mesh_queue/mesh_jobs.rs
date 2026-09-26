@@ -143,7 +143,7 @@ impl World {
 /// Owned copy of a section's sparse per-cell state map for a mesh job, `None`
 /// when the section carries none (the common case — no allocation).
 fn sparse_state_snapshot<T: Copy>(
-    map: &std::collections::HashMap<u16, T>,
+    map: &petramond_world::section::CellMap<T>,
 ) -> Option<Box<[(u16, T)]>> {
     (!map.is_empty()).then(|| map.iter().map(|(&key, &state)| (key, state)).collect())
 }

@@ -2,7 +2,7 @@
 //! layer and the worldgen column-cache records: bounds-checked sequential
 //! reads, length-prefixed writes, kv/indexed table helpers, deflate/inflate.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 
 /// Sequential little-endian reader. Every read is bounds-checked and returns
@@ -165,23 +165,22 @@ pub fn inflate(blob: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// Append a `u16`-length-prefixed list of `(local index, record)` entries to
-/// `buf`, in ascending index order so identical state encodes identically. Owns
-/// only the list FRAME — the count (capped at `u16::MAX`, since a chunk never
-/// holds anywhere near that many), the sort-by-index reproducibility invariant,
-/// the `2 + n * rec_bytes` reserve, and the per-entry `u16` index — and defers
-/// the record body to `body`. Shared by the furnace and chest codecs.
+/// `buf`, in ascending index order (the map's own order) so identical state
+/// encodes identically however it was built. Owns only the list FRAME — the
+/// count (capped at `u16::MAX`, since a chunk never holds anywhere near that
+/// many), the `2 + n * rec_bytes` reserve, and the per-entry `u16` index —
+/// and defers the record body to `body`. Shared by the section record's
+/// sparse-map codecs.
 pub fn put_indexed<T>(
     buf: &mut Vec<u8>,
-    map: &HashMap<u16, T>,
+    map: &BTreeMap<u16, T>,
     rec_bytes: usize,
     mut body: impl FnMut(&mut Vec<u8>, &T),
 ) {
     let n = map.len().min(u16::MAX as usize);
     buf.reserve(2 + n * rec_bytes);
     put_u16(buf, n as u16);
-    let mut entries: Vec<(&u16, &T)> = map.iter().take(n).collect();
-    entries.sort_by_key(|(idx, _)| **idx);
-    for (idx, rec) in entries {
+    for (idx, rec) in map.iter().take(n) {
         put_u16(buf, *idx);
         body(buf, rec);
     }
@@ -193,9 +192,9 @@ pub fn put_indexed<T>(
 pub fn get_indexed<T>(
     r: &mut Reader,
     mut body: impl FnMut(&mut Reader) -> Option<T>,
-) -> Option<HashMap<u16, T>> {
+) -> Option<BTreeMap<u16, T>> {
     let n = r.u16()? as usize;
-    let mut out = HashMap::with_capacity(n.min(256));
+    let mut out = BTreeMap::new();
     for _ in 0..n {
         let idx = r.u16()?;
         out.insert(idx, body(r)?);

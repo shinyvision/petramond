@@ -1,5 +1,5 @@
 use crate::world::WorldData;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use rustc_hash::FxHashSet;
@@ -8,7 +8,7 @@ use crate::net::protocol::{BlockDelta, ColumnPayload, LightPayload, SectionPaylo
 use crate::world::store::{LoadTarget, World, WorldRole};
 use petramond_world::block::Block;
 use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_SIZE, SECTION_VOLUME};
-use petramond_world::section::{Section, SectionSummary};
+use petramond_world::section::{CellMap, Section, SectionSummary};
 
 impl World {
     /// Install a column's replicated facts on a replica: biome + both height
@@ -108,7 +108,7 @@ impl World {
         let s = &payload.states;
         // Before the section install, because that path takes `payload`.
         let draws: Vec<crate::net::protocol::BlockDrawEntry> = s.draws.clone();
-        let cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>> = s
+        let cell_kv: CellMap<BTreeMap<String, Vec<u8>>> = s
             .cell_kv
             .iter()
             .map(|(cell, entries)| (*cell, entries.iter().cloned().collect()))
@@ -125,8 +125,8 @@ impl World {
             // No furnace machine state on a replica: burn/cook counters are sim
             // state (progress reaches clients through menu sync), and the lit
             // face is the block id (`furnace_lit` is its own row).
-            HashMap::new(),
-            HashMap::new(), // container slots replicate via menu sync
+            CellMap::new(),
+            CellMap::new(), // container slots replicate via menu sync
             // The unified state list installs verbatim — the transport already
             // rewrote the id-masked bytes into this session's block ids.
             s.cell_states.iter().copied().collect(),

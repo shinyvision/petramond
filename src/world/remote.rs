@@ -23,19 +23,9 @@
 //! lit face ships — the replica installs a minimal lit stand-in so the mesher
 //! renders it), mobs, and dropped items.
 
-use std::collections::HashMap;
-
 mod ingest;
 mod payload;
 mod send_plan;
 
 #[cfg(test)]
 mod tests;
-
-/// Sparse map → sorted wire entries, so identical state encodes identically
-/// (the same reproducibility rule as the save codec's `put_indexed`).
-fn sorted_entries<T, U>(map: &HashMap<u16, T>, mut f: impl FnMut(&T) -> U) -> Vec<(u16, U)> {
-    let mut out: Vec<(u16, U)> = map.iter().map(|(&cell, v)| (cell, f(v))).collect();
-    out.sort_unstable_by_key(|(cell, _)| *cell);
-    out
-}

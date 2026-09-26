@@ -591,3 +591,54 @@ fn a_high_id_survives_the_whole_section_record() {
     );
     assert_eq!(state.byte(0), 0b0111, "non-id state bytes are untouched");
 }
+
+/// One logical section, its sparse state written cell by cell in `order`:
+/// a stair state and mod KV on every cell, plus a furnace and its slots on
+/// every fifth.
+fn section_filled_in_order(order: impl IntoIterator<Item = usize>) -> Section {
+    use petramond_world::block_state::StairHalf;
+    const FACINGS: [Facing; 4] = [Facing::North, Facing::East, Facing::South, Facing::West];
+    let mut s = sec(3, 4, -2);
+    for i in order {
+        let (x, y, z) = (i % 16, i / 16, (i * 7) % 16);
+        s.set_block(x, y, z, Block::OakStairs);
+        s.set_stair_state(x, y, z, StairState::new(FACINGS[i % 4], StairHalf::Bottom));
+        s.cell_kv_set(x, y, z, format!("test:k{}", i % 3), vec![i as u8]);
+        if i % 5 == 0 {
+            let furnace = Furnace {
+                cook_progress: i as u16,
+                ..Furnace::default()
+            };
+            s.insert_furnace(x, y, z, furnace);
+            let mut slots = Container::with_len(3);
+            slots.slots[0] = Some(ItemStack::new(ItemType::Coal, i as u8 + 1));
+            s.insert_container(x, y, z, slots);
+        }
+    }
+    s
+}
+
+/// The section's sparse maps iterate in cell order, not insertion or hash
+/// order: the same logical section built in different orders encodes to
+/// identical record bytes, and so does its load-and-resave.
+#[test]
+fn sparse_state_encodes_identically_whatever_the_insertion_order() {
+    const CELLS: usize = 48;
+    let forward = section_filled_in_order(0..CELLS);
+    let reverse = section_filled_in_order((0..CELLS).rev());
+    // 29 is coprime with 48, so this visits every cell in a scattered order.
+    let scattered = section_filled_in_order((0..CELLS).map(|i| (i * 29) % CELLS));
+    assert_eq!(forward.cell_states().len(), CELLS);
+    assert_eq!(forward.furnaces().len(), CELLS.div_ceil(5));
+
+    let blob = encode_snapshot(&SectionSnapshot::from_section(&forward));
+    assert_eq!(blob, encode_snapshot(&SectionSnapshot::from_section(&reverse)));
+    assert_eq!(blob, encode_snapshot(&SectionSnapshot::from_section(&scattered)));
+
+    let (loaded, ..) = decode_section(SectionPos::new(3, 4, -2), &blob).expect("decodes");
+    assert_eq!(
+        blob,
+        encode_snapshot(&SectionSnapshot::from_section(&loaded)),
+        "a loaded section re-encodes byte-exact"
+    );
+}

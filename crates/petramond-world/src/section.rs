@@ -8,7 +8,7 @@
 //! fluid metadata, light, the random-tick gate) but scoped to one 16³ cube and
 //! addressed by [`crate::chunk::section_idx`].
 
-use std::collections::HashMap;
+pub use crate::block_state::CellMap;
 use std::sync::Arc;
 
 use crate::block::Block;
@@ -188,7 +188,8 @@ pub struct Section {
     /// common section (no custom shapes). `Arc` so a mesh job's snapshot keeps
     /// reading it safely and a clone is cheap; NOT persisted (re-baked on the
     /// client). The mesher draws each box face-by-face for `Custom`-family cells
-    /// (falling back to a cube on a miss).
+    /// (falling back to a cube on a miss). Probed per cell and never walked,
+    /// so unlike the [`CellMap`]s its order cannot reach any output.
     shape_render: Option<Arc<std::collections::HashMap<u16, Box<[crate::block::ShapeRenderBox]>>>>,
     /// custom-shape SIM light aperture: per-cell "opaque to light" bit a
     /// pack's `wasm` baked (`BakedSimCell.light_aperture`), keyed by section-local
@@ -196,7 +197,7 @@ pub struct Section {
     /// replica bake it identically), so the light flood reads the SAME value on
     /// each side; NOT persisted (re-baked on load). The light snapshot gathers it
     /// for `CustomAperture`-lit cells (absent = passes light until baked).
-    light_apertures: Option<Arc<std::collections::HashMap<u16, bool>>>,
+    light_apertures: Option<Arc<CellMap<bool>>>,
 }
 
 /// A section's block-entity maps, keyed by section-local block index
@@ -205,11 +206,11 @@ pub struct Section {
 struct BlockEntities {
     /// Furnace machine state (burn/cook counters). A furnace's SLOTS live in
     /// [`containers`](Self::containers) under the same key.
-    furnaces: HashMap<u16, Furnace>,
+    furnaces: CellMap<Furnace>,
     /// Generic item-slot containers — chests, furnaces, and mod container
     /// blocks all store their stacks here. (A block-entity's FACING is
     /// ordinary per-cell state in the unified cell store, not an entity map.)
-    containers: HashMap<u16, Container>,
+    containers: CellMap<Container>,
 }
 
 impl BlockEntities {
@@ -287,7 +288,7 @@ impl Section {
     /// The per-cell "opaque to light" bits of this section's baked custom-shape
     /// apertures (empty when none), for the light snapshot to gather.
     #[inline]
-    pub fn custom_light_apertures(&self) -> Option<&std::collections::HashMap<u16, bool>> {
+    pub fn custom_light_apertures(&self) -> Option<&CellMap<bool>> {
         self.light_apertures.as_deref()
     }
 

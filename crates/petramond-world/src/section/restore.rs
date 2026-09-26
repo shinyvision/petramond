@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::block::ShapeState;
@@ -7,7 +7,7 @@ use crate::chunk::SECTION_VOLUME;
 use crate::container::Container;
 use crate::furnace::Furnace;
 
-use super::{BlockEntities, Section, SectionMetrics, SectionSummary};
+use super::{BlockEntities, CellMap, Section, SectionMetrics, SectionSummary};
 
 impl Section {
     /// Rebuild a section from saved arrays. `modified` starts false — it already
@@ -19,10 +19,10 @@ impl Section {
         cz: i32,
         blocks: &[u16],
         fluid: Option<Box<[u8]>>,
-        furnaces: HashMap<u16, Furnace>,
-        containers: HashMap<u16, Container>,
-        cell_states: HashMap<u16, ShapeState>,
-        cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
+        furnaces: CellMap<Furnace>,
+        containers: CellMap<Container>,
+        cell_states: CellMap<ShapeState>,
+        cell_kv: CellMap<BTreeMap<String, Vec<u8>>>,
     ) -> Self {
         Self::from_shared(
             cx,
@@ -47,10 +47,10 @@ impl Section {
         cz: i32,
         blocks: super::BlockCube,
         fluid: Option<Arc<[u8]>>,
-        furnaces: HashMap<u16, Furnace>,
-        containers: HashMap<u16, Container>,
-        cell_states: HashMap<u16, ShapeState>,
-        cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
+        furnaces: CellMap<Furnace>,
+        containers: CellMap<Container>,
+        cell_states: CellMap<ShapeState>,
+        cell_kv: CellMap<BTreeMap<String, Vec<u8>>>,
         metrics: SectionMetrics,
     ) -> Self {
         debug_assert!(metrics.valid());
@@ -75,10 +75,10 @@ impl Section {
         cz: i32,
         blocks: super::BlockCube,
         fluid: Option<Arc<[u8]>>,
-        furnaces: HashMap<u16, Furnace>,
-        containers: HashMap<u16, Container>,
-        cell_states: HashMap<u16, ShapeState>,
-        cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
+        furnaces: CellMap<Furnace>,
+        containers: CellMap<Container>,
+        cell_states: CellMap<ShapeState>,
+        cell_kv: CellMap<BTreeMap<String, Vec<u8>>>,
         metrics: Option<SectionMetrics>,
     ) -> Self {
         let entities = BlockEntities {

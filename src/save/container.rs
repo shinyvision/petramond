@@ -8,13 +8,12 @@
 //! empty via the palette's unknown-name rule, like every other persisted
 //! stack.
 
-use std::collections::HashMap;
-
 use crate::save::codec::{get_indexed, get_item_slot, put_indexed, put_item_slot, put_u8, Reader};
 use petramond_world::container::{Container, MAX_CONTAINER_SLOTS};
+use petramond_world::section::CellMap;
 
 /// Append a `u16`-length-prefixed list of `(local index, container)` records.
-pub fn put_containers(buf: &mut Vec<u8>, containers: &HashMap<u16, Container>) {
+pub fn put_containers(buf: &mut Vec<u8>, containers: &CellMap<Container>) {
     put_indexed(buf, containers, 8, |buf, c| {
         debug_assert!(c.slots.len() <= MAX_CONTAINER_SLOTS);
         put_u8(buf, c.slots.len().min(MAX_CONTAINER_SLOTS) as u8);
@@ -25,7 +24,7 @@ pub fn put_containers(buf: &mut Vec<u8>, containers: &HashMap<u16, Container>) {
 }
 
 /// Read the list written by [`put_containers`]. `None` on truncated input.
-pub fn get_containers(r: &mut Reader) -> Option<HashMap<u16, Container>> {
+pub fn get_containers(r: &mut Reader) -> Option<CellMap<Container>> {
     get_indexed(r, |r| {
         let len = r.u8()? as usize;
         let mut slots = Vec::with_capacity(len);
@@ -48,7 +47,7 @@ mod tests {
         oven.slots[0] = Some(ItemStack::new(ItemType::RawIron, 12));
         oven.slots[1] = Some(ItemStack::new(ItemType::Coal, 3));
 
-        let mut map = HashMap::new();
+        let mut map = CellMap::new();
         map.insert(7u16, oven);
         map.insert(400u16, Container::with_len(9));
 

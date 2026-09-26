@@ -5,7 +5,7 @@
 //! section fields. Fluid state keeps a dense optional buffer because it can fill whole
 //! sections; rarer block states stay sparse and keyed by `section_idx` (`u16`).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::block::{Block, ShapeState};
@@ -248,13 +248,21 @@ pub enum HeldBlockState {
     Log(LogAxis),
 }
 
-/// A lazily-shared empty map, so absent sparse state can hand out `&HashMap`
-/// without allocating. Each expansion site owns one static empty map.
+/// A section's sparse per-cell map, keyed by section-local index
+/// (`section_idx`). Ordered, so every walk (save records, wire payloads,
+/// furnace ticks, light overrides, mesh snapshots) visits cells in ascending
+/// index order: two sections holding the same logical state iterate — and
+/// therefore encode and tick — identically, however their entries were
+/// inserted. A process-seeded hash map would leak its per-run order into
+/// anything that walks it.
+pub type CellMap<V> = BTreeMap<u16, V>;
+
+/// A shared empty [`CellMap`], so absent sparse state can hand out a map
+/// reference without allocating. Each expansion site owns one static.
 macro_rules! empty_map {
     ($V:ty) => {{
-        static EMPTY: std::sync::LazyLock<HashMap<u16, $V>> =
-            std::sync::LazyLock::new(HashMap::new);
-        &*EMPTY
+        static EMPTY: $crate::block_state::CellMap<$V> = std::collections::BTreeMap::new();
+        &EMPTY
     }};
 }
 pub(crate) use empty_map;
@@ -270,8 +278,8 @@ struct SparseStates {
     /// map). The bytes are meaningful only to the owning family/behavior's
     /// codec (`crate::block::encode_*` / `decode_*`); the store, the save
     /// record, and the replication delta never interpret them.
-    cell_states: HashMap<u16, ShapeState>,
-    cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
+    cell_states: CellMap<ShapeState>,
+    cell_kv: CellMap<BTreeMap<String, Vec<u8>>>,
 }
 
 impl SparseStates {
@@ -303,8 +311,8 @@ impl BlockStates {
 
     pub fn from_shared(
         fluid: Option<Arc<[u8]>>,
-        cell_states: HashMap<u16, ShapeState>,
-        cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
+        cell_states: CellMap<ShapeState>,
+        cell_kv: CellMap<BTreeMap<String, Vec<u8>>>,
     ) -> Self {
         let sparse = SparseStates {
             cell_states,
@@ -451,7 +459,7 @@ impl BlockStates {
     /// The whole unified per-cell state map (save codec, wire payload, light
     /// snapshot, mesh-pad capture).
     #[inline]
-    pub fn cell_states(&self) -> &HashMap<u16, ShapeState> {
+    pub fn cell_states(&self) -> &CellMap<ShapeState> {
         match &self.sparse {
             Some(s) => &s.cell_states,
             None => empty_map!(ShapeState),
@@ -489,7 +497,7 @@ impl BlockStates {
     }
 
     #[inline]
-    pub fn cell_kv(&self) -> &HashMap<u16, BTreeMap<String, Vec<u8>>> {
+    pub fn cell_kv(&self) -> &CellMap<BTreeMap<String, Vec<u8>>> {
         match &self.sparse {
             Some(s) => &s.cell_kv,
             None => empty_map!(BTreeMap<String, Vec<u8>>),

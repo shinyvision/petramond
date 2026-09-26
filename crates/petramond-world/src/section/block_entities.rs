@@ -1,11 +1,9 @@
-use std::collections::HashMap;
-
 use crate::chunk::section_idx;
 use crate::container::Container;
 use crate::furnace::Furnace;
 use crate::item::{ItemStack, ItemType};
 
-use super::{BlockEntities, Section};
+use super::{BlockEntities, CellMap, Section};
 
 impl Section {
     // --- Block-entity maps ------------------------------------------------------
@@ -81,7 +79,7 @@ impl Section {
     }
 
     #[inline]
-    pub fn furnaces(&self) -> &HashMap<u16, Furnace> {
+    pub fn furnaces(&self) -> &CellMap<Furnace> {
         match &self.entities {
             Some(e) => &e.furnaces,
             None => crate::block_state::empty_map!(Furnace),
@@ -121,7 +119,7 @@ impl Section {
     }
 
     #[inline]
-    pub fn containers(&self) -> &HashMap<u16, Container> {
+    pub fn containers(&self) -> &CellMap<Container> {
         match &self.entities {
             Some(e) => &e.containers,
             None => crate::block_state::empty_map!(Container),
@@ -148,13 +146,10 @@ impl Section {
         }
         let mut changed = false;
         let mut reskin = Vec::new();
-        // Key order, not map order: `reskin` feeds block writes and update
-        // scheduling, and deterministic ticks (the multiplayer contract)
-        // forbid HashMap iteration order leaking into them.
-        let mut keys: Vec<u16> = entities.furnaces.keys().copied().collect();
-        keys.sort_unstable();
-        for key in keys {
-            let f = entities.furnaces.get_mut(&key).expect("key just listed");
+        // `reskin` feeds block writes and update scheduling, so deterministic
+        // ticks (the multiplayer contract) rely on the `CellMap` walking
+        // furnaces in ascending cell order.
+        for (&key, f) in entities.furnaces.iter_mut() {
             // The furnace's slots live in the shared container map under the
             // same key (sibling field — disjoint borrow).
             let Some(container) = entities.containers.get_mut(&key) else {

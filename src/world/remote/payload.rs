@@ -9,8 +9,6 @@ use crate::world::store::World;
 use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
 use petramond_world::section::Section;
 
-use super::sorted_entries;
-
 /// Wire-payload building over [`Section`] — transport encoding owned by the
 /// replication layer (the section type itself lives in the world crate).
 pub(crate) trait SectionPayloadExt {
@@ -24,16 +22,16 @@ impl SectionPayloadExt for Section {
     /// ship gate (`section_light_final`) guarantees it is present unless the
     /// section never bakes (fully opaque); replica INGEST does no light work.
     fn to_payload(&self) -> SectionPayload {
-        let mut cell_kv: Vec<crate::net::protocol::CellKvEntry> = self
+        // Both levels are ordered maps (cells ascending, then keys), so
+        // identical state encodes identically on the wire.
+        let cell_kv: Vec<crate::net::protocol::CellKvEntry> = self
             .cell_kv()
             .iter()
             .map(|(&cell, map)| {
-                // BTreeMap iteration is key-sorted: deterministic on the wire.
                 let entries = map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                 (cell, entries)
             })
             .collect();
-        cell_kv.sort_unstable_by_key(|(cell, _)| *cell);
 
         SectionPayload {
             pos: SectionPos::new(self.cx, self.cy, self.cz),
@@ -43,7 +41,7 @@ impl SectionPayloadExt for Section {
             skylight: self.skylight_arc().map(SectionBytes),
             blocklight: self.blocklight_arc().map(SectionLight),
             states: SectionStatesPayload {
-                cell_states: sorted_entries(self.cell_states(), |&s| s),
+                cell_states: self.cell_states().iter().map(|(&cell, &s)| (cell, s)).collect(),
                 cell_kv,
                 // Filled by `World::section_payload`: draw sets are world-level
                 // records (keyed at a machine's ANCHOR, which need not be in

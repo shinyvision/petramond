@@ -20,7 +20,7 @@ use crate::facing::Facing;
 use crate::torch::TorchPlacement;
 use crate::trapdoor::TrapdoorState;
 
-use super::Section;
+use super::{CellMap, Section};
 
 impl Section {
     /// The cell's raw opaque state — the seam/store read; typed consumers use
@@ -40,7 +40,7 @@ impl Section {
     /// The whole unified state map (save codec, wire payload, light snapshot,
     /// mesh-pad capture, per-kind render collectors).
     #[inline]
-    pub fn cell_states(&self) -> &HashMap<u16, ShapeState> {
+    pub fn cell_states(&self) -> &CellMap<ShapeState> {
         self.states.cell_states()
     }
 
@@ -187,7 +187,7 @@ impl Section {
     }
 
     /// The whole per-cell mod KV map, for the save codec.
-    pub fn cell_kv(&self) -> &HashMap<u16, BTreeMap<String, Vec<u8>>> {
+    pub fn cell_kv(&self) -> &CellMap<BTreeMap<String, Vec<u8>>> {
         self.states.cell_kv()
     }
 

@@ -24,7 +24,7 @@ pub use petramond_util::bytecodec::{
     put_u64, put_u8,
 };
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::entity::DroppedItem;
@@ -33,7 +33,7 @@ use petramond_world::block::ShapeState;
 use petramond_world::chunk::{SectionPos, SECTION_VOLUME};
 use petramond_world::container::Container;
 use petramond_world::furnace::Furnace;
-use petramond_world::section::Section;
+use petramond_world::section::{CellMap, Section};
 
 use super::format::{Format, RecordError};
 use super::palette;
@@ -166,16 +166,16 @@ pub struct SectionSnapshot {
     /// Furnace machine state (burn/cook counters) in this section, keyed by
     /// section-local block index. The slots live in [`containers`](Self::containers).
     /// Empty for the common section.
-    pub furnaces: HashMap<u16, Furnace>,
+    pub furnaces: CellMap<Furnace>,
     /// Generic item-slot containers (chests, furnaces, mod container blocks),
     /// keyed by section-local block index. Empty for the common section.
-    pub containers: HashMap<u16, Container>,
+    pub containers: CellMap<Container>,
     /// The UNIFIED per-cell block state (stair facing, slab layers, door
     /// pose, torch mount, log axis, model offset+facing, chest/furnace
     /// front), keyed by section-local block index — opaque bytes owned by
     /// each block's codec; the id-masked bytes are the only ones this codec
     /// touches (palette translation). Empty for the common section.
-    pub cell_states: HashMap<u16, ShapeState>,
+    pub cell_states: CellMap<ShapeState>,
     /// Baked skylight cube, captured only when the section's light was CLEAN
     /// (baked and not since invalidated) so a reload can skip the bake
     /// entirely. `None` re-bakes on load, exactly like the pre-persistence
@@ -189,7 +189,7 @@ pub struct SectionSnapshot {
     /// index. Opaque to the engine and PRESERVED byte-exact through load/save —
     /// unknown keys are never dropped, so an absent mod's data survives. See
     /// `Section::cell_kv`.
-    pub cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
+    pub cell_kv: CellMap<BTreeMap<String, Vec<u8>>>,
     /// Mobs resting in this section, captured at save time so a passive owl reloads
     /// where it was left. Like [`entities`](Self::entities) these don't live in the
     /// `Section`, so the world save paths set this from the live mob set. Empty for the
@@ -583,7 +583,7 @@ fn decode_current(
 
 /// The unified cell-state list: per cell `[len][id_mask][len bytes]`, the
 /// id-masked pairs mapped back through the save palette.
-fn get_cell_states(r: &mut Reader, pal: &palette::Palette) -> Option<HashMap<u16, ShapeState>> {
+fn get_cell_states(r: &mut Reader, pal: &palette::Palette) -> Option<CellMap<ShapeState>> {
     get_indexed(r, |r| {
         let len = r.u8()? as usize;
         let id_mask = r.u8()?;

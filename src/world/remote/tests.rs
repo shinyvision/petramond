@@ -1143,3 +1143,28 @@ fn non_finite_draw_geometry_is_dropped_at_the_boundary() {
     );
     assert_eq!(set.resolved.len(), 1, "the renderer only gets the sane box");
 }
+
+/// The wire payload's state lists come out cell-sorted however the section's
+/// state was written, so the same logical section ships identical bytes from
+/// every server and every run.
+#[test]
+fn section_state_payload_is_independent_of_insertion_order() {
+    const CELLS: usize = 48;
+    const FACINGS: [Facing; 4] = [Facing::North, Facing::East, Facing::South, Facing::West];
+    let build = |order: &mut dyn Iterator<Item = usize>| {
+        let mut s = Section::new(0, 4, 0);
+        for i in order {
+            let (x, y, z) = (i % 16, i / 16, (i * 7) % 16);
+            s.set_block(x, y, z, Block::OakStairs);
+            s.set_stair_state(x, y, z, StairState::new(FACINGS[i % 4], StairHalf::Top));
+            s.cell_kv_set(x, y, z, format!("test:k{}", i % 3), vec![i as u8]);
+        }
+        s.to_payload().states
+    };
+    let forward = build(&mut (0..CELLS));
+    assert_eq!(forward.cell_states.len(), CELLS);
+    assert!(forward.cell_states.is_sorted_by_key(|(cell, _)| *cell));
+    assert!(forward.cell_kv.is_sorted_by_key(|(cell, _)| *cell));
+    assert_eq!(forward, build(&mut (0..CELLS).rev()));
+    assert_eq!(forward, build(&mut (0..CELLS).map(|i| (i * 29) % CELLS)));
+}

@@ -3,16 +3,15 @@
 //! container list in `save::container`, and its facing rides the shared
 //! entity-facing list; see `save::codec`).
 
-use std::collections::HashMap;
-
 use crate::save::codec::{get_indexed, put_indexed, put_u16, Reader};
 use petramond_world::furnace::Furnace;
+use petramond_world::section::CellMap;
 
 /// Bytes per serialized furnace: idx(2) + cook/burn_remaining/burn_max (2 each).
 const FURNACE_BYTES: usize = 2 + 6;
 
 /// Append a `u16`-length-prefixed list of `(local index, furnace)` records to `buf`.
-pub fn put_furnaces(buf: &mut Vec<u8>, furnaces: &HashMap<u16, Furnace>) {
+pub fn put_furnaces(buf: &mut Vec<u8>, furnaces: &CellMap<Furnace>) {
     put_indexed(buf, furnaces, FURNACE_BYTES, |buf, f| {
         put_u16(buf, f.cook_progress);
         put_u16(buf, f.burn_remaining);
@@ -21,7 +20,7 @@ pub fn put_furnaces(buf: &mut Vec<u8>, furnaces: &HashMap<u16, Furnace>) {
 }
 
 /// Read the furnace list written by [`put_furnaces`]. `None` on truncated input.
-pub fn get_furnaces(r: &mut Reader) -> Option<HashMap<u16, Furnace>> {
+pub fn get_furnaces(r: &mut Reader) -> Option<CellMap<Furnace>> {
     get_indexed(r, |r| {
         Some(Furnace {
             cook_progress: r.u16()?,
@@ -37,7 +36,7 @@ mod tests {
 
     #[test]
     fn furnace_state_roundtrips_through_a_buffer() {
-        let mut map = HashMap::new();
+        let mut map = CellMap::new();
         map.insert(
             5u16,
             Furnace {
