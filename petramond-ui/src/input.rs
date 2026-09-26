@@ -224,6 +224,8 @@ pub struct FrameState {
     /// hover anchor a `tooltip` node's `hover` property matches against.
     /// One frame old, the same contract as hover-revealed list content.
     pub(crate) hover_widget: Option<String>,
+    /// Last frame's expanded arena and layout (see `crate::runtime::cache`).
+    pub(crate) cache: crate::runtime::cache::FrameCache,
 }
 
 impl FrameState {
@@ -233,6 +235,12 @@ impl FrameState {
 
     pub fn cursor(&self) -> (f32, f32) {
         self.cursor
+    }
+
+    /// What the frame cache did on the last frame: how much of the arena was
+    /// expanded afresh versus carried over, and whether layout was reused.
+    pub fn cache_stats(&self) -> crate::runtime::CacheStats {
+        self.cache.stats
     }
 
     pub fn focused(&self) -> Option<&InstKey> {
@@ -288,6 +296,7 @@ impl FrameState {
         self.last_row_click = None;
         self.last_selected.clear();
         self.hover_widget = None;
+        self.cache = Default::default();
     }
 }
 

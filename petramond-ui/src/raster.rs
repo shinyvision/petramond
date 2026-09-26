@@ -325,8 +325,8 @@ mod tests {
         let mut out = Vec::new();
         rasterize(&dl, &tex, size, [0, 0, 0, 255], &mut out);
         let font = theme.ui_font();
-        for row in 0..font.line_h() {
-            for col in 0..font.cell_w() {
+        for row in 0..size.1 as i32 {
+            for col in 0..size.0 as i32 {
                 let want = font.glyph_cell('A', col, row);
                 let got = px(&out, size, col as u32, row as u32)[0] == 255;
                 assert_eq!(got, want, "glyph 'A' pixel ({col},{row})");

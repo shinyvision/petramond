@@ -340,18 +340,22 @@ impl TextInput {
         self.insert_text(&text, visible_chars, now)
     }
 
-    /// The char index for a pointer at `x_rel` physical px from the visible
-    /// run's left edge, given the per-char advance in physical px.
-    /// The caret index for a pointer `x_rel` logical px into the run. The hit
-    /// is MEASURED against the same font paint uses, so a click lands between
-    /// the glyphs it looks like it landed between at any glyph width.
-    pub fn cursor_index_for_x(&self, x_rel: f32, visible_chars: usize) -> usize {
+    /// The caret index for a pointer `x_rel` logical px into the visible run.
+    /// The hit is MEASURED with `font` — the one paint draws with — so a click
+    /// lands between the glyphs it looks like it landed between at any glyph
+    /// width.
+    pub fn cursor_index_for_x(
+        &self,
+        font: &crate::text::Font,
+        x_rel: f32,
+        visible_chars: usize,
+    ) -> usize {
         let scroll = self.scroll_for_view(visible_chars);
         if visible_chars == 0 {
             return scroll.min(self.len_chars());
         }
         let run: String = self.text.chars().skip(scroll).take(visible_chars).collect();
-        let byte = crate::text::index_at_x(&run, x_rel.max(0.0).round() as i32);
+        let byte = font.index_at_x(&run, x_rel.max(0.0).round() as i32);
         let offset = run[..byte].chars().count();
         (scroll + offset)
             .min(scroll + visible_chars)
@@ -652,9 +656,11 @@ mod tests {
     fn drag_selects_between_mouse_positions() {
         let mut input = TextInput::new(48);
         input.insert_text("abcdef", 6, 0.0);
-        // Run-relative pixel offsets with a 6px advance: 6px→char 1, 24px→char 4.
-        let start = input.cursor_index_for_x(crate::text::width("a") as f32, 6);
-        let end = input.cursor_index_for_x(crate::text::width("abcd") as f32, 6);
+        // Run-relative pixel offsets at the glyph boundaries after "a" and
+        // "abcd" land on chars 1 and 4.
+        let font = crate::text::Font::builtin();
+        let start = input.cursor_index_for_x(&font, font.width("a") as f32, 6);
+        let end = input.cursor_index_for_x(&font, font.width("abcd") as f32, 6);
         let anchor = input.begin_drag(start, 6, 0.1);
 
         input.drag_to(anchor, end, 6, 0.2);

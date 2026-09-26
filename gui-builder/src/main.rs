@@ -11,8 +11,8 @@
 mod app;
 mod bindings;
 mod canvas;
-mod contracts;
 mod doc_edit;
+mod engine_check;
 mod history;
 mod io;
 mod legacy_import;
@@ -79,8 +79,15 @@ fn cli_export(args: &[String]) -> Result<(), String> {
         Some(p) => PathBuf::from(p),
         None => input.with_file_name(io::export_file_name(&project.document)),
     };
-    let contract = contracts::contract_for(&project.document.kind);
-    for issue in project.document.validate(None, Some(&contract)) {
+    // The game's own load-time rules: anything reported here is a document
+    // the game would skip.
+    let theme = theme_src::load(0);
+    let (state, _) = project.sample_ui_state();
+    let dir = input.parent();
+    let ctx = engine_check::EngineContext::for_project(dir);
+    for issue in ctx.validate(&project.document, &theme.theme, &state, &|name| {
+        io::resolve_document_image_path(dir, name)
+    }) {
         eprintln!("warning: {issue}");
     }
     let copied = io::export_document(&out, &project.document, input.parent())?;

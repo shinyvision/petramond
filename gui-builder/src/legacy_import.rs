@@ -320,7 +320,7 @@ fn kind_of(gui_type: &str) -> (String, DocClass) {
         | "pause" => format!("petramond:{gui_type}"),
         _ => "custom:imported".to_owned(),
     };
-    let class = crate::contracts::class_for(&kind);
+    let class = petramond_ui::contract::engine_kind(&kind).map_or(DocClass::Screen, |k| k.class);
     (kind, class)
 }
 
@@ -412,7 +412,9 @@ mod tests {
     #[test]
     fn chest_import_satisfies_the_engine_contract() {
         let imp = import(LEGACY_CHEST).unwrap();
-        let contract = crate::contracts::contract_for("petramond:chest");
+        let contract = petramond_ui::contract::engine_kind("petramond:chest")
+            .expect("chest is an engine kind")
+            .contract();
         let issues = imp.document.validate(None, Some(&contract));
         assert!(issues.is_empty(), "{issues:?}");
         assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);

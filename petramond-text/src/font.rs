@@ -1,4 +1,5 @@
-//! A loaded font: per-glyph bitmaps, per-glyph metrics, and the atlas grid.
+//! A loaded font: per-glyph bitmaps and metrics, a fallback chain of faces,
+//! and a shelf-packed atlas.
 //!
 //! Glyphs are rasterized ONCE, to 1 bit. A pixel font is authored on a pixel
 //! grid, so coverage is thresholded rather than antialiased — anti-aliasing at
@@ -6,51 +7,90 @@
 //! nearest-neighbour sampling. Everything downstream (measurement, wrapping,
 //! caret positions, the GPU atlas, the CPU rasterizer) reads the same metrics,
 //! so what is measured is always what is drawn.
+//!
+//! Coverage is whatever the faces provide: each face in the chain contributes
+//! every codepoint it maps (or the ranges its manifest names) that an earlier
+//! face lacks, and the built-in table closes the chain. The LINE box comes
+//! from the primary face's own ascent/descent — each glyph keeps a tight
+//! bitmap placed against the shared baseline, so one tall glyph (an accented
+//! capital, a fallback script) never enlarges every other glyph.
 
+mod atlas;
+mod raster;
+
+use raster::{FaceMetrics, RawGlyph};
 use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::Mutex;
 
-/// Codepoints a loaded font covers when it has them: printable ASCII, the
-/// Latin-1 supplement (× · ° accented letters), Latin Extended-A (the rest of
-/// European Latin), and the punctuation UI text actually reaches for.
-const COVERAGE: &[Range<u32>] = &[0x20..0x7F, 0xA0..0x180, 0x2013..0x2015, 0x2018..0x201E];
-const EXTRA: &[u32] = &[0x2026, 0x2192, 0x2713];
+/// Codepoints below this resolve through a dense table (Latin, Greek,
+/// Cyrillic — the text the UI actually draws); the rest through a map.
+const DENSE_LIMIT: u32 = 0x800;
+const NO_GLYPH: u32 = u32::MAX;
 
-/// Atlas grid width in cells.
-pub const ATLAS_COLS: u32 = 16;
+/// Glyphs whose ink defines the TEXT BODY — the band a caret or a selection
+/// should cover. Deliberately excludes accented capitals, whose headroom the
+/// line box reserves but ordinary text leaves empty.
+const BODY_TOP_SAMPLE: &str = "MHTbdkl";
+const BODY_BOTTOM_SAMPLE: &str = "gjpqy";
 
-/// Coverage at or above this counts as ink at the supersampled size.
-const INK_THRESHOLD: f32 = 0.5;
+/// One face of a fallback chain: a TrueType/OpenType file at the pixel size
+/// it was designed for.
+#[derive(Clone, Copy, Debug)]
+pub struct FaceSource<'a> {
+    pub bytes: &'a [u8],
+    /// Pixels per EM. Away from its design size a pixel font stops being a
+    /// pixel font, so this is authored, never guessed.
+    pub px: f32,
+    /// Inclusive codepoint ranges to take from this face; empty takes every
+    /// codepoint the face maps.
+    pub ranges: &'a [[u32; 2]],
+}
 
-/// Glyphs are rasterized at this ODD multiple of the target size, then each
-/// target pixel takes the single subpixel at its CENTRE.
-///
-/// A pixel font's glyphs are solid rectangles on a grid, so the exact way to
-/// recover them is to point-sample each pixel's centre — which supersampling
-/// by an odd factor gives for free. Averaging or majority-voting a whole cell
-/// instead bleeds neighbouring strokes together, which is what turns `w`, `W`
-/// and `M` (three one-pixel stems inside five columns) into blobs.
-///
-/// Verified against FreeType's hinted output: centre sampling reproduces all
-/// 94 printable ASCII glyphs of the shipped font exactly, where majority
-/// voting matches 7.
-const SUPERSAMPLE: i32 = 3;
-
-/// One glyph: its 1-bit bitmap inside the font's uniform cell, plus how far
-/// the pen moves after drawing it.
+/// One glyph: a tight 1-bit bitmap, where it sits against the pen and the
+/// line top, how far the pen moves after it, and its atlas rect.
 #[derive(Clone, Debug)]
 pub struct Glyph {
-    /// One bitmask per cell row; bit `cell_w - 1 - col` set = lit.
-    rows: Vec<u32>,
-    /// Pen advance in font-pixels.
+    /// Row-major, `w * h`, `true` = ink.
+    bitmap: Vec<bool>,
+    /// Bitmap rect relative to (pen x, line top): `[dx, dy, w, h]`.
+    bounds: [i32; 4],
     advance: i32,
-    /// Index of this glyph's cell in the atlas grid.
-    cell: u32,
+    atlas: [u32; 4],
 }
 
 impl Glyph {
+    /// Pen advance in font-pixels.
     pub fn advance(&self) -> i32 {
         self.advance
+    }
+
+    /// The bitmap's rect relative to the pen x and the line top, as
+    /// `[dx, dy, w, h]` (zero-sized for blank glyphs such as a space; `dy`
+    /// may be negative for ink above the line box).
+    pub fn bounds(&self) -> [i32; 4] {
+        self.bounds
+    }
+
+    /// The glyph's atlas pixel rect `[x, y, w, h]`.
+    pub fn atlas_rect(&self) -> [u32; 4] {
+        self.atlas
+    }
+
+    /// Whether bitmap pixel `(x, y)` (bitmap-local) is ink.
+    pub fn lit(&self, x: i32, y: i32) -> bool {
+        let [_, _, w, h] = self.bounds;
+        (0..w).contains(&x) && (0..h).contains(&y) && self.bitmap[(y * w + x) as usize]
+    }
+
+    /// Every ink pixel relative to (pen x, line top).
+    pub fn ink(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
+        let [dx, dy, w, _] = self.bounds;
+        self.bitmap
+            .iter()
+            .enumerate()
+            .filter(|(_, lit)| **lit)
+            .map(move |(i, _)| (dx + i as i32 % w, dy + i as i32 / w))
     }
 }
 
@@ -70,265 +110,170 @@ impl std::fmt::Display for FontError {
     }
 }
 
-/// A rasterized font: uniform atlas cells, per-glyph advances.
-///
-/// Cells are uniform (a plain grid, like the slot grids) while ADVANCES are
-/// per glyph — so the atlas stays trivial to index while text still sets
-/// proportionally.
-/// Glyphs whose ink defines the TEXT BODY — the band a caret or a selection
-/// should cover. Deliberately excludes accented capitals, whose headroom the
-/// cell reserves but ordinary text leaves empty.
-const BODY_TOP_SAMPLE: &str = "MHTbdkl";
-const BODY_BOTTOM_SAMPLE: &str = "gjpqy";
-
+/// A rasterized font: per-glyph bitmaps and advances over one line box.
 #[derive(Debug)]
 pub struct Font {
-    cell_w: i32,
-    cell_h: i32,
+    line_h: i32,
     line_advance: i32,
     max_advance: i32,
     body: (i32, i32),
-    glyphs: HashMap<char, Glyph>,
-    fallback: Glyph,
-    cells: u32,
+    /// Every real glyph, then the fallback last.
+    glyphs: Vec<Glyph>,
+    dense: Vec<u32>,
+    sparse: HashMap<char, u32>,
+    atlas_size: (u32, u32),
+    /// Memoised wraps: layout measures a wrapped label and paint wraps it
+    /// again, every frame — both now read one shaping.
+    wraps: Mutex<WrapCache>,
+}
+
+/// Wrapped text by (max width, string): its line ranges and wrapped size.
+#[derive(Debug, Default)]
+struct WrapCache {
+    by_width: HashMap<i32, HashMap<String, Wrapped>>,
+    entries: usize,
+}
+
+#[derive(Debug)]
+struct Wrapped {
+    lines: Vec<Range<usize>>,
+    size: (i32, i32),
+}
+
+/// Distinct wraps held before the cache starts over — far more than any
+/// screen shows, small enough that churning text cannot grow it unbounded.
+const WRAP_CACHE_CAP: usize = 4096;
+
+/// Where one chain member's raw glyphs came from.
+struct Contribution {
+    metrics: FaceMetrics,
+    glyphs: Vec<RawGlyph>,
 }
 
 impl Font {
     /// The built-in 5×7 ASCII table — the fallback when no font file loads.
     pub fn builtin() -> Font {
-        use crate::builtin;
-        let mut glyphs = HashMap::new();
-        let mut cell = 0;
-        for cp in 0x20u32..0x7F {
-            let ch = char::from_u32(cp).expect("ascii");
-            let rows = builtin::glyph(ch)
-                .iter()
-                .map(|bits| u32::from(*bits))
-                .collect();
-            glyphs.insert(
-                ch,
-                Glyph {
-                    rows,
-                    advance: builtin::ADVANCE,
-                    cell,
-                },
-            );
-            cell += 1;
-        }
-        let fallback = Glyph {
-            rows: builtin::glyph('\u{FFFD}')
-                .iter()
-                .map(|bits| u32::from(*bits))
-                .collect(),
-            advance: builtin::ADVANCE,
-            cell,
-        };
-        // The built-in table has neither accents nor descenders, so its body
-        // IS its cell.
-        let body = (0, builtin::GLYPH_H);
-        Font {
-            cell_w: builtin::GLYPH_W,
-            cell_h: builtin::GLYPH_H,
-            line_advance: builtin::GLYPH_H + 2,
-            max_advance: builtin::ADVANCE,
-            body,
-            glyphs,
-            fallback,
-            cells: cell + 1,
-        }
+        let (metrics, glyphs) = raster::builtin_glyphs(true);
+        Font::assemble(vec![Contribution { metrics, glyphs }], false)
+            .expect("the built-in table always assembles")
     }
 
-    /// Rasterize a TrueType/OpenType face at `px` pixels per EM — the size
-    /// the font was designed for (11 for the shipped face).
-    ///
-    /// Away from its design size a pixel font stops being a pixel font, so
-    /// this is authored, never guessed.
+    /// Rasterize one TrueType/OpenType face at `px` pixels per EM — every
+    /// codepoint it maps — closed by the built-in table.
     pub fn from_ttf(bytes: &[u8], px: f32) -> Result<Font, FontError> {
-        use ab_glyph::{Font as _, ScaleFont as _};
-        let face = ab_glyph::FontRef::try_from_slice(bytes)
-            .map_err(|e| FontError::Parse(e.to_string()))?;
-        // ab_glyph scales against the font's ASCENT+DESCENT, not its em
-        // square, so a scale of `px` renders an em of `px * em / height` —
-        // smaller than the design size, and off the pixel grid. Convert, or
-        // every glyph comes out shrunk and mangled.
-        let em = face.units_per_em().filter(|em| *em > 0.0);
-        let raster_px = match em {
-            Some(em) => px * face.height_unscaled() / em,
-            None => px,
-        };
-        let scaled = face.as_scaled(raster_px);
-        let ss = SUPERSAMPLE.max(1);
+        Font::from_faces(&[FaceSource {
+            bytes,
+            px,
+            ranges: &[],
+        }])
+    }
 
-        // Pass 1: outline every covered codepoint and find the common ink box,
-        // so all glyphs can share one cell size and sit on one baseline.
-        struct Raw {
-            ch: char,
-            advance: i32,
-            min_x: i32,
-            min_y: i32,
-            ink: Vec<(i32, i32)>,
+    /// A fallback chain: the first face is primary (its ascent/descent set
+    /// the line box); each later face fills only codepoints every earlier
+    /// face lacks; the built-in table closes the chain.
+    pub fn from_faces(faces: &[FaceSource<'_>]) -> Result<Font, FontError> {
+        let mut parts: Vec<Contribution> = Vec::new();
+        let mut covered: std::collections::HashSet<char> = std::collections::HashSet::new();
+        for source in faces {
+            let (metrics, glyphs) = raster::rasterize_face(source, &|ch| !covered.contains(&ch))?;
+            covered.extend(glyphs.iter().map(|g| g.ch));
+            parts.push(Contribution { metrics, glyphs });
         }
-        let mut raws: Vec<Raw> = Vec::new();
-        let codepoints = COVERAGE
-            .iter()
-            .flat_map(|r| r.clone())
-            .chain(EXTRA.iter().copied());
-        for cp in codepoints {
-            let Some(ch) = char::from_u32(cp) else {
-                continue;
-            };
-            let id = face.glyph_id(ch);
-            if id.0 == 0 {
-                continue; // the face has no glyph for this codepoint
-            }
-            let advance = scaled.h_advance(id).round() as i32;
-            let glyph = id.with_scale(raster_px * ss as f32);
-            let mut ink = Vec::new();
-            let (mut min_x, mut min_y) = (0, 0);
-            if let Some(outline) = face.outline_glyph(glyph) {
-                let bounds = outline.px_bounds();
-                let (hi_x, hi_y) = (bounds.min.x.floor() as i32, bounds.min.y.floor() as i32);
-                // Take the centre subpixel of each target pixel, in ABSOLUTE
-                // coordinates so a glyph's own origin cannot shift the grid
-                // under it.
-                let centre = ss / 2;
-                outline.draw(|x, y, coverage| {
-                    if coverage < INK_THRESHOLD {
-                        return;
-                    }
-                    let (ax, ay) = (hi_x + x as i32, hi_y + y as i32);
-                    if ax.rem_euclid(ss) == centre && ay.rem_euclid(ss) == centre {
-                        ink.push((ax.div_euclid(ss), ay.div_euclid(ss)));
-                    }
-                });
-                min_x = ink.iter().map(|(x, _)| *x).min().unwrap_or(0);
-                min_y = ink.iter().map(|(_, y)| *y).min().unwrap_or(0);
-                // `ink` is absolute; the cell layout below wants it relative.
-                for cell in &mut ink {
-                    cell.0 -= min_x;
-                    cell.1 -= min_y;
-                }
-            }
-            raws.push(Raw {
-                ch,
-                advance,
-                min_x,
-                min_y,
-                ink,
-            });
-        }
-        if raws.iter().all(|raw| raw.ink.is_empty()) {
+        let primary_has_ink = parts
+            .first()
+            .is_some_and(|p| p.glyphs.iter().any(|g| !g.ink.is_empty()));
+        if !primary_has_ink {
             return Err(FontError::Empty);
         }
+        let (metrics, mut glyphs) = raster::builtin_glyphs(false);
+        glyphs.retain(|g| !covered.contains(&g.ch));
+        parts.push(Contribution { metrics, glyphs });
+        Font::assemble(parts, true)
+    }
 
-        // The cell must hold every glyph's ink, including accented capitals
-        // above the cap line and descenders below the baseline.
-        let inked = || raws.iter().filter(|raw| !raw.ink.is_empty());
-        let left = inked().map(|raw| raw.min_x).min().unwrap_or(0).min(0);
-        let top = inked().map(|raw| raw.min_y).min().unwrap_or(0);
-        let right = inked()
-            .map(|raw| raw.min_x + raw.ink.iter().map(|(x, _)| x + 1).max().unwrap_or(0))
-            .max()
-            .unwrap_or(1);
-        let bottom = inked()
-            .map(|raw| raw.min_y + raw.ink.iter().map(|(_, y)| y + 1).max().unwrap_or(0))
-            .max()
-            .unwrap_or(1);
-        let cell_w = (right - left).max(1);
-        let cell_h = (bottom - top).max(1);
-        if cell_w > 32 {
-            // Rows are u32 bitmasks; a wider cell would silently truncate.
-            return Err(FontError::Parse(format!("cell width {cell_w} exceeds 32")));
-        }
+    /// Lay every contribution's glyphs against the primary's baseline, pick
+    /// the fallback, and pack the atlas. `boxed_fallback`: with no U+FFFD in
+    /// the chain, draw a hollow box over the text body.
+    fn assemble(parts: Vec<Contribution>, boxed_fallback: bool) -> Result<Font, FontError> {
+        let primary = parts.first().map(|p| p.metrics).ok_or(FontError::Empty)?;
+        let baseline = primary.ascent;
+        let line_h = primary.line_h;
 
-        let mut glyphs = HashMap::new();
-        let mut cell = 0;
-        for raw in &raws {
-            let mut rows = vec![0u32; cell_h as usize];
-            for &(x, y) in &raw.ink {
-                let col = raw.min_x - left + x;
-                let row = raw.min_y - top + y;
-                if (0..cell_w).contains(&col) && (0..cell_h).contains(&row) {
-                    rows[row as usize] |= 1 << (cell_w - 1 - col);
-                }
+        let mut glyphs: Vec<Glyph> = Vec::new();
+        let mut chars: Vec<char> = Vec::new();
+        for part in parts {
+            for raw in part.glyphs {
+                glyphs.push(place(&raw, baseline));
+                chars.push(raw.ch);
             }
-            glyphs.insert(
-                raw.ch,
-                Glyph {
-                    rows,
-                    advance: raw.advance.max(0),
-                    cell,
-                },
-            );
-            cell += 1;
         }
-
-        // Unknown codepoints get one shared cell. U+FFFD if the face has it,
-        // else a hollow box — never a blank, so a missing glyph is visible.
-        let fallback_rows = glyphs
-            .get(&'\u{FFFD}')
-            .map(|g| g.rows.clone())
-            .unwrap_or_else(|| box_rows(cell_w, cell_h));
-        let fallback_advance = glyphs
-            .get(&'\u{FFFD}')
-            .map(|g| g.advance)
-            .or_else(|| glyphs.get(&'?').map(|g| g.advance))
-            .unwrap_or(cell_w);
-        let fallback = Glyph {
-            rows: fallback_rows,
-            advance: fallback_advance,
-            cell,
-        };
-
-        let row_of = |sample: &str, top: bool| -> Option<i32> {
-            let rows = sample.chars().filter_map(|ch| {
-                let glyph = glyphs.get(&ch)?;
-                let lit: Vec<i32> = (0..cell_h)
-                    .filter(|&row| glyph.rows[row as usize] != 0)
-                    .collect();
-                if top {
-                    lit.first().copied()
-                } else {
-                    lit.last().map(|row| row + 1)
-                }
-            });
-            if top {
-                rows.min()
-            } else {
-                rows.max()
-            }
-        };
-        let body = (
-            row_of(BODY_TOP_SAMPLE, true).unwrap_or(0),
-            row_of(BODY_BOTTOM_SAMPLE, false).unwrap_or(cell_h),
-        );
-
-        Ok(Font {
-            cell_w,
-            cell_h,
-            // One blank pixel row between lines, like the built-in font.
-            line_advance: cell_h + 2,
-            max_advance: glyphs
-                .values()
-                .map(|glyph| glyph.advance)
-                .chain(std::iter::once(fallback.advance))
+        let find = |ch: char| chars.iter().position(|c| *c == ch);
+        let body = {
+            let top = BODY_TOP_SAMPLE
+                .chars()
+                .filter_map(|ch| find(ch).map(|i| &glyphs[i]))
+                .filter(|g| g.bounds[3] > 0)
+                .map(|g| g.bounds[1])
+                .min()
+                .unwrap_or(0);
+            let bottom = BODY_BOTTOM_SAMPLE
+                .chars()
+                .filter_map(|ch| find(ch).map(|i| &glyphs[i]))
+                .filter(|g| g.bounds[3] > 0)
+                .map(|g| g.bounds[1] + g.bounds[3])
                 .max()
-                .unwrap_or(cell_w)
-                .max(1),
+                .unwrap_or(line_h);
+            (top, bottom.max(top + 1))
+        };
+
+        // Unknown codepoints share one glyph: U+FFFD from the chain, else a
+        // hollow box over the body — never a blank, so a missing glyph shows.
+        let fallback = match find('\u{FFFD}') {
+            Some(i) if !boxed_fallback || glyphs[i].bounds[3] > 0 => glyphs[i].clone(),
+            _ => {
+                let advance = find('?').map_or(line_h / 2, |i| glyphs[i].advance).max(3);
+                hollow_box(advance, body)
+            }
+        };
+        glyphs.push(fallback);
+
+        let sizes: Vec<(u32, u32)> = glyphs
+            .iter()
+            .map(|g| (g.bounds[2] as u32, g.bounds[3] as u32))
+            .collect();
+        let (origins, atlas_size) = atlas::pack(&sizes)?;
+        for (glyph, [x, y]) in glyphs.iter_mut().zip(origins) {
+            glyph.atlas = [x, y, glyph.bounds[2] as u32, glyph.bounds[3] as u32];
+        }
+
+        let mut dense = vec![NO_GLYPH; DENSE_LIMIT as usize];
+        let mut sparse = HashMap::new();
+        for (i, ch) in chars.iter().enumerate() {
+            match dense.get_mut(*ch as usize) {
+                Some(slot) => *slot = i as u32,
+                None => {
+                    sparse.insert(*ch, i as u32);
+                }
+            }
+        }
+        let max_advance = glyphs.iter().map(|g| g.advance).max().unwrap_or(1).max(1);
+        Ok(Font {
+            line_h,
+            // One blank pixel row between lines, like the built-in font.
+            line_advance: line_h + 2,
+            max_advance,
             body,
             glyphs,
-            fallback,
-            cells: cell + 1,
+            dense,
+            sparse,
+            atlas_size,
+            wraps: Mutex::default(),
         })
     }
 
-    pub fn cell_w(&self) -> i32 {
-        self.cell_w
-    }
-
-    /// Height of one line's glyph box — what a single-line label measures.
+    /// Height of one line box — what a single-line label measures.
     pub fn line_h(&self) -> i32 {
-        self.cell_h
+        self.line_h
     }
 
     /// Baseline-to-baseline distance for wrapped text.
@@ -345,11 +290,10 @@ impl Font {
         self.max_advance
     }
 
-    /// The text BODY as `(top row within the cell, height)`: ascender top to
-    /// descender bottom, excluding the headroom the cell reserves for
-    /// accented capitals. A caret or a selection sized to the whole cell
-    /// towers over ordinary text, because that headroom is nearly always
-    /// empty.
+    /// The text BODY as `(top row within the line box, height)`: ascender top
+    /// to descender bottom, excluding the headroom reserved for accented
+    /// capitals. A caret or a selection sized to the whole line towers over
+    /// ordinary text, because that headroom is nearly always empty.
     pub fn body_span(&self) -> (i32, i32) {
         let (top, bottom) = self.body;
         (top, (bottom - top).max(1))
@@ -357,16 +301,25 @@ impl Font {
 
     /// How many codepoints resolve to a real glyph (fallback excluded).
     pub fn glyph_count(&self) -> usize {
-        self.glyphs.len()
+        self.glyphs.len() - 1
+    }
+
+    fn index(&self, ch: char) -> Option<u32> {
+        let i = match self.dense.get(ch as usize) {
+            Some(&i) => i,
+            None => *self.sparse.get(&ch)?,
+        };
+        (i != NO_GLYPH).then_some(i)
     }
 
     pub fn glyph(&self, ch: char) -> &Glyph {
-        self.glyphs.get(&ch).unwrap_or(&self.fallback)
+        let i = self.index(ch).unwrap_or(self.glyphs.len() as u32 - 1);
+        &self.glyphs[i as usize]
     }
 
     /// Whether `ch` has its own glyph (false = it draws the fallback).
     pub fn has_glyph(&self, ch: char) -> bool {
-        self.glyphs.contains_key(&ch)
+        self.index(ch).is_some()
     }
 
     pub fn advance(&self, ch: char) -> i32 {
@@ -389,11 +342,11 @@ impl Font {
     pub fn index_at_x(&self, s: &str, x: i32) -> usize {
         let mut pen = 0;
         for (bi, ch) in s.char_indices() {
-            let next = pen + self.advance(ch);
-            if x < pen + self.advance(ch) / 2 {
+            let advance = self.advance(ch);
+            if x < pen + advance / 2 {
                 return bi;
             }
-            pen = next;
+            pen += advance;
         }
         s.len()
     }
@@ -417,6 +370,45 @@ impl Font {
     /// spaces where possible and mid-word only when a word alone overflows.
     /// Returns byte ranges into `s`; never empty (empty text = one empty line).
     pub fn wrap(&self, s: &str, max_w: i32) -> Vec<Range<usize>> {
+        self.with_wrapped(s, max_w, |w| w.lines.clone())
+    }
+
+    /// Run `f` over the memoised wrap of `s` at `max_w`, shaping it first
+    /// on a miss.
+    fn with_wrapped<R>(&self, s: &str, max_w: i32, f: impl FnOnce(&Wrapped) -> R) -> R {
+        if let Ok(cache) = self.wraps.lock() {
+            if let Some(hit) = cache.by_width.get(&max_w).and_then(|m| m.get(s)) {
+                return f(hit);
+            }
+        }
+        let lines = self.wrap_uncached(s, max_w);
+        let w = lines
+            .iter()
+            .map(|r| self.width(&s[r.clone()]))
+            .max()
+            .unwrap_or(0);
+        let h = self.line_h + (lines.len() as i32 - 1) * self.line_advance;
+        let wrapped = Wrapped {
+            lines,
+            size: (w, h),
+        };
+        let out = f(&wrapped);
+        if let Ok(mut cache) = self.wraps.lock() {
+            if cache.entries >= WRAP_CACHE_CAP {
+                cache.by_width.clear();
+                cache.entries = 0;
+            }
+            cache
+                .by_width
+                .entry(max_w)
+                .or_default()
+                .insert(s.to_owned(), wrapped);
+            cache.entries += 1;
+        }
+        out
+    }
+
+    fn wrap_uncached(&self, s: &str, max_w: i32) -> Vec<Range<usize>> {
         let mut lines: Vec<Range<usize>> = Vec::new();
         let mut line_start = 0usize;
         let mut line_w = 0i32;
@@ -455,94 +447,87 @@ impl Font {
     /// Size of `s` in font-pixels; `max_w` `None` = a single line.
     pub fn measure(&self, s: &str, max_w: Option<i32>) -> (i32, i32) {
         match max_w {
-            None => (self.width(s), self.cell_h),
-            Some(max_w) => {
-                let lines = self.wrap(s, max_w);
-                let w = lines
-                    .iter()
-                    .map(|r| self.width(&s[r.clone()]))
-                    .max()
-                    .unwrap_or(0);
-                let h = self.cell_h + (lines.len() as i32 - 1) * self.line_advance;
-                (w, h)
-            }
+            None => (self.width(s), self.line_h),
+            Some(max_w) => self.with_wrapped(s, max_w, |w| w.size),
         }
     }
 
-    /// Whether cell `(col, row)` of `ch`'s glyph box is lit.
-    pub fn glyph_cell(&self, ch: char, col: i32, row: i32) -> bool {
-        if !(0..self.cell_w).contains(&col) || !(0..self.cell_h).contains(&row) {
-            return false;
-        }
-        (self.glyph(ch).rows[row as usize] >> (self.cell_w - 1 - col)) & 1 == 1
+    /// Whether pixel `(x, y)` relative to (pen x, line top) is ink in `ch`.
+    pub fn glyph_cell(&self, ch: char, x: i32, y: i32) -> bool {
+        let glyph = self.glyph(ch);
+        let [dx, dy, ..] = glyph.bounds;
+        glyph.lit(x - dx, y - dy)
     }
 
     // ---- atlas ---------------------------------------------------------
 
-    pub fn atlas_cells(&self) -> u32 {
-        self.cells
-    }
-
     pub fn atlas_size(&self) -> (u32, u32) {
-        let rows = self.cells.div_ceil(ATLAS_COLS);
-        (ATLAS_COLS * self.cell_w as u32, rows * self.cell_h as u32)
+        self.atlas_size
     }
 
-    /// The atlas pixel rect `[x, y, w, h]` of `ch`'s cell.
+    /// The atlas pixel rect `[x, y, w, h]` of `ch`'s glyph bitmap.
     pub fn atlas_rect(&self, ch: char) -> [u32; 4] {
-        let cell = self.glyph(ch).cell;
-        let (cx, cy) = (cell % ATLAS_COLS, cell / ATLAS_COLS);
-        [
-            cx * self.cell_w as u32,
-            cy * self.cell_h as u32,
-            self.cell_w as u32,
-            self.cell_h as u32,
-        ]
+        self.glyph(ch).atlas
     }
 
     /// The atlas as tightly-packed RGBA (white glyphs on transparent).
     pub fn build_atlas(&self) -> (Vec<u8>, (u32, u32)) {
-        let (w, h) = self.atlas_size();
+        let (w, h) = self.atlas_size;
         let mut rgba = vec![0u8; (w * h * 4) as usize];
-        let mut blit = |glyph: &Glyph| {
-            let (cx, cy) = (glyph.cell % ATLAS_COLS, glyph.cell / ATLAS_COLS);
-            for (row, bits) in glyph.rows.iter().enumerate() {
-                for col in 0..self.cell_w {
-                    if (bits >> (self.cell_w - 1 - col)) & 1 == 0 {
-                        continue;
-                    }
-                    let px = cx * self.cell_w as u32 + col as u32;
-                    let py = cy * self.cell_h as u32 + row as u32;
-                    let i = ((py * w + px) * 4) as usize;
-                    rgba[i..i + 4].copy_from_slice(&[255, 255, 255, 255]);
-                }
+        for glyph in &self.glyphs {
+            let [ax, ay, gw, _] = glyph.atlas;
+            for (i, _) in glyph.bitmap.iter().enumerate().filter(|(_, lit)| **lit) {
+                let (x, y) = (ax + i as u32 % gw, ay + i as u32 / gw);
+                let at = ((y * w + x) * 4) as usize;
+                rgba[at..at + 4].copy_from_slice(&[255, 255, 255, 255]);
             }
-        };
-        for glyph in self.glyphs.values() {
-            blit(glyph);
         }
-        blit(&self.fallback);
         (rgba, (w, h))
     }
 }
 
-/// A hollow box, drawn for unknown codepoints when the face has no U+FFFD.
-fn box_rows(cell_w: i32, cell_h: i32) -> Vec<u32> {
-    let full = if cell_w >= 32 {
-        u32::MAX
-    } else {
-        (1u32 << cell_w) - 1
+/// A raw glyph's ink as a tight bitmap placed against the line's baseline.
+fn place(raw: &RawGlyph, baseline: i32) -> Glyph {
+    let (Some(x0), Some(y0)) = (
+        raw.ink.iter().map(|(x, _)| *x).min(),
+        raw.ink.iter().map(|(_, y)| *y).min(),
+    ) else {
+        return Glyph {
+            bitmap: Vec::new(),
+            bounds: [0, 0, 0, 0],
+            advance: raw.advance,
+            atlas: [0; 4],
+        };
     };
-    let edges = full & !(full >> 1) | 1;
-    (0..cell_h)
-        .map(|row| {
-            if row == 0 || row == cell_h - 1 {
-                full
-            } else {
-                edges
-            }
-        })
-        .collect()
+    let x1 = raw.ink.iter().map(|(x, _)| *x).max().unwrap_or(x0);
+    let y1 = raw.ink.iter().map(|(_, y)| *y).max().unwrap_or(y0);
+    let (w, h) = (x1 - x0 + 1, y1 - y0 + 1);
+    let mut bitmap = vec![false; (w * h) as usize];
+    for &(x, y) in &raw.ink {
+        bitmap[((y - y0) * w + (x - x0)) as usize] = true;
+    }
+    Glyph {
+        bitmap,
+        bounds: [x0, baseline + y0, w, h],
+        advance: raw.advance,
+        atlas: [0; 4],
+    }
+}
+
+/// A hollow box over the text body, drawn for unknown codepoints when the
+/// chain has no U+FFFD.
+fn hollow_box(advance: i32, body: (i32, i32)) -> Glyph {
+    let w = (advance - 1).max(2);
+    let h = (body.1 - body.0).max(2);
+    let bitmap = (0..h)
+        .flat_map(|y| (0..w).map(move |x| y == 0 || y == h - 1 || x == 0 || x == w - 1))
+        .collect();
+    Glyph {
+        bitmap,
+        bounds: [0, body.0, w, h],
+        advance,
+        atlas: [0; 4],
+    }
 }
 
 /// `str::floor_char_boundary` is unstable; this is the same rule.
@@ -555,112 +540,4 @@ fn floor_char_boundary(s: &str, index: usize) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn builtin_font_is_fixed_pitch_ascii_with_a_visible_fallback() {
-        let f = Font::builtin();
-        assert_eq!(f.width("AB"), f.advance('A') * 2);
-        assert!(f.has_glyph('A') && f.has_glyph('~'));
-        assert!(!f.has_glyph('\u{d7}'), "the built-in table is ASCII only");
-        // Unknown codepoints share one cell and still draw something.
-        assert_eq!(f.atlas_rect('\u{d7}'), f.atlas_rect('🙂'));
-        assert!((0..f.line_h()).any(|row| (0..f.cell_w()).any(|c| f.glyph_cell('🙂', c, row))));
-    }
-
-    #[test]
-    fn wrap_breaks_on_measured_width_not_character_count() {
-        let f = Font::builtin();
-        let s = "hello world again";
-        let w = f.width("hello world");
-        let lines = f.wrap(s, w);
-        let texts: Vec<&str> = lines.iter().map(|r| &s[r.clone()]).collect();
-        assert_eq!(texts, vec!["hello world", "again"]);
-
-        // A word longer than the line breaks mid-word rather than looping.
-        let long = "abcdefghijklmno";
-        let lines = f.wrap(long, f.width("abcde"));
-        let texts: Vec<&str> = lines.iter().map(|r| &long[r.clone()]).collect();
-        assert_eq!(texts, vec!["abcde", "fghij", "klmno"]);
-
-        // Even a max width narrower than one glyph terminates.
-        assert_eq!(f.wrap("ab", 1).len(), 2);
-        assert_eq!(f.wrap("", 40), vec![0..0]);
-    }
-
-    #[test]
-    fn caret_positions_round_trip_through_the_same_metrics() {
-        let f = Font::builtin();
-        let s = "hello";
-        for (bi, _) in s.char_indices() {
-            let x = f.prefix_width(s, bi);
-            assert_eq!(f.index_at_x(s, x), bi, "caret at byte {bi}");
-        }
-        assert_eq!(f.index_at_x(s, f.width(s) + 99), s.len());
-        assert_eq!(f.prefix_width(s, 999), f.width(s));
-        assert_eq!(f.fit_chars(s, f.width("hel")), 3);
-    }
-
-    /// A caret sized to the whole cell fills the input box, because the cell
-    /// reserves headroom for accented capitals that ordinary text leaves
-    /// empty. The body span is what a caret or selection should cover.
-    #[test]
-    fn the_body_span_is_the_text_band_not_the_whole_cell() {
-        let bytes = std::fs::read(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../assets/ui/font/DepartureMono-Regular.otf"
-        ))
-        .expect("shipped font is vendored");
-        let font = Font::from_ttf(&bytes, 11.0).expect("shipped font rasterizes");
-        let (top, h) = font.body_span();
-        assert!(top > 0, "accented capitals sit above the body");
-        assert!(
-            h < font.line_h(),
-            "body {h} should be shorter than the cell {}",
-            font.line_h()
-        );
-        assert!(top + h <= font.line_h(), "the body stays inside the cell");
-
-        // It spans exactly cap-top to descender-bottom.
-        let ink_rows = |ch: char| -> (i32, i32) {
-            let rows: Vec<i32> = (0..font.line_h())
-                .filter(|&y| (0..font.cell_w()).any(|x| font.glyph_cell(ch, x, y)))
-                .collect();
-            (rows[0], *rows.last().unwrap() + 1)
-        };
-        assert_eq!(top, ink_rows('M').0, "body starts at the cap line");
-        assert_eq!(top + h, ink_rows('g').1, "body ends at the descender");
-        assert!(ink_rows('\u{c4}').0 < top, "the accent is above the body");
-
-        // The built-in table has no accents or descenders: body IS the cell.
-        let builtin = Font::builtin();
-        assert_eq!(builtin.body_span(), (0, builtin.line_h()));
-    }
-
-    #[test]
-    fn measure_uses_line_advance_between_wrapped_lines() {
-        let f = Font::builtin();
-        let one = f.measure("hi", None);
-        assert_eq!(one, (f.width("hi"), f.line_h()));
-        let (_, h) = f.measure("hello world", Some(f.width("hello")));
-        assert_eq!(h, f.line_h() + f.line_advance());
-    }
-
-    #[test]
-    fn atlas_pixels_match_the_glyph_table() {
-        let f = Font::builtin();
-        let (rgba, (w, _)) = f.build_atlas();
-        let [ax, ay, ..] = f.atlas_rect('A');
-        for row in 0..f.line_h() {
-            for col in 0..f.cell_w() {
-                let i = (((ay + row as u32) * w + ax + col as u32) * 4) as usize;
-                assert_eq!(
-                    rgba[i + 3] == 255,
-                    f.glyph_cell('A', col, row),
-                    "atlas('A') differs at {col},{row}"
-                );
-            }
-        }
-    }
-}
+mod tests;

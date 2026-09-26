@@ -4,6 +4,7 @@
 
 use crate::bindings::{self, Catalog};
 use crate::doc_edit::{self, NodePath};
+use crate::engine_check::EngineContext;
 use crate::history::History;
 use crate::panels;
 use crate::preview::DiskImages;
@@ -58,6 +59,9 @@ pub struct App {
     // Cached validation.
     validation: Vec<DocIssue>,
     validation_rev: Option<u64>,
+    /// The engine context validation runs in, with the project dir it was
+    /// read for (re-read only when the project moves).
+    engine_ctx: Option<(Option<PathBuf>, EngineContext)>,
     /// Set by canvas double-click: the inspector focuses its text field.
     pub focus_text_edit: bool,
     pub status: String,
@@ -93,6 +97,7 @@ impl App {
             new_kind_buf: String::new(),
             validation: Vec::new(),
             validation_rev: None,
+            engine_ctx: None,
             focus_text_edit: false,
             status: "Ready".into(),
             canvas_drag: None,
@@ -179,24 +184,27 @@ impl App {
         state
     }
 
-    /// Cached validation for the current document + theme.
+    /// Cached validation for the current document + theme: the game's own
+    /// load-time rules (see `engine_check`), judged in the context of the
+    /// pack the project is saved in.
     pub fn validation(&mut self) -> Vec<DocIssue> {
         if self.validation_rev != Some(self.doc_rev) {
-            let contract = crate::contracts::contract_for(&self.proj.document.kind);
-            self.validation = self
-                .proj
-                .document
-                .validate(Some(self.theme.theme.as_ref()), Some(&contract));
-            // Builder-side extra: static images must resolve beside the
-            // project or they draw nothing, in game and preview alike.
             let dir = self
                 .path
                 .as_ref()
                 .and_then(|p| p.parent().map(PathBuf::from));
-            self.validation.extend(doc_edit::missing_image_issues(
+            if self.engine_ctx.as_ref().map(|(d, _)| d) != Some(&dir) {
+                let ctx = EngineContext::for_project(dir.as_deref());
+                self.engine_ctx = Some((dir.clone(), ctx));
+            }
+            let state = self.preview_state();
+            let (_, ctx) = self.engine_ctx.as_ref().expect("engine context was just set");
+            self.validation = ctx.validate(
                 &self.proj.document,
-                &|name| crate::io::resolve_document_image_path(dir.as_deref(), name).is_some(),
-            ));
+                &self.theme.theme,
+                &state,
+                &|name| crate::io::resolve_document_image_path(dir.as_deref(), name),
+            );
             self.validation_rev = Some(self.doc_rev);
         }
         self.validation.clone()
@@ -259,8 +267,9 @@ impl App {
                     Ok(()) => {
                         self.dirty = false;
                         // The project dir may have just come into existence
-                        // (save-as): image warnings must re-check against it.
+                        // (save-as): image and pack checks re-run against it.
                         self.validation_rev = None;
+                        self.engine_ctx = None;
                         self.status = format!("Saved {}", path.display());
                     }
                     Err(e) => self.status = e,
@@ -447,9 +456,9 @@ impl App {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     ui.menu_button("New", |ui| {
-                        for kind in crate::contracts::ENGINE_KINDS {
-                            if ui.button(*kind).clicked() {
-                                self.new_project(kind);
+                        for kind in petramond_ui::contract::ENGINE_KINDS {
+                            if ui.button(kind.key).clicked() {
+                                self.new_project(kind.key);
                                 ui.close_menu();
                             }
                         }

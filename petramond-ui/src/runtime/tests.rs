@@ -1592,19 +1592,23 @@ fn typing_a_word_keeps_it_visible_instead_of_scrolling_to_the_last_glyph() {
             .values()
             .next()
             .expect("focused editor")
-            .render(crate::widget::input_visible_chars(120), true, h.now);
+            .render(
+                crate::widget::input_visible_chars(h.rt.theme().ui_font(), 120),
+                true,
+                h.now,
+            );
     assert_eq!(shown.text, "chest", "the whole word stays in view");
     assert_eq!(shown.cursor, 5, "and the caret is after it");
 
     // The window is a property of the box: a wider box shows more, and it
     // never depends on what has been typed into it.
-    let font = crate::text::font();
+    let font = h.rt.theme().ui_font();
     assert_eq!(
-        crate::widget::input_visible_chars(font.max_advance() * 3),
+        crate::widget::input_visible_chars(font, font.max_advance() * 3),
         3
     );
     assert_eq!(
-        crate::widget::input_visible_chars(font.max_advance() * 9),
+        crate::widget::input_visible_chars(font, font.max_advance() * 9),
         9
     );
 }

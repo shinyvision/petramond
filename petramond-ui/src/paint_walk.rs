@@ -448,7 +448,7 @@ impl PaintCtx<'_> {
                 }
                 let pad = self.theme.metrics.button_pad;
                 let text_rect = widget::input_text_rect(rect, pad);
-                let visible = widget::input_visible_chars(text_rect.w);
+                let visible = widget::input_visible_chars(self.theme.ui_font(), text_rect.w);
                 let ty = rect.y + (rect.h - self.theme.ui_font().line_h()) / 2;
                 let editor = inst.key.as_ref().and_then(|k| self.fs.editors.get(k));
                 match editor {
@@ -694,7 +694,7 @@ impl PaintCtx<'_> {
                     // Wrap to the frame's interior; centre the wrapped block
                     // vertically (single lines land where they always did).
                     let text_w =
-                        (rect.x + rect.w - insets[2] - tx).max(self.theme.ui_font().cell_w());
+                        (rect.x + rect.w - insets[2] - tx).max(self.theme.ui_font().max_advance());
                     let (_, block_h) = self.theme.ui_font().measure(text, Some(text_w));
                     p.text_wrapped(
                         text,

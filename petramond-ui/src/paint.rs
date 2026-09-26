@@ -492,21 +492,26 @@ impl Painter<'_> {
         let (tw, th) = font.atlas_size();
         let (mut cx, py) = (x * self.scale, y * self.scale);
         for ch in s.chars() {
-            let src = font.atlas_rect(ch);
-            self.list.push_rect(
-                TexId::Font,
-                [
-                    cx as f32,
-                    py as f32,
-                    (font.cell_w() * k) as f32,
-                    (font.line_h() * k) as f32,
-                ],
-                src.map(|v| v as f32),
-                (tw, th),
-                color,
-                clip,
-            );
-            cx += font.advance(ch) * k;
+            // Each glyph is its own tight bitmap, placed against the pen and
+            // the line top; blank glyphs (spaces) emit nothing.
+            let glyph = font.glyph(ch);
+            let [dx, dy, w, h] = glyph.bounds();
+            if w > 0 && h > 0 {
+                self.list.push_rect(
+                    TexId::Font,
+                    [
+                        (cx + dx * k) as f32,
+                        (py + dy * k) as f32,
+                        (w * k) as f32,
+                        (h * k) as f32,
+                    ],
+                    glyph.atlas_rect().map(|v| v as f32),
+                    (tw, th),
+                    color,
+                    clip,
+                );
+            }
+            cx += glyph.advance() * k;
         }
     }
 

@@ -1,5 +1,7 @@
-//! Live validation panel: `Document::validate` against the loaded theme and
-//! the kind's engine contract. Clicking an issue selects the offending node.
+//! Live validation panel: the game's own load-time rules
+//! (`petramond_ui::contract`, via `engine_check`) against the loaded theme,
+//! the kind's engine contract and the project's pack. Clicking an issue
+//! selects the offending node.
 
 use crate::app::App;
 use crate::doc_edit;
@@ -12,7 +14,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         if issues.is_empty() {
             ui.colored_label(
                 egui::Color32::from_rgb(110, 200, 120),
-                "✔ document is valid",
+                format!(
+                    "✔ valid for the engine (contract {}, format {})",
+                    petramond_ui::contract::CONTRACT_VERSION,
+                    petramond_ui::FORMAT_VERSION
+                ),
             );
         } else {
             ui.colored_label(

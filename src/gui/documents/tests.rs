@@ -18,6 +18,39 @@ fn engine_contracts_cover_every_container_kind() {
     assert!(contract_for(GuiKind::Pause).roles.is_empty());
 }
 
+/// The shared contract table (what the gui-builder validates against) is
+/// the engine's kind registry, row for row: a kind added to one without the
+/// other fails here instead of passing in the builder and failing in game.
+#[test]
+fn the_shared_kind_table_is_the_engine_kind_registry() {
+    let table: Vec<&str> = petramond_ui::contract::ENGINE_KINDS
+        .iter()
+        .map(|k| k.key)
+        .collect();
+    assert_eq!(table, petramond_world::gui_state::engine_kind_keys());
+    for key in table {
+        let kind = crate::gui::intern_kind(key).expect("engine key interns");
+        assert!(!kind.is_registered(), "{key} is an engine kind");
+    }
+    assert_eq!(
+        petramond_ui::contract::ENGINE_NAMESPACE,
+        petramond_world::registry::ENGINE_NAMESPACE
+    );
+}
+
+/// Shipped engine documents are authored as the class the shared table
+/// scaffolds new ones with, so the builder's "New" matches the game.
+#[test]
+fn shipped_documents_use_their_table_class() {
+    for kind in petramond_ui::contract::ENGINE_KINDS {
+        let gui_kind = crate::gui::intern_kind(kind.key).expect("engine key interns");
+        let Some(doc) = doc_entry_for(gui_kind) else {
+            continue;
+        };
+        assert_eq!(doc.doc.class, kind.class, "{}", kind.key);
+    }
+}
+
 #[test]
 fn bindings_catalog_parses_and_covers_controller_kinds() {
     // assets/ui/bindings.json is the builder-facing data contract; keep
@@ -74,44 +107,29 @@ fn crafting_browser_documents_ship_and_validate() {
 
 /// The font's line box drives every document's vertical budget, so a font
 /// swap (or one more label) must not push a shipped screen off the
-/// smallest viewport the game scales to. Panels that legitimately scroll
-/// absorb the difference; a panel that simply grew is a layout bug you
-/// only see by opening that screen — and you see it as the Back button
-/// sliced off the bottom edge, where nothing can click it.
-///
-/// Check every instance against ITS PARENT, not the root. The root is
-/// `grow`, so it is the viewport by construction and an assertion against
-/// it can never fail — that is how the Controls panel grew past the bottom
-/// of the screen unnoticed. Parent-relative also catches the half of the
-/// problem the screen edge hides: a tab page that outgrows its panel
-/// paints its last row straight through the buttons below it.
-///
-/// Content inside a `scroll` is exempt — overflowing is what it is for.
+/// smallest viewport the game scales to. The rule itself (parent-relative,
+/// scroll/tooltip/abs exemptions) is the shared
+/// [`petramond_ui::contract::viewport_overflow`] the gui-builder also runs;
+/// this judges every shipped screen with seeded content on every page.
 #[test]
 fn every_shipped_document_fits_the_smallest_viewport() {
+    let theme = crate::gui::doc_theme::theme();
     let mut overflowing = Vec::new();
     for scale in [1i32, 3] {
         for kind in SHELL_KINDS {
-            walk_solved(*kind, scale, Seed::Ordinary, |n| {
-                // Tooltips are placed by the runtime, which clamps them;
-                // `abs` children are deliberately out of flow.
-                if n.floating || n.rect.h == 0 {
-                    return;
+            let Some(doc) = doc_for(*kind) else { continue };
+            for page in pages(*kind) {
+                let state = seeded_state(*kind, Seed::Ordinary, page);
+                for issue in petramond_ui::contract::viewport_overflow(
+                    &doc.doc,
+                    &theme,
+                    &state,
+                    scale,
+                    &|_| None,
+                ) {
+                    overflowing.push(format!("{kind:?} page {page}: {issue}"));
                 }
-                if n.inst.layout.abs.is_some() {
-                    return;
-                }
-                let (top, bottom) = (n.parent.y, n.parent.y + n.parent.h);
-                if (!n.scrolled && (n.rect.y < top || n.rect.y + n.rect.h > bottom))
-                    || n.rect.x < n.parent.x
-                    || n.rect.x + n.rect.w > n.parent.x + n.parent.w
-                {
-                    overflowing.push(format!(
-                        "{kind:?} @scale {scale}: {:?} at {:?} outside parent content {:?}",
-                        n.inst.node.kind, n.rect, n.parent,
-                    ));
-                }
-            });
+            }
         }
     }
     assert!(
@@ -669,18 +687,20 @@ struct SolvedNode<'a, 'd> {
     inst: &'a petramond_ui::Inst<'d>,
     rect: petramond_ui::RectI,
     root: petramond_ui::RectI,
-    /// The enclosing content box, or the viewport for the root.
-    parent: petramond_ui::RectI,
     /// Inside a floating `tooltip` subtree (see `Solved::overlay`).
     floating: bool,
-    /// Inside a `scroll` subtree, where overflowing IS the feature.
-    scrolled: bool,
+}
+
+/// The [`seeded_state`] pages a kind is judged on: both sides of every
+/// [`EXCLUSIVE`] pair, and each of the creative screen's four views.
+fn pages(kind: GuiKind) -> std::ops::Range<usize> {
+    0..if kind == GuiKind::Creative { 4 } else { 2 }
 }
 
 /// Solve one shipped document with seeded dynamic text at `scale`, then
 /// hand every instance to `check`.
 fn walk_solved(kind: GuiKind, scale: i32, seed: Seed, mut check: impl FnMut(SolvedNode<'_, '_>)) {
-    for page in 0..if kind == GuiKind::Creative { 4 } else { 2 } {
+    for page in pages(kind) {
         walk_solved_page(kind, scale, seed, page, &mut check);
     }
 }
@@ -695,11 +715,9 @@ fn walk_solved_page(
     use petramond_ui::{solve, InstTree, ThemeEnv};
     let Some(doc) = doc_for(kind) else { return };
     let theme = crate::gui::doc_theme::theme();
-    // The TIGHTEST viewport this scale ever solves into: `gui_scale` steps
-    // up only once the window holds another whole 320×240, so every scale
-    // bottoms out at that same logical box. Checking the wide end instead
-    // would let a panel that only fits on a big monitor pass.
-    let viewport = (320, 240);
+    // The TIGHTEST viewport this scale ever solves into. Checking the wide
+    // end instead would let a panel that only fits on a big monitor pass.
+    let viewport = petramond_ui::contract::SMALLEST_VIEWPORT;
     let state = seeded_state(kind, seed, page);
     // Resolve the responsive breakpoint exactly as the runtime does — a
     // document that stacks below 360px must be judged in the form it will
@@ -712,39 +730,12 @@ fn walk_solved_page(
         image_size: &|_| None,
     };
     let solved = solve(&tree, &env, viewport, &|_| 0);
-    // A `scroll` anywhere above an instance means overflowing its box is
-    // the point, not a bug. Parents precede children in the arena.
-    let mut scrolled = vec![false; tree.len()];
     for i in 0..tree.len() {
-        let inst = tree.get(i as u32);
-        if let Some(p) = inst.parent {
-            scrolled[i] = scrolled[p as usize]
-                || matches!(tree.get(p).node.kind, petramond_ui::NodeKind::Scroll { .. });
-        }
-    }
-    for (i, &scrolled) in scrolled.iter().enumerate() {
-        let inst = tree.get(i as u32);
         check(SolvedNode {
-            inst,
+            inst: tree.get(i as u32),
             rect: solved.rects[i],
             root: solved.rects[0],
-            parent: inst.parent.map_or(
-                petramond_ui::RectI {
-                    x: 0,
-                    y: 0,
-                    w: viewport.0,
-                    h: viewport.1,
-                },
-                |p| {
-                    use petramond_ui::LayoutEnv;
-                    let parent = tree.get(p);
-                    let pad = parent.layout.pad;
-                    let border = env.container_insets(parent.node);
-                    solved.rects[p as usize].inset(std::array::from_fn(|i| pad[i] + border[i]))
-                },
-            ),
             floating: solved.overlay[i],
-            scrolled,
         });
     }
 }
@@ -891,12 +882,20 @@ fn long_dynamic_text_never_pushes_a_widget_off_its_screen() {
 
 #[test]
 fn foreign_namespace_documents_are_rejected_per_pack() {
+    // The loader's check runs through the shared rules on the registry's
+    // own keys.
+    use petramond_ui::contract::kind_permitted;
     let kind = crate::gui::intern_kind("doctest:owned").unwrap();
-    assert!(kind_permitted(kind, Some("doctest")).is_ok());
-    assert!(kind_permitted(kind, Some("otherpack")).is_err());
-    assert!(kind_permitted(kind, None).is_err());
-    assert!(kind_permitted(GuiKind::Furnace, None).is_ok());
-    assert!(kind_permitted(GuiKind::Title, Some("anypack")).is_ok());
+    let key = crate::gui::kind_key(kind).unwrap();
+    assert!(kind.is_registered());
+    assert!(kind_permitted(key, Some("doctest")).is_ok());
+    assert!(kind_permitted(key, Some("otherpack")).is_err());
+    assert!(kind_permitted(key, None).is_err());
+    for engine in [GuiKind::Furnace, GuiKind::Title] {
+        let key = crate::gui::kind_key(engine).unwrap();
+        assert!(kind_permitted(key, None).is_ok());
+        assert!(kind_permitted(key, Some("anypack")).is_ok());
+    }
 }
 
 /// A scratch dir of sheets for the collection tests below (the collector

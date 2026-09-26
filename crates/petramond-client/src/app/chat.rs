@@ -207,7 +207,7 @@ impl ChatUi {
         }
         let idx = self
             .editor
-            .cursor_index_for_x(lx - layout.text_x as f32, layout.visible_chars);
+            .cursor_index_for_x(&ui_font(), lx - layout.text_x as f32, layout.visible_chars);
         self.drag_anchor = Some(self.editor.begin_drag(idx, layout.visible_chars, now));
     }
 
@@ -218,7 +218,7 @@ impl ChatUi {
         let lx = x / layout.scale as f32;
         let idx = self
             .editor
-            .cursor_index_for_x(lx - layout.text_x as f32, layout.visible_chars);
+            .cursor_index_for_x(&ui_font(), lx - layout.text_x as f32, layout.visible_chars);
         self.editor.drag_to(anchor, idx, layout.visible_chars, now);
     }
 
@@ -243,9 +243,8 @@ impl ChatUi {
         now: f64,
     ) {
         let scale = petramond::gui::gui_scale(screen) as i32;
-        // Chat is not document-backed, so it paints with the process-default
-        // font the theme installed.
-        let font = petramond_ui::text::font();
+        // Chat is not document-backed; it paints with the theme font.
+        let font = ui_font();
         let mut p = petramond_ui::Painter {
             list: draw,
             scale,
@@ -280,12 +279,12 @@ impl ChatUi {
                 if drawn >= PASSIVE_MAX_LINES || y < 4 {
                     return;
                 }
-                y -= petramond_ui::text::line_advance() + 2;
+                y -= p.font.line_advance() + 2;
                 let backing = petramond_ui::RectI {
                     x: 8,
                     y: y - 1,
                     w,
-                    h: petramond_ui::text::line_h() + 2,
+                    h: p.font.line_h() + 2,
                 };
                 p.solid(backing, [0.0, 0.0, 0.0, 0.38 * alpha], None);
                 draw_visual_line(p, 8 + PAD, y, visual, alpha, Some(backing));
@@ -321,7 +320,7 @@ impl ChatUi {
         let mut y = open_history_first_line_y(history, visible_count);
         for visual in &lines[start..end] {
             draw_visual_line(p, x + PAD, y, visual, 1.0, Some(history));
-            y += petramond_ui::text::line_advance();
+            y += p.font.line_advance();
         }
 
         let input = petramond_ui::RectI {
@@ -331,9 +330,9 @@ impl ChatUi {
             h: input_h,
         };
         p.solid(input, [0.0, 0.0, 0.0, 0.72], None);
-        let prefix_w = petramond_ui::text::width(INPUT_PREFIX);
+        let prefix_w = p.font.width(INPUT_PREFIX);
         let text_x = x + PAD + prefix_w;
-        let text_y = input_y + (input_h - petramond_ui::text::line_h()) / 2;
+        let text_y = input_y + (input_h - p.font.line_h()) / 2;
         let visible = chars_for_width(w - PAD * 2 - prefix_w);
         self.input_layout = Some(InputLayout {
             scale: p.scale,
@@ -376,7 +375,7 @@ impl ChatUi {
         self.input_layout
             .map(|layout| layout.visible_chars)
             .unwrap_or_else(|| {
-                let prefix_w = petramond_ui::text::width(INPUT_PREFIX);
+                let prefix_w = ui_font().width(INPUT_PREFIX);
                 chars_for_width(CHAT_W - PAD * 2 - prefix_w)
             })
     }
@@ -408,7 +407,7 @@ fn logical_screen(screen: (u32, u32)) -> (i32, i32) {
 /// needs one representative advance: the WIDEST glyph, which guarantees a
 /// wrapped line never overruns the panel even in all-caps.
 fn chars_for_width(w: i32) -> usize {
-    let widest = petramond_ui::text::font().max_advance().max(1);
+    let widest = ui_font().max_advance().max(1);
     (w / widest).max(1) as usize
 }
 
@@ -417,16 +416,24 @@ fn contains(r: petramond_ui::RectI, x: f32, y: f32) -> bool {
 }
 
 fn open_history_visible_lines() -> usize {
+    let font = ui_font();
     let content_h = OPEN_HISTORY_H.saturating_sub(PAD * 2);
-    if content_h <= petramond_ui::text::line_h() {
+    if content_h <= font.line_h() {
         return 1;
     }
-    ((content_h - petramond_ui::text::line_h()) / petramond_ui::text::line_advance() + 1) as usize
+    ((content_h - font.line_h()) / font.line_advance() + 1) as usize
 }
 
 fn open_history_first_line_y(history: petramond_ui::RectI, line_count: usize) -> i32 {
-    let last_y = history.y + history.h - PAD - petramond_ui::text::line_h();
-    last_y - line_count.saturating_sub(1) as i32 * petramond_ui::text::line_advance()
+    let font = ui_font();
+    let last_y = history.y + history.h - PAD - font.line_h();
+    last_y - line_count.saturating_sub(1) as i32 * font.line_advance()
+}
+
+/// Chat is not document-backed: it measures and paints with the UI theme's
+/// font, so its text matches document text and its hit tests match its paint.
+fn ui_font() -> std::sync::Arc<petramond_ui::text::Font> {
+    petramond::gui::doc_theme::ui_font()
 }
 
 fn wrap_spans(spans: &[ChatSpan], max_chars: usize) -> Vec<Vec<ColoredText>> {
@@ -498,7 +505,7 @@ fn draw_visual_line(
     let mut cx = x;
     for run in line {
         p.text(&run.text, cx, y, color(run.fg, alpha), clip);
-        cx += petramond_ui::text::width(&run.text);
+        cx += p.font.width(&run.text);
     }
 }
 
@@ -548,10 +555,10 @@ mod tests {
         let visible = open_history_visible_lines();
         let first_y = open_history_first_line_y(panel, visible);
         let last_y =
-            first_y + visible.saturating_sub(1) as i32 * petramond_ui::text::line_advance();
+            first_y + visible.saturating_sub(1) as i32 * ui_font().line_advance();
 
         assert!(first_y >= panel.y + PAD);
-        assert!(last_y + petramond_ui::text::line_h() <= panel.y + panel.h - PAD);
+        assert!(last_y + ui_font().line_h() <= panel.y + panel.h - PAD);
     }
 
     fn send(chat: &mut ChatUi, text: &str) {

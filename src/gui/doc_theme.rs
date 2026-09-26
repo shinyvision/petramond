@@ -15,16 +15,14 @@ const THEME_JSON: &str = "ui/theme/theme.json";
 static THEME: OnceLock<Arc<Theme>> = OnceLock::new();
 
 pub fn theme() -> Arc<Theme> {
-    THEME
-        .get_or_init(|| {
-            let theme = load();
-            // Text measurement, wrapping, caret hits and the CPU rasterizer
-            // all read the process-default font; install the theme's so what
-            // is measured is what the GPU atlas actually draws.
-            petramond_ui::text::install(theme.ui_font().clone());
-            theme
-        })
-        .clone()
+    THEME.get_or_init(load).clone()
+}
+
+/// The theme's UI font: what text surfaces outside documents (chat, mod
+/// canvases) measure and paint with, so they match document text. There is
+/// no process-global font — every measurement names the font it uses.
+pub fn ui_font() -> Arc<petramond_ui::text::Font> {
+    theme().ui_font().clone()
 }
 
 fn load() -> Arc<Theme> {

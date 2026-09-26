@@ -5,9 +5,17 @@
 //! item, `visible: false` nodes are dropped (they take no space), and every
 //! binding is resolved to a concrete value. Layout, widgets, and paint all
 //! run over this arena, so binding resolution happens in exactly one place.
+//!
+//! Every instance records which state keys its expansion read. That is what
+//! lets the runtime keep last frame's arena and re-expand only the subtrees
+//! whose inputs changed (see [`reuse`]): a clean subtree moves across frames
+//! wholesale instead of being resolved again.
+
+pub(crate) mod reuse;
 
 use crate::doc::{Document, Node, NodeKind};
 use crate::state::{UiMap, UiState, UiValue};
+use reuse::Prev;
 
 /// A stable per-frame identity for an id-bearing instance: the node id plus
 /// the list item index when the node lives inside a template. Ephemeral
@@ -18,7 +26,8 @@ pub struct InstKey {
     pub item: Option<u32>,
 }
 
-/// One expanded node instance with every binding resolved.
+/// One expanded node instance: the document node it stamps, plus every
+/// binding resolved ([`InstData`], reachable directly through `Deref`).
 #[derive(Debug)]
 pub struct Inst<'d> {
     pub node: &'d Node,
@@ -26,6 +35,23 @@ pub struct Inst<'d> {
     /// the tree expanded in compact form (and the node carries one), else its
     /// ordinary `layout`.
     pub layout: &'d crate::doc::LayoutProps,
+    data: InstData,
+}
+
+impl std::ops::Deref for Inst<'_> {
+    type Target = InstData;
+
+    fn deref(&self) -> &InstData {
+        &self.data
+    }
+}
+
+/// An instance's resolved state, independent of the document borrow — the
+/// part that survives from one frame to the next.
+#[derive(Debug)]
+pub struct InstData {
+    /// Pre-order index of the stamped node in its document.
+    pub node_id: u32,
     /// The innermost list item index this instance was stamped from.
     pub item: Option<u32>,
     /// Resolved display text (label/button/badge/alert): binding, else static.
@@ -60,12 +86,20 @@ pub struct Inst<'d> {
     pub palette: Option<String>,
     pub text_opacity: f32,
     pub enabled: bool,
+    /// The enabled state inherited from the parent when this was expanded.
+    pub(crate) parent_enabled: bool,
     /// Arena index of the parent instance (`None` for the root).
     pub parent: Option<u32>,
     /// Arena indices of this instance's children, in document/item order.
     pub children: Vec<u32>,
     /// Identity for ephemeral state + events (id-bearing nodes only).
     pub key: Option<InstKey>,
+    /// Instances in this subtree, itself included (it is contiguous in the
+    /// arena: pre-order).
+    pub(crate) span: u32,
+    /// Hashes of every state key this instance's expansion read — its own
+    /// bindings plus the visibility of children that expanded to nothing.
+    pub(crate) deps: Vec<u64>,
 }
 
 /// The expanded arena. Index 0 is the root.
@@ -140,8 +174,42 @@ impl<'d> InstTree<'d> {
         compact: bool,
         hover: Option<&str>,
     ) -> InstTree<'d> {
+        let shape = reuse::DocShape::of(doc);
+        Self::expand_with(doc, &shape, state, compact, hover, None)
+    }
+
+    /// The expansion every entry point shares: `prev` (last frame's arena of
+    /// the same document, with its dirty subtrees marked) donates every clean
+    /// subtree instead of it being resolved again.
+    pub(crate) fn expand_with(
+        doc: &'d Document,
+        shape: &reuse::DocShape<'d>,
+        state: &UiState,
+        compact: bool,
+        hover: Option<&str>,
+        mut prev: Option<&mut Prev>,
+    ) -> InstTree<'d> {
         let mut tree = InstTree { insts: Vec::new() };
-        tree.grow(&doc.root, state, None, None, None, true, compact, hover);
+        let mut grow = Grow {
+            tree: &mut tree,
+            shape,
+            state,
+            compact,
+            hover,
+            prev: prev.as_deref_mut(),
+        };
+        grow.node(
+            &doc.root,
+            At {
+                node_id: 0,
+                item_map: None,
+                item: None,
+                parent: None,
+                parent_enabled: true,
+                counterpart: Some(ROOT),
+                reusable: true,
+            },
+        );
         tree
     }
 
@@ -174,167 +242,266 @@ impl<'d> InstTree<'d> {
             .map(|i| i as u32)
     }
 
+    /// Detach the arena from the document borrow, keeping every resolved
+    /// value for the next frame.
+    pub(crate) fn into_data(self) -> Vec<InstData> {
+        self.insts.into_iter().map(|inst| inst.data).collect()
+    }
+
+    /// Re-attach a detached arena to its document (`shape` indexes the same
+    /// document the data was expanded from).
+    pub(crate) fn from_data(
+        shape: &reuse::DocShape<'d>,
+        data: Vec<InstData>,
+        compact: bool,
+    ) -> InstTree<'d> {
+        let insts = data
+            .into_iter()
+            .map(|data| {
+                let node = shape.node(data.node_id);
+                Inst {
+                    node,
+                    layout: node.layout_for(compact),
+                    data,
+                }
+            })
+            .collect();
+        InstTree { insts }
+    }
+}
+
+/// Where one node is being stamped: the list item it resolves against, its
+/// parent, and its counterpart in last frame's arena (if any).
+#[derive(Clone, Copy)]
+struct At<'m> {
+    node_id: u32,
+    item_map: Option<&'m UiMap>,
+    item: Option<u32>,
+    parent: Option<u32>,
+    parent_enabled: bool,
+    /// The previous arena's instance of this same node and item, when one
+    /// exists and may be matched.
+    counterpart: Option<u32>,
+    /// Whether clean previous subtrees may be adopted here. Off below a list
+    /// that re-expanded: its rows may resolve against new item maps even when
+    /// no global key they read changed.
+    reusable: bool,
+}
+
+/// One expansion pass over a document.
+struct Grow<'t, 'd, 's> {
+    tree: &'t mut InstTree<'d>,
+    shape: &'s reuse::DocShape<'d>,
+    state: &'s UiState,
+    compact: bool,
+    hover: Option<&'s str>,
+    prev: Option<&'s mut Prev>,
+}
+
+/// Binding reads for one instance, recording every key they touch.
+struct Reads<'a> {
+    state: &'a UiState,
+    item: Option<&'a UiMap>,
+    deps: Vec<u64>,
+}
+
+impl<'a> Reads<'a> {
+    fn key(&mut self, key: &Option<String>) -> Option<&'a UiValue> {
+        let key = key.as_deref()?;
+        self.deps.push(reuse::key_hash(key));
+        self.state.resolve(self.item, key)
+    }
+
+    fn bool(&mut self, key: &Option<String>, default: bool) -> bool {
+        self.key(key).and_then(UiValue::as_bool).unwrap_or(default)
+    }
+
+    fn str(&mut self, key: &Option<String>) -> Option<String> {
+        match self.key(key)? {
+            UiValue::Str(s) if !s.is_empty() => Some(s.clone()),
+            _ => None,
+        }
+    }
+
+    fn int(&mut self, key: &Option<String>) -> Option<i32> {
+        self.key(key).and_then(UiValue::as_f32).map(|f| f as i32)
+    }
+
+    fn text(&mut self, node: &Node) -> Option<String> {
+        let bound = self.key(&node.bind.text).and_then(UiValue::as_display_text);
+        if bound.is_some() {
+            return bound;
+        }
+        match &node.kind {
+            NodeKind::Label { text, .. }
+            | NodeKind::Button { text, .. }
+            | NodeKind::Badge { text }
+            | NodeKind::Alert { text, .. } => text.clone(),
+            // Inputs show their bound text (editor overlays it while focused).
+            _ => None,
+        }
+    }
+}
+
+impl<'d> Grow<'_, 'd, '_> {
     /// Expand `node` (and descendants) into the arena; returns its index, or
     /// `None` when the node resolved invisible.
-    #[allow(clippy::too_many_arguments)]
-    fn grow(
-        &mut self,
-        node: &'d Node,
-        state: &UiState,
-        item_map: Option<&UiMap>,
-        item: Option<u32>,
-        parent: Option<u32>,
-        parent_enabled: bool,
-        compact: bool,
-        hover: Option<&str>,
-    ) -> Option<u32> {
-        if !resolve_bool(state, item_map, &node.bind.visible, true) {
+    fn node(&mut self, node: &'d Node, at: At<'_>) -> Option<u32> {
+        if let Some(adopted) = self.adopt(at) {
+            return Some(adopted);
+        }
+        let mut reads = Reads {
+            state: self.state,
+            item: at.item_map,
+            deps: Vec::new(),
+        };
+        let visible = reads.bool(&node.bind.visible, true);
+        let anchored = match &node.kind {
+            NodeKind::Tooltip {
+                hover: Some(anchor),
+            } => Some(anchor.as_str()),
+            _ => None,
+        };
+        if anchored.is_some() {
+            reads.deps.push(reuse::HOVER_DEP);
+        }
+        if !visible || anchored.is_some_and(|anchor| self.hover != Some(anchor)) {
+            // The parent must know what hid this child, or a clean parent
+            // could be adopted next frame without the child that should
+            // have appeared.
+            if let Some(p) = at.parent {
+                self.tree.insts[p as usize].data.deps.append(&mut reads.deps);
+            }
             return None;
         }
-        if let NodeKind::Tooltip {
-            hover: Some(anchor),
-        } = &node.kind
-        {
-            if hover != Some(anchor.as_str()) {
-                return None;
-            }
-        }
-        let idx = self.insts.len() as u32;
-        self.insts.push(Inst {
-            node,
-            layout: node.layout_for(compact),
-            item,
-            text: resolve_text(state, item_map, node),
-            value_f32: resolve_key(state, item_map, &node.bind.value).and_then(UiValue::as_f32),
-            value_bool: resolve_key(state, item_map, &node.bind.value).and_then(UiValue::as_bool),
-            selected: match resolve_key(state, item_map, &node.bind.selected) {
+        let idx = self.tree.insts.len() as u32;
+        let items = match (&node.kind, reads.key(&node.bind.items)) {
+            (NodeKind::List { .. }, Some(UiValue::List(items))) => Some(items.clone()),
+            _ => None,
+        };
+        let value = reads.key(&node.bind.value);
+        let data = InstData {
+            node_id: at.node_id,
+            item: at.item,
+            text: reads.text(node),
+            value_f32: value.and_then(UiValue::as_f32),
+            value_bool: value.and_then(UiValue::as_bool),
+            selected: match reads.key(&node.bind.selected) {
                 Some(UiValue::I32(i)) => Some(*i),
                 _ => None,
             },
-            enabled: parent_enabled && resolve_bool(state, item_map, &node.bind.enabled, true),
-            image: resolve_key(state, item_map, &node.bind.image).and_then(|v| match v {
-                UiValue::Str(s) => Some(s.clone()),
+            enabled: at.parent_enabled && reads.bool(&node.bind.enabled, true),
+            parent_enabled: at.parent_enabled,
+            image: match reads.key(&node.bind.image) {
+                Some(UiValue::Str(s)) => Some(s.clone()),
                 _ => None,
-            }),
-            frame: resolve_key(state, item_map, &node.bind.frame)
-                .and_then(UiValue::as_f32)
-                .map(|f| f as i32),
-            tint: resolve_key(state, item_map, &node.bind.tint).and_then(|v| match v {
-                UiValue::I32(packed) => Some(unpack_tint(*packed)),
+            },
+            frame: reads.int(&node.bind.frame),
+            tint: match reads.key(&node.bind.tint) {
+                Some(UiValue::I32(packed)) => Some(unpack_tint(*packed)),
                 _ => None,
-            }),
-            item_name: resolve_key(state, item_map, &node.bind.item).and_then(|v| match v {
-                UiValue::Str(s) if !s.is_empty() => Some(s.clone()),
-                _ => None,
-            }),
-            min_w: resolve_key(state, item_map, &node.bind.min_w)
-                .and_then(UiValue::as_f32)
-                .map(|f| f as i32),
-            abs_x: resolve_key(state, item_map, &node.bind.abs_x)
-                .and_then(UiValue::as_f32)
-                .map(|f| f as i32),
-            abs_y: resolve_key(state, item_map, &node.bind.abs_y)
-                .and_then(UiValue::as_f32)
-                .map(|f| f as i32),
-            palette: resolve_key(state, item_map, &node.bind.palette).and_then(|v| match v {
-                UiValue::Str(s) if !s.is_empty() => Some(s.clone()),
-                _ => None,
-            }),
-            text_opacity: resolve_key(state, item_map, &node.bind.text_opacity)
+            },
+            item_name: reads.str(&node.bind.item),
+            min_w: reads.int(&node.bind.min_w),
+            abs_x: reads.int(&node.bind.abs_x),
+            abs_y: reads.int(&node.bind.abs_y),
+            palette: reads.str(&node.bind.palette),
+            text_opacity: reads
+                .key(&node.bind.text_opacity)
                 .and_then(UiValue::as_f32)
                 .filter(|v| v.is_finite())
                 .unwrap_or(1.0)
                 .clamp(0.0, 1.0),
-            parent,
+            parent: at.parent,
             children: Vec::new(),
             key: node.id.as_ref().map(|id| InstKey {
                 id: id.clone(),
-                item,
+                item: at.item,
             }),
+            span: 1,
+            deps: std::mem::take(&mut reads.deps),
+        };
+        let enabled = data.enabled;
+        self.tree.insts.push(Inst {
+            node,
+            layout: node.layout_for(self.compact),
+            data,
         });
 
-        let enabled = self.insts[idx as usize].enabled;
-        let child_indices = match &node.kind {
+        let mut children = Vec::new();
+        match &node.kind {
             NodeKind::List { .. } => {
-                let template = node.children.first();
-                let items =
-                    node.bind
-                        .items
-                        .as_deref()
-                        .and_then(|k| match state.resolve(item_map, k) {
-                            Some(UiValue::List(items)) => Some(items.clone()),
-                            _ => None,
-                        });
-                let mut out = Vec::new();
-                if let (Some(template), Some(items)) = (template, items) {
+                if let (Some(template), Some(items)) = (node.children.first(), items) {
+                    let template_id = at.node_id + 1;
                     for (i, m) in items.iter().enumerate() {
-                        if let Some(ci) = self.grow(
-                            template,
-                            state,
-                            Some(m),
-                            Some(i as u32),
-                            Some(idx),
-                            enabled,
-                            compact,
-                            hover,
-                        ) {
-                            out.push(ci);
-                        }
+                        let item = Some(i as u32);
+                        let child = At {
+                            node_id: template_id,
+                            item_map: Some(m),
+                            item,
+                            parent: Some(idx),
+                            parent_enabled: enabled,
+                            counterpart: None,
+                            reusable: false,
+                        };
+                        children.extend(self.node(template, child));
                     }
                 }
-                out
             }
-            _ => node
-                .children
-                .iter()
-                .filter_map(|c| {
-                    self.grow(c, state, item_map, item, Some(idx), enabled, compact, hover)
-                })
-                .collect(),
-        };
-        self.insts[idx as usize].children = child_indices;
+            _ => {
+                let mut child_id = at.node_id + 1;
+                for child in &node.children {
+                    let child_at = At {
+                        node_id: child_id,
+                        item_map: at.item_map,
+                        item: at.item,
+                        parent: Some(idx),
+                        parent_enabled: enabled,
+                        counterpart: self.counterpart_of(at.counterpart, child_id, at.item),
+                        reusable: at.reusable,
+                    };
+                    children.extend(self.node(child, child_at));
+                    child_id += self.shape.size(child_id);
+                }
+            }
+        }
+        let span = self.tree.insts.len() as u32 - idx;
+        let inst = &mut self.tree.insts[idx as usize].data;
+        inst.children = children;
+        inst.span = span;
         Some(idx)
     }
-}
 
-fn resolve_key<'a>(
-    state: &'a UiState,
-    item: Option<&'a UiMap>,
-    key: &Option<String>,
-) -> Option<&'a UiValue> {
-    key.as_deref().and_then(|k| state.resolve(item, k))
-}
-
-fn resolve_bool(
-    state: &UiState,
-    item: Option<&UiMap>,
-    key: &Option<String>,
-    default: bool,
-) -> bool {
-    match resolve_key(state, item, key) {
-        Some(v) => v.as_bool().unwrap_or(default),
-        None => default,
+    /// The previous arena's child of `parent` stamping node `node_id` for
+    /// `item`, if the previous frame had one.
+    fn counterpart_of(&self, parent: Option<u32>, node_id: u32, item: Option<u32>) -> Option<u32> {
+        let prev = self.prev.as_deref()?;
+        prev.child_of(parent?, node_id, item)
     }
-}
 
-fn resolve_text(state: &UiState, item: Option<&UiMap>, node: &Node) -> Option<String> {
-    let bound = resolve_key(state, item, &node.bind.text).and_then(UiValue::as_display_text);
-    if bound.is_some() {
-        return bound;
-    }
-    match &node.kind {
-        NodeKind::Label { text, .. }
-        | NodeKind::Button { text, .. }
-        | NodeKind::Badge { text }
-        | NodeKind::Alert { text, .. } => text.clone(),
-        NodeKind::TextInput { .. } => {
-            // Inputs show their bound text (editor overlays it while focused).
-            None
+    /// Move the previous frame's instance of this node (and its whole
+    /// subtree) into the arena when nothing it read has changed.
+    fn adopt(&mut self, at: At<'_>) -> Option<u32> {
+        if !at.reusable {
+            return None;
         }
-        _ => None,
+        let prev = self.prev.as_deref_mut()?;
+        let j = at.counterpart?;
+        if !prev.is_clean(j, at.node_id, at.item, at.parent_enabled) {
+            return None;
+        }
+        let new_start = self.tree.insts.len() as u32;
+        for data in prev.take_subtree(j, new_start, at.parent) {
+            let node = self.shape.node(data.node_id);
+            self.tree.insts.push(Inst {
+                node,
+                layout: node.layout_for(self.compact),
+                data,
+            });
+        }
+        Some(new_start)
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

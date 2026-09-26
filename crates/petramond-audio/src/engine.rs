@@ -8,7 +8,7 @@ use std::io::Cursor;
 
 use rodio::buffer::SamplesBuffer;
 use rodio::source::Source;
-use rodio::{ChannelCount, DeviceSinkBuilder, MixerDeviceSink, SampleRate, SpatialPlayer};
+use rodio::{DeviceSinkBuilder, MixerDeviceSink, SpatialPlayer};
 
 use super::keep_alive::KeepAlive;
 use super::{MusicTrack, Sound, SoundCategory, SpatialListener, SpatialSoundSource};
@@ -24,22 +24,29 @@ const EAR_HALF_SPACING: f32 = 0.18;
 /// its own end never fades — it finishes as it was mastered.
 const MUSIC_FADE_SECONDS: f32 = 1.5;
 
-/// A sound decoded into memory once at startup, replayed by cloning the sample
-/// buffer (a memcpy — far cheaper than re-decoding the OGG on every play).
+/// A sound decoded into memory once at startup. The PCM lives inside rodio's
+/// `SamplesBuffer`, whose sample data is an `Arc<[Sample]>`, so every play is a
+/// clone of this source: a reference-count bump plus a fresh read cursor, never
+/// a copy of the samples.
 struct DecodedSound {
-    channels: ChannelCount,
-    sample_rate: SampleRate,
-    samples: Vec<f32>,
+    source: SamplesBuffer,
 }
 
 impl DecodedSound {
+    /// A fresh, independently positioned source over the shared samples.
+    #[inline]
+    fn play(&self) -> SamplesBuffer {
+        self.source.clone()
+    }
+
     /// Playback length at unit speed, in seconds — read from the decoded clip itself
     /// (frames ÷ sample rate), so decode checks do not pin asset metadata.
     #[inline]
     #[cfg(test)]
     fn duration(&self) -> f64 {
-        let frames = self.samples.len() / self.channels.get() as usize;
-        frames as f64 / self.sample_rate.get() as f64
+        self.source
+            .total_duration()
+            .map_or(0.0, |d| d.as_secs_f64())
     }
 }
 
@@ -271,10 +278,7 @@ impl Audio {
             };
             let loop_sink = rodio::Player::connect_new(sink.mixer());
             loop_sink.set_volume(0.0);
-            loop_sink.append(
-                SamplesBuffer::new(buf.channels, buf.sample_rate, buf.samples.clone())
-                    .repeat_infinite(),
-            );
+            loop_sink.append(buf.play().repeat_infinite());
             self.gain_loops.insert(
                 sound,
                 ActiveGainLoop {
@@ -450,7 +454,7 @@ impl Audio {
                 * sound.distance_gain((initial_position - listener.pos).length()),
         );
         player.set_speed(pitch);
-        let samples = SamplesBuffer::new(buf.channels, buf.sample_rate, buf.samples.clone());
+        let samples = buf.play();
         if def.looped {
             // A loop row plays until `stop_spatial`; `update_spatial`'s
             // finished-sink sweep never sees it empty.
@@ -612,12 +616,10 @@ impl Audio {
 
         let buf = &self.buffers[sound.0 as usize][variant];
         if let Some(sink) = self.sink.as_ref() {
-            // Clone the decoded PCM into a fresh replayable source, shift its pitch
-            // and gain, and mix it in. `speed` resamples (pitch + tempo together);
-            // `add` overlaps it with anything already playing.
-            let source = SamplesBuffer::new(buf.channels, buf.sample_rate, buf.samples.clone())
-                .speed(pitch)
-                .amplify(gain);
+            // A fresh cursor over the shared PCM, pitch- and gain-shifted, mixed
+            // in. `speed` resamples (pitch + tempo together); `add` overlaps it
+            // with anything already playing.
+            let source = buf.play().speed(pitch).amplify(gain);
             sink.mixer().add(source);
         }
     }
@@ -668,14 +670,12 @@ fn decode(bytes: Vec<u8>) -> Result<DecodedSound, String> {
         rodio::Decoder::try_from(Cursor::new(bytes)).map_err(|e| format!("decode init: {e}"))?;
     let channels = decoder.channels();
     let sample_rate = decoder.sample_rate();
-    let samples: Vec<f32> = decoder.collect();
+    let samples: Vec<rodio::Sample> = decoder.collect();
     if samples.is_empty() {
         return Err("decoded to zero samples".into());
     }
     Ok(DecodedSound {
-        channels,
-        sample_rate,
-        samples,
+        source: SamplesBuffer::new(channels, sample_rate, samples),
     })
 }
 
@@ -694,6 +694,7 @@ fn seed_rng() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rodio::{ChannelCount, SampleRate};
 
     /// A device-less engine for exercising the pure RNG helpers.
     fn silent_audio(seed: u64) -> Audio {
@@ -724,10 +725,29 @@ mod tests {
             .expect("clip file exists")
             .0;
         let d = decode(bytes).expect("wood_punch variant should decode");
-        assert!(!d.samples.is_empty(), "decoded to some samples");
-        assert!(d.sample_rate.get() > 0);
-        assert!(d.channels.get() >= 1);
+        assert!(d.play().len() > 0, "decoded to some samples");
+        assert!(d.source.sample_rate().get() > 0);
+        assert!(d.source.channels().get() >= 1);
         assert!(d.duration() > 0.0, "has a positive duration");
+    }
+
+    #[test]
+    fn each_play_reads_the_shared_samples_from_the_start() {
+        let pcm: Vec<rodio::Sample> = (0..64).map(|i| i as rodio::Sample / 64.0).collect();
+        let sound = DecodedSound {
+            source: SamplesBuffer::new(
+                ChannelCount::new(2).unwrap(),
+                SampleRate::new(8_000).unwrap(),
+                pcm.clone(),
+            ),
+        };
+        // Draining part of one play leaves the stored clip untouched: the next
+        // play starts at sample zero and yields the same PCM.
+        let mut first = sound.play();
+        assert_eq!(first.by_ref().take(10).count(), 10);
+        let second: Vec<_> = sound.play().collect();
+        assert_eq!(second, pcm);
+        assert_eq!(first.len(), pcm.len() - 10);
     }
 
     #[test]

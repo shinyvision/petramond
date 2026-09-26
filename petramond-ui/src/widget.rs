@@ -5,6 +5,7 @@
 
 use crate::doc::{ScrollAxis, TabSpec};
 use crate::layout::RectI;
+use crate::text::Font;
 use crate::theme::Theme;
 use crate::tree::Inst;
 
@@ -28,7 +29,7 @@ pub(crate) fn tab_widths(theme: &Theme, tabs: &[TabSpec]) -> Vec<i32> {
                 .and_then(|k| theme.part(k))
                 .map(|p| p.natural().0)
                 .unwrap_or(0);
-            let text_w = crate::text::width(tab.label.as_deref().unwrap_or(""));
+            let text_w = theme.ui_font().width(tab.label.as_deref().unwrap_or(""));
             let gap = if icon_w > 0 && text_w > 0 { 4 } else { 0 };
             icon_w + gap + text_w + pad * 2
         })
@@ -224,9 +225,8 @@ pub(crate) fn toggle_face_chain(
 /// the current content collapses as you type — the box would show one glyph
 /// and re-scroll on every keystroke. The widest advance is the only bound
 /// that cannot overflow (and is exact for a monospace face).
-pub(crate) fn input_visible_chars(inner_w: i32) -> usize {
-    let font = crate::text::font();
-    if inner_w < font.cell_w() {
+pub(crate) fn input_visible_chars(font: &Font, inner_w: i32) -> usize {
+    if inner_w <= 0 {
         return 0;
     }
     (inner_w / font.max_advance().max(1)).max(1) as usize
@@ -361,12 +361,13 @@ mod tests {
 
     #[test]
     fn input_char_capacity_matches_font_advance() {
-        assert_eq!(input_visible_chars(0), 0);
-        assert_eq!(input_visible_chars(crate::text::cell_w()), 1);
+        let font = Font::builtin();
+        assert_eq!(input_visible_chars(&font, 0), 0);
+        assert_eq!(input_visible_chars(&font, 1), 1, "a sliver still shows the caret glyph");
         // The window depends only on the box, so it cannot shrink as the
         // text changes — that is what stranded the caret on the last glyph.
-        let six = crate::text::font().max_advance() * 6;
-        assert_eq!(input_visible_chars(six), 6);
-        assert_eq!(input_visible_chars(six - 1), 5);
+        let six = font.max_advance() * 6;
+        assert_eq!(input_visible_chars(&font, six), 6);
+        assert_eq!(input_visible_chars(&font, six - 1), 5);
     }
 }

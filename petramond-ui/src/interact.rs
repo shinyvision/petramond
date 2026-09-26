@@ -294,10 +294,11 @@ impl Interact<'_> {
                         fs.focus_text_input(key.clone(), &bound, *max_chars);
                         let pad = self.theme.metrics.button_pad;
                         let text_rect = widget::input_text_rect(rect, pad);
-                        let visible = widget::input_visible_chars(text_rect.w);
+                        let font = self.theme.ui_font();
+                        let visible = widget::input_visible_chars(font, text_rect.w);
                         let x_rel = x - text_rect.x as f32;
                         if let Some(editor) = fs.editors.get_mut(&key) {
-                            let idx = editor.cursor_index_for_x(x_rel, visible);
+                            let idx = editor.cursor_index_for_x(font, x_rel, visible);
                             let anchor = editor.begin_drag(idx, visible, fs.now);
                             fs.drag = Some(Drag::TextSelect { key, anchor });
                         }
@@ -398,10 +399,10 @@ impl Interact<'_> {
                     let rect = self.solved.rects[i as usize];
                     let pad = self.theme.metrics.button_pad;
                     let text_rect = widget::input_text_rect(rect, pad);
-                    let visible = widget::input_visible_chars(text_rect.w);
+                    let visible = widget::input_visible_chars(self.theme.ui_font(), text_rect.w);
                     let x_rel = x - text_rect.x as f32;
                     if let Some(editor) = fs.editors.get_mut(&key) {
-                        let idx = editor.cursor_index_for_x(x_rel, visible);
+                        let idx = editor.cursor_index_for_x(self.theme.ui_font(), x_rel, visible);
                         editor.drag_to(anchor, idx, visible, fs.now);
                     }
                 }
@@ -574,7 +575,8 @@ impl Interact<'_> {
             if let Some(i) = self.tree.find(&focus.id, focus.item) {
                 let rect = self.solved.rects[i as usize];
                 let pad = self.theme.metrics.button_pad;
-                let visible = widget::input_visible_chars(widget::input_text_rect(rect, pad).w);
+                let text_w = widget::input_text_rect(rect, pad).w;
+                let visible = widget::input_visible_chars(self.theme.ui_font(), text_w);
                 let now = fs.now;
                 if let Some(editor) = fs.editors.get_mut(&focus) {
                     let before = editor.text().to_owned();
@@ -708,7 +710,8 @@ impl Interact<'_> {
         };
         let rect = self.solved.rects[i as usize];
         let pad = self.theme.metrics.button_pad;
-        let visible = widget::input_visible_chars(widget::input_text_rect(rect, pad).w);
+        let text_w = widget::input_text_rect(rect, pad).w;
+        let visible = widget::input_visible_chars(self.theme.ui_font(), text_w);
         let now = fs.now;
         if let Some(editor) = fs.editors.get_mut(&focus) {
             if editor.insert_text(&ch.to_string(), visible, now) {

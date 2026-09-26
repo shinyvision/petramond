@@ -122,7 +122,7 @@ pub(crate) fn content_pad(l: &crate::doc::LayoutProps, ins: [i32; 4]) -> [i32; 4
 }
 
 /// Solved geometry, indexed by instance arena index.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Solved {
     /// Final absolute rect per instance (logical px).
     pub rects: Vec<RectI>,

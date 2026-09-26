@@ -18,10 +18,10 @@
 //!
 //! (list items are string-keyed maps of tagged values, mirroring `UiMap`).
 
-use crate::contracts;
+use petramond_ui::contract;
 use petramond_ui::{
-    Anchor, AnchorEdge, Document, LayoutProps, Node, NodeKind, UiMap, UiState, UiValue,
-    FORMAT_VERSION,
+    Anchor, AnchorEdge, DocClass, Document, LayoutProps, Node, NodeKind, SlotContract, UiMap,
+    UiState, UiValue, FORMAT_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -66,9 +66,12 @@ impl Default for EditorSettings {
 
 impl Project {
     /// A fresh project for `kind`: a centered panel scaffolded with every
-    /// slot grid its engine contract requires (so it validates immediately).
+    /// slot grid its engine contract requires (so it validates immediately),
+    /// authored as the class the engine table gives the kind. Mod kinds
+    /// start as a slotless screen.
     pub fn new(kind: &str) -> Project {
-        let contract = contracts::contract_for(kind);
+        let engine = contract::engine_kind(kind);
+        let contract = engine.map(|k| k.contract()).unwrap_or_else(SlotContract::default);
         let mut root = Node::leaf(NodeKind::Column);
         root.style = Some("panel.large".into());
         root.layout = LayoutProps {
@@ -99,7 +102,7 @@ impl Project {
             }));
         }
         for (role, count) in &contract.roles {
-            let (cols, rows) = contracts::default_grid(*count);
+            let (cols, rows) = default_grid(*count);
             root.children.push(Node::leaf(if *count == 1 {
                 NodeKind::Slot {
                     role: role.clone(),
@@ -121,7 +124,7 @@ impl Project {
             document: Document {
                 format: FORMAT_VERSION,
                 kind: kind.to_owned(),
-                class: contracts::class_for(kind),
+                class: engine.map_or(DocClass::Screen, |k| k.class),
                 compact_below_w: None,
                 root,
             },
@@ -162,6 +165,19 @@ impl Project {
             }
         }
         (state, errors)
+    }
+}
+
+/// A sensible grid shape for `count` slots (used when scaffolding a new
+/// document that must satisfy its contract).
+fn default_grid(count: usize) -> (u32, u32) {
+    match count {
+        27 => (9, 3),
+        9 => (3, 3),
+        4 => (2, 2),
+        21 => (7, 3),
+        1 => (1, 1),
+        n => (n as u32, 1),
     }
 }
 
@@ -251,11 +267,11 @@ mod tests {
 
     #[test]
     fn new_projects_satisfy_their_contract() {
-        for kind in crate::contracts::ENGINE_KINDS {
-            let p = Project::new(kind);
-            let contract = crate::contracts::contract_for(kind);
-            let issues = p.document.validate(None, Some(&contract));
-            assert!(issues.is_empty(), "{kind}: {issues:?}");
+        for kind in contract::ENGINE_KINDS {
+            let p = Project::new(kind.key);
+            assert_eq!(p.document.class, kind.class, "{}", kind.key);
+            let issues = p.document.validate(None, Some(&kind.contract()));
+            assert!(issues.is_empty(), "{}: {issues:?}", kind.key);
         }
     }
 

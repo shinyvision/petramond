@@ -264,7 +264,7 @@ mod tests {
         let loaded = crate::project::Project::from_json(&saved).unwrap();
         let exported = loaded.document.to_json_pretty();
         let doc = Document::from_json(&exported).unwrap();
-        let contract = crate::contracts::contract_for(&doc.kind);
+        let contract = petramond_ui::contract::contract_for_document(&doc).unwrap();
         assert_eq!(doc.validate(None, Some(&contract)), vec![]);
 
         let theme = Arc::new(Theme::placeholder());

@@ -296,62 +296,10 @@ pub fn wrap_in(root: &mut Node, path: &[usize], kind: NodeKind) -> Option<()> {
 /// Bound image names (`bind.image`) are state keys, not files, so they don't
 /// count.
 pub fn static_image_names(doc: &Document) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    doc.root.visit(&mut |n| {
-        let name = match &n.kind {
-            NodeKind::Image { image, .. } | NodeKind::Rotimage { image, .. } => Some(image),
-            NodeKind::Button {
-                image: Some(image), ..
-            } => Some(image),
-            _ => None,
-        };
-        if let Some(image) = name {
-            if !image.is_empty() && !out.contains(image) {
-                out.push(image.clone());
-            }
-        }
-    });
-    out
-}
-
-/// Builder-side warnings for static image names that don't resolve (the node
-/// draws nothing). Issue paths use the runtime's `root/1/2(image)` format so
-/// the validation panel's click-to-select resolver works on them.
-pub fn missing_image_issues(
-    doc: &Document,
-    exists: &dyn Fn(&str) -> bool,
-) -> Vec<petramond_ui::DocIssue> {
-    fn walk(
-        node: &Node,
-        path: &str,
-        exists: &dyn Fn(&str) -> bool,
-        out: &mut Vec<petramond_ui::DocIssue>,
-    ) {
-        let image_ref: Option<&String> = match &node.kind {
-            NodeKind::Image { image, .. } | NodeKind::Rotimage { image, .. } => Some(image),
-            NodeKind::Button {
-                image: Some(image), ..
-            } => Some(image),
-            _ => None,
-        };
-        if let Some(image) = image_ref {
-            if !image.is_empty() && !exists(image) {
-                out.push(petramond_ui::DocIssue {
-                    path: format!("{path}({})", node.kind.type_name()),
-                    message: format!(
-                        "image '{image}' not found beside the project (won't draw; \
-                         use Choose image… to copy one in)"
-                    ),
-                });
-            }
-        }
-        for (i, c) in node.children.iter().enumerate() {
-            walk(c, &format!("{path}/{i}"), exists, out);
-        }
-    }
-    let mut out = Vec::new();
-    walk(&doc.root, "root", exists, &mut out);
-    out
+    petramond_ui::contract::image_refs(doc)
+        .into_iter()
+        .map(|r| r.name)
+        .collect()
 }
 
 // ---- DocIssue path resolver ---------------------------------------------------
@@ -465,10 +413,12 @@ mod tests {
                 { "type": "button", "id": "go", "image": "missing_btn.png" }
             ] }
         }"#);
-        let issues = missing_image_issues(&d, &|name| name == "ok.png");
+        let issues =
+            petramond_ui::contract::image_issues(&d, &|name| (name == "ok.png").then_some((4, 4)));
         assert_eq!(issues.len(), 2);
         assert!(issues[0].message.contains("missing.png"));
-        // The panel's click-to-select resolver understands the path.
+        // The panel's click-to-select resolver understands the shared rule's
+        // paths.
         let path = resolve_issue_path(&issues[0].path).unwrap();
         assert_eq!(path, vec![1, 0]);
         assert_eq!(node_at(&d.root, &path).unwrap().kind.type_name(), "image");

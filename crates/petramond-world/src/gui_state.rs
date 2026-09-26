@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub use kind::GuiKind;
-pub use kind::{intern_kind, intern_str, kind_key, resolve_kind};
+pub use kind::{engine_kind_keys, intern_kind, intern_str, kind_key, resolve_kind};
 
 /// Maximum distinct destination cells one pointer gesture can ship. The
 /// largest supported menu is a 54-slot generic container plus all 36 player

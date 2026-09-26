@@ -5,13 +5,17 @@
 //! the namespace; engine kinds may ship from anywhere (re-skin packs).
 //! Documents validate against the engine's per-kind
 //! [`SlotContract`] and the theme's style set — a bad document is skipped
-//! loudly, never trusted to route clicks.
+//! loudly, never trusted to route clicks. Every rule lives in
+//! [`petramond_ui::contract`], shared with the gui-builder.
 //!
 //! In debug builds the registry re-reads changed files (~1s poll), so editing
 //! a document (or re-exporting from the gui-builder) shows up without a
 //! restart.
 
 use super::GuiKind;
+use petramond_ui::contract::{
+    self, image_refs, slot_semantics_issues, validate_for_engine, EngineCatalog, EngineCheck,
+};
 use petramond_ui::{DocClass, Document, Node, NodeKind, SlotContract};
 use petramond_world::container::{SlotSpec, MAX_CONTAINER_SLOTS, MAX_SLOT_FILTERS};
 use std::path::PathBuf;
@@ -134,74 +138,49 @@ pub fn container_slot_specs(kind: GuiKind) -> Arc<Vec<SlotSpec>> {
     doc_for(kind).map(|d| d.container_slots).unwrap_or_default()
 }
 
-/// The slot contract a MOD document earns from its own declarations: mod
-/// kinds may declare generic `container` slots (engine-backed mod-owned
-/// storage, capped), plus the standard `player_inv`/`hotbar` grids with the
-/// engine counts. Any other role is refused — a mod document can never name
-/// an engine block-entity's roles. `Err` skips the document loudly at load.
-fn document_contract_for(doc: &Document) -> Result<SlotContract, String> {
-    // The engine grids' sizes come from the inventory layout itself.
-    const MAIN_GRID: usize =
-        petramond_world::inventory::TOTAL_SLOTS - petramond_world::inventory::HOTBAR_LEN;
-    const HOTBAR: usize = petramond_world::inventory::HOTBAR_LEN;
-    let mut roles: Vec<(String, usize)> = Vec::new();
-    for (role, count) in doc.role_slots() {
-        match role.as_str() {
-            "container" if count <= MAX_CONTAINER_SLOTS => {}
-            "container" => {
-                return Err(format!(
-                    "declares {count} container slots; the cap is {MAX_CONTAINER_SLOTS}"
-                ))
-            }
-            "player_inv" if count == MAIN_GRID => {}
-            "hotbar" if count == HOTBAR => {}
-            "off_hand" if count == 1 => {}
-            "player_inv" | "hotbar" | "off_hand" => {
-                return Err(format!(
-                    "role '{role}' declares {count} slots; the engine grids are \
-                     player_inv:{MAIN_GRID}, hotbar:{HOTBAR}, and off_hand:1"
-                ))
-            }
-            _ => {
-                return Err(format!(
-                    "role '{role}' is not available to mod documents (allowed: container, \
-                     player_inv, hotbar, off_hand)"
-                ))
-            }
-        }
-        roles.push((role, count));
+// The GUI-facing statement of the engine's limits lives in
+// `petramond_ui::contract` (shared with the gui-builder); these pin it to the
+// engine's own constants so the two can never drift.
+const _: () = {
+    use petramond_ui::contract as ui;
+    use petramond_world::inventory::{HOTBAR_LEN, TOTAL_SLOTS};
+    assert!(ui::CHEST_SLOTS == crate::world::chest::CHEST_SLOTS);
+    assert!(ui::FURNACE_SLOTS == petramond_world::furnace::FURNACE_SLOTS);
+    assert!(ui::HOTBAR_SLOTS == HOTBAR_LEN);
+    assert!(ui::MAIN_GRID_SLOTS == TOTAL_SLOTS - HOTBAR_LEN);
+    assert!(ui::MAX_CONTAINER_SLOTS == MAX_CONTAINER_SLOTS);
+    assert!(ui::MAX_SLOT_FILTERS == MAX_SLOT_FILTERS);
+    assert!(ui::IMAGE_MAX_SIDE == mod_api::GUI_IMAGE_MAX_SIDE);
+    assert!(ui::IMAGE_MAX_FRAMES == mod_api::GUI_IMAGE_MAX_FRAMES);
+};
+
+/// The item-tag registry as the shared validator sees it. The check stays on
+/// the non-interning QUERY lookup: the interning resolve would register a
+/// misspelled tag as a fresh empty one and the slot would silently accept
+/// nothing.
+struct ItemTags;
+
+impl EngineCatalog for ItemTags {
+    fn item_tag_exists(&self, name: &str) -> bool {
+        petramond_world::item::ItemTag::lookup(name).is_some()
     }
-    Ok(SlotContract { roles })
 }
 
 /// A mod document's `container` slot semantics in in-role index order.
 ///
-/// A TAG name is checked against the item-tag registry via the non-interning
-/// QUERY lookup — the interning resolve would register a misspelled tag as a
-/// fresh empty one and the slot would silently accept nothing. A DATA key is
-/// checked for being NAMESPACED and nothing else: data keys have no
-/// declaration anywhere (a row states one by carrying it), so "no row carries
-/// it yet" is a pack shipping its slot before its rows, not an error. Both
-/// failures are document errors (`Err` skips it loudly).
+/// The rules (semantics only on `container` slots, the filter cap, tag
+/// existence, namespaced data keys) are the shared
+/// [`slot_semantics_issues`]; this resolves the authored filters to runtime
+/// ones once they pass. `Err` skips the document loudly.
 fn doc_container_specs(doc: &Document) -> Result<Vec<SlotSpec>, String> {
+    let issues = slot_semantics_issues(doc, &ItemTags);
+    if !issues.is_empty() {
+        return Err(issues.join("; "));
+    }
     let mut specs = Vec::new();
     for cell in doc.slot_semantics() {
         if cell.role != "container" {
-            if !cell.accepts.is_empty() || cell.take_only {
-                return Err(format!(
-                    "role '{}' carries accepts/take_only; slot semantics apply only to \
-                     'container' slots",
-                    cell.role
-                ));
-            }
             continue;
-        }
-        if cell.accepts.len() > MAX_SLOT_FILTERS {
-            return Err(format!(
-                "a container slot declares {} accepts filters; the cap is {MAX_SLOT_FILTERS} \
-                 (the runtime accepts mask spends one bit per filter)",
-                cell.accepts.len()
-            ));
         }
         let mut filters = Vec::new();
         for accept in &cell.accepts {
@@ -216,7 +195,7 @@ fn doc_container_specs(doc: &Document) -> Result<Vec<SlotSpec>, String> {
     Ok(specs)
 }
 
-/// One authored `accepts` entry → the runtime filter.
+/// One validated `accepts` entry → the runtime filter.
 fn resolve_slot_filter(
     accept: &petramond_ui::doc::Accept,
 ) -> Result<petramond_world::container::SlotFilter, String> {
@@ -224,150 +203,51 @@ fn resolve_slot_filter(
         petramond_ui::doc::Accept::Tag(name) => petramond_world::item::ItemTag::lookup(name)
             .map(petramond_world::container::SlotFilter::Tag)
             .ok_or_else(|| format!("unknown item tag '{name}' in a slot's accepts")),
-        petramond_ui::doc::Accept::Data { data } => {
-            if !petramond_world::registry::is_namespaced(data) {
-                return Err(format!(
-                    "slot accepts data key '{data}': data keys must be namespaced ('mod_id:name')"
-                ));
-            }
-            Ok(petramond_world::container::SlotFilter::Data(
-                super::intern_str(data),
-            ))
-        }
+        petramond_ui::doc::Accept::Data { data } => Ok(
+            petramond_world::container::SlotFilter::Data(super::intern_str(data)),
+        ),
     }
 }
 
-/// The engine's slot expectations per kind. Mod kinds derive their contract
-/// from their own document via `document_contract_for`; shell kinds carry no
-/// role slots.
+/// The engine's slot expectations per kind, from the shared engine kind
+/// table. Mod kinds derive their contract from their own document; shell
+/// kinds carry no role slots.
 pub fn contract_for(kind: GuiKind) -> SlotContract {
-    match kind {
-        GuiKind::Chest => SlotContract::new(&[
-            ("container", crate::world::chest::CHEST_SLOTS),
-            ("player_inv", 27),
-            ("hotbar", 9),
-        ]),
-        GuiKind::Inventory => SlotContract::new(&[
-            ("player_inv", 27),
-            ("hotbar", 9),
-            ("off_hand", 1),
-            ("craft_result", 1),
-        ]),
-        GuiKind::CraftingTable => {
-            SlotContract::new(&[("player_inv", 27), ("hotbar", 9), ("craft_result", 1)])
-        }
-        GuiKind::Furnace => SlotContract::new(&[
-            ("player_inv", 27),
-            ("hotbar", 9),
-            // Input, fuel, output — in `SLOT_INPUT`/`SLOT_FUEL`/`SLOT_OUTPUT`
-            // order, since the in-role index IS the container index.
-            ("container", petramond_world::furnace::FURNACE_SLOTS),
-        ]),
-        GuiKind::Creative => SlotContract::new(&[("hotbar", 9)]),
-        GuiKind::Hotbar => SlotContract::new(&[("hotbar", 9), ("off_hand", 1)]),
-        GuiKind::Demo => SlotContract::new(&[("demo_slots", 9)]),
-        _ => SlotContract::default(),
-    }
-}
-
-/// The mod-kind ownership rule, shared with the baked path: a namespaced
-/// document kind must ship from the pack owning the namespace.
-fn kind_permitted(kind: GuiKind, pack_id: Option<&str>) -> Result<(), String> {
-    if !kind.is_registered() {
-        return Ok(());
-    }
-    let key = super::kind_key(kind).unwrap_or("?");
-    let owner = key.split_once(':').map(|(ns, _)| ns).unwrap_or("");
-    match pack_id {
-        Some(id) if id == owner => Ok(()),
-        Some(id) => Err(format!(
-            "kind '{key}' does not belong to pack '{id}' (namespaced kinds must use the \
-             shipping pack's own id)"
-        )),
-        None => Err(format!(
-            "kind '{key}' is namespaced but the document ships outside any pack"
-        )),
-    }
+    super::kind_key(kind)
+        .and_then(contract::engine_kind)
+        .map(|k| k.contract())
+        .unwrap_or_default()
 }
 
 fn file_mtime(path: &std::path::Path) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
-/// Every image a document statically names — on `image`, `rotimage`, and
-/// image-backed `button` nodes alike — resolved beside the document in
-/// first-reference order. `Err` rejects the document: a statically named
-/// image whose file is missing used to only skip its quad, which no pack
-/// author ever saw until the screen drew wrong.
-fn collect_doc_images(doc: &Document, dir: &std::path::Path) -> Result<Vec<DocImageRef>, String> {
-    // First-reference order (the order feeds TexId::DocImage), keeping the
-    // first SEEN frames grid so an unframed reference cannot hide a framed
-    // one from the sheet check below.
-    let mut refs: Vec<(String, Option<[u32; 2]>)> = Vec::new();
-    doc.root.visit(&mut |node| {
-        let (name, frames) = match &node.kind {
-            petramond_ui::NodeKind::Image { image, frames, .. } => (image.as_str(), *frames),
-            petramond_ui::NodeKind::Rotimage { image, .. } => (image.as_str(), None),
-            petramond_ui::NodeKind::Button {
-                image: Some(image),
-                frames,
-                ..
-            } => (image.as_str(), *frames),
-            _ => return,
-        };
-        // An empty static name is the runtime-bound pattern (`bind.image`
-        // supplies the art, e.g. the world-settings pack icons) — there is
-        // no file to resolve beside the document.
-        if name.is_empty() {
-            return;
-        }
-        match refs.iter_mut().find(|(n, _)| n == name) {
-            Some(slot) => {
-                if slot.1.is_none() {
-                    slot.1 = frames;
-                }
-            }
-            None => refs.push((name.to_string(), frames)),
-        }
-    });
-    let mut images = Vec::with_capacity(refs.len());
-    for (name, frames) in refs {
-        let path = dir.join(&name);
-        let size =
-            image::image_dimensions(&path).map_err(|_| format!("names missing art {name}"))?;
-        if let Some(frames) = frames {
-            validate_frame_sheet(&name, size, frames)?;
-        }
-        images.push(DocImageRef { name, path, size });
-    }
-    Ok(images)
+fn image_size_beside(dir: &std::path::Path, name: &str) -> Option<(u32, u32)> {
+    image::image_dimensions(dir.join(name)).ok()
 }
 
-/// A framed sheet is uploaded whole and ONE frame is drawn per node, so the
-/// grid must divide the image exactly and both must stay inside the shared
-/// GUI image bounds — a bad grid mis-slices every frame of the sheet.
-fn validate_frame_sheet(name: &str, size: (u32, u32), frames: [u32; 2]) -> Result<(), String> {
-    let [cols, rows] = frames;
-    let (w, h) = size;
-    if cols == 0 || rows == 0 || w % cols != 0 || h % rows != 0 {
-        return Err(format!(
-            "image {name} is {w}x{h}, which the frames grid {cols}x{rows} does not divide evenly"
-        ));
+/// Every image a document statically names (the shared [`image_refs`]
+/// walk), resolved beside the document in first-reference order. `Err`
+/// rejects the document: a statically named image whose file is missing, or
+/// a framed sheet its grid does not fit, would otherwise draw wrong with no
+/// symptom until someone opened the screen.
+fn collect_doc_images(doc: &Document, dir: &std::path::Path) -> Result<Vec<DocImageRef>, String> {
+    let refs = image_refs(doc);
+    let mut images = Vec::with_capacity(refs.len());
+    for r in refs {
+        let size = image_size_beside(dir, &r.name)
+            .ok_or_else(|| format!("names missing art {}", r.name))?;
+        if let Some(frames) = r.frames {
+            contract::check_frame_sheet(&r.name, size, frames)?;
+        }
+        images.push(DocImageRef {
+            path: dir.join(&r.name),
+            name: r.name,
+            size,
+        });
     }
-    if cols * rows > mod_api::GUI_IMAGE_MAX_FRAMES {
-        return Err(format!(
-            "image {name} declares {} frames; the cap is {}",
-            cols * rows,
-            mod_api::GUI_IMAGE_MAX_FRAMES
-        ));
-    }
-    if w > mod_api::GUI_IMAGE_MAX_SIDE || h > mod_api::GUI_IMAGE_MAX_SIDE {
-        return Err(format!(
-            "image {name} is {w}x{h}; the GUI image side cap is {}",
-            mod_api::GUI_IMAGE_MAX_SIDE
-        ));
-    }
-    Ok(())
+    Ok(images)
 }
 
 /// The standard slot-tooltip chrome every CONTAINER document carries: hovering
@@ -563,22 +443,17 @@ fn load() -> Registry {
             );
             continue;
         };
-        if let Err(e) = kind_permitted(kind, found.pack_id.as_deref()) {
-            eprintln!("gui: ignoring {} — {e}", found.json.display());
-            continue;
-        }
-        let contract = if kind.is_registered() {
-            match document_contract_for(&doc) {
-                Ok(contract) => contract,
-                Err(e) => {
-                    eprintln!("gui: ignoring {} — {e}", found.json.display());
-                    continue;
-                }
-            }
-        } else {
-            contract_for(kind)
-        };
-        let issues = doc.validate(Some(theme.as_ref()), Some(&contract));
+        // The shared engine rules — the same function the gui-builder runs,
+        // so a document it calls valid is one this loader accepts.
+        let issues = validate_for_engine(
+            &doc,
+            &EngineCheck {
+                styles: Some(theme.as_ref()),
+                pack_id: found.pack_id.as_deref(),
+                catalog: &ItemTags,
+                image_size: &|name| image_size_beside(&found.dir, name),
+            },
+        );
         if !issues.is_empty() {
             for issue in &issues {
                 eprintln!("gui: {} — {issue}", found.json.display());
@@ -593,9 +468,8 @@ fn load() -> Registry {
             }
         };
         // Collect referenced images (resolved beside the document) with
-        // their pixel sizes for layout naturals. Bad art — a missing file, a
-        // frame grid that does not divide its sheet — rejects the document
-        // loudly like any other validation failure.
+        // their pixel sizes for layout naturals. The art was validated
+        // above; a file that vanished since still rejects the document.
         let images = match collect_doc_images(&doc, &found.dir) {
             Ok(images) => images,
             Err(e) => {

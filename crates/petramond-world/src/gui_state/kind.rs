@@ -166,6 +166,12 @@ pub fn resolve_kind(key: &str) -> Option<GuiKind> {
         .map(|i| GuiKind((ENGINE_GUI_KIND_NAMES.len() + i) as u8))
 }
 
+/// Every engine kind key, index == frozen id — what the GUI document
+/// contract table is checked against.
+pub fn engine_kind_keys() -> &'static [&'static str] {
+    &ENGINE_GUI_KIND_NAMES
+}
+
 /// The registered key of `kind` (`None` for [`GuiKind::Other`] / unregistered
 /// ids). Events and the ABI carry this string, never the session id.
 pub fn kind_key(kind: GuiKind) -> Option<&'static str> {

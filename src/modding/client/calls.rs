@@ -823,7 +823,8 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             if text.len() > CLIENT_TEXT_BYTES_MAX || text.contains(['\n', '\r']) {
                 return HostRet::Error("invalid single-line client text".into());
             }
-            let [width, height] = petramond_text::measure_scaled(&text, scale);
+            // Mod canvases measure and draw with the UI theme's font.
+            let [width, height] = crate::gui::doc_theme::ui_font().measure_scaled(&text, scale);
             let Ok(width) = u16::try_from(width) else {
                 return HostRet::Error("client text width exceeds u16".into());
             };
@@ -855,8 +856,9 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             client.next_image_revision = client.next_image_revision.wrapping_add(1).max(1);
             let image = client.images.get_mut(&key).unwrap();
             let rgba = Arc::make_mut(&mut image.rgba);
+            let font = crate::gui::doc_theme::ui_font();
             for run in runs {
-                petramond_text::draw_rgba(
+                font.draw_rgba(
                     rgba,
                     image.width as u32,
                     &run.text,

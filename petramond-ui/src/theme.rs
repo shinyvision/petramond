@@ -139,12 +139,24 @@ struct ThemeJson {
 }
 
 /// The theme's font: a real font FILE plus the pixel size it was designed
-/// for. A pixel font rasterized off its design grid loses whole stems, so the
-/// size is authored, never guessed.
+/// for (a pixel font rasterized off its design grid loses whole stems, so the
+/// size is authored, never guessed), optionally limited to inclusive
+/// codepoint `ranges`, and followed by `fallback` faces that fill whatever
+/// the primary lacks — a pack can add a script without replacing the face.
 #[derive(Deserialize)]
 struct FontJson {
+    #[serde(flatten)]
+    face: FaceJson,
+    #[serde(default)]
+    fallback: Vec<FaceJson>,
+}
+
+#[derive(Deserialize)]
+struct FaceJson {
     file: String,
     px: f32,
+    #[serde(default)]
+    ranges: Vec<[u32; 2]>,
 }
 
 #[derive(Deserialize)]
@@ -232,12 +244,7 @@ impl Theme {
         }
         let atlas = load_png(&t.atlas, read)?;
         let ui_font = match &t.font {
-            Some(font) => {
-                let bytes = read(&font.file)
-                    .ok_or_else(|| ThemeError(format!("font '{}' not found", font.file)))?;
-                crate::text::Font::from_ttf(&bytes, font.px)
-                    .map_err(|e| ThemeError(format!("font '{}': {e}", font.file)))?
-            }
+            Some(font) => load_font(font, read)?,
             None => crate::text::Font::builtin(),
         };
         let (rgba, size) = ui_font.build_atlas();
@@ -251,9 +258,8 @@ impl Theme {
         })
     }
 
-    /// The theme's UI font. The host installs this as the process default
-    /// ([`crate::text::install`]) once the theme is loaded, so the free
-    /// functions in `text` measure with the font that actually draws.
+    /// The theme's UI font — the one font its documents are measured, hit
+    /// tested and painted with (the atlas in [`Theme::font`] is built from it).
     pub fn ui_font(&self) -> &std::sync::Arc<crate::text::Font> {
         &self.ui_font
     }
@@ -336,6 +342,29 @@ fn parse_hex(s: &str) -> Option<[f32; 4]> {
     ])
 }
 
+/// The manifest's face chain (primary, then fallbacks) as one font.
+fn load_font(
+    font: &FontJson,
+    read: &dyn Fn(&str) -> Option<Vec<u8>>,
+) -> Result<crate::text::Font, ThemeError> {
+    let faces: Vec<&FaceJson> = std::iter::once(&font.face).chain(&font.fallback).collect();
+    let bytes = faces
+        .iter()
+        .map(|f| read(&f.file).ok_or_else(|| ThemeError(format!("font '{}' not found", f.file))))
+        .collect::<Result<Vec<_>, _>>()?;
+    let sources: Vec<crate::text::FaceSource<'_>> = faces
+        .iter()
+        .zip(&bytes)
+        .map(|(f, bytes)| crate::text::FaceSource {
+            bytes,
+            px: f.px,
+            ranges: &f.ranges,
+        })
+        .collect();
+    crate::text::Font::from_faces(&sources)
+        .map_err(|e| ThemeError(format!("font '{}': {e}", font.face.file)))
+}
+
 fn load_png(path: &str, read: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<ImageData, ThemeError> {
     let bytes = read(path).ok_or_else(|| ThemeError(format!("missing theme image '{path}'")))?;
     let img = image::load_from_memory(&bytes)
@@ -346,11 +375,6 @@ fn load_png(path: &str, read: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<ImageD
         rgba: img.into_raw(),
         size,
     })
-}
-
-fn builtin_font() -> ImageData {
-    let (rgba, size) = crate::text::build_atlas();
-    ImageData { rgba, size }
 }
 
 // ---- layout env ---------------------------------------------------------------
@@ -485,8 +509,9 @@ impl LayoutEnv for ThemeEnv<'_> {
                     .unwrap_or((0, 0));
                 let gap = if icon.0 > 0 { 4 } else { 0 };
                 let chrome_w = insets[0] + icon.0 + gap + insets[2];
-                let text_avail = avail_w.map(|a| (a - chrome_w).max(self.theme.ui_font().cell_w()));
-                let (text_w, text_h) = self.theme.ui_font().measure(text.unwrap_or(""), text_avail);
+                let font = self.theme.ui_font();
+                let text_avail = avail_w.map(|a| (a - chrome_w).max(font.max_advance()));
+                let (text_w, text_h) = font.measure(text.unwrap_or(""), text_avail);
                 (
                     chrome_w + text_w,
                     insets[1] + icon.1.max(text_h) + insets[3],
@@ -815,13 +840,15 @@ impl Theme {
             palette.insert(k.to_owned(), parse_hex(v).unwrap());
         }
 
+        let ui_font = crate::text::Font::builtin();
+        let (rgba, size) = ui_font.build_atlas();
         Theme {
             palette,
             parts,
             metrics: Metrics::default(),
             atlas: atlas.finish(),
-            font: builtin_font(),
-            ui_font: std::sync::Arc::new(crate::text::Font::builtin()),
+            font: ImageData { rgba, size },
+            ui_font: std::sync::Arc::new(ui_font),
         }
     }
 }
@@ -938,6 +965,83 @@ mod tests {
         assert_eq!(t.container_insets(&compound.root), authored);
     }
 
+    fn tiny_png() -> Vec<u8> {
+        let img = image::RgbaImage::new(4, 4);
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+        bytes.into_inner()
+    }
+
+    fn shipped_font_bytes() -> Vec<u8> {
+        std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../assets/ui/font/DepartureMono-Regular.otf"
+        ))
+        .expect("shipped font is vendored")
+    }
+
+    /// A theme whose font is the shipped face, loaded like the game does.
+    fn shipped_font_theme() -> Theme {
+        let json = r#"{ "format": 1, "atlas": "kit.png",
+            "font": { "file": "ui.otf", "px": 11 },
+            "parts": { "panel.large": { "rect": [0, 0, 4, 4] } } }"#;
+        let (png, font) = (tiny_png(), shipped_font_bytes());
+        Theme::load(json, &|p| match p {
+            "kit.png" => Some(png.clone()),
+            "ui.otf" => Some(font.clone()),
+            _ => None,
+        })
+        .expect("theme with the shipped font loads")
+    }
+
+    /// Measurement belongs to the theme, not the process: two themes with
+    /// different fonts coexist, and each one's tab widths (the hit-test
+    /// geometry) follow the font that same theme paints with.
+    #[test]
+    fn two_themes_measure_with_their_own_fonts() {
+        let real = shipped_font_theme();
+        let placeholder = Theme::placeholder();
+        let tabs = [crate::doc::TabSpec {
+            key: "world".into(),
+            icon: None,
+            label: Some("World".into()),
+        }];
+        let pad = |t: &Theme| t.metrics.button_pad * 2;
+        let real_w = crate::widget::tab_widths(&real, &tabs)[0];
+        let placeholder_w = crate::widget::tab_widths(&placeholder, &tabs)[0];
+        assert_eq!(real_w, real.ui_font().width("World") + pad(&real));
+        assert_eq!(
+            placeholder_w,
+            placeholder.ui_font().width("World") + pad(&placeholder)
+        );
+        assert_ne!(
+            real.ui_font().width("World"),
+            placeholder.ui_font().width("World"),
+            "the two fonts genuinely differ"
+        );
+    }
+
+    /// Coverage is manifest data: a primary limited to ASCII plus a fallback
+    /// face for the accents yields one font covering both.
+    #[test]
+    fn theme_font_ranges_and_fallback_faces_come_from_the_manifest() {
+        let json = r#"{ "format": 1, "atlas": "kit.png",
+            "font": { "file": "ui.otf", "px": 11, "ranges": [[32, 126]],
+                      "fallback": [ { "file": "ui.otf", "px": 11, "ranges": [[192, 255]] } ] },
+            "parts": { "panel.large": { "rect": [0, 0, 4, 4] } } }"#;
+        let (png, font) = (tiny_png(), shipped_font_bytes());
+        let t = Theme::load(json, &|p| match p {
+            "kit.png" => Some(png.clone()),
+            "ui.otf" => Some(font.clone()),
+            _ => None,
+        })
+        .expect("theme with a fallback face loads");
+        let f = t.ui_font();
+        assert!(f.has_glyph('A') && f.has_glyph('\u{c4}'));
+        assert!(!f.has_glyph('\u{3a9}'), "outside every declared range");
+        assert_eq!(t.font.size, f.atlas_size());
+    }
+
     #[test]
     fn theme_json_parses_shorthand_and_state_parts() {
         let json = r##"{
@@ -982,8 +1086,10 @@ mod tests {
             [1.0, 0.0, 1.0, 1.0],
             "missing key is loud magenta"
         );
-        // Font defaults to the builtin atlas.
-        assert_eq!(t.font.size, crate::text::atlas_size());
+        // Font defaults to the builtin table, and the uploaded atlas is the
+        // one built from the font that measures.
+        assert_eq!(t.font.size, crate::text::Font::builtin().atlas_size());
+        assert_eq!(t.font.size, t.ui_font().atlas_size());
     }
 
     #[test]

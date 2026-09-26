@@ -81,10 +81,16 @@ pub fn choose_project_image(project_dir: Option<&Path>) -> Result<Option<String>
     Ok(Some(name))
 }
 
+/// The game's base asset root, when the builder runs inside the repo.
+pub fn game_assets_dir() -> Option<PathBuf> {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent()?;
+    let dir = repo.join("assets");
+    dir.is_dir().then_some(dir)
+}
+
 /// The game's document dir, when the builder runs inside the repo.
 pub fn game_documents_dir() -> Option<PathBuf> {
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent()?;
-    let dir = repo.join("assets/ui/documents");
+    let dir = game_assets_dir()?.join("ui/documents");
     dir.is_dir().then_some(dir)
 }
 

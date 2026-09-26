@@ -4,6 +4,12 @@
 //! frame produces comes back in [`FrameOutput`] — the draw list, resolved
 //! widget events, and the named/slot rects the host needs to layer its own
 //! content (item icons, hearts) and to hit-test latched clicks.
+//!
+//! Expansion and layout are cached across frames in the host's
+//! [`FrameState`] (see [`cache`]): an unchanged state reuses last frame's
+//! arena and layout outright, and a changed one re-expands only the
+//! subtrees that read a changed key — interaction and paint are what run
+//! every frame.
 
 use crate::doc::{Document, NodeKind};
 use crate::input::{FrameState, InputEvent, PreviewState, UiEvent};
@@ -13,9 +19,15 @@ use crate::paint::{DrawList, Painter, TexId, SOLID_UV};
 use crate::paint_walk::{DocImages, PaintCtx};
 use crate::text_edit::TextClipboard;
 use crate::theme::{Theme, ThemeEnv};
+use crate::tree::reuse::DocShape;
 use crate::tree::{InstKey, InstTree, ROOT};
 use crate::widget;
+use cache::{ExpandKey, LayoutKey};
 use std::sync::Arc;
+
+pub(crate) mod cache;
+
+pub use cache::CacheStats;
 
 pub struct UiRuntime {
     doc: Arc<Document>,
@@ -131,13 +143,21 @@ impl UiRuntime {
             (args.screen.0 as i32) / scale,
             (args.screen.1 as i32) / scale,
         );
-        let tree = InstTree::expand_form_hover(
-            &self.doc,
-            args.state,
-            self.doc.compact_active(viewport.0),
-            fs.hover_widget.as_deref(),
-        );
+        // The frame cache travels with the host's FrameState; it is out of
+        // `fs` for the frame so interaction can borrow `fs` freely.
+        let mut cache = std::mem::take(&mut fs.cache);
+        cache.bind(&self.doc, &self.theme);
+        let shape = DocShape::of(&self.doc);
+        let expand_key = ExpandKey {
+            origin: args.state.origin(),
+            revision: args.state.revision(),
+            compact: self.doc.compact_active(viewport.0),
+            hover: fs.hover_widget.clone(),
+        };
+        let tree = cache.expand(&self.doc, &shape, args.state, expand_key.clone());
         if tree.is_empty() {
+            cache.store(tree, None);
+            fs.cache = cache;
             return;
         }
         let images = args.images;
@@ -146,13 +166,30 @@ impl UiRuntime {
             gui_scale: scale,
             image_size: &|name| images.resolve(name).map(|(_, (w, h))| (w as i32, h as i32)),
         };
-        let mut solved = solve(&tree, &env, viewport, &|i| {
-            tree.get(i)
-                .key
-                .as_ref()
-                .map(|k| fs.scroll_offset(k))
-                .unwrap_or(0)
+        let (scrolls, image_sizes) = cache::layout_inputs(&tree, fs, images);
+        let layout_key = LayoutKey {
+            expand: expand_key,
+            scale,
+            viewport,
+            scrolls,
+            images: image_sizes,
+        };
+        let mut solved = cache.take_layout(&layout_key).unwrap_or_else(|| {
+            solve(&tree, &env, viewport, &|i| {
+                tree.get(i)
+                    .key
+                    .as_ref()
+                    .map(|k| fs.scroll_offset(k))
+                    .unwrap_or(0)
+            })
         });
+        // Tooltip placement follows the cursor every frame, so the cache
+        // keeps the layout as solved, before it moves.
+        let has_tooltips = tree
+            .insts
+            .iter()
+            .any(|inst| matches!(inst.node.kind, NodeKind::Tooltip { .. }));
+        let pristine = has_tooltips.then(|| solved.clone());
 
         // Re-clamp scroll offsets against this frame's content so a shrunk
         // list can't strand its offset out of range.
@@ -182,12 +219,14 @@ impl UiRuntime {
             if !matches!(inst.node.kind, NodeKind::List { .. }) {
                 continue;
             }
-            let (Some(key), Some(selected)) = (inst.key.clone(), inst.selected) else {
+            let (Some(key), Some(selected)) = (inst.key.as_ref(), inst.selected) else {
                 continue;
             };
-            let changed = fs.last_selected.get(&key) != Some(&selected);
-            fs.last_selected.insert(key, selected);
-            if !changed || selected < 0 {
+            if fs.last_selected.get(key) == Some(&selected) {
+                continue;
+            }
+            fs.last_selected.insert(key.clone(), selected);
+            if selected < 0 {
                 continue;
             }
             let Some(&row_inst) = inst.children.get(selected as usize) else {
@@ -240,14 +279,8 @@ impl UiRuntime {
         // Hover resolution for paint, from the post-input cursor.
         let (cx, cy) = (fs.cursor().0 / scale as f32, fs.cursor().1 / scale as f32);
         place_tooltips(&tree, &mut solved, (cx as i32, cy as i32), viewport);
-        let visible_at = |i: u32| {
-            !solved.overlay[i as usize]
-                && widget::contains_f(solved.rects[i as usize], cx, cy)
-                && solved.clips[i as usize].is_none_or(|c| widget::contains_f(c, cx, cy))
-        };
-        let hover = (0..tree.len() as u32)
-            .rev()
-            .find(|&i| tree.get(i).enabled && widget::pointer_target(tree.get(i)) && visible_at(i));
+        let hovered = resolve_hover(&tree, &solved, (cx, cy));
+        let hover = hovered.widget;
         let slot_hover = hover.and_then(|i| match tree.get(i).node.kind {
             NodeKind::Slot { .. } => Some((i, 0)),
             NodeKind::SlotGrid { cols, rows, .. } => (0..cols * rows)
@@ -261,33 +294,7 @@ impl UiRuntime {
                 .map(|c| (i, c)),
             _ => None,
         });
-        let row_hover = (0..tree.len() as u32).rev().find_map(|i| {
-            if !matches!(tree.get(i).node.kind, NodeKind::List { .. }) || !visible_at(i) {
-                return None;
-            }
-            tree.get(i)
-                .children
-                .iter()
-                .position(|&c| tree.get(c).enabled && visible_at(c))
-                .map(|row| (i, row as u32))
-        });
-        // The hovered stamp's ITEM index (not its position among the visible
-        // children — invisible stamps are dropped entirely). Unlike the hover
-        // FACE above this ignores `enabled`: a row you cannot activate can
-        // still describe itself, which is exactly when the description matters
-        // most.
-        out.hover_item = (0..tree.len() as u32).rev().find_map(|i| {
-            let inst = tree.get(i);
-            if !matches!(inst.node.kind, NodeKind::List { .. }) || !visible_at(i) {
-                return None;
-            }
-            let id = inst.key.as_ref()?.id.clone();
-            let item = inst
-                .children
-                .iter()
-                .find_map(|&c| visible_at(c).then(|| tree.get(c).item).flatten())?;
-            Some((id, item))
-        });
+        out.hover_item = hovered.item;
         let tab_hover = hover.and_then(|i| match &tree.get(i).node.kind {
             NodeKind::TabBar { tabs } => {
                 let widths = widget::tab_widths(&self.theme, tabs);
@@ -302,15 +309,8 @@ impl UiRuntime {
             }
             _ => None,
         });
-
-        // The anchor for hover-anchored tooltips, resolved like `hover_item`:
-        // the topmost NAMED widget under the cursor, interactive or not — a
-        // gauge a machine fills can describe itself exactly like a disabled
-        // list row. Next frame's expansion reads it (one frame of lag).
-        fs.hover_widget = (0..tree.len() as u32)
-            .rev()
-            .filter(|&i| visible_at(i))
-            .find_map(|i| tree.get(i).key.as_ref().map(|k| k.id.clone()));
+        // Next frame's expansion reads the hover anchor (one frame of lag).
+        fs.hover_widget = hovered.anchor;
 
         // Paint: dim backdrop (physical fullscreen), then the tree.
         if let Some(color) = args.dim {
@@ -332,7 +332,7 @@ impl UiRuntime {
             metrics,
             hover,
             slot_hover,
-            row_hover,
+            row_hover: hovered.row,
             tab_hover,
             preview: args.preview,
         };
@@ -388,7 +388,84 @@ impl UiRuntime {
                 .find(|s| s.inst == i)
                 .map(|s| (s.role.clone(), s.base + c))
         });
+        cache.store(tree, Some((layout_key, pristine.unwrap_or(solved))));
+        fs.cache = cache;
     }
+}
+
+/// Everything the cursor resolves to, found in ONE topmost-first pass over
+/// the instances visible under it (tooltips excluded).
+struct Hovered {
+    /// The topmost enabled pointer target: the face that paints hovered.
+    widget: Option<u32>,
+    /// The topmost list's first enabled visible row, as `(list, position)`.
+    row: Option<(u32, u32)>,
+    /// The hovered stamp's ITEM index (not its position among the visible
+    /// children — invisible stamps are dropped entirely), with the list id.
+    /// Unlike the hover FACE this ignores `enabled`: a row you cannot
+    /// activate can still describe itself, which is exactly when the
+    /// description matters most.
+    item: Option<(String, u32)>,
+    /// The topmost NAMED widget, interactive or not — the anchor for
+    /// hover-anchored tooltips: a gauge a machine fills can describe itself
+    /// exactly like a disabled list row.
+    anchor: Option<String>,
+}
+
+fn resolve_hover(
+    tree: &InstTree<'_>,
+    solved: &crate::layout::Solved,
+    (cx, cy): (f32, f32),
+) -> Hovered {
+    let visible_at = |i: u32| {
+        !solved.overlay[i as usize]
+            && widget::contains_f(solved.rects[i as usize], cx, cy)
+            && solved.clips[i as usize].is_none_or(|c| widget::contains_f(c, cx, cy))
+    };
+    let mut found = Hovered {
+        widget: None,
+        row: None,
+        item: None,
+        anchor: None,
+    };
+    for i in (0..tree.len() as u32).rev() {
+        if !visible_at(i) {
+            continue;
+        }
+        let inst = tree.get(i);
+        if found.widget.is_none() && inst.enabled && widget::pointer_target(inst) {
+            found.widget = Some(i);
+        }
+        if found.anchor.is_none() {
+            found.anchor = inst.key.as_ref().map(|k| k.id.clone());
+        }
+        if matches!(inst.node.kind, NodeKind::List { .. }) {
+            if found.row.is_none() {
+                found.row = inst
+                    .children
+                    .iter()
+                    .position(|&c| tree.get(c).enabled && visible_at(c))
+                    .map(|row| (i, row as u32));
+            }
+            if found.item.is_none() {
+                found.item = inst.key.as_ref().and_then(|key| {
+                    let item = inst
+                        .children
+                        .iter()
+                        .find_map(|&c| visible_at(c).then(|| tree.get(c).item).flatten())?;
+                    Some((key.id.clone(), item))
+                });
+            }
+        }
+        if found.widget.is_some()
+            && found.anchor.is_some()
+            && found.row.is_some()
+            && found.item.is_some()
+        {
+            break;
+        }
+    }
+    found
 }
 
 /// Move every solved `tooltip` subtree from the solver's provisional origin to

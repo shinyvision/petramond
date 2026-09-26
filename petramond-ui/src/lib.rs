@@ -10,8 +10,12 @@
 //! what artists see is exactly what ships.
 //!
 //! This crate never learns game types: slots are role strings, dynamic values
-//! are state keys, host-drawn regions are `hook` nodes.
+//! are state keys, host-drawn regions are `hook` nodes. The one exception is
+//! [`contract`]: the engine's kind table and load-time document rules as
+//! pure data and checks, kept here so the game and the gui-builder run the
+//! same validation instead of hand-copied tables.
 
+pub mod contract;
 pub mod doc;
 pub mod input;
 mod interact;
@@ -41,7 +45,7 @@ pub use input::{
 pub use layout::{grid_cell, solve, LayoutEnv, RectI, SlotMetrics, Solved};
 pub use paint::{Batch, DrawList, Painter, TexId, UiVertex};
 pub use paint_walk::{DocImages, NoImages};
-pub use runtime::{FrameArgs, FrameOutput, HookRectOut, SlotRectOut, UiRuntime};
+pub use runtime::{CacheStats, FrameArgs, FrameOutput, HookRectOut, SlotRectOut, UiRuntime};
 pub use state::{UiMap, UiState, UiValue};
 pub use text_edit::{TextClipboard, TextInput, TextInputRender};
 pub use theme::{ImageData, Part, PartFace, Theme, ThemeEnv, ThemeError};
