@@ -1,4 +1,5 @@
 use crate::world::ReplicaWorld;
+use crate::world::cell_change::{CellChange, ChangeKind};
 use crate::world::store::for_each_column_cy;
 use crate::world::WorldData;
 use std::collections::BTreeMap;
@@ -286,8 +287,9 @@ impl ReplicaWorld {
         if !self.data.sections.contains_key(&pos) {
             return;
         }
-        {
+        let old = {
             let section = self.data.section_mut(pos).expect("presence checked above");
+            let old = section.block(lx, ly, lz);
             // The raw write clears the cell's sparse state + fluid meta — the
             // same wipe the server's own write performed. Fluid meta then rides on
             // top of the cleared cell.
@@ -310,33 +312,9 @@ impl ReplicaWorld {
             // rebake of this neighbourhood lands as `LightData` (a pump or
             // two; the block itself appears immediately).
             section.mark_light_clean();
-        }
-        self.refresh_block_entity_index(pos);
-        self.refresh_particle_emitter_index(pos);
-        // The raw write replaced the cell's state, so a set that survives this
-        // delta (a corrective resend of an unchanged cell; the batch's clearing
-        // draw delta has not been applied yet) re-reads its cached placement.
-        self.refresh_block_draw_placement(delta.pos);
-        // Heightmap keeps replica physics/sky queries truthful; the light it
-        // would invalidate on a streaming world is server-owned here.
-        let _ = self.update_column_heights_after_set(
-            delta.pos.x,
-            delta.pos.y,
-            delta.pos.z,
-            Block::from_id(delta.block_id),
-        );
-        // Geometry samplers only; light-driven remeshes ride the server's
-        // `LightData` install for exactly the sections whose cubes changed.
-        self.queue_dirty_meshes_sampling_cell(delta.pos.x, delta.pos.y, delta.pos.z);
-        // Re-mark any custom-shape cell so the CLIENT bakes it (its own
-        // client_wasm) and predicts the same collision the server does.
-        self.mark_custom_bake_edit(
-            delta.pos.x,
-            delta.pos.y,
-            delta.pos.z,
-            Block::from_id(delta.block_id),
-        );
-        self.side.terrain.vis_dirty = true;
+            old
+        };
+        self.apply_cell_changes(&[CellChange::new(delta.pos, old, ChangeKind::Remote)]);
     }
 
     /// Replica-only: apply one live per-cell mod KV delta (the streamed twin

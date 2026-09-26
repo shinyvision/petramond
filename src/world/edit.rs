@@ -7,6 +7,7 @@ use petramond_world::chunk::{ChunkPos, SECTION_SIZE, WORLD_MIN_Y};
 use petramond_world::column::NO_SURFACE;
 use petramond_world::section::SectionSummary;
 
+use super::cell_change::{CellChange, ChangeKind};
 use super::store::SkyCoverChange;
 
 impl<S: WorldSide> World<S> {
@@ -33,14 +34,16 @@ impl<S: WorldSide> World<S> {
     /// object and drops once), or `None` for a single-cell block.
     pub fn remove_compound(&mut self, pos: IVec3) -> Option<Vec<IVec3>> {
         let cells = self.compound_cells(pos)?;
+        let mut changes = Vec::with_capacity(cells.len());
         for &c in &cells {
             if let Some((chunk, lx, ly, lz)) = self.data.chunk_at_world_mut(c.x, c.y, c.z) {
+                let old = chunk.block(lx, ly, lz);
                 chunk.set_block(lx, ly, lz, Block::Air); // also clears the cell state
                 chunk.modified = true;
+                changes.push(CellChange::new(c, old, ChangeKind::Place));
             }
-            self.note_block_entity_change(c);
         }
-        self.refresh_region(&cells);
+        self.apply_cell_changes(&changes);
         Some(cells)
     }
 
@@ -112,87 +115,48 @@ impl<S: WorldSide> World<S> {
             }
             old
         };
-        self.refresh_particle_emitter_index(pos);
-        // A mod's drawing belongs to the block that submitted it, and the write
+        // Every consequence of the write — indexes, the cell's draw set (a
+        // mod's drawing belongs to the block that submitted it, and the write
         // above already cleared the cell's per-cell state and mod KV for that
-        // reason. Without this the set outlives its machine: it keeps drawing
-        // at a cell the mod no longer owns, keeps riding the section payload to
-        // every new joiner, and cannot be cleared afterwards — `SetBlockDraw`
-        // is gated on owning the block that is now gone. A costume swap does
-        // NOT come through here (`swap_model_block` writes its cells itself),
-        // which is exactly why a machine changing row keeps what it owns.
-        if old != b {
-            self.forget_block_draw(IVec3::new(wx, wy, wz));
-        } else {
-            // The write kept the block but cleared and re-derived the cell's
-            // state, so a surviving set's cached placement has to be re-read.
-            self.refresh_block_draw_placement(IVec3::new(wx, wy, wz));
-        }
-        if let Some(change) = self.update_column_heights_after_set(wx, wy, wz, b) {
-            self.mark_sky_cover_edited_at(wx, wz, change);
-        }
-
-        // Re-mesh exactly the sections whose pads sample this cell so border
-        // face culling, AO, and smooth light stay correct across seams.
-        self.queue_dirty_meshes_sampling_cell(wx, wy, wz);
-        // A WASM-resolved shape's bake depends on this cell's block + state, so
-        // drop the cached bake here + at each face neighbour and re-mark any
-        // such cell dirty for the next bake pump (the same hook the replica's
-        // ingest calls, so client prediction bakes the same cells).
-        self.mark_custom_bake_edit(wx, wy, wz, b);
-        // Natively-refined shapes (fence arms, stair corners) re-resolve NOW,
-        // synchronously, cascading through neighbours whose stored state
-        // changes — reads never resolve, they decode.
-        self.refine_shape_states_around(wx, wy, wz);
-        // Plane openness may have changed; deep-visibility must re-evaluate.
-        self.mark_visibility_dirty();
-
-        // Announce the change: re-lights the influence reach and lets reactive
-        // neighbours (e.g. water) re-evaluate on the next game tick. A proven
-        // light-identical replacement (glass into air, stone variants) skips
-        // the relight entirely; a plain solid⇄air edit relights only as far
-        // as the light actually present at the cell can carry a change. A
-        // proven walkability-identical replacement (a grazed grass tuft, a
-        // crop stage, a hydration swap) likewise skips the confinement
-        // invalidation feed (see `edit_nav_equivalent`).
-        let nav_relevant = !super::tick::edit_nav_equivalent(old, b);
-        if old.has_same_light_behavior(b) {
-            self.notify_light_equivalent_change_nav(wx, wy, wz, nav_relevant);
-        } else {
-            let radius = self.edit_light_reach(wx, wy, wz, old, b);
-            self.notify_block_change_with_light_radius_nav(wx, wy, wz, radius, nav_relevant);
-        }
+        // reason), heightmaps, remesh, shape bakes and refinement, the
+        // bounded relight and the announce — runs in the one pipeline.
+        self.apply_cell_changes(&[CellChange::new(IVec3::new(wx, wy, wz), old, ChangeKind::Write)]);
         true
     }
 
     /// Swap a placed cube block's id in place while PRESERVING everything else
     /// the cell owns — the sibling block-entity maps (machine state, container;
     /// `set_block` never touches them) and the cell's per-cell STATE + mod KV
-    /// (which `set_block` clears, so both are carried across explicitly — the
-    /// facing of a lit-flipping furnace is cell state now). The cube sibling
-    /// of [`World::swap_model_block`]: the same placed machine changing
-    /// costume (`furnace` ⇄ `furnace_lit`). Announces itself through the
-    /// ordinary block-write lanes (delta capture, relight, remesh, block
-    /// updates, save `modified`) — a skin swap needs no bespoke promotion.
+    /// (which `set_block` clears, so both are carried across the raw write —
+    /// the facing of a lit-flipping furnace is cell state now). The cube
+    /// sibling of [`World::swap_model_block`]: the same placed machine
+    /// changing costume (`furnace` ⇄ `furnace_lit`), announced through the
+    /// cell-change pipeline as a costume change, so the machine keeps its
+    /// draw set. Refused (like any write) while the section's streamed
+    /// content is still in flight.
     pub fn swap_block_skin(&mut self, pos: IVec3, to: Block) -> bool {
+        let Some((sp, ..)) = WorldData::split_world(pos.x, pos.y, pos.z) else {
+            return false;
+        };
+        if !self.data.stream_writable(sp) {
+            return false;
+        }
         let Some((chunk, lx, ly, lz)) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
             return false;
         };
+        let old = chunk.block(lx, ly, lz);
         let kv = chunk.cell_kv_take(lx, ly, lz);
         let state = chunk.cell_state(lx, ly, lz);
-        // A refused write (stream-finality guard) leaves the old cell; a
-        // landed one cleared its state + KV. Either way the carried values
-        // are what the cell must hold afterwards.
-        let ok = self.set_block_world(pos.x, pos.y, pos.z, to);
-        if let Some((chunk, lx, ly, lz)) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z) {
-            if let Some(kv) = kv {
-                chunk.cell_kv_restore(lx, ly, lz, kv);
-            }
-            if !state.is_empty() {
-                chunk.set_cell_state(lx, ly, lz, state);
-            }
+        chunk.set_block(lx, ly, lz, to);
+        if let Some(kv) = kv {
+            chunk.cell_kv_restore(lx, ly, lz, kv);
         }
-        ok
+        if !state.is_empty() {
+            chunk.set_cell_state(lx, ly, lz, state);
+        }
+        chunk.modified = true;
+        self.apply_cell_changes(&[CellChange::new(pos, old, ChangeKind::Costume)]);
+        true
     }
 
     /// How far (in cells, L1) the light change from replacing `old` with `new`
@@ -202,7 +166,7 @@ impl<S: WorldSide> World<S> {
     /// flood reach. Sound because a value `v` at the cell decays 2 per step:
     /// no cell past `v/2 - 1` can observe a difference. The cell's own light
     /// cubes still hold their pre-edit values when this runs.
-    fn edit_light_reach(&self, wx: i32, wy: i32, wz: i32, old: Block, new: Block) -> i32 {
+    pub(super) fn edit_light_reach(&self, wx: i32, wy: i32, wz: i32, old: Block, new: Block) -> i32 {
         if old.light_emission() != 0 || new.light_emission() != 0 {
             return Self::LIGHT_REACH;
         }
@@ -244,17 +208,14 @@ impl<S: WorldSide> World<S> {
         if !block.is_log() || !self.materialize_section_at(pos) {
             return false;
         }
-        let Some((section_pos, _, _, _)) = WorldData::split_world(pos.x, pos.y, pos.z) else {
-            return false;
-        };
         let Some((section, lx, ly, lz)) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
             return false;
         };
+        let old = section.block(lx, ly, lz);
         section.set_block(lx, ly, lz, block);
         section.set_log_axis(lx, ly, lz, axis);
         section.modified = true;
-        self.refresh_particle_emitter_index(section_pos);
-        self.refresh_region(&[pos]);
+        self.apply_cell_changes(&[CellChange::new(pos, old, ChangeKind::Place)]);
         true
     }
 

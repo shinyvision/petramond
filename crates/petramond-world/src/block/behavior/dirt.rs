@@ -72,15 +72,5 @@ pub fn grass_within(world: &WorldData, center: IVec3, radius: i32) -> bool {
     false
 }
 
-/// Everything this module's relocated tests (in the engine crate) exercise.
-/// Test-support builds only; never a public api surface.
-#[cfg(any(test, feature = "test-support"))]
-pub mod test_exports {
-    pub use super::grass_within;
-    pub use super::DIRT;
-    pub use super::SPREAD_RADIUS;
-    #[allow(unused_imports)]
-    pub use super::*;
-    pub use crate::block::Block;
-    pub use crate::mathh::IVec3;
-}
+#[cfg(test)]
+mod tests;

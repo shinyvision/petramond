@@ -225,7 +225,6 @@ mod tests {
             if !world.has_dirty_meshes() {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(2));
         }
     }
 

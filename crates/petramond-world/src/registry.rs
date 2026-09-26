@@ -807,13 +807,8 @@ pub fn names() -> &'static ContentNames {
     crate::content::current().names()
 }
 
-/// Everything this module's relocated tests (in the engine crate) exercise.
-/// Test-support builds only; never a public api surface.
 #[cfg(test)]
 mod tests;
 
-#[cfg(any(test, feature = "test-support"))]
-pub mod test_exports {
-    #[allow(unused_imports)]
-    pub use super::*;
-}
+#[cfg(test)]
+mod name_tests;

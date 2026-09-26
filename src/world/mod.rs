@@ -17,6 +17,7 @@ pub mod actor;
 pub mod animated_block;
 mod block_deltas;
 pub(crate) mod cells;
+mod cell_change;
 pub mod chest;
 mod column_heightmaps;
 pub mod construction;

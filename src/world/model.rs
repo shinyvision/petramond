@@ -15,7 +15,7 @@ use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 use petramond_world::block_model::{self, BlockModelKind};
 
-use super::store::SkyCoverChange;
+use super::cell_change::{CellChange, ChangeKind};
 
 impl<S: WorldSide> World<S> {
     /// Place model `block` with its rotated-footprint base at `base`: write the block id to
@@ -43,19 +43,21 @@ impl<S: WorldSide> World<S> {
         }
         // Write block + offset for every cell first (no remesh yet), so the region is
         // fully consistent before any mesh is rebuilt.
+        let mut changes = Vec::with_capacity(cells.len());
         for &(c, off) in &cells {
             let Some((chunk, lx, ly, lz)) = self.data.chunk_at_world_mut(c.x, c.y, c.z) else {
                 return false;
             };
+            let old = chunk.block(lx, ly, lz);
             chunk.set_block(lx, ly, lz, block);
             if off != [0, 0, 0] {
                 chunk.set_model_offset(lx, ly, lz, off);
             }
             chunk.set_model_facing(lx, ly, lz, facing);
             chunk.modified = true;
+            changes.push(CellChange::new(c, old, ChangeKind::Place));
         }
-        let positions: Vec<IVec3> = cells.into_iter().map(|(cell, _)| cell).collect();
-        self.refresh_region(&positions);
+        self.apply_cell_changes(&changes);
         true
     }
 
@@ -129,9 +131,11 @@ impl<S: WorldSide> World<S> {
         {
             return false;
         }
+        let mut changes = Vec::with_capacity(new_cells.len());
         for &(c, off) in &new_cells {
             let (chunk, lx, ly, lz) = self.data.chunk_at_world_mut(c.x, c.y, c.z)
                 .expect("cell resolution verified above");
+            let old = chunk.block(lx, ly, lz);
             // `set_block` clears the cell's model state AND its mod cell KV
             // (per-cell state dies with the block) — a swap is the same placed
             // machine changing costume, so both are carried across explicitly.
@@ -145,9 +149,9 @@ impl<S: WorldSide> World<S> {
                 chunk.cell_kv_restore(lx, ly, lz, kv);
             }
             chunk.modified = true;
+            changes.push(CellChange::new(c, old, ChangeKind::Costume));
         }
-        let positions: Vec<IVec3> = new_cells.into_iter().map(|(cell, _)| cell).collect();
-        self.refresh_region(&positions);
+        self.apply_cell_changes(&changes);
         true
     }
 
@@ -220,56 +224,14 @@ impl<S: WorldSide> World<S> {
                 );
             }
         }
-        // No `refresh_region` here, deliberately. Each `cell_kv_set` above
-        // already queued the meshes that sample its cell (the mask is a
+        // No cell change is announced here, deliberately. Each `cell_kv_set`
+        // above already queued the meshes that sample its cell (the mask is a
         // mesh-feeding key) and re-marked any custom bake reading it. What
-        // `refresh_region` adds on top — a relight ball and a shape re-resolve
-        // per cell — is block-CHANGE work, and this call changes no block: its
+        // `apply_cell_changes` adds on top — a relight ball and a shape
+        // re-resolve per cell — is block-CHANGE work, and this call changes no block: its
         // whole contract is that collision, selection and lighting stay the
         // row's.
         true
-    }
-
-    /// Relight + remesh every section each cell in `cells` can influence and
-    /// announce the changes — the batched tail of [`set_block_world`] for a
-    /// multi-cell edit.
-    ///
-    /// [`set_block_world`]: Self::set_block_world
-    pub(super) fn refresh_region(&mut self, cells: &[IVec3]) {
-        let mut seen = std::collections::HashSet::new();
-        // Keyed per world column: consecutive same-column height updates chain
-        // (old → mid → new) and merge into one envelope; distinct columns keep
-        // their own exact segment for the distance-bounded invalidation.
-        let mut sky_changed: std::collections::HashMap<(i32, i32), SkyCoverChange> =
-            std::collections::HashMap::new();
-        for &c in cells {
-            let block = Block::from_id(self.data.chunk_block(c.x, c.y, c.z));
-            if let Some(change) = self.update_column_heights_after_set(c.x, c.y, c.z, block) {
-                sky_changed
-                    .entry((c.x, c.z))
-                    .and_modify(|all| all.merge(change))
-                    .or_insert(change);
-            }
-            if let Some((pos, _, _, _)) = WorldData::split_world(c.x, c.y, c.z) {
-                if seen.insert(pos) {
-                    self.refresh_particle_emitter_index(pos);
-                }
-            }
-            // A costume swap rewrites the cell's block and model state without
-            // dropping its draw set (that is the point of a swap), so the
-            // set's cached prim→world transform is re-read here.
-            self.refresh_block_draw_placement(c);
-            self.queue_dirty_meshes_sampling_cell(c.x, c.y, c.z);
-            // The matching relight ball rides along with each cell's announce.
-            self.notify_block_and_neighbors(c.x, c.y, c.z);
-            // Refined shape state (the cell's own — a placed stair resolves
-            // its corner — and the neighbourhood's) re-resolves with the
-            // edit, exactly like the `set_block_world` lane.
-            self.refine_shape_states_around(c.x, c.y, c.z);
-        }
-        for ((wx, wz), change) in sky_changed {
-            self.mark_sky_cover_edited_at(wx, wz, change);
-        }
     }
 }
 

@@ -95,7 +95,11 @@ pub mod mods {
     /// the scratch state is dropped immediately.
     pub fn load(seed: u32) -> WorldgenMods {
         let mut host = crate::modding::ModHost::load(seed, &Default::default());
-        let mut world = crate::world::ServerWorld::new(seed, 4);
+        let mut world = crate::world::ServerWorld::with_pool(
+            seed,
+            4,
+            std::sync::Arc::new(crate::worker::JobPool::inline()),
+        );
         let mut bus = crate::events::EventBus::default();
         let mut systems = crate::events::TickSystems::default();
         let mut sound = 1u64;

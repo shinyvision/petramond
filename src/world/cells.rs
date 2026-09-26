@@ -7,13 +7,27 @@
 //! touches, both the ones it writes and the ones it overwrites.
 
 use crate::world::ServerWorld;
-use crate::schematic::ResolvedCell;
 use petramond_math::math::IVec3;
 use petramond_world::{
     block::{Block, ShapeState},
     chunk::section_idx,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
+
+use super::cell_change::{CellChange, ChangeKind};
+
+/// A live cell's complete contents — block, per-cell state, fluid level, mod
+/// KV and block entities: what an edit snapshots before overwriting a cell
+/// and what the applicator installs. Schematics capture and paste this type.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedCell {
+    pub block: Block,
+    pub state: ShapeState,
+    pub fluid: u8,
+    pub kv: BTreeMap<String, Vec<u8>>,
+    pub container: Option<petramond_world::container::Container>,
+    pub furnace: Option<petramond_world::furnace::Furnace>,
+}
 
 pub type Cells = Vec<(IVec3, ResolvedCell)>;
 
@@ -366,12 +380,11 @@ impl ServerWorld {
 
     /// Install raw records. Callers have validated and materialized the cells.
     fn install_cells(&mut self, cells: &[(IVec3, &ResolvedCell)]) {
-        for (p, _) in cells {
-            self.forget_block_draw(*p);
-        }
+        let mut changes = Vec::with_capacity(cells.len());
         for (p, data) in cells {
             let (s, x, y, z) = self.data.chunk_at_world_mut(p.x, p.y, p.z)
                 .expect("materialized edit");
+            changes.push(CellChange::new(*p, s.block(x, y, z), ChangeKind::Replace));
             s.take_container(x, y, z);
             s.take_furnace(x, y, z);
             s.set_block(x, y, z, data.block);
@@ -386,12 +399,7 @@ impl ServerWorld {
             }
             s.modified = true;
         }
-        let positions: Vec<_> = cells.iter().map(|(p, _)| *p).collect();
-        for (p, data) in cells {
-            self.mark_custom_bake_edit(p.x, p.y, p.z, data.block);
-            self.note_block_entity_change(*p);
-        }
-        self.refresh_region(&positions);
+        self.apply_cell_changes(&changes);
         // Neighbours see the completed edit; the copied cells retain their
         // authored connection/corner state until a later world edit changes it.
         for (p, data) in cells {

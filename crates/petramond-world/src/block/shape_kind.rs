@@ -49,7 +49,7 @@ pub use facets::{
     ShapeSim, LIGHT_APERTURES_OPEN, NO_PART_TINT,
 };
 
-pub use corner_form::{face_uv_turns, FRONT_AFTER_TURN};
+pub use corner_form::{face_uv_turns, FACE_BEFORE_TURN, FRONT_AFTER_TURN};
 pub use load::{RawBox, RawCustomShape, RawRun, RawShape};
 pub use neighborhood::{CellCodec, CellView, ShapeNeighborhood, ShapeState, SHAPE_STATE_MAX};
 
@@ -717,21 +717,5 @@ impl ShapeKindInterner {
     }
 }
 
-/// Everything this module's relocated tests (in the engine crate) exercise.
-/// Test-support builds only; never a public api surface.
-#[cfg(any(test, feature = "test-support"))]
-pub mod test_exports {
-    pub use super::corner_form::FACE_BEFORE_TURN;
-    pub use super::face_uv_turns;
-    pub use super::facets;
-    pub use super::families;
-    pub use super::light_aperture_face;
-    pub use super::BoxDef;
-    pub use super::RawShape;
-    pub use super::ShapeFamily;
-    pub use super::ShapeParams;
-    pub use super::FRONT_AFTER_TURN;
-    #[allow(unused_imports)]
-    pub use super::*;
-    pub use crate::tile::Tile;
-}
+#[cfg(test)]
+mod tests;

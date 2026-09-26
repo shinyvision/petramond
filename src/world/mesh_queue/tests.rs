@@ -90,7 +90,6 @@ fn stale_rejected_light_bake_requests_a_rebake() {
         if !world.data.sections[&pos].light_dirty {
             return;
         }
-        std::thread::sleep(std::time::Duration::from_millis(2));
     }
     panic!("stale-rejected bake was never re-requested: section wedged light-dirty");
 }
@@ -359,7 +358,6 @@ fn reconciliation_is_async_and_never_overrides_authoritative_light() {
             landed = true;
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(1));
     }
     assert!(landed, "reconciliation terrain bundle did not land");
 
@@ -379,7 +377,6 @@ fn reconciliation_is_async_and_never_overrides_authoritative_light() {
             assert_eq!(world.data.sections[&pos].skylight_at(8, 8, 8), 7);
             return;
         }
-        std::thread::sleep(std::time::Duration::from_millis(1));
     }
     panic!("stale reconciliation bundle did not retire");
 }

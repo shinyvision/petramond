@@ -136,18 +136,17 @@ impl ReplicaWorld {
         }
     }
 
-    /// Synchronously mesh `pos` for a test: meshing is async now, so pump the budget +
-    /// drain until the section's mesh lands (or time out).
+    /// Synchronously mesh `pos` for a test. Test worlds run on an inline job
+    /// pool, so every light bake and mesh job a pump submits has finished by
+    /// the next pump: a bounded run of pumps lands the mesh deterministically.
     #[cfg(test)]
     pub fn mesh_section_blocking_for_test(&mut self, pos: SectionPos) {
-        use std::time::{Duration, Instant};
         for dz in -1..=1 {
             for dx in -1..=1 {
                 self.data.ensure_column(ChunkPos::new(pos.cx + dx, pos.cz + dz));
             }
         }
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
+        for _ in 0..256 {
             self.tick_mesh_budget(8);
             // Up to date once a mesh exists AND the section isn't queued/in-flight for a
             // fresher one (a re-dirty sets `dirty`, the drained result clears it).
@@ -156,10 +155,7 @@ impl ReplicaWorld {
             if ready {
                 return;
             }
-            if Instant::now() >= deadline {
-                panic!("mesh for {pos:?} did not complete");
-            }
-            std::thread::sleep(Duration::from_millis(1));
         }
+        panic!("mesh for {pos:?} did not complete");
     }
 }

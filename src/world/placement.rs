@@ -8,6 +8,8 @@ pub use petramond_world::world::placement::*;
 
 use petramond_math::math::IVec3;
 
+use super::cell_change::{CellChange, ChangeKind};
+
 impl<S: WorldSide> World<S> {
     /// The placement ladder: whether `block` can be placed at all for this
     /// click, and if so which state write lands where. `None` is a refused
@@ -114,7 +116,7 @@ impl<S: WorldSide> World<S> {
                 return false;
             }
         }
-        let mut cells = Vec::with_capacity(plan.writes.len());
+        let mut changes = Vec::with_capacity(plan.writes.len());
         for &CellWrite {
             cell: c,
             block: b,
@@ -131,6 +133,7 @@ impl<S: WorldSide> World<S> {
             // clear (see `CellWrite::augments`). Detach + re-attach around the
             // write; the courier then overwrites just the claimed part's keys.
             let kept = augments.then(|| section.cell_kv_take(lx, ly, lz)).flatten();
+            let old = section.block(lx, ly, lz);
             section.set_block(lx, ly, lz, b);
             if let Some(map) = kept {
                 section.cell_kv_restore(lx, ly, lz, map);
@@ -139,7 +142,7 @@ impl<S: WorldSide> World<S> {
                 section.set_cell_state(lx, ly, lz, state);
             }
             section.modified = true;
-            cells.push(c);
+            changes.push(CellChange::new(c, old, ChangeKind::Place));
         }
         for &CellWrite {
             cell: c,
@@ -148,16 +151,6 @@ impl<S: WorldSide> World<S> {
             ..
         } in &plan.writes
         {
-            // The WASM-bake fan-out + deep-visibility invalidation every
-            // block write owes (the cube path had them via `set_block_world`;
-            // the old per-family commits skipped them).
-            self.mark_custom_bake_edit(c.x, c.y, c.z, b);
-            // A block the render fan-outs draw outside the chunk mesh must
-            // enter the block-entity index with the write, or the placed
-            // panel/front is invisible until its section is reloaded.
-            if crate::world::store::block_entity_index::indexes_block_entity(b) {
-                self.note_block_entity_change(c);
-            }
             if with_block_entities {
                 let facing =
                     <petramond_world::block_state::EntityFront as petramond_world::block::CellView>::from_cell(state).0;
@@ -168,8 +161,11 @@ impl<S: WorldSide> World<S> {
                 }
             }
         }
-        self.mark_visibility_dirty();
-        self.refresh_region(&cells);
+        // The one reaction pipeline: the block-entity index (a block drawn
+        // outside the chunk mesh must enter it with the write, or the placed
+        // panel is invisible until its section reloads), the WASM-bake
+        // fan-out, deep visibility, relight, remesh, announce and refine.
+        self.apply_cell_changes(&changes);
         true
     }
 }

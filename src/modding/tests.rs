@@ -696,7 +696,7 @@ fn a_guest_dresses_a_placed_machine_and_a_joiner_sees_it() {
 
     // A client joining now streams the section, which is the ONLY way a
     // machine that last redrew itself before the join can reach it.
-    let mut replica = ReplicaWorld::with_pool(0, 1, std::sync::Arc::new(crate::worker::JobPool::new(1)));
+    let mut replica = ReplicaWorld::new(0, 1);
     let cp = petramond_world::chunk::ChunkPos::new(0, 0);
     replica.install_remote_column(sim.world.column_payload(cp).expect("a column payload"));
     let sp = petramond_world::chunk::SectionPos::from_world(anchor.x, anchor.y, anchor.z)

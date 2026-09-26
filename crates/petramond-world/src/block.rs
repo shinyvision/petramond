@@ -40,7 +40,9 @@ pub use shape::{
 };
 pub use shape_kind::ConnectionRule;
 pub use shape_kind::ItemRender;
-pub use shape_kind::{face_uv_turns, BlockShapeKind, ShapeFamily, ShapeKindDef};
+pub use shape_kind::{
+    face_uv_turns, BlockShapeKind, ShapeFamily, ShapeKindDef, FACE_BEFORE_TURN,
+};
 pub use shape_kind::{MeshEmitter, PlantPlanes};
 /// Family identity for the state codecs each shape family's cells carry.
 pub use shape_kind::families as shape_kind_families;
@@ -346,11 +348,4 @@ pub fn split_part_kv_key(stored: &str) -> (&str, CellPart) {
 pub fn kv_key_affects_mesh(key: &str) -> bool {
     let base = split_part_kv_key(key).0;
     base == TINT_KV_KEY || base == crate::block_model::PARTS_KV_KEY
-}
-
-/// Pub path to `shape_kind`'s `test_exports` shim (the module stays private).
-/// Test-support builds only.
-#[cfg(any(test, feature = "test-support"))]
-pub mod shape_kind_test_shim {
-    pub use super::shape_kind::test_exports::*;
 }

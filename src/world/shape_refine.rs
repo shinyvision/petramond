@@ -39,7 +39,7 @@ impl<S: WorldSide> World<S> {
     /// Re-resolve the refined shape state of the edited cell and its
     /// neighbourhood, cascading through cells whose stored state changed.
     /// Called from every edit chokepoint (`set_block_world`,
-    /// `refresh_region`) on the server AND the predicting replica.
+    /// `apply_cell_changes`) on the server AND the predicting replica.
     pub fn refine_shape_states_around(&mut self, wx: i32, wy: i32, wz: i32) {
         let seed = IVec3::new(wx, wy, wz);
         let mut queue: VecDeque<IVec3> = VecDeque::with_capacity(8);

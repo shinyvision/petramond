@@ -5,15 +5,15 @@ use crate::events::tick::TickEvents;
 use crate::events::{PostQueue, RosterRefs, SimCtx};
 use crate::modding::host::{handle_host_call, ModStoreData};
 use crate::modding::scope;
-use crate::world::World;
+use crate::world::ServerWorld;
 use petramond_world::block::Block;
 
 use super::read_only_permits;
 
 /// A world with one stone-floored loaded chunk, a world KV entry and a cell
 /// KV entry at (1, 64, 1) — something for every delete to target.
-fn fixture_world() -> World {
-    let mut world = World::new(1, 1);
+fn fixture_world() -> ServerWorld {
+    let mut world = ServerWorld::new(1, 1);
     let mut c = petramond_world::chunk::Chunk::new(0, 0);
     for z in 0..petramond_world::chunk::CHUNK_SZ {
         for x in 0..petramond_world::chunk::CHUNK_SX {

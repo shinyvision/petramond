@@ -17,6 +17,8 @@ use petramond_world::door::DoorState;
 
 use petramond_world::world::query::door_support;
 
+use super::cell_change::{CellChange, ChangeKind};
+
 /// Cell offset from a door's lower cell to its upper cell.
 const UP: IVec3 = IVec3::new(0, 1, 0);
 
@@ -102,8 +104,10 @@ impl<S: WorldSide> World<S> {
         if !self.materialize_section_at(base) || !self.materialize_section_at(upper) {
             return false;
         }
+        let mut changes = Vec::with_capacity(2);
         for (cell, top) in [(base, false), (upper, true)] {
             if let Some((c, lx, ly, lz)) = self.data.chunk_at_world_mut(cell.x, cell.y, cell.z) {
+                changes.push(CellChange::new(cell, c.block(lx, ly, lz), ChangeKind::Place));
                 // `set_block` clears any stale door entry; then record this cell's state.
                 c.set_block(lx, ly, lz, block);
                 c.set_door_state(
@@ -118,9 +122,8 @@ impl<S: WorldSide> World<S> {
                 );
                 c.modified = true;
             }
-            self.note_block_entity_change(cell);
         }
-        self.refresh_region(&[base, upper]);
+        self.apply_cell_changes(&changes);
         true
     }
 

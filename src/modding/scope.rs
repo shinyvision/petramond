@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn a_read_only_scope_lends_shared_access_only() {
-        let mut world = World::new(1, 1);
+        let mut world = ServerWorld::new(1, 1);
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         let mut nobody = RosterRefs::empty();

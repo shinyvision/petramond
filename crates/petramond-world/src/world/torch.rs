@@ -96,12 +96,5 @@ fn support_kind(normal: IVec3, placement: TorchPlacement) -> Option<SupportKind>
     }
 }
 
-/// Everything this module's relocated tests (in the engine crate) exercise.
-/// Test-support builds only; never a public api surface.
-#[cfg(any(test, feature = "test-support"))]
-pub mod test_exports {
-    #[allow(unused_imports)]
-    pub use super::*;
-    pub use crate::mathh::IVec3;
-    pub use crate::torch::TorchPlacement;
-}
+#[cfg(test)]
+mod tests;

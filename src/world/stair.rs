@@ -5,6 +5,8 @@ use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 use petramond_world::block_state::StairState;
 
+use super::cell_change::{CellChange, ChangeKind};
+
 
 impl<S: WorldSide> World<S> {
     /// Place a single-cell stair and record its facing before relighting/remeshing.
@@ -16,10 +18,11 @@ impl<S: WorldSide> World<S> {
         let Some((section, lx, ly, lz)) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
             return false;
         };
+        let old = section.block(lx, ly, lz);
         section.set_block(lx, ly, lz, block);
         section.set_stair_state(lx, ly, lz, state);
         section.modified = true;
-        self.refresh_region(&[pos]);
+        self.apply_cell_changes(&[CellChange::new(pos, old, ChangeKind::Place)]);
         true
     }
 }

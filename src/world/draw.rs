@@ -521,7 +521,7 @@ impl<S: WorldSide> World<S> {
     ///
     /// Called from every path that writes a cell's block or model state
     /// without dropping its set: a machine changing COSTUME (`swap_model_block`
-    /// → `refresh_region`) keeps what it owns, and a replica's corrective delta
+    /// → `apply_cell_changes`) keeps what it owns, and a replica's corrective delta
     /// restores a cell's state under a set the server has not cleared. A stale
     /// transform would draw the machine's liquid where it used to face.
     pub(in crate::world) fn refresh_block_draw_placement(&mut self, pos: IVec3) {
@@ -768,12 +768,18 @@ mod tests {
         // The cell turns under a surviving set — exactly what a costume swap
         // does to a machine that keeps its drawing.
         let cells = w.model_group(base).expect("a placed group").2;
+        let mut changes = Vec::new();
         for c in &cells {
             let (chunk, lx, ly, lz) = w.data.chunk_at_world_mut(c.x, c.y, c.z)
                 .expect("a placed footprint cell");
             chunk.set_model_facing(lx, ly, lz, Facing::North);
+            changes.push(crate::world::cell_change::CellChange::new(
+                *c,
+                chunk.block(lx, ly, lz),
+                crate::world::cell_change::ChangeKind::Costume,
+            ));
         }
-        w.refresh_region(&cells);
+        w.apply_cell_changes(&changes);
         let after = w.draws.block_draws[&anchor].frame;
         assert_ne!(before, after, "fixture: the placement must actually move");
         assert_eq!(after, w.block_local_frame(anchor), "refreshed");

@@ -22,6 +22,8 @@ pub mod saved_index;
 pub mod shape_bake_validate;
 pub mod slab;
 pub mod stair;
+#[cfg(test)]
+pub(crate) mod test_world;
 pub mod tick_state;
 pub mod torch;
 

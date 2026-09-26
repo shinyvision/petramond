@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn legacy_name_lists_convert_to_the_first_claimant_only() {
-        let mut world = ServerWorld::with_pool(1, 2, std::sync::Arc::new(crate::worker::JobPool::inline()));
+        let mut world = ServerWorld::new(1, 2);
         world.world_kv_set(OPERATORS_KEY.into(), br#"[" Rachel ", "bob"]"#.to_vec());
         let mut ops = load(&world);
         let (rachel, mallory) = (PlayerKey([1; 32]), PlayerKey([2; 32]));

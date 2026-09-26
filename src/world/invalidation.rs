@@ -422,7 +422,6 @@ mod tests {
             if w.data.sections.values().all(|s| !s.light_dirty || s.all_opaque()) {
                 return w;
             }
-            std::thread::sleep(std::time::Duration::from_millis(1));
         }
         panic!("fixture light never settled");
     }

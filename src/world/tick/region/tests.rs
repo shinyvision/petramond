@@ -4,8 +4,7 @@ use petramond_world::chunk::ChunkPos;
 
 #[test]
 fn region_updates_include_non_air_once_across_sections_and_skip_outside_cells() {
-    let mut world = ServerWorld::with_pool(0, 1, std::sync::Arc::new(crate::worker::JobPool::inline()),
-    );
+    let mut world = ServerWorld::new(0, 1);
     for cx in -1..=0 {
         for cz in 0..=1 {
             world.insert_empty_column_for_test(ChunkPos::new(cx, cz));
@@ -51,8 +50,7 @@ fn region_updates_include_non_air_once_across_sections_and_skip_outside_cells() 
 
 #[test]
 fn region_updates_clip_to_world_bounds_without_materializing_empty_sections() {
-    let mut world = ServerWorld::with_pool(0, 1, std::sync::Arc::new(crate::worker::JobPool::inline()),
-    );
+    let mut world = ServerWorld::new(0, 1);
     let p = IVec3::new(WORLD_BORDER - 1, WORLD_MIN_Y, -WORLD_BORDER);
     let sp = SectionPos::from_world(p.x, p.y, p.z).unwrap();
     world.insert_empty_column_for_test(sp.chunk_pos());

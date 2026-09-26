@@ -443,7 +443,6 @@ fn removing_surface_cover_relights_loaded_sections_below_the_changed_section() {
             landed = true;
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(1));
     }
     assert!(landed, "the marked distant section must rebake unprompted");
     let lower_section = world.data.sections.get(&lower).unwrap();

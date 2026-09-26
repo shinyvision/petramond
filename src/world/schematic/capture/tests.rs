@@ -8,8 +8,7 @@ use petramond_world::{
 };
 
 fn world() -> ServerWorld {
-    ServerWorld::with_pool(0, 1, Arc::new(crate::worker::JobPool::inline()),
-    )
+    ServerWorld::new(0, 1)
 }
 
 #[test]

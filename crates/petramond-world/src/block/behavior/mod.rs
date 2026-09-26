@@ -202,13 +202,3 @@ impl BlockBehavior for EngineHook {
         );
     }
 }
-
-/// Pub paths to the per-behaviour `test_exports` shims (the behaviour modules
-/// themselves stay private). Test-support builds only.
-#[cfg(any(test, feature = "test-support"))]
-pub mod test_shims {
-    pub use super::dirt::test_exports as dirt;
-    pub use super::grass::test_exports as grass;
-    pub use super::leaves::test_exports as leaves;
-    pub use super::wasm::test_exports as wasm;
-}

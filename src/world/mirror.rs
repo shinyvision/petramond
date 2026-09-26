@@ -130,29 +130,32 @@ mod tests {
     use super::*;
     use crate::world::testutil::install_flat_floor;
     use petramond_world::block::Block;
-    use std::time::{Duration, Instant};
 
     /// The mirror is a faithful connection stand-in: terrain the server
     /// finishes lands on the replica, a later edit reaches it through the
     /// delta log, and an eviction takes the section off the replica again.
     #[test]
     fn a_mirrored_replica_follows_installs_edits_and_evictions() {
-        let pool = std::sync::Arc::new(crate::worker::JobPool::new(2));
-        let mut server = ServerWorld::with_pool(0, 1, pool.clone());
-        let mut replica = ReplicaWorld::with_pool(0, 1, pool);
+        let mut server = ServerWorld::new(0, 1);
+        let mut replica = ReplicaWorld::new(0, 1);
         install_flat_floor(&mut server);
         let mut mirror = ReplicaMirror::new(&mut server);
 
         // Fixture sections demand their first bake; pump until the floor is
-        // light-final and shipped.
+        // light-final and shipped. Both worlds run inline pools, so each pump
+        // finishes what the previous one submitted.
         let floor = SectionPos::from_world(0, 64, 0).expect("in range");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !replica.data().sections.contains_key(&floor) {
+        for _ in 0..64 {
+            if replica.data().sections.contains_key(&floor) {
+                break;
+            }
             server.pump_light_bakes();
             mirror.sync(&mut server, &mut replica);
-            assert!(Instant::now() < deadline, "the floor never shipped");
-            std::thread::sleep(Duration::from_millis(1));
         }
+        assert!(
+            replica.data().sections.contains_key(&floor),
+            "the floor never shipped"
+        );
         assert_eq!(
             Block::from_id(replica.data().chunk_block(3, 64, 3)),
             Block::Stone

@@ -102,4 +102,44 @@ mod tests {
             }
         }
     }
+
+    /// The UV turn must exactly undo what turning the shape did to a face's
+    /// cell-local UV: sampling a turned box at the turned point has to land on
+    /// the same texel as sampling the authored box at the authored point, or a
+    /// tile authored once cannot serve all four facings.
+    ///
+    /// The sides come out right for free; `+Y`/`-Y` are the two that need the
+    /// correction, in OPPOSITE directions, which is exactly the pair a
+    /// hand-derived sign gets backwards.
+    #[test]
+    fn the_uv_turn_undoes_the_shape_turn_on_every_face() {
+        use petramond_world::block::{face_uv_turns, ShapeFace, FACE_BEFORE_TURN};
+
+        // Which authored face ends up at canonical index `i` after `turns`.
+        let face_before_turns =
+            |i: usize, turns: u8| (0..turns).fold(i, |f, _| FACE_BEFORE_TURN[f]);
+        // A cell-local point off-centre on every axis, so no symmetry can hide
+        // a mistake.
+        let authored = [3.0 / 16.0, 5.0 / 16.0, 6.0 / 16.0];
+        for turns in 0..4u8 {
+            // The same material point after `turns` quarter turns: the turn the
+            // box extents get, (x, z) -> (1 - z, x).
+            let mut p = authored;
+            for _ in 0..turns {
+                p = [1.0 - p[2], p[1], p[0]];
+            }
+            for (i, face) in FACES.into_iter().enumerate() {
+                // Face `i` of the turned box is authored face `a`; sampling the
+                // turned face at the turned point must land where the authored
+                // face sampled the authored point.
+                let want = cell_uv(FACES[face_before_turns(i, turns)], authored);
+                let [u, v] = cell_uv(face, p);
+                let got = ShapeFace::turn_uv(face_uv_turns(i, turns), u, v);
+                assert!(
+                    (got.0 - want[0]).abs() < 1e-5 && (got.1 - want[1]).abs() < 1e-5,
+                    "turn {turns} face {i}: sampled {got:?}, authored {want:?}"
+                );
+            }
+        }
+    }
 }

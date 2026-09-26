@@ -52,15 +52,9 @@ pub struct CellData {
     pub furnace: Option<[u16; 3]>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct ResolvedCell {
-    pub block: Block,
-    pub state: ShapeState,
-    pub fluid: u8,
-    pub kv: BTreeMap<String, Vec<u8>>,
-    pub container: Option<Container>,
-    pub furnace: Option<Furnace>,
-}
+/// A live cell's complete contents — the world's own snapshot type
+/// (`world::cells`), which schematics capture from and paste back.
+pub use crate::world::cells::ResolvedCell;
 
 impl CellData {
     pub fn capture(cell: &ResolvedCell) -> Self {

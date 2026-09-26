@@ -132,7 +132,6 @@ mod tests {
     use petramond_world::block::Block;
     use petramond_world::chunk::SectionPos;
     use petramond_world::section::Section;
-    use std::time::{Duration, Instant};
 
     /// A renderer missing the GPU copy can recover released CPU geometry without
     /// removing the installed mesh while the forced remesh is pending.
@@ -175,12 +174,18 @@ mod tests {
             "gating a repack must never remove the installed mesh"
         );
 
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while world.side.terrain.meshes[&pos].is_released() {
+        // The inline pool finishes each submitted job inside the pump, so a
+        // bounded run of pumps (light, submit, drain) always lands it.
+        for _ in 0..64 {
+            if !world.side.terrain.meshes[&pos].is_released() {
+                break;
+            }
             world.tick_mesh_budget(8);
-            assert!(Instant::now() < deadline, "forced remesh did not land");
-            std::thread::sleep(Duration::from_millis(1));
         }
+        assert!(
+            !world.side.terrain.meshes[&pos].is_released(),
+            "forced remesh did not land"
+        );
         assert!(!world.side.terrain.meshes[&pos].is_empty());
         assert!(
             !world.terrain_render_handoff().needs_repack_remeshes(column),
@@ -192,7 +197,7 @@ mod tests {
     /// column must come back as upload work, uploaded or not.
     #[test]
     fn a_full_reupload_requeues_every_meshed_column() {
-        let mut world = World::new(0, 0);
+        let mut world = ReplicaWorld::new(0, 0);
         let pos = SectionPos::new(0, 0, 0);
         let column = pos.chunk_pos();
         let mut section = Section::new(pos.cx, pos.cy, pos.cz);
@@ -201,10 +206,10 @@ mod tests {
         world.insert_section_for_test(pos, section);
         world.mesh_section_blocking_for_test(pos);
         world.terrain_render_handoff().mark_column_uploaded(column);
-        assert!(!world.terrain.mesh_upload_dirty_columns.contains(&column));
+        assert!(!world.side.terrain.mesh_upload_dirty_columns.contains(&column));
 
         world.terrain_render_handoff().request_full_reupload();
-        assert!(world.terrain.mesh_upload_dirty_columns.contains(&column));
+        assert!(world.side.terrain.mesh_upload_dirty_columns.contains(&column));
         let mut dirty = Vec::new();
         world
             .terrain_render_handoff()
@@ -214,8 +219,8 @@ mod tests {
 
     #[test]
     fn a_full_reupload_of_an_empty_world_queues_nothing() {
-        let mut world = World::new(0, 0);
+        let mut world = ReplicaWorld::new(0, 0);
         world.terrain_render_handoff().request_full_reupload();
-        assert!(world.terrain.mesh_upload_dirty_columns.is_empty());
+        assert!(world.side.terrain.mesh_upload_dirty_columns.is_empty());
     }
 }

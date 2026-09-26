@@ -200,13 +200,15 @@ impl<S: WorldSide> World<S> {
 }
 
 impl ServerWorld {
-    /// A server world over its own machine-sized job pool.
+    /// A test server world over an INLINE job pool (see [`JobPool::inline`]):
+    /// every gen/light job it queues finishes before the submitting call
+    /// returns, so a test gates on one more pump instead of sleeping on a
+    /// worker thread, and a test process never spawns a pool per world.
+    /// Production worlds share the session's pool through
+    /// [`with_pool`](Self::with_pool).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new(seed: u32, render_dist: i32) -> Self {
-        Self::with_pool(
-            seed,
-            render_dist,
-            Arc::new(JobPool::new(JobPool::default_threads())),
-        )
+        Self::with_pool(seed, render_dist, Arc::new(JobPool::inline()))
     }
 
     /// Construct over a caller-owned job pool, so the server world and the
@@ -350,13 +352,11 @@ impl ServerWorld {
 }
 
 impl ReplicaWorld {
-    /// A replica over its own machine-sized job pool.
+    /// A test replica over an INLINE job pool (see [`ServerWorld::new`]):
+    /// mesh and light jobs finish inside the call that queues them.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new(seed: u32, render_dist: i32) -> Self {
-        Self::with_pool(
-            seed,
-            render_dist,
-            Arc::new(JobPool::new(JobPool::default_threads())),
-        )
+        Self::with_pool(seed, render_dist, Arc::new(JobPool::inline()))
     }
 
     /// Construct over a caller-owned job pool (see [`ServerWorld::with_pool`]).
