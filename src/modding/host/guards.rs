@@ -15,10 +15,11 @@ use petramond_world::item::ItemType;
 /// [`ErrorCode::LimitExceeded`] — recoverable: the SDK's `try_` wrappers hand
 /// it back so a mod can split or shard instead of being disabled.
 ///
-/// Why these particular numbers. The watchdog deliberately charges GUEST
-/// compute only, so host-side per-element work is unmetered: without
+/// Why these particular numbers. Host-side work is metered only by the fuel a
+/// call's request and reply bytes cost ([`super::budget::host_call_fuel`]),
+/// which says nothing about how long ONE call holds the sim: without
 /// [`SIM_BATCH_MAX`] one maximal batch (the 64 MiB guest memory allows
-/// millions of positions) stalls the sim with no backstop, and 4096 is orders
+/// millions of positions) stalls the tick inside a single call, and 4096 is orders
 /// of magnitude above legitimate per-tick batches (bundled mods peak in the
 /// low hundreds) while a maximal capped batch stays microseconds of host work.
 /// It mirrors the client surface's per-call caps (`CLIENT_BLOCKS_QUERY_MAX`

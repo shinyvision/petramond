@@ -144,6 +144,9 @@ fn representative_messages_roundtrip_through_postcard() {
         protocol: 50,
         challenge: [0x11; 32],
     });
+    roundtrip(&ServerToClient::ModsDisabled {
+        mods: vec!["farming".into(), "combat".into()],
+    });
     for reason in [
         JoinRejectReason::BadProof,
         JoinRejectReason::InvalidName("Player name cannot be empty".into()),

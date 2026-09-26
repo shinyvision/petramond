@@ -20,6 +20,8 @@ use crate::player::BonePose;
 use crate::world::ReplicaWorld;
 
 use super::state::{ClientCommand, ClientImageData};
+use crate::modding::health::ModHealth;
+use crate::modding::host::budget::FuelBudget;
 use crate::modding::instance::ModInstance;
 
 struct ClientMod {
@@ -135,6 +137,8 @@ impl ClientModRuntime {
                 world_seed,
                 RuntimeSide::Client,
                 Some(storage),
+                ModHealth::standalone(&id),
+                FuelBudget::DEFAULT,
             ) {
                 Ok(instance) => instance,
                 Err(e) => {
@@ -591,6 +595,18 @@ impl ClientModRuntime {
     /// table and the controls screen.
     pub fn key_actions(&self) -> &[ModKeyAction] {
         &self.actions
+    }
+
+    /// The server disabled these mods for the session
+    /// (`ServerToClient::ModsDisabled`): disable their client instances too,
+    /// so shape bakes and predictions fall back exactly when the server's do
+    /// instead of baking collision the server no longer has.
+    pub fn disable_from_server(&mut self, mod_ids: &[String]) {
+        for loaded in &mut self.mods {
+            if mod_ids.contains(&loaded.id) {
+                loaded.instance.disable("the server disabled this mod for the session");
+            }
+        }
     }
 
     /// The live (non-disabled) mod owning a namespaced `mod_id:name` key.
@@ -1076,9 +1092,15 @@ pub fn bake_installed_custom_item_geometry() {
         let Ok(module) = crate::modding::host::module_for(&path) else {
             continue;
         };
-        let Ok(mut instance) =
-            ModInstance::from_module_side(&id, &module, 0, RuntimeSide::Client, None)
-        else {
+        let Ok(mut instance) = ModInstance::from_module_side(
+            &id,
+            &module,
+            0,
+            RuntimeSide::Client,
+            None,
+            ModHealth::standalone(&id),
+            FuelBudget::DEFAULT,
+        ) else {
             continue;
         };
         instance.call_init_detached();

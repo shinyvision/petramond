@@ -388,9 +388,13 @@ mod tests {
     /// runs off-wasm. Any call this world does not model panics, so a future
     /// edit that reaches for one is reported rather than silently answered.
     fn install_host() {
-        static ONCE: OnceLock<()> = OnceLock::new();
-        ONCE.get_or_init(|| {
-            let _ = mod_sdk::__rt::NATIVE_HOST.set(Box::new(|call| match call {
+        thread_local! {
+            static HOST: std::cell::RefCell<Option<mod_sdk::testing::HostGuard>> =
+                const { std::cell::RefCell::new(None) };
+        }
+        HOST.with(|slot| {
+            slot.borrow_mut().get_or_insert_with(|| {
+                mod_sdk::testing::install_host(|call| match call {
                 HostCall::Block(mod_sdk::BlockCall::GetBlock { pos }) => HostRet::Block(with(|f| f.seen(*pos))),
                 HostCall::Block(mod_sdk::BlockCall::SetBlock { pos, block }) => {
                     with(|f| f.write(*pos, *block));
@@ -432,7 +436,8 @@ mod tests {
                     HostRet::Bool(true)
                 }
                 other => panic!("the fake world does not model {other:?}"),
-            }));
+                })
+            });
         });
     }
 

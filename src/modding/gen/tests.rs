@@ -53,7 +53,7 @@ fn trapping_module() -> Module {
 #[test]
 fn stage_replacement_conflicts_resolve_to_last_in_load_order() {
     let module = trapping_module();
-    let mut b = GenHooksBuilder::new(1);
+    let mut b = GenHooksBuilder::new(1, ModHealthBoard::default(), FuelBudget::DEFAULT);
     b.add_generator("alpha", &module, 7);
     b.add_stage_replacement("beta", &module, WorldgenStage::Terrain, 9);
     let hooks = b.build().expect("hooks registered");
@@ -72,7 +72,11 @@ fn stage_replacement_conflicts_resolve_to_last_in_load_order() {
     assert_eq!(hooks.mods[climate.mod_idx].id, "alpha");
 
     // Nothing registered = no config = the empty fast path.
-    assert!(GenHooksBuilder::new(1).build().is_none());
+    assert!(
+        GenHooksBuilder::new(1, ModHealthBoard::default(), FuelBudget::DEFAULT)
+            .build()
+            .is_none()
+    );
 }
 
 /// Failure contract: a trapping replacement falls back to the ENGINE
@@ -81,7 +85,7 @@ fn stage_replacement_conflicts_resolve_to_last_in_load_order() {
 #[test]
 fn trapping_gen_mod_falls_back_to_the_engine_stage() {
     let module = trapping_module();
-    let mut b = GenHooksBuilder::new(0x312);
+    let mut b = GenHooksBuilder::new(0x312, ModHealthBoard::default(), FuelBudget::DEFAULT);
     b.add_stage_replacement("hostile", &module, WorldgenStage::Terrain, 1);
     b.add_stage_replacement("hostile", &module, WorldgenStage::Vegetation, 2);
     b.add_feature(
@@ -108,4 +112,45 @@ fn trapping_gen_mod_falls_back_to_the_engine_stage() {
             "engine fallback must be byte-identical at ({cx},{cy},{cz})"
         );
     }
+}
+
+/// Health contract: one worker's trap disables the mod for EVERY worker (and
+/// its tick instance, which shares the board) — no thread keeps generating
+/// a mod another thread dropped.
+#[test]
+fn a_trap_on_one_worker_disables_the_mod_on_every_worker() {
+    let module = trapping_module();
+    let board = ModHealthBoard::default();
+    let mut b = GenHooksBuilder::new(7, board.clone(), FuelBudget::DEFAULT);
+    b.add_stage_replacement("hostile", &module, WorldgenStage::Terrain, 1);
+    let hooks = b.build().expect("hooks registered");
+    let heights = [64; 256];
+    let biomes = [1; 256];
+    let inputs = GenInputs {
+        seed: 7,
+        section_pos: [0, 4, 0],
+        blocks: None,
+        surface_heights: &heights,
+        biomes: &biomes,
+    };
+    assert!(!board.health("hostile").is_disabled());
+    let worker = std::thread::spawn({
+        let hooks = Arc::clone(&hooks);
+        move || {
+            let inputs = GenInputs {
+                seed: 7,
+                section_pos: [0, 4, 0],
+                blocks: None,
+                surface_heights: &[64; 256],
+                biomes: &[1; 256],
+            };
+            hooks.replace_terrain(&inputs)
+        }
+    });
+    assert!(worker.join().unwrap().is_none(), "the worker trapped");
+    assert!(board.health("hostile").is_disabled(), "the mod is down session-wide");
+    assert_eq!(board.disabled_since(0), vec!["hostile".to_owned()]);
+    // This thread never instantiated the mod and now never will.
+    assert!(hooks.replace_terrain(&inputs).is_none());
+    assert_eq!(board.disabled_count(), 1, "disabled once, not once per thread");
 }

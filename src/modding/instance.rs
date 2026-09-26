@@ -10,12 +10,16 @@
 //! Protocol (see `mod-api` docs): requests are postcard bytes written into
 //! guest memory through the guest's own `mod_alloc`; `mod_dispatch(ptr, len)`
 //! consumes the request buffer and returns a packed `ptr << 32 | len` reply
-//! the host reads and then releases with `mod_free`. Any trap, deadline,
-//! memory fault, or malformed reply DISABLES the mod for the session with a
-//! visible error — the tick always continues without it. A
+//! the host reads and then releases with `mod_free`. Any trap, exhausted fuel
+//! budget, deadline, memory fault, or malformed reply DISABLES the mod for the
+//! session with a visible error — the tick always continues without it — and
+//! the disable lands on the mod's shared [`ModHealth`], so every other
+//! instance of it (worldgen workers, bakes) stops too. A
 //! [`GuestRet::Unsupported`] reply (an older guest declining a call it
 //! predates) is not an error: the dispatch counts as unanswered and the mod
 //! stays enabled.
+
+use std::sync::Arc;
 
 use mod_api::{AbiRejection, AbiVersion, Capabilities, GuestCall, GuestRet};
 use wasmtime::{Instance, Memory, Module, Store, TypedFunc};
@@ -29,6 +33,8 @@ fn slow_dispatch_logging() -> bool {
     log::log_enabled!(target: "petramond::modding::perf", log::Level::Debug)
 }
 
+use super::health::ModHealth;
+use super::host::budget::FuelBudget;
 use super::host::{self, ModStoreData, Phase, Registration, DISPATCH_DEADLINE_EPOCHS};
 use super::scope;
 
@@ -40,7 +46,10 @@ pub(super) struct ModInstance {
     fn_alloc: TypedFunc<u32, u32>,
     fn_free: TypedFunc<(u32, u32), ()>,
     fn_dispatch: TypedFunc<(u32, u32), u64>,
-    disabled: bool,
+    /// The mod's session-wide health, shared with its other instances.
+    health: Arc<ModHealth>,
+    /// Fuel the current guest entry was armed with (see [`host::budget`]).
+    armed_fuel: u64,
     /// Successful guest dispatches (init + tick systems + events), for tests
     /// and diagnostics.
     dispatches: u64,
@@ -56,8 +65,18 @@ pub(super) struct ModInstance {
 }
 
 impl ModInstance {
+    /// A standalone server instance with its own health and the default
+    /// fuel budget (fixtures and single-instance tools).
     pub(super) fn from_module(id: &str, module: &Module, world_seed: u32) -> Result<Self, String> {
-        Self::from_module_side(id, module, world_seed, mod_api::RuntimeSide::Server, None)
+        Self::from_module_side(
+            id,
+            module,
+            world_seed,
+            mod_api::RuntimeSide::Server,
+            None,
+            ModHealth::standalone(id),
+            FuelBudget::DEFAULT,
+        )
     }
 
     pub(super) fn from_module_side(
@@ -66,13 +85,19 @@ impl ModInstance {
         world_seed: u32,
         side: mod_api::RuntimeSide,
         client_storage_dir: Option<std::path::PathBuf>,
+        health: Arc<ModHealth>,
+        budget: FuelBudget,
     ) -> Result<Self, String> {
         let mut store = Store::new(
             host::engine(),
             ModStoreData::new_for_side(id, world_seed, side, client_storage_dir),
         );
         store.limiter(|data| &mut data.limits);
+        store.data_mut().meter.set_budget(budget);
         // Instantiation runs guest code too (data/start sections): same leash.
+        store
+            .set_fuel(budget.per_dispatch)
+            .map_err(|e| format!("arm fuel: {e:#}"))?;
         store.set_epoch_deadline(DISPATCH_DEADLINE_EPOCHS);
         let instance = host::linker()?
             .instantiate(&mut store, module)
@@ -108,13 +133,24 @@ impl ModInstance {
             request_buf: Vec::new(),
             reply_buf: Vec::new(),
             declined: Vec::new(),
-            disabled: false,
+            health,
+            armed_fuel: budget.per_dispatch,
             dispatches: 0,
         })
     }
 
     pub(super) fn disabled(&self) -> bool {
-        self.disabled
+        self.health.is_disabled()
+    }
+
+    /// Replace this instance's fuel budgets (the session's configuration).
+    pub(super) fn set_fuel_budget(&mut self, budget: FuelBudget) {
+        self.store.data_mut().meter.set_budget(budget);
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))] // test observability
+    pub(super) fn fuel_used_this_tick(&self) -> u64 {
+        self.store.data().meter.used_this_tick()
     }
 
     #[cfg_attr(not(test), allow(dead_code))] // test observability
@@ -141,7 +177,10 @@ impl ModInstance {
     /// must stay pure (registrations, `ResolveBlock`, `Log`, `RngU64`).
     pub(super) fn call_init_detached(&mut self) {
         debug_assert!(self.store.data().phase == Phase::Init);
-        self.arm_dispatch();
+        if !self.arm_dispatch() {
+            self.store.data_mut().phase = Phase::Run;
+            return;
+        }
         let result = self.fn_init.call(
             &mut self.store,
             (
@@ -150,18 +189,19 @@ impl ModInstance {
             ),
         );
         self.store.data_mut().phase = Phase::Run;
+        let fuel_note = self.settle_fuel();
         match result {
             Ok(()) => self.dispatches += 1,
             Err(e) => {
                 let context = self.dispatch_context(None);
-                self.disable(&format!("mod_init trapped: {e:#}{context}"));
+                self.disable(&format!("mod_init trapped: {e:#}{fuel_note}{context}"));
             }
         }
     }
 
     /// The registrations `mod_init` collected — empty if the mod got disabled.
     pub(super) fn take_registrations(&mut self) -> Vec<Registration> {
-        if self.disabled {
+        if self.disabled() {
             self.store.data_mut().pending.clear();
             return Vec::new();
         }
@@ -192,7 +232,7 @@ impl ModInstance {
     /// are rejected, everything else (deadline, disable-on-trap, protocol)
     /// behaves identically.
     pub(super) fn call_guest_detached(&mut self, call: &GuestCall) -> Option<GuestRet> {
-        if self.disabled {
+        if self.disabled() {
             return None;
         }
         let mut request = std::mem::take(&mut self.request_buf);
@@ -205,13 +245,17 @@ impl ModInstance {
                 return None;
             }
         };
-        self.arm_dispatch();
+        if !self.arm_dispatch() {
+            self.request_buf = request;
+            return None;
+        }
         // Only timed when the diagnostic that reads it is switched on: a clock
         // read per dispatch is real cost on a path that runs thousands of
         // times a tick.
         let started = slow_dispatch_logging().then(std::time::Instant::now);
         let result = self.dispatch_protocol(&request[..request_len]);
         self.request_buf = request;
+        let fuel_note = self.settle_fuel();
         match result {
             Ok(GuestRet::Unsupported) => {
                 self.note_declined(call);
@@ -226,7 +270,7 @@ impl ModInstance {
             }
             Err(e) => {
                 let context = self.dispatch_context(Some(call));
-                self.disable(&format!("{e}{context}"));
+                self.disable(&format!("{e}{fuel_note}{context}"));
                 None
             }
         }
@@ -272,11 +316,47 @@ impl ModInstance {
         );
     }
 
-    /// Arm the watchdog for one guest entry: the store's epoch deadline plus
-    /// the per-dispatch accounting `host_dispatch` charges against.
-    fn arm_dispatch(&mut self) {
+    /// Arm one guest entry: its fuel (the per-dispatch budget, capped by
+    /// what is left of this tick's — see [`host::budget`]), the wall-clock
+    /// backstop deadline, and the per-dispatch accounting `host_dispatch`
+    /// charges against. `false` = the mod may not run (this tick's budget is
+    /// spent, so it was just disabled).
+    ///
+    /// The tick is the published simulation context's, or the detached AI
+    /// dispatch's; worldgen and client instances have none and are held to
+    /// the per-dispatch budget only.
+    fn arm_dispatch(&mut self) -> bool {
+        let tick = scope::with_active_ref(|ctx| ctx.world.current_tick())
+            .or_else(super::ai::detached_tick);
+        let fuel = match self.store.data_mut().meter.arm(tick) {
+            Ok(fuel) => fuel,
+            Err(why) => {
+                self.disable(&why);
+                return false;
+            }
+        };
+        if let Err(e) = self.store.set_fuel(fuel) {
+            self.disable(&format!("arm fuel: {e:#}"));
+            return false;
+        }
+        self.armed_fuel = fuel;
         self.store.set_epoch_deadline(DISPATCH_DEADLINE_EPOCHS);
         self.store.data_mut().begin_dispatch();
+        true
+    }
+
+    /// Charge the finished entry's fuel to this tick's budget. Returns a
+    /// disable-message note naming the budget when the entry ran dry (empty
+    /// otherwise), so a fuel trap says which limit it hit.
+    fn settle_fuel(&mut self) -> String {
+        let remaining = self.store.get_fuel().unwrap_or(0);
+        let meter = &mut self.store.data_mut().meter;
+        meter.charge(self.armed_fuel, remaining);
+        if remaining == 0 {
+            format!(" [{}]", meter.exhaustion(self.armed_fuel))
+        } else {
+            String::new()
+        }
     }
 
     /// Diagnostic suffix for disable messages: the guest call that was in
@@ -351,14 +431,11 @@ impl ModInstance {
         decoded
     }
 
-    /// Session-scoped kill switch: one visible error line, then the mod stops
+    /// Session-scoped kill switch: one visible error line, then the mod —
+    /// THIS instance and every other instance sharing its health — stops
     /// receiving dispatches until the next launch.
     pub(super) fn disable(&mut self, why: &str) {
-        if self.disabled {
-            return;
-        }
-        self.disabled = true;
-        log::error!("mod '{}' disabled for this session: {why}", self.id);
+        self.health.disable(why);
     }
 }
 

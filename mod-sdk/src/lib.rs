@@ -9,6 +9,12 @@
 //! ([`log`], [`current_tick`], [`rng_u64`], [`register_tick_system`],
 //! [`register_event_handler`]).
 //!
+//! Prefer registering closures over hand-numbered ids: implement
+//! [`TypedMod`] beside [`Mod`] and export with [`register_typed_mod!`] —
+//! [`Handlers`] allocates the ids and routes each dispatch to its closure.
+//! Native tests run a mod's logic against [`testing::MockHost`], a per-test
+//! fake world installed on the test's own thread.
+//!
 //! Determinism contract: mod code runs only inside
 //! `mod_init`, tick systems, and event handlers; randomness only through
 //! [`rng_u64`]'s seeded host streams; no clock, no filesystem, no entropy.
@@ -51,6 +57,9 @@ mod worldgen;
 
 #[doc(hidden)]
 pub mod __rt;
+mod handlers;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod testing;
 
 pub use abi::*;
 pub use bytes::*;
@@ -63,6 +72,7 @@ pub use core_calls::*;
 pub use entities::*;
 pub use fast_hash::*;
 pub use gui::*;
+pub use handlers::*;
 pub use id_shards::*;
 pub use instance_data::*;
 pub use interact::*;

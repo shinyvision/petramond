@@ -12,10 +12,14 @@ extern "C" {
 }
 
 /// Host-target stub so the SDK itself type-checks off-wasm: a mod built
-/// natively answers its host calls through [`NATIVE_HOST`] or not at all.
+/// natively answers its host calls through the host installed on the calling
+/// thread ([`crate::testing`]) or not at all.
 #[cfg(not(target_arch = "wasm32"))]
 unsafe fn host_dispatch(_ptr: u32, _len: u32) -> u64 {
-    unreachable!("mod-sdk host calls only exist inside the wasm guest")
+    panic!(
+        "mod-sdk host call made off-wasm with no host installed on this thread \
+         (see mod_sdk::testing::MockHost / install_host)"
+    )
 }
 
 /// The single mod instance behind the raw exports.
@@ -64,19 +68,13 @@ fn to_wire(bytes: &[u8]) -> u64 {
 }
 
 /// One host call: encode, dispatch, decode the reply (the host allocated
-/// it in our memory through `mod_alloc`; we own and free it).
-/// Off-wasm, the host every SDK call goes to: a tool that links a mod's logic
-/// natively (to benchmark or test it against the real worldgen) installs one
-/// before the first call.
-#[cfg(not(target_arch = "wasm32"))]
-pub type NativeHost = Box<dyn Fn(&HostCall) -> HostRet + Send + Sync>;
-#[cfg(not(target_arch = "wasm32"))]
-pub static NATIVE_HOST: std::sync::OnceLock<NativeHost> = std::sync::OnceLock::new();
-
+/// it in our memory through `mod_alloc`; we own and free it). Off-wasm the
+/// call goes to the host installed on the calling thread instead
+/// ([`crate::testing::install_host`]).
 pub fn host_call(call: &HostCall) -> HostRet {
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(host) = NATIVE_HOST.get() {
-        return host(call);
+    if let Some(ret) = crate::testing::answer_natively(call) {
+        return ret;
     }
     let request = mod_api::encode(call).expect("encode host call");
     let packed = unsafe { host_dispatch(request.as_ptr() as u32, request.len() as u32) };

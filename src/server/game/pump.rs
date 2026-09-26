@@ -108,6 +108,21 @@ impl ServerGame {
                 sess.replication.sent_unlock_count = unlocked.len();
             }
         }
+        // Mods disabled since this recipient last heard (same append-only
+        // suffix bookkeeping): its client instances must fall back with ours.
+        let disabled_mods = self.mods.host().disabled_count();
+        for (s, out) in per_session.iter_mut().enumerate() {
+            let sess = &mut self.sessions[s];
+            if disabled_mods > sess.replication.sent_disabled_mods {
+                out.push(ServerToClient::ModsDisabled {
+                    mods: self
+                        .mods
+                        .host()
+                        .disabled_since(sess.replication.sent_disabled_mods),
+                });
+                sess.replication.sent_disabled_mods = disabled_mods;
+            }
+        }
         let queue_room: Vec<usize> = self
             .sessions
             .iter()

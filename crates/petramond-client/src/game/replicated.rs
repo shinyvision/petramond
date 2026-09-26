@@ -762,6 +762,9 @@ impl Game {
                         self.player.progression.unlock(&recipe);
                     }
                 }
+                ServerToClient::ModsDisabled { mods } => {
+                    self.client_mods.disable_from_server(&mods);
+                }
                 // Streaming flow control: Start opens the timing window, End
                 // closes it into a measured apply rate and an immediate ack
                 // (both markers apply in THIS same drain loop, so the elapsed

@@ -21,6 +21,7 @@ pub mod ai;
 pub mod client;
 mod convert;
 pub mod gen;
+mod health;
 mod host;
 pub(crate) use host::memo::{
     clear_pending_key, has_pending_key, park, sweep_parked, take_pending_key, wait_for_pending,
@@ -85,6 +86,8 @@ use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 
 pub use client::{ClientCommand, ClientImageData, ClientOverlayRegistration};
+use health::ModHealthBoard;
+pub use host::budget::FuelBudget;
 use host::Registration;
 use instance::ModInstance;
 
@@ -129,6 +132,11 @@ pub struct ModHost {
     /// registry is per-thread (see `ai.rs`), and `initialize` runs on the
     /// constructing thread.
     ai_nodes: std::collections::HashMap<String, ai::AiNodeRegistration>,
+    /// Every mod's session-wide health (shared with its worldgen instances)
+    /// and the order mods were disabled in — what clients are told.
+    health: ModHealthBoard,
+    /// The session's fuel budgets (see [`FuelBudget`]).
+    budget: FuelBudget,
 }
 
 impl ModHost {
@@ -152,17 +160,29 @@ impl ModHost {
         // `module_for` below then blocks only on its own module's slot, so an
         // unwarmed session pays the slowest compile, not the sum.
         host::module_cache::prewarm(mods.iter().map(|(_, wasm)| wasm.clone()));
+        let health = ModHealthBoard::default();
+        let budget = FuelBudget::DEFAULT;
         let mut instances = Vec::new();
         let mut metas = Vec::new();
         for (id, wasm) in mods {
+            // A mod that fails to load is disabled like one that fails later,
+            // so clients drop their instances of it too.
             let module = match host::module_for(wasm) {
                 Ok(module) => module,
                 Err(e) => {
-                    log::error!("mod '{id}' disabled for this session: {e}");
+                    health.health(id).disable(&e);
                     continue;
                 }
             };
-            match ModInstance::from_module(id, &module, world_seed) {
+            match ModInstance::from_module_side(
+                id,
+                &module,
+                world_seed,
+                mod_api::RuntimeSide::Server,
+                None,
+                health.health(id),
+                budget,
+            ) {
                 Ok(inst) => {
                     log::info!("mod '{id}' loaded from {}", wasm.display());
                     instances.push(Arc::new(Mutex::new(inst)));
@@ -171,7 +191,9 @@ impl ModHost {
                         module: Some(module),
                     });
                 }
-                Err(e) => log::error!("mod '{id}' disabled for this session: {e}"),
+                Err(e) => {
+                    health.health(id).disable(&e);
+                }
             }
         }
         Self {
@@ -180,7 +202,31 @@ impl ModHost {
             hostile_spawners: Vec::new(),
             block_behaviors: std::collections::HashMap::new(),
             ai_nodes: std::collections::HashMap::new(),
+            health,
+            budget,
         }
+    }
+
+    /// Replace the session's fuel budgets: applies to every loaded instance
+    /// now, and to the worldgen instances [`initialize`](Self::initialize)
+    /// configures (call it before `initialize` for those).
+    pub fn set_fuel_budget(&mut self, budget: FuelBudget) {
+        self.budget = budget;
+        for inst in &self.instances {
+            inst.lock().unwrap().set_fuel_budget(budget);
+        }
+    }
+
+    /// Mods disabled this session after the first `seen`, in disable order —
+    /// the suffix a client that has been told `seen` of them is missing
+    /// (`ServerToClient::ModsDisabled`).
+    pub fn disabled_since(&self, seen: usize) -> Vec<String> {
+        self.health.disabled_since(seen)
+    }
+
+    /// How many mods this session has disabled so far.
+    pub fn disabled_count(&self) -> usize {
+        self.health.disabled_count()
     }
 
     /// Test helper: a host with one WAT guest registered under `mod_id` whose
@@ -213,6 +259,8 @@ impl ModHost {
             hostile_spawners: Vec::new(),
             block_behaviors: std::collections::HashMap::new(),
             ai_nodes: std::collections::HashMap::new(),
+            health: ModHealthBoard::default(),
+            budget: FuelBudget::DEFAULT,
         }
     }
 
@@ -235,6 +283,8 @@ impl ModHost {
             hostile_spawners: Vec::new(),
             block_behaviors: std::collections::HashMap::new(),
             ai_nodes: std::collections::HashMap::new(),
+            health: ModHealthBoard::default(),
+            budget: FuelBudget::DEFAULT,
         }
     }
 
@@ -255,7 +305,8 @@ impl ModHost {
         systems: &mut TickSystems,
         next_spatial_sound_handle: &mut u64,
     ) {
-        let mut gen_hooks = gen::GenHooksBuilder::new(world.data().seed);
+        let mut gen_hooks =
+            gen::GenHooksBuilder::new(world.data().seed, self.health.clone(), self.budget);
         let mut ai_nodes: std::collections::HashMap<String, ai::AiNodeRegistration> =
             std::collections::HashMap::new();
         let mut hostile_order = self.hostile_spawners.len();

@@ -23,9 +23,15 @@
 //!
 //! # Failure policy
 //!
-//! Trap / deadline / protocol break / invalid ids disable that THREAD's
-//! instance with a visible error; a failed FEATURE is skipped, a failed stage
-//! REPLACEMENT falls back to the ENGINE stage (logged loudly, once per stage).
+//! Trap / exhausted fuel / deadline / protocol break / invalid ids disable
+//! the MOD — not just the failing thread's instance: every gen instance holds
+//! the mod's session-wide [`ModHealth`] (shared with its tick instance), so
+//! the first failure on any worker stops the mod on every worker before their
+//! next dispatch, and generation cannot keep including a mod on some threads
+//! while others dropped it. A failed FEATURE is skipped, a failed stage
+//! REPLACEMENT falls back to the ENGINE stage (logged loudly, once per
+//! stage). Fuel metering makes the failure itself deterministic: the same
+//! section input exhausts the same budget on every thread and machine.
 //!
 //! # Empty-hook cost
 //!
@@ -44,6 +50,8 @@ use petramond_world::biome;
 use petramond_world::block::Block;
 use petramond_world::chunk::{SEA_LEVEL, SECTION_VOLUME};
 
+use super::health::{ModHealth, ModHealthBoard};
+use super::host::budget::FuelBudget;
 use super::host::Registration;
 use super::instance::ModInstance;
 
@@ -75,6 +83,8 @@ const ALL_STAGES: [WorldgenStage; STAGE_COUNT] = [
 struct GenModule {
     id: String,
     module: Module,
+    /// The mod's session-wide health, shared with its tick instance.
+    health: Arc<ModHealth>,
     /// Gen registrations the MAIN load recorded — per-thread inits are
     /// validated (cheaply, by count) against this.
     expected_gen_regs: usize,
@@ -97,6 +107,8 @@ struct StageHook {
 pub struct GenHooks {
     epoch: u64,
     seed: u32,
+    /// The session's fuel budgets, for every per-thread instance.
+    budget: FuelBudget,
     mods: Vec<GenModule>,
     /// Registration order == (load order, per-mod order) — the dispatch order.
     features: Vec<FeatureHook>,
@@ -264,14 +276,17 @@ impl GenHooks {
     }
 
     /// Dispatch one call into this thread's instance of `mod_idx`, validating
-    /// the reply. Any failure (instantiation, trap, deadline, shape, ids)
-    /// disables that thread's instance and yields `None`.
+    /// the reply. Any failure (instantiation, trap, fuel, deadline, shape,
+    /// ids) disables the mod session-wide and yields `None`.
     fn dispatch<T>(
         &self,
         mod_idx: usize,
         call: &GuestCall,
         validate: impl FnOnce(GuestRet) -> Result<T, String>,
     ) -> Option<T> {
+        if self.mods[mod_idx].health.is_disabled() {
+            return None;
+        }
         THREAD_SLOTS.with(|cell| {
             let mut t = cell.borrow_mut();
             if t.epoch != self.epoch {
@@ -282,10 +297,9 @@ impl GenHooks {
                 t.slots.resize_with(self.mods.len(), || Slot::Empty);
             }
             if matches!(t.slots[mod_idx], Slot::Empty) {
-                t.slots[mod_idx] = match self.instantiate(mod_idx) {
-                    Some(inst) => Slot::Live(Box::new(inst)),
-                    None => Slot::Failed,
-                };
+                // A failed instantiation disabled the mod (checked above on
+                // every later dispatch), so the slot never retries.
+                t.slots[mod_idx] = Slot::Live(Box::new(self.instantiate(mod_idx)?));
             }
             let Slot::Live(inst) = &mut t.slots[mod_idx] else {
                 return None;
@@ -302,6 +316,7 @@ impl GenHooks {
     }
 
     /// Build this thread's instance of `mod_idx` and run its detached init.
+    /// `None` = it failed, and the mod is now disabled session-wide.
     fn instantiate(&self, mod_idx: usize) -> Option<ModInstance> {
         let m = &self.mods[mod_idx];
         let mut inst = match ModInstance::from_module_side(
@@ -310,13 +325,12 @@ impl GenHooks {
             self.seed,
             mod_api::RuntimeSide::Worldgen,
             None,
+            Arc::clone(&m.health),
+            self.budget,
         ) {
             Ok(inst) => inst,
             Err(e) => {
-                log::error!(
-                    "mod '{}': worldgen instance failed to instantiate: {e}",
-                    m.id
-                );
+                m.health.disable(&format!("worldgen instance failed to instantiate: {e}"));
                 return None;
             }
         };
@@ -425,7 +439,6 @@ fn validated_writes(output: mod_api::GenOutput, seed: u32) -> Result<GenerationP
 
 enum Slot {
     Empty,
-    Failed,
     Live(Box<ModInstance>),
 }
 
@@ -449,15 +462,22 @@ thread_local! {
 
 pub struct GenHooksBuilder {
     seed: u32,
+    health: ModHealthBoard,
+    budget: FuelBudget,
     mods: Vec<GenModule>,
     features: Vec<FeatureHook>,
     replacements: [Option<StageHook>; STAGE_COUNT],
 }
 
 impl GenHooksBuilder {
-    pub fn new(seed: u32) -> Self {
+    /// A builder for one session: `health` is the session's board (so gen
+    /// instances share each mod's tick-instance health) and `budget` its fuel
+    /// budgets.
+    pub(super) fn new(seed: u32, health: ModHealthBoard, budget: FuelBudget) -> Self {
         Self {
             seed,
+            health,
+            budget,
             mods: Vec::new(),
             features: Vec::new(),
             replacements: Default::default(),
@@ -541,6 +561,7 @@ impl GenHooksBuilder {
                 self.mods.push(GenModule {
                     id: mod_id.to_owned(),
                     module: module.clone(),
+                    health: self.health.health(mod_id),
                     expected_gen_regs: 0,
                 });
                 self.mods.len() - 1
@@ -558,6 +579,7 @@ impl GenHooksBuilder {
         Some(Arc::new(GenHooks {
             epoch: petramond_worldgen::hooks::next_epoch(),
             seed: self.seed,
+            budget: self.budget,
             mods: self.mods,
             features: self.features,
             replacements: self.replacements,

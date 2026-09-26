@@ -33,6 +33,7 @@ impl Remap for ServerToClient {
             | ServerToClient::PlayerLeft { .. }
             | ServerToClient::ChatLine(_)
             | ServerToClient::RecipesUnlocked { .. }
+            | ServerToClient::ModsDisabled { .. }
             | ServerToClient::StreamBatchStart
             | ServerToClient::StreamBatchEnd { .. }
             | ServerToClient::ServerClosing

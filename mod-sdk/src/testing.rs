@@ -1,0 +1,457 @@
+//! Native test support: run a mod's REAL logic off-wasm against a fake
+//! host, one per test.
+//!
+//! Inside the wasm guest every SDK host call crosses the ABI. Built natively
+//! (a mod's `cargo test`), the same calls go to the host installed on the
+//! CALLING THREAD — nothing process-global, so parallel tests each get their
+//! own world and a test can swap hosts mid-way:
+//!
+//! - [`MockHost`] is a ready-made fake world: blocks, world and cell KV, mob
+//!   tags, the tick clock, RNG streams, logs, and a recorder of every call.
+//!   Calls it does not model panic with the call named, unless the test
+//!   answers them through [`MockHost::on`].
+//! - [`install_host`] / [`with_host`] install any closure, for a test that
+//!   needs a hand-rolled answer to everything.
+//!
+//! ```ignore
+//! let host = mod_sdk::testing::MockHost::new();
+//! host.set_block([0, 64, 0], STONE);
+//! host.run(|| my_mod::grow_crop([0, 65, 0]));
+//! assert_eq!(host.block([0, 65, 0]), Some(WHEAT));
+//! ```
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::marker::PhantomData;
+use std::rc::Rc;
+
+use mod_api::{
+    BlockId, ContainerAddress, HostCall, HostRet, ItemStackData, MobTagLookup, MobTagValue,
+    RuntimeSide,
+};
+
+type NativeHost = Box<dyn FnMut(&HostCall) -> HostRet>;
+
+thread_local! {
+    static HOST: RefCell<Option<NativeHost>> = const { RefCell::new(None) };
+}
+
+/// The installed host's answer to `call`, or `None` when this thread has
+/// none (the caller then takes the wasm path, which panics off-wasm).
+pub(crate) fn answer_natively(call: &HostCall) -> Option<HostRet> {
+    HOST.with(|slot| {
+        let mut slot = slot
+            .try_borrow_mut()
+            .expect("a native test host made an SDK host call while answering one");
+        slot.as_mut().map(|host| host(call))
+    })
+}
+
+/// Keeps a host installed on this thread; dropping it restores whatever was
+/// installed before (hosts nest). Not `Send`: the host belongs to the thread
+/// that installed it.
+#[must_use = "the host is uninstalled when the guard drops"]
+pub struct HostGuard {
+    previous: Option<NativeHost>,
+    _thread_bound: PhantomData<*const ()>,
+}
+
+impl Drop for HostGuard {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        // `try_with`: a guard kept in a thread-local of its own may drop
+        // during thread teardown, after this slot is gone.
+        let _ = HOST.try_with(|slot| *slot.borrow_mut() = previous);
+    }
+}
+
+/// Answer every SDK host call made on this thread with `host` until the
+/// returned guard drops.
+pub fn install_host(host: impl FnMut(&HostCall) -> HostRet + 'static) -> HostGuard {
+    let previous = HOST.with(|slot| slot.borrow_mut().replace(Box::new(host)));
+    HostGuard {
+        previous,
+        _thread_bound: PhantomData,
+    }
+}
+
+/// Run `f` with `host` answering this thread's SDK host calls.
+pub fn with_host<R>(host: impl FnMut(&HostCall) -> HostRet + 'static, f: impl FnOnce() -> R) -> R {
+    let _guard = install_host(host);
+    f()
+}
+
+type Fallback = Box<dyn FnMut(&HostCall) -> Option<HostRet>>;
+
+/// A fake world answering the common host calls, plus a recorder. Cheap to
+/// clone (clones share the world). See the module docs.
+#[derive(Clone, Default)]
+pub struct MockHost {
+    state: Rc<RefCell<MockState>>,
+    fallback: Rc<RefCell<Option<Fallback>>>,
+}
+
+#[derive(Default)]
+struct MockState {
+    tick: u64,
+    blocks: HashMap<[i32; 3], BlockId>,
+    /// `None` = every cell counts as loaded; `Some` = only these.
+    loaded: Option<Vec<[i32; 3]>>,
+    world_kv: HashMap<String, Vec<u8>>,
+    cell_kv: HashMap<([i32; 3], String), Vec<u8>>,
+    mobs: HashMap<u64, HashMap<String, MobTagValue>>,
+    containers: HashMap<ContainerAddress, Vec<Option<ItemStackData>>>,
+    rng_queue: Vec<u64>,
+    rng_streams: HashMap<String, u64>,
+    logs: Vec<String>,
+    calls: Vec<HostCall>,
+}
+
+impl MockHost {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Install this world on the calling thread until the guard drops.
+    pub fn install(&self) -> HostGuard {
+        let host = self.clone();
+        install_host(move |call| host.answer(call))
+    }
+
+    /// Run `f` with this world installed on the calling thread.
+    pub fn run<R>(&self, f: impl FnOnce() -> R) -> R {
+        let _guard = self.install();
+        f()
+    }
+
+    /// Answer calls this world does not model (or override ones it does):
+    /// `handler` is asked first, and `None` falls through to the model.
+    pub fn on(&self, handler: impl FnMut(&HostCall) -> Option<HostRet> + 'static) {
+        *self.fallback.borrow_mut() = Some(Box::new(handler));
+    }
+
+    pub fn set_tick(&self, tick: u64) {
+        self.state.borrow_mut().tick = tick;
+    }
+
+    pub fn set_block(&self, pos: [i32; 3], block: BlockId) {
+        self.state.borrow_mut().blocks.insert(pos, block);
+    }
+
+    /// The block at `pos`, `None` where nothing was ever placed.
+    pub fn block(&self, pos: [i32; 3]) -> Option<BlockId> {
+        self.state.borrow().blocks.get(&pos).copied()
+    }
+
+    /// Restrict the loaded cells to `cells` (by default everything is
+    /// loaded); reads of any other cell answer "unloaded".
+    pub fn set_loaded(&self, cells: impl IntoIterator<Item = [i32; 3]>) {
+        self.state.borrow_mut().loaded = Some(cells.into_iter().collect());
+    }
+
+    pub fn set_world_kv(&self, key: &str, value: &[u8]) {
+        let mut state = self.state.borrow_mut();
+        state.world_kv.insert(key.to_owned(), value.to_vec());
+    }
+
+    pub fn world_kv(&self, key: &str) -> Option<Vec<u8>> {
+        self.state.borrow().world_kv.get(key).cloned()
+    }
+
+    pub fn set_cell_kv(&self, pos: [i32; 3], key: &str, value: &[u8]) {
+        let mut state = self.state.borrow_mut();
+        state.cell_kv.insert((pos, key.to_owned()), value.to_vec());
+    }
+
+    pub fn cell_kv(&self, pos: [i32; 3], key: &str) -> Option<Vec<u8>> {
+        self.state.borrow().cell_kv.get(&(pos, key.to_owned())).cloned()
+    }
+
+    /// Make mob `id` live (with no tags) so tag calls address it.
+    pub fn add_mob(&self, id: u64) {
+        self.state.borrow_mut().mobs.entry(id).or_default();
+    }
+
+    pub fn mob_tag(&self, id: u64, key: &str) -> Option<MobTagValue> {
+        self.state.borrow().mobs.get(&id)?.get(key).cloned()
+    }
+
+    /// Place a container with exactly these slots at a block or mob address.
+    pub fn set_container(&self, at: ContainerAddress, slots: Vec<Option<ItemStackData>>) {
+        self.state.borrow_mut().containers.insert(at, slots);
+    }
+
+    /// Read the fake container at `at`, if one exists.
+    pub fn container(&self, at: ContainerAddress) -> Option<Vec<Option<ItemStackData>>> {
+        self.state.borrow().containers.get(&at).cloned()
+    }
+
+    /// Values the next `RngU64` calls answer, in order, before the
+    /// deterministic per-stream fallback takes over.
+    pub fn queue_rng(&self, values: impl IntoIterator<Item = u64>) {
+        self.state.borrow_mut().rng_queue.extend(values);
+    }
+
+    /// Every line the mod logged, in order.
+    pub fn logs(&self) -> Vec<String> {
+        self.state.borrow().logs.clone()
+    }
+
+    /// Every host call the mod made, in order (the recorder).
+    pub fn calls(&self) -> Vec<HostCall> {
+        self.state.borrow().calls.clone()
+    }
+
+    fn answer(&self, call: &HostCall) -> HostRet {
+        self.state.borrow_mut().calls.push(call.clone());
+        if let Some(handler) = self.fallback.borrow_mut().as_mut() {
+            if let Some(ret) = handler(call) {
+                return ret;
+            }
+        }
+        self.state.borrow_mut().model(call).unwrap_or_else(|| {
+            panic!("MockHost does not model {call:?}; answer it with MockHost::on")
+        })
+    }
+}
+
+impl MockState {
+    fn loaded(&self, pos: &[i32; 3]) -> bool {
+        self.loaded.as_ref().is_none_or(|cells| cells.contains(pos))
+    }
+
+    fn read_block(&self, pos: &[i32; 3]) -> Option<BlockId> {
+        if !self.loaded(pos) {
+            return None;
+        }
+        Some(self.blocks.get(pos).copied().unwrap_or(BlockId(0)))
+    }
+
+    fn write_block(&mut self, pos: [i32; 3], block: BlockId) -> bool {
+        if !self.loaded(&pos) {
+            return false;
+        }
+        self.blocks.insert(pos, block);
+        true
+    }
+
+    fn rng_next(&mut self, key: &str) -> u64 {
+        if !self.rng_queue.is_empty() {
+            return self.rng_queue.remove(0);
+        }
+        let state = self.rng_streams.entry(key.to_owned()).or_insert_with(|| {
+            key.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+                (h ^ u64::from(b)).wrapping_mul(0x1_0000_0000_01b3)
+            })
+        });
+        *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = *state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    /// The modelled answer to `call`, `None` when this world does not model
+    /// it.
+    fn model(&mut self, call: &HostCall) -> Option<HostRet> {
+        Some(match call {
+            HostCall::Log { msg } => {
+                self.logs.push(msg.clone());
+                HostRet::Unit
+            }
+            HostCall::RuntimeSide => HostRet::RuntimeSide(RuntimeSide::Server),
+            HostCall::CurrentTick => HostRet::U64(self.tick),
+            HostCall::RngU64 { stream_key } => HostRet::U64(self.rng_next(stream_key)),
+            HostCall::RegisterTickSystem { .. }
+            | HostCall::RegisterEventHandler { .. }
+            | HostCall::RegisterHostileSpawner { .. }
+            | HostCall::RegisterBlockBehavior { .. }
+            | HostCall::RegisterAiNode { .. }
+            | HostCall::EmitEvent { .. } => HostRet::Unit,
+            HostCall::GetBlock { pos } => HostRet::Block(self.read_block(pos)),
+            HostCall::GetBlocks { positions } => {
+                HostRet::Blocks(positions.iter().map(|p| self.read_block(p)).collect())
+            }
+            HostCall::IsLoaded { pos } => HostRet::Bool(self.loaded(pos)),
+            HostCall::SetBlock { pos, block } | HostCall::SwapBlock { pos, block } => {
+                HostRet::Bool(self.write_block(*pos, *block))
+            }
+            HostCall::SetBlocks { blocks } => HostRet::U64(
+                blocks
+                    .iter()
+                    .filter(|(pos, block)| self.write_block(*pos, *block))
+                    .count() as u64,
+            ),
+            HostCall::WorldKvGet { key } => HostRet::Bytes(self.world_kv.get(key).cloned()),
+            HostCall::WorldKvSet { key, value } => {
+                self.world_kv.insert(key.clone(), value.clone());
+                HostRet::Unit
+            }
+            HostCall::WorldKvDelete { key } => HostRet::Bool(self.world_kv.remove(key).is_some()),
+            HostCall::SectionKvGet { pos, key } => {
+                HostRet::Bytes(self.cell_kv.get(&(*pos, key.clone())).cloned())
+            }
+            HostCall::SectionKvSet { pos, key, value } => {
+                let loaded = self.loaded(pos);
+                if loaded {
+                    self.cell_kv.insert((*pos, key.clone()), value.clone());
+                }
+                HostRet::Bool(loaded)
+            }
+            HostCall::SectionKvDelete { pos, key } => {
+                HostRet::Bool(self.cell_kv.remove(&(*pos, key.clone())).is_some())
+            }
+            HostCall::SectionKvGetMany { key, positions } => HostRet::BytesMany(
+                positions
+                    .iter()
+                    .map(|pos| self.cell_kv.get(&(*pos, key.clone())).cloned())
+                    .collect(),
+            ),
+            HostCall::SectionKvSetMany { key, writes } => HostRet::Bools(
+                writes
+                    .iter()
+                    .map(|(pos, value)| match value {
+                        _ if !self.loaded(pos) => false,
+                        Some(value) => {
+                            self.cell_kv.insert((*pos, key.clone()), value.clone());
+                            true
+                        }
+                        None => self.cell_kv.remove(&(*pos, key.clone())).is_some(),
+                    })
+                    .collect(),
+            ),
+            HostCall::MobTagGet { mob_id, key } => HostRet::MobTag(match self.mobs.get(mob_id) {
+                None => MobTagLookup::MissingMob,
+                Some(tags) => tags
+                    .get(key)
+                    .cloned()
+                    .map_or(MobTagLookup::Absent, MobTagLookup::Value),
+            }),
+            HostCall::MobTagSet { mob_id, key, value } => {
+                HostRet::Bool(self.mobs.get_mut(mob_id).is_some_and(|tags| {
+                    tags.insert(key.clone(), value.clone());
+                    true
+                }))
+            }
+            HostCall::MobTagDelete { mob_id, key } => HostRet::Bool(
+                self.mobs
+                    .get_mut(mob_id)
+                    .is_some_and(|tags| tags.remove(key).is_some()),
+            ),
+            HostCall::ContainerGet { at } => {
+                HostRet::ContainerSlots(self.containers.get(at).cloned())
+            }
+            HostCall::ContainerGetMany { addresses } => HostRet::Containers(
+                addresses
+                    .iter()
+                    .map(|at| self.containers.get(at).cloned())
+                    .collect(),
+            ),
+            HostCall::ContainerSet { at, slots } => {
+                let Some(container) = self.containers.get_mut(at) else {
+                    return Some(HostRet::Bool(false));
+                };
+                if slots.iter().any(|(index, _)| *index as usize >= container.len()) {
+                    return Some(HostRet::Bool(false));
+                }
+                for (index, stack) in slots {
+                    container[*index as usize] = stack.clone();
+                }
+                HostRet::Bool(true)
+            }
+            _ => return None,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sdk_calls_reach_the_mock_installed_on_this_thread() {
+        let host = MockHost::new();
+        host.set_block([1, 2, 3], BlockId(7));
+        host.run(|| {
+            assert_eq!(crate::get_block([1, 2, 3]), Some(BlockId(7)));
+            crate::log("hello");
+        });
+        assert_eq!(host.logs(), vec!["hello".to_owned()]);
+        assert!(matches!(host.calls()[0], HostCall::GetBlock { pos: [1, 2, 3] }));
+    }
+
+    #[test]
+    fn hosts_are_per_test_and_nest() {
+        let outer = MockHost::new();
+        let inner = MockHost::new();
+        outer.set_tick(5);
+        inner.set_tick(9);
+        let _outer = outer.install();
+        assert_eq!(crate::current_tick(), 5);
+        inner.run(|| assert_eq!(crate::current_tick(), 9));
+        assert_eq!(crate::current_tick(), 5, "the outer host is restored");
+    }
+
+    #[test]
+    fn unmodelled_calls_can_be_answered_by_the_test() {
+        let host = MockHost::new();
+        host.on(|call| match call {
+            HostCall::CurrentTick => Some(HostRet::U64(42)),
+            _ => None,
+        });
+        host.run(|| assert_eq!(crate::current_tick(), 42));
+    }
+
+    #[test]
+    fn kv_and_tags_round_trip_and_rng_is_deterministic() {
+        let host = MockHost::new();
+        host.add_mob(3);
+        host.queue_rng([11]);
+        let (first, second) = host.run(|| {
+            crate::__rt::host_call(&HostCall::WorldKvSet {
+                key: "m:k".into(),
+                value: vec![1],
+            });
+            crate::__rt::host_call(&HostCall::MobTagSet {
+                mob_id: 3,
+                key: "m:t".into(),
+                value: MobTagValue::Bool(true),
+            });
+            (crate::rng_u64("s"), crate::rng_u64("s"))
+        });
+        assert_eq!(host.world_kv("m:k"), Some(vec![1]));
+        assert_eq!(host.mob_tag(3, "m:t"), Some(MobTagValue::Bool(true)));
+        assert_eq!(first, 11, "queued values come first");
+        // The queue was spent on the first draw, so the second is the
+        // stream's first value — the same one a fresh world draws first.
+        let replay = MockHost::new().run(|| crate::rng_u64("s"));
+        assert_eq!(second, replay, "streams are deterministic per key");
+    }
+
+    #[test]
+    fn container_reads_and_writes_share_the_fake_world() {
+        let host = MockHost::new();
+        let at = ContainerAddress::Block([4, 5, 6]);
+        let stack = ItemStackData {
+            item: "example:stone".into(),
+            count: 3,
+            data: Vec::new(),
+        };
+        host.set_container(at, vec![None, None]);
+        host.run(|| {
+            assert!(crate::container_set(at, vec![(1, Some(stack.clone()))]));
+            assert_eq!(crate::container_get(at), Some(vec![None, Some(stack.clone())]));
+            assert_eq!(
+                crate::container_get_many(vec![at, ContainerAddress::Mob(99)]),
+                vec![Some(vec![None, Some(stack)]), None]
+            );
+            assert!(!crate::container_set(at, vec![(2, None)]));
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "MockHost does not model")]
+    fn unmodelled_calls_panic_with_the_call_named() {
+        MockHost::new().run(|| crate::__rt::host_call(&HostCall::Players));
+    }
+}

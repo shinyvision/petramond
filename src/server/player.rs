@@ -211,6 +211,9 @@ pub struct SessionReplication {
     /// How many of this player's unlocked recipes the client has been told
     /// about. Unlocking only appends, so the catch-up is the untold suffix.
     pub sent_unlock_count: usize,
+    /// How many of the session's disabled mods the client has been told
+    /// about (`ModHost::disabled_since`); the log only appends.
+    pub sent_disabled_mods: usize,
     /// The last `MenuSyncMsg` this session was sent (its `gui_state` field
     /// always `None` — the map compares by `Arc` identity below). On-change
     /// send detection.
@@ -315,6 +318,7 @@ impl ConnectedPlayer {
                 last_sent_inventory_revision: None,
                 last_obtained_scan: None,
                 sent_unlock_count: 0,
+                sent_disabled_mods: 0,
                 last_menu_sync: None,
                 last_sent_gui_state: None,
                 last_reported_transform: None,

@@ -457,6 +457,68 @@ fn host_call_spinning_dispatch_is_disabled_by_the_call_cap() {
     );
 }
 
+/// Contract: a runaway guest loop is stopped by its FUEL budget — the same
+/// instruction count on every machine — with no help from the wall-clock
+/// epoch (nothing advances it here), and the disable names the budget.
+#[test]
+fn runaway_dispatch_is_disabled_by_its_fuel_budget() {
+    let mut runaway =
+        hostile_guest_with_id("fuelled", "(loop $spin (br $spin))\n    (i64.const 0)");
+    runaway.set_fuel_budget(super::FuelBudget {
+        per_dispatch: 1_000_000,
+        per_tick: u64::MAX,
+    });
+    runaway.call_init_detached();
+    assert!(!runaway.disabled());
+    let ret = runaway.call_guest_detached(&mod_api::GuestCall::TickSystem { id: 7 });
+    assert!(ret.is_none() && runaway.disabled(), "the fuel budget trapped the loop");
+}
+
+/// Contract: the PER-TICK budget spans every dispatch a mod makes in one
+/// tick. Many individually cheap dispatches in the same tick exhaust it; the
+/// same dispatches spread over ticks never do.
+#[test]
+fn many_cheap_dispatches_in_one_tick_exhaust_the_tick_budget() {
+    // A bounded loop: every dispatch burns the same (deterministic) fuel.
+    let body = "(local $i i32)\n    \
+                (loop $l (local.set $i (i32.add (local.get $i) (i32.const 1)))\n    \
+                (br_if $l (i32.lt_u (local.get $i) (i32.const 1000))))\n    \
+                (i64.const 2199023255553)";
+    let call = mod_api::GuestCall::TickSystem { id: 7 };
+    let mut probe = hostile_guest_with_id("probe", body);
+    probe.call_init_detached();
+    let one = super::ai::with_detached_tick(1, || {
+        assert!(probe.call_guest_detached(&call).is_some());
+        probe.fuel_used_this_tick()
+    });
+    assert!(one > 0, "a dispatch in a tick is charged to it");
+
+    let budget = super::FuelBudget {
+        per_dispatch: u64::MAX,
+        per_tick: one * 2 + one / 2,
+    };
+    let mut spread = hostile_guest_with_id("spread", body);
+    spread.set_fuel_budget(budget);
+    spread.call_init_detached();
+    for tick in 10..20 {
+        super::ai::with_detached_tick(tick, || {
+            assert!(spread.call_guest_detached(&call).is_some());
+            assert!(spread.call_guest_detached(&call).is_some());
+        });
+    }
+    assert!(!spread.disabled(), "two dispatches per tick fit the tick budget");
+
+    let mut crowded = hostile_guest_with_id("crowded", body);
+    crowded.set_fuel_budget(budget);
+    crowded.call_init_detached();
+    super::ai::with_detached_tick(30, || {
+        assert!(crowded.call_guest_detached(&call).is_some());
+        assert!(crowded.call_guest_detached(&call).is_some());
+        assert!(crowded.call_guest_detached(&call).is_none());
+    });
+    assert!(crowded.disabled(), "the third dispatch in one tick ran dry");
+}
+
 /// Contract: the dispatch watchdog charges GUEST compute only. A host call
 /// that stalls for many epochs (a slow storage read, an I/O hiccup) must not
 /// get the mod disabled, while a runaway guest loop still traps. Runs in a

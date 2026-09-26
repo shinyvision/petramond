@@ -3,9 +3,10 @@
 //! registration window, diagnostics counters).
 //!
 //! Engine config is part of the determinism contract: NaN
-//! canonicalization ON, no threads, no WASI, no relaxed-SIMD, epoch
-//! interruption armed by a background ticker thread so a runaway mod traps out
-//! instead of hanging the tick loop.
+//! canonicalization ON, no threads, no WASI, no relaxed-SIMD, and FUEL
+//! metering ([`budget`]) so a runaway mod traps out at the same instruction on
+//! every machine instead of hanging the tick loop. Epoch interruption, armed
+//! by a background ticker thread, stays only as a wall-clock backstop.
 //!
 //! Call handling is split per ABI domain (one submodule per domain enum of
 //! [`HostCall`]); the switchboard in [`handle_host_call`] gates every call on
@@ -27,6 +28,7 @@ use wasmtime::{
 
 use super::client::ClientStoreData;
 
+pub(in crate::modding) mod budget;
 pub(in crate::modding) mod guards;
 pub(in crate::modding) mod module_cache;
 
@@ -54,7 +56,11 @@ mod worldgen;
 const EPOCH_PERIOD: Duration = Duration::from_millis(50);
 
 /// Epochs of GUEST COMPUTE a single dispatch may span before it traps: a
-/// generous ~2 s for work that should take microseconds. Time spent inside
+/// generous ~2 s for work that should take microseconds. This is the
+/// LAST-RESORT hang backstop only — the deterministic limits are the fuel
+/// budgets ([`budget`]), which a runaway guest exhausts long before this
+/// wall-clock deadline, so disablement never depends on machine load in
+/// practice. Time spent inside
 /// re-entrant host calls is NOT charged — `host_dispatch` re-arms the deadline
 /// with the remaining budget when a host call returns, so a host-side stall
 /// (e.g. a slow storage read) cannot get an innocent mod disabled. Hitting
@@ -120,6 +126,7 @@ pub(in crate::modding) fn engine() -> &'static Engine {
         config.cranelift_nan_canonicalization(true);
         config.wasm_relaxed_simd(false);
         config.epoch_interruption(true);
+        config.consume_fuel(true);
         let engine = Engine::new(&config).expect("wasmtime engine config");
         let weak = engine.weak();
         std::thread::Builder::new()
@@ -246,6 +253,8 @@ pub(in crate::modding) struct ModStoreData {
     /// when one is written ([`Self::last_host_call`]): this is set on every
     /// host call of every mod.
     last_host_call: Option<(Vec<u8>, bool)>,
+    /// Deterministic fuel accounting (see [`budget`]).
+    pub(in crate::modding) meter: budget::TickMeter,
 }
 
 impl ModStoreData {
@@ -279,6 +288,7 @@ impl ModStoreData {
             dispatch_host_calls: 0,
             dispatch_host_wall: std::time::Duration::ZERO,
             last_host_call: None,
+            meter: budget::TickMeter::new(budget::FuelBudget::DEFAULT),
         }
     }
 
@@ -537,9 +547,11 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                         return Err(wasmtime::Error::msg(format!("malformed host call: {e}")));
                     }
                 };
+                let request_len = buf.len();
                 {
-                    // Charge the guest stretch since the last (re-)arm; the
-                    // host execution below stays uncharged.
+                    // Charge the guest stretch since the last (re-)arm against
+                    // the wall-clock backstop; host execution below is not
+                    // charged there (it pays in fuel instead).
                     let now = epoch_now();
                     let data = caller.data_mut();
                     data.dispatch_host_calls += 1;
@@ -565,6 +577,18 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                 caller.data_mut().dispatch_host_wall += host_started.elapsed();
                 let bytes = mod_api::encode(&ret)
                     .map_err(|e| wasmtime::Error::msg(format!("encode host reply: {e}")))?;
+                // Host work is metered in the guest's own currency: a call
+                // costs a base plus its request and reply bytes.
+                let cost = budget::host_call_fuel(request_len, bytes.len());
+                let fuel = caller.get_fuel()?;
+                if fuel < cost {
+                    // Drained, so the disable message names the budget.
+                    caller.set_fuel(0)?;
+                    return Err(wasmtime::Error::msg(
+                        "dispatch exhausted its fuel budget in host calls",
+                    ));
+                }
+                caller.set_fuel(fuel - cost)?;
                 let alloc =
                     caller.data().alloc.clone().ok_or_else(|| {
                         wasmtime::Error::msg("host_dispatch during instantiation")

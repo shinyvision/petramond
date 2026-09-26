@@ -292,6 +292,13 @@ pub enum ServerToClient {
     RecipesUnlocked {
         recipes: Vec<String>,
     },
+    /// Mods the server disabled for the session since this recipient last
+    /// heard, in disable order (a trap, an exhausted fuel budget, a failed
+    /// load). The client disables its own instances of them, so shape bakes
+    /// and predictions fall back together with the server's.
+    ModsDisabled {
+        mods: Vec<String>,
+    },
     ServerClosing,
     KeepAlive,
     Disconnect {

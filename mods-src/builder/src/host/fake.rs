@@ -273,8 +273,9 @@ impl Fake {
 
     /// Run the mod on this thread against this world until the guard drops.
     pub fn install(self: &Rc<Self>) -> Installed {
-        bridge::install(Rc::clone(self));
+        let world = Rc::clone(self);
         Installed {
+            _sdk_host: mod_sdk::testing::install_host(move |call| bridge::answer(&world, call)),
             _host: super::installed::install(Rc::clone(self) as Rc<dyn super::Host>),
         }
     }
@@ -440,43 +441,19 @@ pub fn record(name: &str) -> BlockRecord {
 
 /// The world installed on a test's thread; uninstalled when dropped.
 pub struct Installed {
+    _sdk_host: mod_sdk::testing::HostGuard,
     _host: super::installed::Installed,
-}
-
-impl Drop for Installed {
-    fn drop(&mut self) {
-        bridge::uninstall();
-    }
 }
 
 mod bridge {
     //! mod-sdk's own host calls (its record stores' world KV, its change
     //! cursor, its log) reach the world installed on the calling thread.
 
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
     use mod_sdk::{HostCall, HostRet};
 
     use super::{Deed, Fake};
 
-    thread_local! {
-        static WORLD: RefCell<Option<Rc<Fake>>> = const { RefCell::new(None) };
-    }
-
-    pub fn install(world: Rc<Fake>) {
-        mod_sdk::__rt::NATIVE_HOST.get_or_init(|| Box::new(answer));
-        WORLD.with(|slot| *slot.borrow_mut() = Some(world));
-    }
-
-    pub fn uninstall() {
-        WORLD.with(|slot| *slot.borrow_mut() = None);
-    }
-
-    fn answer(call: &HostCall) -> HostRet {
-        let world = WORLD
-            .with(|slot| slot.borrow().clone())
-            .expect("no fake world is installed on this thread");
+    pub fn answer(world: &Fake, call: &HostCall) -> HostRet {
         let mut state = world.state_mut();
         match call {
             HostCall::Kv(mod_sdk::KvCall::WorldKvGet { key }) => HostRet::Bytes(state.kv.get(key).cloned()),
