@@ -3,9 +3,12 @@
 //! world never pays a wasm compile for an unchanged module. A cold compile is
 //! ~300 ms per bundled mod; a warm artifact deserializes in ~1 ms.
 //!
-//! Cache key = (wasm path, wasm content + length, engine compatibility hash):
-//! rebuilding a mod or upgrading wasmtime/config misses and recompiles, and a
-//! stale artifact for the same path is garbage-collected on the next store.
+//! Cache key = (wasm path, wasm content + length, engine compatibility hash,
+//! host mod-ABI version): rebuilding a mod, upgrading wasmtime/config, or an
+//! engine speaking another mod ABI misses and recompiles — so every artifact
+//! was produced by, and passed through the load handshake of, an engine of
+//! the current ABI — and a stale artifact for the same path is
+//! garbage-collected on the next store.
 //! Deserialization failures (however they happen) fall back to compiling.
 //!
 //! Concurrency: each path owns a `OnceLock` slot, so [`prewarm`] can compile
@@ -122,6 +125,7 @@ fn artifact_path(path: &Path, bytes: &[u8]) -> Option<PathBuf> {
     std::fs::create_dir_all(&dir).ok()?;
     let mut compat = std::hash::DefaultHasher::new();
     engine().precompile_compatibility_hash().hash(&mut compat);
+    mod_api::ABI_VERSION.pack().hash(&mut compat);
     Some(dir.join(format!(
         "{:016x}-{:016x}-{:x}-{:016x}.cwasm",
         fnv1a64(path.to_string_lossy().as_bytes()),

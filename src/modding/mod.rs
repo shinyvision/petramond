@@ -187,14 +187,17 @@ impl ModHost {
     /// click drain) without a compiled mod.
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_unit_guest_host(mod_id: &str) -> Self {
-        let wat = r#"(module
+        let wat = format!(
+            r#"(module
   (memory (export "memory") 1)
   (data (i32.const 512) "\00")
-  (func (export "mod_init"))
+{}  (func (export "mod_init") (param i32 i64))
   (func (export "mod_alloc") (param i32) (result i32) (i32.const 4096))
   (func (export "mod_free") (param i32 i32))
   (func (export "mod_dispatch") (param i32 i32) (result i64)
-    (i64.const 2199023255553)))"#;
+    (i64.const 2199023255553)))"#,
+            instance::wat_abi_exports(mod_api::ABI_VERSION)
+        );
         assert_eq!(mod_api::pack_ptr_len(512, 1), 2199023255553);
         let module =
             wasmtime::Module::new(host::engine(), wat.as_bytes()).expect("assemble unit guest");

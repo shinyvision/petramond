@@ -3,7 +3,8 @@
 //! A mod implements [`Mod`], calls [`register_mod!`], and builds with plain
 //! `cargo build --target wasm32-unknown-unknown` (see `mods-src/`). The SDK
 //! owns the raw ABI — the `mod_alloc`/`mod_free`/`mod_dispatch` exports, the
-//! `host_dispatch` import, postcard framing, pointer packing — so mod code
+//! ABI version handshake (see [`host_supports`]), the `host_dispatch` import,
+//! postcard framing, pointer packing — so mod code
 //! only ever sees `mod-api` types (re-exported here) and the safe wrappers
 //! ([`log`], [`current_tick`], [`rng_u64`], [`register_tick_system`],
 //! [`register_event_handler`]).
@@ -16,6 +17,7 @@
 
 pub use mod_api::*;
 
+mod abi;
 mod bytes;
 mod cadence;
 mod change_log;
@@ -47,6 +49,7 @@ mod worldgen;
 #[doc(hidden)]
 pub mod __rt;
 
+pub use abi::*;
 pub use bytes::*;
 pub use cadence::*;
 pub use change_log::*;
@@ -89,6 +92,12 @@ pub use worldgen::*;
 /// sim-scoped call (world/entity/player/KV/env) returns an error there — and
 /// the SDK wrappers turn that into a panic that disables the instance.
 pub trait Mod: Default {
+    /// Host capabilities this mod cannot run without. The engine refuses to
+    /// load it — with the missing capabilities named — where any is absent,
+    /// instead of the mod failing on its first unsupported call. Optional
+    /// features are better probed at runtime with [`host_supports`].
+    const REQUIRES: Capabilities = Capabilities::NONE;
+
     /// The registration window: call [`register_tick_system`] /
     /// [`register_event_handler`] / [`register_worldgen_feature`] /
     /// [`register_stage_replacement`] / [`register_generator`] here (they are
@@ -269,14 +278,28 @@ pub trait Mod: Default {
 /// impl mod_sdk::Mod for MyMod { /* ... */ }
 /// mod_sdk::register_mod!(MyMod);
 /// ```
+///
+/// Besides the dispatch glue it exports the ABI handshake: `mod_abi_version`
+/// (the SDK's [`ABI_VERSION`]) and `mod_abi_requires` ([`Mod::REQUIRES`]),
+/// which the engine checks before `mod_init` runs.
 #[macro_export]
 macro_rules! register_mod {
     ($ty:ty) => {
         static __PETRAMOND_MOD: $crate::__rt::ModSlot<$ty> = $crate::__rt::ModSlot::new();
 
         #[no_mangle]
-        pub extern "C" fn mod_init() {
-            $crate::__rt::init(&__PETRAMOND_MOD)
+        pub extern "C" fn mod_abi_version() -> u32 {
+            $crate::ABI_VERSION.pack()
+        }
+
+        #[no_mangle]
+        pub extern "C" fn mod_abi_requires() -> u64 {
+            <$ty as $crate::Mod>::REQUIRES.bits()
+        }
+
+        #[no_mangle]
+        pub extern "C" fn mod_init(host_abi: u32, host_caps: u64) {
+            $crate::__rt::init(&__PETRAMOND_MOD, host_abi, host_caps)
         }
 
         #[no_mangle]

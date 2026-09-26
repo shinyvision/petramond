@@ -72,7 +72,9 @@ impl From<Vec<GenWrite>> for GenOutput {
 }
 
 /// Host → guest: what the engine asks a mod to run through `mod_dispatch`.
-/// (`mod_init` is its own export and carries no payload.)
+/// (`mod_init` is its own export; its only arguments are the host's packed
+/// [`AbiVersion`](crate::AbiVersion) and [`Capabilities`](crate::Capabilities)
+/// bits, see [`crate::negotiate`].)
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum GuestCall {
     /// Run the tick system the mod registered under `id`.
@@ -293,4 +295,9 @@ pub enum GuestRet {
     BakedItem(BakedItemGeometry),
     /// Reply to [`GuestCall::ShapePlacementPlan`]: the placement plan.
     ShapePlacement(ShapePlacementResult),
+    /// The guest does not know the call: it was built against an older ABI
+    /// minor than the host speaks (see [`crate::decode_call`]). The host treats
+    /// the dispatch as unanswered — the same fallback as a disabled mod — and
+    /// keeps the mod running.
+    Unsupported,
 }

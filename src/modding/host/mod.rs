@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
-use mod_api::{HostCall, HostRet, RuntimeSide};
+use mod_api::{Decoded, HostCall, HostRet, RuntimeSide};
 use wasmtime::{
     AsContextMut, Caller, Config, Engine, Linker, Memory, StoreLimits, StoreLimitsBuilder,
     TypedFunc,
@@ -693,9 +693,25 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                 let mut buf = vec![0u8; len as usize];
                 memory.read(&caller, ptr as usize, &mut buf)?;
                 // A call the host cannot decode is a broken ABI, not a bad
-                // argument: trap (=> the mod is disabled), don't guess.
-                let call: HostCall = mod_api::decode(&buf)
-                    .map_err(|e| wasmtime::Error::msg(format!("malformed host call: {e}")))?;
+                // argument: trap (=> the mod is disabled), don't guess. A
+                // well-framed call past the enum's end comes from a guest
+                // built against a newer ABI minor: decline it with
+                // `Unsupported` instead.
+                let call = match mod_api::decode_call::<HostCall>(&buf) {
+                    Ok(Decoded::Known(call)) => Some(call),
+                    Ok(Decoded::Unknown { variant }) => {
+                        log::debug!(
+                            "mod '{}': host call #{variant} is newer than mod ABI {}; \
+                             replying Unsupported",
+                            caller.data().mod_id,
+                            mod_api::ABI_VERSION,
+                        );
+                        None
+                    }
+                    Err(e) => {
+                        return Err(wasmtime::Error::msg(format!("malformed host call: {e}")));
+                    }
+                };
                 {
                     // Charge the guest stretch since the last (re-)arm; the
                     // host execution below stays uncharged.
@@ -717,7 +733,10 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                     data.last_host_call = Some((buf, false));
                 }
                 let host_started = std::time::Instant::now();
-                let ret = handle_host_call(caller.data_mut(), call);
+                let ret = match call {
+                    Some(call) => handle_host_call(caller.data_mut(), call),
+                    None => HostRet::Unsupported,
+                };
                 caller.data_mut().dispatch_host_wall += host_started.elapsed();
                 let bytes = mod_api::encode(&ret)
                     .map_err(|e| wasmtime::Error::msg(format!("encode host reply: {e}")))?;

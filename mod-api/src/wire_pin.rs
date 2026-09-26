@@ -8,10 +8,11 @@
 //! without any test noticing (round-trips still pass, both sides re-derive
 //! the new dialect together).
 //!
-//! This pin makes wire changes DELIBERATE, never accidental. The pre-release
-//! policy (crate docs) allows reshaping the ABI freely: when you mean to
-//! change it, run this test, paste the printed replacement block over `PINS`
-//! in the same change, and rebuild the mods (`make mods`). When you did NOT
+//! This pin makes wire changes DELIBERATE, never accidental. When you mean
+//! to change the ABI, bump `ABI_VERSION` by the crate-docs rules (major for a
+//! changed encoding, minor for an append), run this test, paste the printed
+//! replacement block over `PINS` in the same change, and rebuild the mods
+//! (`make mods`). When you did NOT
 //! mean to change it, this failure is the only thing standing between you
 //! and a silently re-numbered protocol.
 //!
@@ -731,6 +732,7 @@ fn samples() -> Samples {
     s.pin("GuestRet::ShapePlacement", &GuestRet::ShapePlacement(ShapePlacementResult {
         accepted: true, anchor: [0, 1, 0], cells: vec![[0, 1, 0]], block: Some(BlockId(2)),
     }));
+    s.pin("GuestRet::Unsupported", &GuestRet::Unsupported);
 
     // --- EventPayload: every variant, declaration order ----------------------
     s.pin("EventPayload::BlockPlacePre", &EventPayload::BlockPlacePre {
@@ -1058,6 +1060,7 @@ fn samples() -> Samples {
     s.pin("EventPayload::SchematicPositioned", &EventPayload::SchematicPositioned {
         player: PlayerId(2), tag: "m:t".into(), asset: [3; 32], origin: [1, 2, 3], turns: 1,
     });
+    s.pin("HostRet::Unsupported", &HostRet::Unsupported);
 
     s
 }
@@ -1339,6 +1342,7 @@ const PINS: &[(&str, &str)] = &[
     ("GuestRet::BakedRender", "0801010000000000000000000000000000803f0000803f0000803f01c81e28011e01"),
     ("GuestRet::BakedItem", "0900"),
     ("GuestRet::ShapePlacement", "0a01000200010002000102"),
+    ("GuestRet::Unsupported", "0b"),
     ("EventPayload::BlockPlacePre", "0002040601000103"),
     ("EventPayload::BlockBreakPre", "01020406010100020101036d3a690101036d3a6b0107"),
     ("EventPayload::InteractAttempt", "020102040601000200010700"),
@@ -1445,6 +1449,7 @@ const PINS: &[(&str, &str)] = &[
     ("EventPayload::ActorActed", "1c010702040601010a"),
     ("EventPayload::SchematicChosen", "1d02036d3a740303030303030303030303030303030303030303030303030303030303030303"),
     ("EventPayload::SchematicPositioned", "1e02036d3a74030303030303030303030303030303030303030303030303030303030303030302040601"),
+    ("HostRet::Unsupported", "4d"),
 ];
 
 #[test]

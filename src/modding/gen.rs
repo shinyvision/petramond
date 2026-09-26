@@ -353,6 +353,7 @@ fn reply_shape(call: &str, expected: &str, got: &GuestRet) -> String {
         GuestRet::BakedRender(_) => "BakedRender",
         GuestRet::BakedItem(_) => "BakedItem",
         GuestRet::ShapePlacement(_) => "ShapePlacement",
+        GuestRet::Unsupported => "Unsupported",
     };
     format!("{call} expected a {expected} reply, got {got}")
 }

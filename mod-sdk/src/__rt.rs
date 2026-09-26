@@ -3,7 +3,7 @@
 
 use core::cell::UnsafeCell;
 
-use mod_api::{GuestCall, GuestRet, HostCall, HostRet};
+use mod_api::{Decoded, GuestCall, GuestRet, HostCall, HostRet};
 
 #[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "env")]
@@ -153,7 +153,10 @@ macro_rules! host_fn {
 }
 pub(crate) use host_fn;
 
-pub fn init<T: crate::Mod>(slot: &ModSlot<T>) {
+/// `mod_init`: record the host's side of the ABI handshake, then run the
+/// mod's registration window.
+pub fn init<T: crate::Mod>(slot: &ModSlot<T>, host_abi: u32, host_caps: u64) {
+    crate::abi::record_host(host_abi, host_caps);
     // Panics abort the guest (a trap); surface the message through the
     // host log first so the disable line has a cause next to it.
     std::panic::set_hook(Box::new(|info| {
@@ -166,14 +169,24 @@ pub fn init<T: crate::Mod>(slot: &ModSlot<T>) {
 }
 
 pub fn dispatch<T: crate::Mod>(slot: &ModSlot<T>, ptr: u32, len: u32) -> u64 {
-    let call: GuestCall = {
+    let decoded = {
         let request = unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };
-        let call = mod_api::decode(request).expect("malformed engine call");
+        let decoded = mod_api::decode_call::<GuestCall>(request).expect("malformed engine call");
         free(ptr, len); // the guest owns request buffers once dispatched
-        call
+        decoded
     };
     let mod_ = unsafe { (*slot.0.get()).as_mut() }.expect("mod_dispatch before mod_init");
-    let ret = match call {
+    // A call from a newer ABI minor than this SDK knows: decline, don't trap.
+    let ret = match decoded {
+        Decoded::Known(call) => dispatch_call(mod_, call),
+        Decoded::Unknown { .. } => GuestRet::Unsupported,
+    };
+    to_wire(&mod_api::encode(&ret).expect("encode guest reply"))
+}
+
+/// Route one known [`GuestCall`] to its [`Mod`](crate::Mod) hook.
+fn dispatch_call<T: crate::Mod>(mod_: &mut T, call: GuestCall) -> GuestRet {
+    match call {
         GuestCall::TickSystem { id } => {
             mod_.tick_system(id);
             GuestRet::Unit
@@ -292,6 +305,5 @@ pub fn dispatch<T: crate::Mod>(slot: &ModSlot<T>, ptr: u32, len: u32) -> u64 {
             block_id,
             inputs,
         } => GuestRet::ShapePlacement(mod_.shape_placement_plan(shape_kind, block_id, &inputs)),
-    };
-    to_wire(&mod_api::encode(&ret).expect("encode guest reply"))
+    }
 }

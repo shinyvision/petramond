@@ -17,6 +17,7 @@ use super::instance::ModInstance;
 use super::ModHost;
 use petramond_math::world_pos::WorldPos;
 
+mod abi;
 mod conditions;
 
 struct Sim {
@@ -254,13 +255,14 @@ fn guest_registering(
     let registration = mod_api::encode(registration).unwrap();
     let reg_bytes = wat_bytes(&registration);
     let reg_len = registration.len();
+    let abi_exports = super::instance::wat_abi_exports(mod_api::ABI_VERSION);
     let wat = format!(
         r#"(module
   (import "env" "host_dispatch" (func $hd (param i32 i32) (result i64)))
   (memory (export "memory") 1)
   (data (i32.const 0) "{reg_bytes}")
   (data (i32.const 512) "\00")
-{extra_data}  (func (export "mod_init")
+{extra_data}{abi_exports}  (func (export "mod_init") (param i32 i64)
     (drop (call $hd (i32.const 0) (i32.const {reg_len}))))
   (func (export "mod_alloc") (param i32) (result i32) (i32.const 4096))
   (func (export "mod_free") (param i32 i32))

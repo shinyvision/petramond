@@ -2529,4 +2529,9 @@ pub enum HostRet {
     Aims(Vec<Result<[f64; 3], crate::ActionRefusal>>),
     /// [`HostCall::BlockChangesSince`].
     BlockChanges(crate::BlockChanges),
+    /// The host does not know the call: the guest was built against a newer
+    /// ABI minor than the host speaks (see [`crate::decode_call`]). The SDK's
+    /// wrappers treat it like any unexpected reply; a mod that wants to degrade
+    /// gracefully checks `mod_sdk::host_supports` before calling.
+    Unsupported,
 }

@@ -1,15 +1,24 @@
 //! One loaded mod: its wasmtime store + instance, the raw dispatch protocol,
 //! and the disable-on-error policy.
 //!
+//! Handshake: right after instantiation — before `mod_init` — the host reads
+//! the guest's `mod_abi_version`/`mod_abi_requires` exports and refuses a
+//! module whose ABI major or required capabilities it cannot serve
+//! ([`mod_api::negotiate`]); an accepted guest gets the host's version and
+//! capability bits as `mod_init(abi, caps)`.
+//!
 //! Protocol (see `mod-api` docs): requests are postcard bytes written into
 //! guest memory through the guest's own `mod_alloc`; `mod_dispatch(ptr, len)`
 //! consumes the request buffer and returns a packed `ptr << 32 | len` reply
 //! the host reads and then releases with `mod_free`. Any trap, deadline,
 //! memory fault, or malformed reply DISABLES the mod for the session with a
-//! visible error — the tick always continues without it.
+//! visible error — the tick always continues without it. A
+//! [`GuestRet::Unsupported`] reply (an older guest declining a call it
+//! predates) is not an error: the dispatch counts as unanswered and the mod
+//! stays enabled.
 
-use mod_api::{GuestCall, GuestRet};
-use wasmtime::{Memory, Module, Store, TypedFunc};
+use mod_api::{AbiRejection, AbiVersion, Capabilities, GuestCall, GuestRet};
+use wasmtime::{Instance, Memory, Module, Store, TypedFunc};
 
 use crate::events::SimCtx;
 
@@ -27,7 +36,7 @@ pub(super) struct ModInstance {
     id: String,
     store: Store<ModStoreData>,
     memory: Memory,
-    fn_init: TypedFunc<(), ()>,
+    fn_init: TypedFunc<(u32, u64), ()>,
     fn_alloc: TypedFunc<u32, u32>,
     fn_free: TypedFunc<(u32, u32), ()>,
     fn_dispatch: TypedFunc<(u32, u32), u64>,
@@ -41,6 +50,9 @@ pub(super) struct ModInstance {
     /// and another (zero-filled) for the reply.
     request_buf: Vec<u8>,
     reply_buf: Vec<u8>,
+    /// Call kinds this guest has already declined as unsupported — logged
+    /// once each, not on every dispatch.
+    declined: Vec<std::mem::Discriminant<GuestCall>>,
 }
 
 impl ModInstance {
@@ -69,8 +81,10 @@ impl ModInstance {
             .get_memory(&mut store, "memory")
             .ok_or("mod exports no linear memory")?;
         let typed_err = |name: &str, e: wasmtime::Error| format!("export {name}: {e:#}");
+        let guest_abi = handshake(&instance, &mut store)?;
+        log::debug!("mod '{id}' speaks mod ABI {guest_abi}");
         let fn_init = instance
-            .get_typed_func::<(), ()>(&mut store, "mod_init")
+            .get_typed_func::<(u32, u64), ()>(&mut store, "mod_init")
             .map_err(|e| typed_err("mod_init", e))?;
         let fn_alloc = instance
             .get_typed_func::<u32, u32>(&mut store, "mod_alloc")
@@ -93,6 +107,7 @@ impl ModInstance {
             fn_dispatch,
             request_buf: Vec::new(),
             reply_buf: Vec::new(),
+            declined: Vec::new(),
             disabled: false,
             dispatches: 0,
         })
@@ -127,7 +142,13 @@ impl ModInstance {
     pub(super) fn call_init_detached(&mut self) {
         debug_assert!(self.store.data().phase == Phase::Init);
         self.arm_dispatch();
-        let result = self.fn_init.call(&mut self.store, ());
+        let result = self.fn_init.call(
+            &mut self.store,
+            (
+                mod_api::ABI_VERSION.pack(),
+                mod_api::HOST_CAPABILITIES.bits(),
+            ),
+        );
         self.store.data_mut().phase = Phase::Run;
         match result {
             Ok(()) => self.dispatches += 1,
@@ -148,7 +169,8 @@ impl ModInstance {
     }
 
     /// Dispatch one [`GuestCall`], publishing `ctx` for re-entrant host calls.
-    /// `None` = the mod is (or just became) disabled; the caller carries on.
+    /// `None` = no answer: the mod is (or just became) disabled, or it declined
+    /// the call as unsupported; the caller carries on either way.
     pub(super) fn call_guest(&mut self, ctx: &mut SimCtx, call: &GuestCall) -> Option<GuestRet> {
         scope::enter(ctx, || self.call_guest_detached(call))
     }
@@ -191,6 +213,10 @@ impl ModInstance {
         let result = self.dispatch_protocol(&request[..request_len]);
         self.request_buf = request;
         match result {
+            Ok(GuestRet::Unsupported) => {
+                self.note_declined(call);
+                None
+            }
             Ok(ret) => {
                 self.dispatches += 1;
                 if let Some(started) = started {
@@ -204,6 +230,23 @@ impl ModInstance {
                 None
             }
         }
+    }
+
+    /// The guest answered [`GuestRet::Unsupported`]: it was built against an
+    /// older ABI minor that predates this call. Say so once per call kind.
+    fn note_declined(&mut self, call: &GuestCall) {
+        let kind = std::mem::discriminant(call);
+        if self.declined.contains(&kind) {
+            return;
+        }
+        self.declined.push(kind);
+        log::warn!(
+            "mod '{}' does not support {} (built against an older mod ABI than {}); \
+             the engine carries on without it",
+            self.id,
+            host::short_debug(call, 48),
+            mod_api::ABI_VERSION,
+        );
     }
 
     /// Perf diagnostics: any dispatch over the threshold logs its guest/host
@@ -317,4 +360,51 @@ impl ModInstance {
         self.disabled = true;
         log::error!("mod '{}' disabled for this session: {why}", self.id);
     }
+}
+
+/// Read the guest's side of the ABI handshake and check it against this host.
+/// Runs before `mod_init`, so an incompatible module is refused at load with
+/// the reason spelled out — never half-initialized, never trapping mid-game.
+fn handshake(instance: &Instance, store: &mut Store<ModStoreData>) -> Result<AbiVersion, String> {
+    if instance.get_func(&mut *store, "mod_abi_version").is_none() {
+        return Err(AbiRejection::Unversioned.to_string());
+    }
+    let guest = instance
+        .get_typed_func::<(), u32>(&mut *store, "mod_abi_version")
+        .map_err(|e| format!("export mod_abi_version: {e:#}"))?
+        .call(&mut *store, ())
+        .map(AbiVersion::unpack)
+        .map_err(|e| format!("mod_abi_version trapped: {e:#}"))?;
+    let requires = match instance.get_typed_func::<(), u64>(&mut *store, "mod_abi_requires") {
+        Ok(func) => func
+            .call(&mut *store, ())
+            .map(Capabilities::from_bits)
+            .map_err(|e| format!("mod_abi_requires trapped: {e:#}"))?,
+        // Only a same-major guest is bound to this ABI's export set; another
+        // major is refused on its version alone.
+        Err(e) if guest.major == mod_api::ABI_VERSION.major => {
+            return Err(format!("export mod_abi_requires: {e:#}"));
+        }
+        Err(_) => Capabilities::NONE,
+    };
+    mod_api::negotiate(
+        guest,
+        requires,
+        mod_api::ABI_VERSION,
+        mod_api::HOST_CAPABILITIES,
+    )
+    .map_err(|rejection| rejection.to_string())?;
+    Ok(guest)
+}
+
+/// The handshake exports a hand-written WAT test guest needs: declares
+/// `version` and requires no capabilities. `mod_init` then takes the host's
+/// `(param i32 i64)`.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn wat_abi_exports(version: AbiVersion) -> String {
+    format!(
+        "  (func (export \"mod_abi_version\") (result i32) (i32.const {}))\n  \
+         (func (export \"mod_abi_requires\") (result i64) (i64.const 0))\n",
+        version.pack() as i32
+    )
 }

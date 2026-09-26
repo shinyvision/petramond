@@ -9,14 +9,28 @@
 //! # Evolving the ABI
 //!
 //! postcard has no schema: enum variants encode as their **declaration index**
-//! and struct fields **positionally**, so reordering variants, reshaping a
-//! variant's fields, or inserting a variant anywhere but the end all change the
-//! wire encoding. Nothing is released and the only mods are the ones bundled in
-//! this repo, so shape these types however stays cleanest and rebuild the mods
-//! (`make mods`) — there is no external mod whose compiled copy must keep
-//! decoding an old dialect. The host still disables (never crashes on) a mod
-//! that sends a variant it cannot decode.
+//! and struct fields **positionally**, so a compiled guest only understands the
+//! exact dialect it was built against. Every guest therefore declares the
+//! [`AbiVersion`] it speaks, and the host refuses a different major at load
+//! with a readable [`AbiRejection`] (see [`negotiate`] for the handshake and
+//! capability negotiation). The rules for changing this crate:
+//!
+//! - **Minor bump** (`ABI_VERSION.minor`): the ABI only GROWS — a variant
+//!   appended at the END of a call/reply enum, or a new [`Capabilities`] bit.
+//!   Older guests keep working: a call they do not know is answered with
+//!   [`GuestRet::Unsupported`], and a newer guest's unknown call to an older
+//!   host gets [`HostRet::Unsupported`]. A new reply variant may only answer a
+//!   new call, and a new event payload may only reach a handler registered for
+//!   its (new) kind, so an older peer never has to decode one.
+//! - **Major bump**: anything that changes an existing encoding — reordering
+//!   or removing variants, adding/removing/reshaping fields. Every compiled
+//!   guest of the old major is refused at load; rebuild the bundled mods
+//!   (`make mods`).
+//!
+//! `wire_pin` records the encoding of every variant so neither kind of change
+//! happens by accident.
 
+mod abi;
 pub mod biome;
 mod client;
 mod data;
@@ -33,6 +47,7 @@ mod worldgen;
 #[cfg(test)]
 mod wire_pin;
 
+pub use abi::*;
 pub use client::*;
 pub use data::*;
 pub use events::*;

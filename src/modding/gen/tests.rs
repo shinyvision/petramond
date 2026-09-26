@@ -34,13 +34,16 @@ fn invalid_plan_members_reject_the_whole_generation_output() {
 /// A minimal guest whose init succeeds and whose every dispatch traps —
 /// the "runaway/broken gen mod" for the fallback contract.
 fn trapping_module() -> Module {
-    let wat = r#"(module
+    let wat = format!(
+        r#"(module
   (import "env" "host_dispatch" (func $hd (param i32 i32) (result i64)))
   (memory (export "memory") 1)
-  (func (export "mod_init"))
+{}  (func (export "mod_init") (param i32 i64))
   (func (export "mod_alloc") (param i32) (result i32) (i32.const 4096))
   (func (export "mod_free") (param i32 i32))
-  (func (export "mod_dispatch") (param i32 i32) (result i64) unreachable))"#;
+  (func (export "mod_dispatch") (param i32 i32) (result i64) unreachable))"#,
+        crate::modding::instance::wat_abi_exports(mod_api::ABI_VERSION)
+    );
     Module::new(crate::modding::host::engine(), wat.as_bytes()).expect("assemble trap guest")
 }
 
