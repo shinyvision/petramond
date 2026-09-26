@@ -247,7 +247,7 @@ pub fn settle(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, task: Task)
                         for face in FACES {
                             if let Some(n) = job.design.unit_at(crate::geometry::offset(cell, face))
                             {
-                                job.crew.deferrals.deferred.remove(&Task::Unit(n));
+                                job.crew.deferrals.deferred.lift(&Task::Unit(n));
                             }
                         }
                     }
@@ -277,7 +277,7 @@ pub fn settle(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, task: Task)
                     for sealed in sealed {
                         let task = Task::Unit(sealed);
                         job.crew.access.unreachable.remove(&sealed);
-                        job.crew.deferrals.deferred.remove(&task);
+                        job.crew.deferrals.deferred.lift(&task);
                         job.crew.deferrals.blind.retain(|(t, _)| *t != task);
                     }
                 }
@@ -345,8 +345,7 @@ fn refused(ctx: &mut Ctx, job: &mut Job, task: Task, refusal: ActionRefusal) {
         if let Some(info) = job.crew.mob.and_then(mob_info) {
             job.crew
                 .deferrals
-                .blind
-                .insert((task, super::standing_cell(info.pos)));
+                .strike(task, super::standing_cell(info.pos));
         }
     }
     if let Some(id) = job.crew.mob {

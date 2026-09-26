@@ -5,15 +5,15 @@
 //! core meets the opposite surface becomes a floor-to-ceiling COLUMN with a
 //! mirrored cone at its foot.
 //!
-//! SEAM CONTRACT, the same one `cavern.rs` states: sections generate in any
+//! SEAM CONTRACT, the one `crate::probe` states: sections generate in any
 //! order on any thread, and a formation may straddle several of them. Every
 //! decision is therefore a pure function of `(seed, root cell)` plus the
 //! POSITIONAL terrain — never of the dispatching section. Cells this section
 //! owns are read from its snapshot (where disagreement is impossible);
-//! everything outside it is read through `terrain_space_at`, and a cell that
-//! was not probed is UNKNOWN: never rooted on, never grown into. The scan
-//! window reaches far enough past the section that any formation with a cell
-//! inside it is found from every side.
+//! everything outside it is read through `TerrainReads`, and a cell that was
+//! not probed is UNKNOWN: never rooted on, never grown into. The scan window
+//! reaches far enough past the section that any formation with a cell inside
+//! it is found from every side.
 //!
 //! Formations never block one another. Cells are resolved by a fixed
 //! PRECEDENCE (block over hanging over standing), so a section that sees only
@@ -25,12 +25,12 @@
 //! terrain batch over every cell outside the section those roots may read,
 //! and a second terrain batch only when a column's foot needs its discs.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use mod_sdk::*;
 
 use super::{Dripstone, BIOME_TOP_Y};
-use crate::cavern::batched;
+use crate::probe::{self, Pad, TerrainReads};
 
 /// Frozen positional-RNG salts (append-only in practice).
 const SALT_ROOT: u64 = 0x0E58_2000_0000_0001;
@@ -52,6 +52,13 @@ const CONE_NARROW: [i32; 4] = [1, 1, 0, 0];
 /// Plain runs and clusters reach far less and are filtered per candidate.
 const MARGIN_CONE: i32 = COLUMN_REACH + CONE_WIDE.len() as i32 + CONE_RUN;
 const SIDE_MARGIN: i32 = 2;
+/// The biome gate's reach: every cell a root that can write into the section
+/// may sit on.
+const REACH_PAD: Pad = Pad {
+    xz: SIDE_MARGIN,
+    down: MARGIN_CONE,
+    up: MARGIN_CONE,
+};
 
 /// Formations: one centre per lattice cell, each owning a disc of
 /// `FORMATION_R` blocks. Per-mille root density runs from the core value at
@@ -117,6 +124,18 @@ enum Space {
     Unknown,
 }
 
+impl Space {
+    /// A positional answer, or UNKNOWN for a cell never probed.
+    fn of(answer: Option<TerrainSpace>) -> Space {
+        match answer {
+            Some(TerrainSpace::Air) => Space::Air,
+            Some(TerrainSpace::Fluid) => Space::Fluid,
+            Some(TerrainSpace::Solid) => Space::Solid,
+            None => Space::Unknown,
+        }
+    }
+}
+
 /// A column's foot, resolved in the first pass, whose mirrored cone needs
 /// its own discs probed.
 struct Foot {
@@ -145,20 +164,7 @@ pub fn generate(d: &Dripstone, ctx: &GenCtx) -> Vec<GenWrite> {
     };
     let origin = ctx.origin_world();
     let seed = ctx.seed();
-    let in_reach = underground_biomes_in_box(
-        [
-            origin[0] - SIDE_MARGIN,
-            origin[1] - MARGIN_CONE,
-            origin[2] - SIDE_MARGIN,
-        ],
-        [
-            origin[0] + 15 + SIDE_MARGIN,
-            origin[1] + 15 + MARGIN_CONE,
-            origin[2] + 15 + SIDE_MARGIN,
-        ],
-    )
-    .contains(&ours);
-    if !in_reach {
+    if !probe::in_reach(ours, origin, REACH_PAD, underground_biomes_in_box) {
         return Vec::new();
     }
 
@@ -168,11 +174,9 @@ pub fn generate(d: &Dripstone, ctx: &GenCtx) -> Vec<GenWrite> {
     }
 
     // --- ONE biome batch: a root grows only in the habitat ------------
-    let want = roots.len();
-    let biomes = batched(roots.iter().map(|r| r.p).collect(), underground_biome_at);
-    if biomes.len() != want {
+    let Some(biomes) = probe::ask(roots.iter().map(|r| r.p).collect(), underground_biome_at) else {
         return Vec::new();
-    }
+    };
     let roots: Vec<Root> = roots
         .into_iter()
         .zip(biomes)
@@ -185,9 +189,9 @@ pub fn generate(d: &Dripstone, ctx: &GenCtx) -> Vec<GenWrite> {
 
     // --- ONE terrain batch: every cell a root may read outside this
     // section ----------------------------------------------------------------
-    let inside = |c: [i32; 3]| ctx.block(c).is_some();
-    let mut probes = Probes::default();
-    probes.ask(roots.iter().flat_map(cells_read).filter(|c| !inside(*c)));
+    // A refused batch leaves every cell unknown, and unknown grows nothing.
+    let mut probes = TerrainReads::new();
+    probes.ask_unseen(ctx, roots.iter().flat_map(cells_read));
     let snapshot = |c: [i32; 3]| -> Option<Space> {
         ctx.block(c).map(|b| {
             if b == d.air {
@@ -202,126 +206,89 @@ pub fn generate(d: &Dripstone, ctx: &GenCtx) -> Vec<GenWrite> {
 
     // --- resolve, first pass ---------------------------------------------
     let mut w = Writes::default();
-    let mut feet: Vec<Foot> = Vec::new();
-    {
-        let space = |c: [i32; 3]| snapshot(c).unwrap_or_else(|| probes.space(c));
-        for r in &roots {
-            let Some(down) = orientation(&space, r.p) else {
-                continue;
-            };
-            let step = if down { -1 } else { 1 };
-            match r.kind {
-                Kind::Single => place_run(&space, &mut w, r.p, step, r.len),
-                Kind::Cluster => {
-                    place_run(&space, &mut w, r.p, step, r.len);
-                    for (i, arm) in arms(r.p).into_iter().enumerate() {
-                        // Shorter than the centre by one or two, alternating
-                        // by side so a cluster reads as a ragged crown.
-                        if orientation(&space, arm) == Some(down) {
-                            let len = (r.len - 1 - (i as i32 & 1)).max(1);
-                            place_run(&space, &mut w, arm, step, len);
-                        }
-                    }
-                }
-                Kind::Cone { wide, column } => {
-                    let foot = if column {
-                        column_foot(&space, r.p, step)
-                    } else {
-                        None
-                    };
-                    place_cone(&space, &mut w, r.p, step, wide, foot.is_some());
-                    if let Some(g) = foot {
-                        for k in 0..g {
-                            w.solid.insert([r.p[0], r.p[1] + step * k, r.p[2]]);
-                        }
-                        feet.push(Foot {
-                            base: [r.p[0], r.p[1] + step * (g - 1), r.p[2]],
-                            up: -step,
-                            wide,
-                        });
-                    }
-                }
-            }
-        }
-    }
+    let feet: Vec<Foot> = {
+        let space = |c: [i32; 3]| snapshot(c).unwrap_or_else(|| Space::of(probes.space(c)));
+        roots
+            .iter()
+            .filter_map(|r| place_root(&space, &mut w, r))
+            .collect()
+    };
 
     // --- second pass: a column's foot, once its floor is known -----------
     if !feet.is_empty() {
-        probes.ask(
-            feet.iter()
-                .flat_map(|f| cone_cells(f.base, f.up, f.wide, false))
-                .filter(|c| !inside(*c)),
+        probes.ask_unseen(
+            ctx,
+            feet.iter().flat_map(|f| cone_cells(f.base, f.up, f.wide, false)),
         );
-        let space = |c: [i32; 3]| snapshot(c).unwrap_or_else(|| probes.space(c));
+        let space = |c: [i32; 3]| snapshot(c).unwrap_or_else(|| Space::of(probes.space(c)));
         for f in &feet {
             place_cone(&space, &mut w, f.base, f.up, f.wide, true);
         }
     }
-
-    let mut out: Vec<GenWrite> = Vec::new();
-    for c in &w.solid {
-        if inside(*c) {
-            out.push((*c, d.block));
-        }
-    }
-    for c in w.hanging.difference(&w.solid) {
-        if inside(*c) {
-            out.push((*c, d.stalactite));
-        }
-    }
-    for c in w.standing.difference(&w.solid) {
-        if inside(*c) && !w.hanging.contains(c) {
-            out.push((*c, d.stalagmite));
-        }
-    }
-    out
+    w.into_writes(d, ctx)
 }
 
-/// The probed cells outside the section and their answers. A later `ask`
-/// appends; earlier answers keep their indices, and the index is built FROM
-/// the request order so an answer can never be read back against a
-/// different cell.
-#[derive(Default)]
-struct Probes {
-    index: BTreeMap<[i32; 3], usize>,
-    spaces: Vec<TerrainSpace>,
-    failed: bool,
+/// Resolve one root against the terrain into `w`: its run, cluster or cone.
+/// Returns the foot a column still has to grow once its floor is probed.
+fn place_root(space: &dyn Fn([i32; 3]) -> Space, w: &mut Writes, r: &Root) -> Option<Foot> {
+    let down = orientation(space, r.p)?;
+    let step = if down { -1 } else { 1 };
+    match r.kind {
+        Kind::Single => place_run(space, w, r.p, step, r.len),
+        Kind::Cluster => {
+            place_run(space, w, r.p, step, r.len);
+            for (i, arm) in arms(r.p).into_iter().enumerate() {
+                // Shorter than the centre by one or two, alternating by side
+                // so a cluster reads as a ragged crown.
+                if orientation(space, arm) == Some(down) {
+                    let len = (r.len - 1 - (i as i32 & 1)).max(1);
+                    place_run(space, w, arm, step, len);
+                }
+            }
+        }
+        Kind::Cone { wide, column } => {
+            let foot = if column {
+                column_foot(space, r.p, step)
+            } else {
+                None
+            };
+            place_cone(space, w, r.p, step, wide, foot.is_some());
+            let g = foot?;
+            for k in 0..g {
+                w.solid.insert([r.p[0], r.p[1] + step * k, r.p[2]]);
+            }
+            return Some(Foot {
+                base: [r.p[0], r.p[1] + step * (g - 1), r.p[2]],
+                up: -step,
+                wide,
+            });
+        }
+    }
+    None
 }
 
-impl Probes {
-    fn ask(&mut self, cells: impl Iterator<Item = [i32; 3]>) {
-        let fresh: Vec<[i32; 3]> = cells
-            .filter(|c| !self.index.contains_key(c))
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        if fresh.is_empty() {
-            return;
+impl Writes {
+    /// The cells this section owns, each with the block its precedence
+    /// gives it.
+    fn into_writes(self, d: &Dripstone, ctx: &GenCtx) -> Vec<GenWrite> {
+        let inside = |c: [i32; 3]| ctx.block(c).is_some();
+        let mut out: Vec<GenWrite> = Vec::new();
+        for c in &self.solid {
+            if inside(*c) {
+                out.push((*c, d.block));
+            }
         }
-        let base = self.spaces.len();
-        for (i, c) in fresh.iter().enumerate() {
-            self.index.insert(*c, base + i);
+        for c in self.hanging.difference(&self.solid) {
+            if inside(*c) {
+                out.push((*c, d.stalactite));
+            }
         }
-        let want = fresh.len();
-        let reply = batched(fresh, terrain_space_at);
-        if reply.len() != want {
-            // A refused batch leaves every cell unknown.
-            self.failed = true;
-            return;
+        for c in self.standing.difference(&self.solid) {
+            if inside(*c) && !self.hanging.contains(c) {
+                out.push((*c, d.stalagmite));
+            }
         }
-        self.spaces.extend(reply);
-    }
-
-    fn space(&self, c: [i32; 3]) -> Space {
-        if self.failed {
-            return Space::Unknown;
-        }
-        match self.index.get(&c).map(|&i| self.spaces[i]) {
-            Some(TerrainSpace::Air) => Space::Air,
-            Some(TerrainSpace::Fluid) => Space::Fluid,
-            Some(TerrainSpace::Solid) => Space::Solid,
-            None => Space::Unknown,
-        }
+        out
     }
 }
 

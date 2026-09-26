@@ -45,24 +45,56 @@ pub fn door_toward(ctx: &mut Ctx, job: &mut Job, body: &Body, cells: &[[i32; 3]]
 }
 
 fn door_in_the_way(ctx: &mut Ctx, job: &mut Job, body: &Body, cells: &[[i32; 3]]) -> Option<Step> {
-    let here: HashMap<[i32; 3], u32> = match route::region(ctx, body.cell, false, &[]) {
-        Some(Some(region)) => region
-            .cells()
-            .filter_map(|c| Some((c, region.moves(c)?)))
-            .collect(),
-        _ => {
-            if super::TRACE {
-                log("TRACE door scan: the ground around has not loaded");
-            }
-            return None;
+    let Some(here) = walked(ctx, body) else {
+        if super::TRACE {
+            log("TRACE door scan: the ground around has not loaded");
         }
+        return None;
     };
     // Only work the golem cannot walk to is behind a door.
     if cells.iter().any(|c| here.contains_key(c)) {
         return None;
     }
-    // One scan answers for all the work shut out, not just the piece weighed
-    // first: the nearest door may be next to another piece.
+    let wanted = wanted(job, cells);
+    let doors = doors_near(ctx, job, &here, &wanted);
+    trace!(
+        "TRACE door scan for {:?}: region {} cells, doors {doors:?}",
+        cells[0],
+        here.len()
+    );
+    let door = blocking(ctx, &here, doors)?;
+    let stance = door_stance(body, &here, door)?;
+    job.crew.access.door_tried.set(door, ctx.now + DOOR_AGAIN);
+    trace!(
+        "TRACE opening the door at {door:?} from {stance:?} for work at {:?}",
+        cells[0]
+    );
+    if stance == body.cell {
+        return Some(Step::Use {
+            door,
+            open: true,
+            since: ctx.now,
+        });
+    }
+    Some(walk_to(ctx, stance, Then::Open(door)))
+}
+
+/// The cells the golem walks to from where it stands, and the moves to each.
+/// `None` while the ground around has not loaded.
+fn walked(ctx: &mut Ctx, body: &Body) -> Option<HashMap<[i32; 3], u32>> {
+    let region = route::region(ctx, body.cell, false, &[])??;
+    Some(
+        region
+            .cells()
+            .filter_map(|c| Some((c, region.moves(c)?)))
+            .collect(),
+    )
+}
+
+/// The cells of `cells` and of the other work shut out. One scan answers for
+/// all the work shut out, not just the piece weighed first: the nearest door
+/// may be next to another piece.
+fn wanted(job: &Job, cells: &[[i32; 3]]) -> Vec<[i32; 3]> {
     let mut shut_out: Vec<usize> = job.crew.access.unreachable.iter().copied().collect();
     shut_out.sort_unstable();
     shut_out.truncate(SHUT_OUT);
@@ -72,6 +104,18 @@ fn door_in_the_way(ctx: &mut Ctx, job: &mut Job, body: &Body, cells: &[[i32; 3]]
     }
     wanted.sort_unstable();
     wanted.dedup();
+    wanted
+}
+
+/// Shut doors beside walked ground near the `wanted` work, by their lower
+/// half, nearest the work first: those not opened lately that could stand
+/// in the way.
+fn doors_near(
+    ctx: &mut Ctx,
+    job: &Job,
+    here: &HashMap<[i32; 3], u32>,
+    wanted: &[[i32; 3]],
+) -> Vec<[i32; 3]> {
     let mut beside: Vec<[i32; 3]> = here
         .keys()
         .filter(|c| wanted.iter().any(|w| manhattan(**c, *w) <= DOOR_REACH))
@@ -101,12 +145,7 @@ fn door_in_the_way(ctx: &mut Ctx, job: &mut Job, body: &Body, cells: &[[i32; 3]]
         } else {
             *cell
         };
-        let tried = job
-            .crew
-            .access
-            .door_tried
-            .get(&lower)
-            .is_some_and(|at| ctx.now < at + DOOR_AGAIN);
+        let tried = job.crew.access.door_tried.holds(&lower, ctx.now);
         if !doors.contains(&lower) && !tried {
             doors.push(lower);
         }
@@ -130,17 +169,19 @@ fn door_in_the_way(ctx: &mut Ctx, job: &mut Job, body: &Body, cells: &[[i32; 3]]
             *d,
         )
     });
-    trace!(
-        "TRACE door scan for {:?}: region {} cells, {} beside, doors {doors:?}",
-        cells[0],
-        here.len(),
-        beside.len()
-    );
-    // A door is only worth touching while it stands in the way; toggling an
-    // open one shuts it. Asked as a step ACROSS the door, from the walking
-    // side: a probe from wherever the golem stands is a long search, asked
-    // every scan.
-    let mut blocking = None;
+    doors
+}
+
+/// The first of `doors` that stands in the way, if any does and this tick
+/// can tell. A door is only worth touching while it stands in the way;
+/// toggling an open one shuts it. Asked as a step ACROSS the door, from the
+/// walking side: a probe from wherever the golem stands is a long search,
+/// asked every scan.
+fn blocking(
+    ctx: &mut Ctx,
+    here: &HashMap<[i32; 3], u32>,
+    doors: Vec<[i32; 3]>,
+) -> Option<[i32; 3]> {
     for shut in doors.into_iter().take(DOOR_PROBES) {
         let mut near = SIDES.iter().map(|s| offset(shut, *s));
         let far: Vec<[i32; 3]> = near.clone().filter(|n| !here.contains_key(n)).collect();
@@ -156,11 +197,14 @@ fn door_in_the_way(ctx: &mut Ctx, job: &mut Job, body: &Body, cells: &[[i32; 3]]
             }
         }
         if blocks {
-            blocking = Some(shut);
-            break;
+            return Some(shut);
         }
     }
-    let door = blocking?;
+    None
+}
+
+/// The nearest walked cell `door` is swung from, seen and in reach.
+fn door_stance(body: &Body, here: &HashMap<[i32; 3], u32>, door: [i32; 3]) -> Option<[i32; 3]> {
     let halves = [door, offset(door, [0, 1, 0])];
     let mut stances: Vec<([i32; 3], u32)> = here
         .iter()
@@ -177,24 +221,11 @@ fn door_in_the_way(ctx: &mut Ctx, job: &mut Job, body: &Body, cells: &[[i32; 3]]
         stances.iter().map(|(s, _)| feet_of(*s)).collect(),
         &halves,
     );
-    let stance = stances
+    stances
         .into_iter()
         .zip(sees)
         .find(|(_, refusal)| refusal.is_none())
-        .map(|((s, _), _)| s)?;
-    job.crew.access.door_tried.insert(door, ctx.now);
-    trace!(
-        "TRACE opening the door at {door:?} from {stance:?} for work at {:?}",
-        cells[0]
-    );
-    if stance == body.cell {
-        return Some(Step::Use {
-            door,
-            open: true,
-            since: ctx.now,
-        });
-    }
-    Some(walk_to(ctx, stance, Then::Open(door)))
+        .map(|((s, _), _)| s)
 }
 
 /// Turn to the door in reach and swing it once the eyes are on it. One

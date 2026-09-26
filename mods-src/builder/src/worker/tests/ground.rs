@@ -4,8 +4,8 @@ use crate::host::fake::rows::{BEDROCK, DIRT, DOOR, STONE};
 use crate::host::fake::stack;
 use crate::host::prelude::*;
 use crate::testing::{CHEST_AT, HOME, TABLE_AT};
-use crate::worker::ground::{ground, search, Cell, Move, Way};
-use crate::worker::tuning::price::{DESIGN_MOVES, DOOR_MOVES, HURT_MOVES, LEVEL_MOVES};
+use crate::worker::ground::{fall_cost, ground, search, Cell, Move, Way};
+use crate::worker::tuning::price::{DESIGN_MOVES, DOOR_MOVES, HURT_MOVES, LEVEL_MOVES, SAFE_FALL};
 
 const OPEN: Cell = Cell {
     open: true,
@@ -240,4 +240,13 @@ fn the_designs_own_blocks_are_spared_digging_in_and_dear_getting_out() {
     assert_eq!(dug[&[0, 0, 0]].dig, Some(60 + DESIGN_MOVES));
     assert_eq!(spared[&[2, 0, 0]].dig, Some(5), "earth in a design cell is work to clear");
     assert!(spared[&[1, 0, 0]].open);
+}
+
+#[test]
+fn a_fall_costs_its_levels_and_what_it_hurts() {
+    let safe = SAFE_FALL as u32;
+    assert_eq!(fall_cost(1, 20.0), Some(1));
+    assert_eq!(fall_cost(SAFE_FALL, 20.0), Some(safe), "a safe fall does not hurt");
+    assert_eq!(fall_cost(SAFE_FALL + 2, 20.0), Some(safe + 2 + 2 * HURT_MOVES));
+    assert_eq!(fall_cost(SAFE_FALL + 2, 2.0), None, "a fall that kills is no way");
 }

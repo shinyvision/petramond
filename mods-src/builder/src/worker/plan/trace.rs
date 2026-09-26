@@ -160,7 +160,7 @@ pub(super) fn deferred(ctx: &Ctx, job: &Job, candidates: &[(Task, [i32; 3])]) {
     let top: Vec<String> = candidates
         .iter()
         .take(6)
-        .map(|(t, c)| format!("{t:?}@{c:?} until {:?}", job.crew.deferrals.deferred.get(t)))
+        .map(|(t, c)| format!("{t:?}@{c:?} until {:?}", job.crew.deferrals.deferred.until(t)))
         .collect();
     log(&format!(
         "TRACE deferred candidates at {}: {top:?}",

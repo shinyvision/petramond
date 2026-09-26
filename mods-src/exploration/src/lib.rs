@@ -1,6 +1,10 @@
 //! Two underground habitats: the mushroom cavern and its cave flora, and the
 //! dripstone caves and their spikes.
 
+// The file-length audit cannot see a monolithic function inside a short
+// file; worldgen algorithms here stay split into named stages instead.
+#![warn(clippy::too_many_lines)]
+
 use mod_sdk::*;
 
 mod cascade;
@@ -8,6 +12,7 @@ mod cavern;
 mod content;
 mod dripstone;
 mod fluids;
+mod probe;
 mod shroom;
 mod spores;
 
@@ -82,7 +87,7 @@ impl Mod for Exploration {
         match feature_id {
             GEN_CAVERN => match self.content.as_ref().map(|c| cavern::generate(c, ctx)) {
                 Some(Ok(writes)) => writes.into(),
-                Some(Err(cavern::Deferred)) => GenOutput::deferred(),
+                Some(Err(probe::Deferred)) => GenOutput::deferred(),
                 None => GenOutput::default(),
             },
             GEN_DRIPSTONE => self

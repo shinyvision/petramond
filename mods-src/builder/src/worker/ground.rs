@@ -170,8 +170,165 @@ pub(super) fn ground(
     Some(grid)
 }
 
-/// Whether every section of the site has been loaded long enough for a way
-/// home judged shut to be believed. Checked only while it reads shut.
+/// The search box as the search reads it.
+#[derive(Clone, Copy)]
+struct Grid<'a> {
+    cells: &'a HashMap<[i32; 3], Cell>,
+}
+
+impl Grid<'_> {
+    fn at(self, c: [i32; 3]) -> Option<Cell> {
+        self.cells.get(&c).copied()
+    }
+
+    /// The door standing in `c`, by its lower half.
+    fn door_of(self, c: [i32; 3]) -> Option<[i32; 3]> {
+        self.at(c).filter(|cell| cell.door).map(|_| {
+            if self.at(up(c, -1)).is_some_and(|below| below.door) {
+                up(c, -1)
+            } else {
+                c
+            }
+        })
+    }
+
+    /// What getting through `cells` costs: moves, the cells dug, and the door
+    /// opened. `None` when one of them is outside the box or cannot be dug.
+    fn clear(self, cells: &[[i32; 3]]) -> Option<Clearing> {
+        let mut cost = 0;
+        let mut digs = Vec::new();
+        let mut door = None;
+        for c in cells {
+            let cell = self.at(*c)?;
+            if cell.open {
+                continue;
+            }
+            if let Some(d) = self.door_of(*c) {
+                if door.is_none() {
+                    cost += DOOR_MOVES;
+                }
+                door = Some(d);
+                continue;
+            }
+            cost += cell.dig?;
+            digs.push(*c);
+        }
+        Some((cost, digs, door))
+    }
+
+    /// Where a body falling from above `from` through `start` comes to rest,
+    /// and how far it fell; `None` past the box or onto something that is no
+    /// floor.
+    fn landing(self, from: [i32; 3], start: [i32; 3]) -> Option<([i32; 3], i32)> {
+        let mut c = start;
+        loop {
+            let below = self.at(up(c, -1))?;
+            if below.floor {
+                return Some((c, from[1] - c[1]));
+            }
+            if !below.open {
+                return None;
+            }
+            c = up(c, -1);
+        }
+    }
+}
+
+fn up(c: [i32; 3], n: i32) -> [i32; 3] {
+    offset(c, [0, n, 0])
+}
+
+/// What a fall of `fall` levels costs in moves at `health`, or `None` when
+/// it kills.
+pub(super) fn fall_cost(fall: i32, health: f32) -> Option<u32> {
+    let hurt = (fall - SAFE_FALL).max(0);
+    ((hurt as f32) < health).then(|| fall as u32 + HURT_MOVES * hurt as u32)
+}
+
+/// What the search may do besides walking.
+#[derive(Clone, Copy)]
+struct Rules {
+    health: f32,
+    /// Up a level on a scaffold.
+    rise: bool,
+    /// Down ways that cannot be walked back up.
+    fall: bool,
+}
+
+/// A move out of a cell: where it ends, the move, what it costs beyond the
+/// cell, and what it digs and opens.
+type Onward = ([i32; 3], Move, u32, Vec<[i32; 3]>, Option<[i32; 3]>);
+
+/// Every move out of `c` the ground allows.
+fn moves_from(grid: Grid, rules: Rules, c: [i32; 3]) -> Vec<Onward> {
+    let mut moves = Vec::new();
+    for side in SIDES {
+        let n = offset(c, side);
+        // Along, onto the floor there, or off the edge.
+        if let Some((cost, digs, door)) = grid.clear(&[up(n, 1), n]) {
+            match grid.at(up(n, -1)) {
+                Some(below) if below.floor => {
+                    moves.push((n, Move::Walk(n), 1 + cost, digs, door))
+                }
+                Some(below) if below.open => {
+                    if let Some((land, drop)) = grid.landing(c, up(n, -1)) {
+                        if let Some(hurt) = fall_cost(drop, rules.health) {
+                            let step = if drop <= 1 {
+                                Move::Walk(land)
+                            } else {
+                                Move::Drop(land)
+                            };
+                            if rules.fall || drop <= 1 {
+                                moves.push((land, step, 1 + cost + hurt, digs, door));
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        // A step up onto the block beside: a staircase mined upward.
+        if grid.at(n).is_some_and(|b| b.floor && !b.door) {
+            let to = up(n, 1);
+            if let Some((cost, digs, door)) = grid.clear(&[up(c, 2), up(to, 1), to]) {
+                moves.push((to, Move::Walk(to), 1 + cost, digs, door));
+            }
+        }
+        // A step down beside. Digging a way in clears the head room over it
+        // too, or the step cannot be walked back up.
+        let to = up(n, -1);
+        if grid.at(up(to, -1)).is_some_and(|b| b.floor) {
+            let needs: Vec<[i32; 3]> = if rules.fall {
+                vec![n, to]
+            } else {
+                vec![up(n, 1), n, to]
+            };
+            if let Some((cost, digs, door)) = grid.clear(&needs) {
+                if !digs.is_empty() {
+                    moves.push((to, Move::Walk(to), 1 + cost, digs, door));
+                }
+            }
+        }
+    }
+    if rules.rise {
+        if let Some((cost, digs, door)) = grid.clear(&[up(c, 2)]) {
+            moves.push((up(c, 1), Move::Rise, LEVEL_MOVES as u32 + cost, digs, door));
+        }
+    }
+    if let Some(floor) = grid.at(up(c, -1)).filter(|_| rules.fall) {
+        if let (Some(dig), Some((land, fall))) = (floor.dig, grid.landing(c, up(c, -1))) {
+            if let Some(hurt) = fall_cost(fall, rules.health) {
+                moves.push((land, Move::Sink, dig + hurt, vec![up(c, -1)], None));
+            }
+        }
+    }
+    moves
+}
+
+/// The cheapest weighted way from the cells the golem walks to (`here`, each
+/// with what walking there costs) to ground in `home`: its first move. Moves
+/// in `failed` (from, to) are not tried again; `rise` lets it climb on
+/// scaffolds.
 pub(super) fn search(
     grid: &HashMap<[i32; 3], Cell>,
     here: &HashMap<[i32; 3], u32>,
@@ -183,64 +340,13 @@ pub(super) fn search(
     // them, one digging its way in would only shut itself in deeper.
     fall: bool,
 ) -> Option<Way> {
-    let at = |c: [i32; 3]| grid.get(&c).copied();
-    let up = |c: [i32; 3], n: i32| offset(c, [0, n, 0]);
-    let door_of = |c: [i32; 3]| {
-        at(c).filter(|cell| cell.door).map(|_| {
-            if at(up(c, -1)).is_some_and(|below| below.door) {
-                up(c, -1)
-            } else {
-                c
-            }
-        })
-    };
-    let clear = |cells: &[[i32; 3]]| -> Option<Clearing> {
-        let mut cost = 0;
-        let mut digs = Vec::new();
-        let mut door = None;
-        for c in cells {
-            let cell = at(*c)?;
-            if cell.open {
-                continue;
-            }
-            if let Some(d) = door_of(*c) {
-                if door.is_none() {
-                    cost += DOOR_MOVES;
-                }
-                door = Some(d);
-                continue;
-            }
-            cost += cell.dig?;
-            digs.push(*c);
-        }
-        Some((cost, digs, door))
-    };
-    // Where a body falling from above `from` comes to rest, and how far it
-    // fell; `None` past the box or onto something that is no floor.
-    let landing = |from: [i32; 3], start: [i32; 3]| -> Option<([i32; 3], i32)> {
-        let mut c = start;
-        loop {
-            let below = at(up(c, -1))?;
-            if below.floor {
-                return Some((c, from[1] - c[1]));
-            }
-            if !below.open {
-                return None;
-            }
-            c = up(c, -1);
-        }
-    };
-    // What a fall costs in moves, or `None` when it kills.
-    let fall_cost = |fall: i32| {
-        let hurt = (fall - SAFE_FALL).max(0);
-        ((hurt as f32) < health).then(|| fall as u32 + HURT_MOVES * hurt as u32)
-    };
-
+    let rules = Rules { health, rise, fall };
+    let grid = Grid { cells: grid };
     let mut best: HashMap<[i32; 3], u32> = HashMap::default();
     let mut came: HashMap<[i32; 3], Way> = HashMap::default();
     let mut queue = BinaryHeap::new();
     for (cell, moves) in here {
-        if grid.contains_key(cell) {
+        if grid.cells.contains_key(cell) {
             best.insert(*cell, *moves);
             queue.push(Reverse((*moves, *cell)));
         }
@@ -255,70 +361,9 @@ pub(super) fn search(
             break;
         }
         // Standing in a doorway, the panel may stand in the way out.
-        let leaving = door_of(c).or_else(|| door_of(up(c, 1)));
-        let mut moves = Vec::new();
-        for side in SIDES {
-            let n = offset(c, side);
-            // Along, onto the floor there, or off the edge.
-            if let Some((cost, digs, door)) = clear(&[up(n, 1), n]) {
-                match at(up(n, -1)) {
-                    Some(below) if below.floor => {
-                        moves.push((n, Move::Walk(n), 1 + cost, digs, door))
-                    }
-                    Some(below) if below.open => {
-                        if let Some((land, drop)) = landing(c, up(n, -1)) {
-                            if let Some(hurt) = fall_cost(drop) {
-                                let step = if drop <= 1 {
-                                    Move::Walk(land)
-                                } else {
-                                    Move::Drop(land)
-                                };
-                                if fall || drop <= 1 {
-                                    moves.push((land, step, 1 + cost + hurt, digs, door));
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            // A step up onto the block beside: a staircase mined upward.
-            if at(n).is_some_and(|b| b.floor && !b.door) {
-                let to = up(n, 1);
-                if let Some((cost, digs, door)) = clear(&[up(c, 2), up(to, 1), to]) {
-                    moves.push((to, Move::Walk(to), 1 + cost, digs, door));
-                }
-            }
-            // A step down beside. Digging a way in clears the head room over it
-            // too, or the step cannot be walked back up.
-            let to = up(n, -1);
-            if at(up(to, -1)).is_some_and(|b| b.floor) {
-                let needs: Vec<[i32; 3]> = if fall {
-                    vec![n, to]
-                } else {
-                    vec![up(n, 1), n, to]
-                };
-                if let Some((cost, digs, door)) = clear(&needs) {
-                    if !digs.is_empty() {
-                        moves.push((to, Move::Walk(to), 1 + cost, digs, door));
-                    }
-                }
-            }
-        }
-        if rise {
-            if let Some((cost, digs, door)) = clear(&[up(c, 2)]) {
-                moves.push((up(c, 1), Move::Rise, LEVEL_MOVES as u32 + cost, digs, door));
-            }
-        }
-        if let Some(floor) = at(up(c, -1)).filter(|_| fall) {
-            if let (Some(dig), Some((land, fall))) = (floor.dig, landing(c, up(c, -1))) {
-                if let Some(hurt) = fall_cost(fall) {
-                    moves.push((land, Move::Sink, dig + hurt, vec![up(c, -1)], None));
-                }
-            }
-        }
-        for (to, step, extra, digs, door) in moves {
-            if !grid.contains_key(&to) || failed.contains(&(c, to)) {
+        let leaving = grid.door_of(c).or_else(|| grid.door_of(up(c, 1)));
+        for (to, step, extra, digs, door) in moves_from(grid, rules, c) {
+            if !grid.cells.contains_key(&to) || failed.contains(&(c, to)) {
                 continue;
             }
             // Out of a doorway the panel may be in the way: opened first.
@@ -345,7 +390,17 @@ pub(super) fn search(
         }
     }
     let (goal, total) = goal?;
-    // Back to the first move out of where the golem walks.
+    Some(first_move(&came, here, goal, total))
+}
+
+/// Back from `goal` along the moves that `came` to it, to the first move out
+/// of where the golem walks, priced at the whole way's `total`.
+fn first_move(
+    came: &HashMap<[i32; 3], Way>,
+    here: &HashMap<[i32; 3], u32>,
+    goal: [i32; 3],
+    total: u32,
+) -> Way {
     let mut at_cell = goal;
     let mut first = None;
     while let Some(way) = came.get(&at_cell) {
@@ -363,11 +418,11 @@ pub(super) fn search(
     }
     // Ground that walks home is walked to already when nothing came before
     // it: the flood and the route disagree, and walking there settles it.
-    Some(first.unwrap_or(Way {
+    first.unwrap_or(Way {
         from: goal,
         step: Move::Walk(goal),
         digs: Vec::new(),
         door: None,
         cost: total,
-    }))
+    })
 }

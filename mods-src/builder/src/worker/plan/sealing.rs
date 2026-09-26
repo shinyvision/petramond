@@ -7,7 +7,6 @@ use crate::geometry::{offset, SIDES};
 use crate::jobs::Job;
 use crate::survey::Known;
 use crate::worker::body::stands_at;
-use crate::worker::crew::Deferrals;
 use crate::worker::route::{self, Hubs};
 use crate::worker::tuning::patience::{CUTTER_ROUNDS, SITE_STALLED};
 use crate::worker::{Ctx, Task, TRACE};
@@ -74,7 +73,7 @@ pub(in crate::worker) fn cutting(
         if !cuts_off(ctx, hubs, cells, &walls, |n| work_near(job, unit, n))? {
             return Some(false);
         }
-        let waits = Deferrals::round(&mut job.crew.deferrals.support_waits, unit, CUTTER_ROUNDS);
+        let waits = job.crew.deferrals.support_waits.within(unit, CUTTER_ROUNDS);
         return Some(waits && !only_cutting_work_left(ctx, job, Some(unit)));
     }
     let Task::Unit(i) = task else {
@@ -88,7 +87,7 @@ pub(in crate::worker) fn cutting(
         // Ways in are held apart; a wall that keeps cutting off some ledge
         // with work beside it goes in after waiting a few rounds, or a ring
         // of such walls waits on itself forever.
-        let waits = Deferrals::round(&mut job.crew.deferrals.cutter_waits, i, CUTTER_ROUNDS);
+        let waits = job.crew.deferrals.cutter_waits.within(i, CUTTER_ROUNDS);
         return Some(waits && !only_cutting_work_left(ctx, job, Some(i)));
     }
     Some(false)

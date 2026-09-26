@@ -1,17 +1,20 @@
 //! Gathering the open work a plan weighs: what can be done with what is
 //! carried, within the layers being worked.
 
+use std::collections::BTreeMap;
+
 use crate::host::prelude::*;
 
 use super::glazing::{only_glazing_left, ways_through};
 use super::sealing::{only_cutting_work_left, swings_open};
 use super::{trace, Flow, Mode, Round};
+use crate::design::Design;
 use crate::fx::HashSet;
 use crate::geometry::{manhattan, offset, FACES};
 use crate::jobs::Job;
 use crate::project::Projects;
-use crate::survey::Known;
-use crate::worker::crew::Stamped;
+use crate::survey::{ItemKey, Known, Survey};
+use crate::worker::crew::{Crew, Stamped};
 use crate::worker::route::{self, Hubs};
 use crate::worker::tuning::every::{HELD_EVERY, WAYS_EVERY};
 use crate::worker::tuning::patience::{BAND_PATIENCE, GLAZE_PATIENCE};
@@ -42,6 +45,24 @@ impl Candidates {
     }
 }
 
+/// What every open unit in the window is judged against: read once per plan.
+struct Judging<'a> {
+    body: &'a Body,
+    project: &'a crate::project::Project,
+    /// Only ways in are left to build: they are not held back any longer.
+    closing: bool,
+    /// Windows go in now rather than last.
+    glazing: bool,
+    /// What the hands and the chests hold, if the chests could be read.
+    held: Option<&'a BTreeMap<ItemKey, u32>>,
+    /// What the hands hold.
+    carried: &'a BTreeMap<ItemKey, u32>,
+    /// The top of the layers being worked, if a band bounds them.
+    ceiling: Option<i32>,
+    /// How many units past the cursor are looked at.
+    scan: usize,
+}
+
 /// The open work in the window: tasks doable with what is carried, whether
 /// any placement waits on items, and whether any work waits on time.
 pub(super) fn gather(
@@ -56,31 +77,7 @@ pub(super) fn gather(
     // Ways in stay open until they are all that is left to build; windows
     // are glazed last, and are ways through until then.
     let closing = only_cutting_work_left(ctx, job, None);
-    // Once the wait has passed, glazing goes in until something else lands,
-    // rather than waiting again before every pane.
-    let idle = ctx.now.saturating_sub(job.crew.pace.progress_at);
-    if idle > GLAZE_PATIENCE {
-        job.crew.glazing.under_way = true;
-    }
-    // What the golem can lay hands on (its slots and the chests), re-read now
-    // and then: reading every chest is dear and their contents change slowly.
-    if job.crew.cargo.in_reach.stale(ctx.now, HELD_EVERY) {
-        let stock = ctx.supplies.stock(project.table);
-        // Chests out of the loaded world read as empty: what they hold is
-        // unknown, not nothing, and no work is passed over for it.
-        let held = stock.read.then(|| {
-            let mut held = cargo::totals(&body.slots);
-            for (key, count) in stock.totals {
-                *held.entry(key).or_default() += count;
-            }
-            held
-        });
-        job.crew.cargo.in_reach = Stamped {
-            at: ctx.now,
-            value: held,
-        };
-    }
-    let held = job.crew.cargo.in_reach.value.clone();
+    let held = refresh_reads(ctx, job, body, project);
     let glazing = job.crew.glazing.under_way || only_glazing_left(job, held.as_ref());
     if !glazing && job.crew.glazing.ways.stale(ctx.now, WAYS_EVERY) {
         job.crew.glazing.ways = Stamped {
@@ -97,22 +94,87 @@ pub(super) fn gather(
         crew.pace.cursor += 1;
     }
     let carried = cargo::totals(&body.slots);
-    // Only a building golem lays anything: a job on its way home only takes
-    // its scaffolding down.
-    let scan = if mode != Mode::Building { 0 } else { SCAN };
-    // Judged against all unbuilt work, not the window: the window shrinks as
-    // deferrals lapse, and a support whose unit fell out of it was dug as
-    // stray.
-    let open_cells: HashSet<[i32; 3]> = survey
+    let judging = Judging {
+        body,
+        project,
+        closing,
+        glazing,
+        held: held.as_ref(),
+        carried: &carried,
+        ceiling,
+        // Only a building golem lays anything: a job on its way home only
+        // takes its scaffolding down.
+        scan: if mode != Mode::Building { 0 } else { SCAN },
+    };
+    let open_cells = open_cells(&job.design, survey, crew, judging.scan);
+    trace::held_ways_in(ctx, &job.design, survey, crew, closing);
+    offer_units(ctx, &job.design, survey, crew, &judging, &mut found);
+    offer_scaffolds(ctx, crew, body, project, &open_cells, &mut found);
+    offer_reopens(&job.design, survey, crew, ctx.now, &mut found);
+    offer_digs(ctx, crew, &mut found);
+    offer_trims(&job.design, crew, ctx.now, &mut found);
+    found
+}
+
+/// Re-read what wants reading before work is weighed; what the golem can lay
+/// hands on (its slots and the chests), if the chests could be read.
+fn refresh_reads(
+    ctx: &mut Ctx,
+    job: &mut Job,
+    body: &Body,
+    project: &crate::project::Project,
+) -> Option<BTreeMap<ItemKey, u32>> {
+    // Once the wait has passed, glazing goes in until something else lands,
+    // rather than waiting again before every pane.
+    let idle = ctx.now.saturating_sub(job.crew.pace.progress_at);
+    if idle > GLAZE_PATIENCE {
+        job.crew.glazing.under_way = true;
+    }
+    // Re-read now and then: reading every chest is dear and their contents
+    // change slowly.
+    if job.crew.cargo.in_reach.stale(ctx.now, HELD_EVERY) {
+        let stock = ctx.supplies.stock(project.table);
+        // Chests out of the loaded world read as empty: what they hold is
+        // unknown, not nothing, and no work is passed over for it.
+        let held = stock.read.then(|| {
+            let mut held = cargo::totals(&body.slots);
+            for (key, count) in stock.totals {
+                *held.entry(key).or_default() += count;
+            }
+            held
+        });
+        job.crew.cargo.in_reach = Stamped {
+            at: ctx.now,
+            value: held,
+        };
+    }
+    job.crew.cargo.in_reach.value.clone()
+}
+
+/// The cells of unbuilt placements in the scan. Judged against all unbuilt
+/// work, not the window: the window shrinks as deferrals lapse, and a support
+/// whose unit fell out of it was dug as stray.
+fn open_cells(design: &Design, survey: &Survey, crew: &Crew, scan: usize) -> HashSet<[i32; 3]> {
+    survey
         .known
         .iter()
         .enumerate()
         .skip(crew.pace.cursor)
         .take(scan)
         .filter(|(i, known)| matches!(known, Known::Place(_)) && !crew.built.contains(i))
-        .map(|(i, _)| job.design.units[i].pos)
-        .collect();
-    trace::held_ways_in(ctx, &job.design, survey, crew, closing);
+        .map(|(i, _)| design.units[i].pos)
+        .collect()
+}
+
+/// The open units in the window, in build order: placements and clearances.
+fn offer_units(
+    ctx: &mut Ctx,
+    design: &Design,
+    survey: &Survey,
+    crew: &mut Crew,
+    judging: &Judging,
+    found: &mut Candidates,
+) {
     // Earth comes off from its open face inward: a block with nothing open
     // beside it is seen from nowhere, so it waits until digging lays it bare.
     let bare = exposed(
@@ -121,7 +183,7 @@ pub(super) fn gather(
             .known
             .iter()
             .skip(crew.pace.cursor)
-            .take(scan)
+            .take(judging.scan)
             .filter_map(|known| match known {
                 Known::Clear {
                     at,
@@ -139,11 +201,11 @@ pub(super) fn gather(
         .iter()
         .enumerate()
         .skip(crew.pace.cursor)
-        .take(scan)
+        .take(judging.scan)
     {
         // With no band to bound it (nothing landing), the first few in build
         // order are all a plan can afford to weigh.
-        if ceiling.is_none() && open == WINDOW {
+        if judging.ceiling.is_none() && open == WINDOW {
             break;
         }
         if !known.open() {
@@ -153,102 +215,50 @@ pub(super) fn gather(
         // golem is up its scaffolding right beside it. A pillar is dear: what
         // it reaches is laid from it, whatever its layer, before it comes down
         // to be raised again in the same spot once the band gets there.
-        if ceiling.is_some_and(|top| job.design.units[i].pos[1] > top)
-            && !beside_the_perch(crew, body, job.design.units[i].pos)
+        let pos = design.units[i].pos;
+        if judging.ceiling.is_some_and(|top| pos[1] > top)
+            && !beside_the_perch(crew, judging.body, pos)
         {
             found.waiting = true;
             continue;
         }
-        trace::passage(ctx, &job.design, crew, i, known, &carried, closing);
+        trace::passage(ctx, design, crew, i, known, judging.carried, judging.closing);
         if crew.deferrals.deferred(Task::Unit(i), ctx.now) {
             found.waiting = true;
             continue;
         }
-        open += 1;
-        match known {
-            Known::Place(_) if crew.built.contains(&i) => {
-                // Built once and gone again (decayed, broken): reported, never
-                // rebuilt for free — a recheck is the owner's call.
-                open -= 1;
-            }
-            Known::Place(_)
-                if job.design.passage(i)
-                    && !closing
-                    && !swings_open(ctx.caches, &job.design, i) =>
-            {
-                open -= 1;
-                found.waiting = true;
-            }
-            Known::Place(_)
-                if job.design.glazing(i)
-                    && !glazing
-                    && !crew.glazing.ahead.contains(&i)
-                    && crew.glazing.ways.value.contains(&i) =>
-            {
-                open -= 1;
-                found.waiting = true;
-            }
-            // Blocks neither the hands nor the chests hold wait, giving their
-            // place in the window to work that can go up.
-            Known::Place(missing)
-                if held
-                    .as_ref()
-                    .is_some_and(|held| !cargo::holds(held, missing)) =>
-            {
-                open -= 1;
-                found.wants_items = true;
-            }
-            Known::Place(missing) => {
-                if !cargo::holds(&carried, missing) {
-                    found.wants_items = true;
-                    continue;
-                }
-                let pos = job.design.units[i].pos;
-                if leans_on_scaffold(&job.design, job.design.units[i], &project.scaffolds) {
-                    found.waiting = true;
-                    continue;
-                }
-                if !crew.faces.floating.contains(&i) {
-                    found.list.push((Task::Unit(i), pos));
-                    continue;
-                }
-                match support::below(ctx, &job.design, pos) {
-                    support::Support::Needed(cell) => {
-                        let task = Task::Support { unit: i, cell };
-                        found.offer(crew.deferrals.deferred(task, ctx.now), task, cell);
-                    }
-                    support::Support::Standing => {
-                        crew.faces.floating.remove(&i);
-                        found.list.push((Task::Unit(i), pos));
-                    }
-                    support::Support::Impossible => {
-                        crew.note = "Some blocks have nothing to be placed against".into();
-                        trace!("TRACE no support under {pos:?}");
-                        crew.faces.floating.remove(&i);
-                        crew.deferrals.defer(Task::Unit(i), ctx.now + OUT_OF_REACH);
-                    }
-                }
-            }
+        let takes_a_place = match known {
+            Known::Place(missing) => offer_placement(ctx, design, crew, judging, i, missing, found),
             // The golem's own scaffolding standing in a room comes down as
             // scaffolding does, in its turn: never dug as an obstruction.
-            Known::Clear { at, .. } if crew.scaffolding.cells.contains(at) => {
-                open -= 1;
-            }
+            Known::Clear { at, .. } if crew.scaffolding.cells.contains(at) => false,
             Known::Clear {
                 at,
                 holds_items: false,
                 ..
             } => {
                 if !bare.contains(at) {
-                    open -= 1;
                     buried.push((Task::Unit(i), *at));
-                } else if !crew.aloft.perch.is_some_and(|p| p.holds(*at)) {
-                    found.list.push((Task::Unit(i), *at));
+                    false
+                } else {
+                    if !crew.aloft.perch.is_some_and(|p| p.holds(*at)) {
+                        found.list.push((Task::Unit(i), *at));
+                    }
+                    true
                 }
             }
-            Known::Clear { .. } => crew.note = "A container with items is in the way".into(),
-            Known::Unloaded | Known::Unchecked => found.waiting = true,
-            _ => {}
+            Known::Clear { .. } => {
+                crew.note = "A container with items is in the way".into();
+                true
+            }
+            Known::Unloaded | Known::Unchecked => {
+                found.waiting = true;
+                true
+            }
+            _ => true,
+        };
+        if takes_a_place {
+            open += 1;
         }
     }
     // Earth nothing will ever lay bare (an eave run into the bank, with no
@@ -258,8 +268,84 @@ pub(super) fn gather(
     } else if !buried.is_empty() {
         found.waiting = true;
     }
-    // Stray scaffolding comes down only on the walk home or from the top of the
-    // golem's own pillar: anywhere else up high a stray may be the way down.
+}
+
+/// Weigh open placement `i`, missing `missing`; whether it takes a place in
+/// the window.
+fn offer_placement(
+    ctx: &mut Ctx,
+    design: &Design,
+    crew: &mut Crew,
+    judging: &Judging,
+    i: usize,
+    missing: &[ItemStackData],
+    found: &mut Candidates,
+) -> bool {
+    // Built once and gone again (decayed, broken): reported, never rebuilt
+    // for free — a recheck is the owner's call.
+    if crew.built.contains(&i) {
+        return false;
+    }
+    if design.passage(i) && !judging.closing && !swings_open(ctx.caches, design, i) {
+        found.waiting = true;
+        return false;
+    }
+    if design.glazing(i)
+        && !judging.glazing
+        && !crew.glazing.ahead.contains(&i)
+        && crew.glazing.ways.value.contains(&i)
+    {
+        found.waiting = true;
+        return false;
+    }
+    // Blocks neither the hands nor the chests hold wait, giving their place
+    // in the window to work that can go up.
+    if judging.held.is_some_and(|held| !cargo::holds(held, missing)) {
+        found.wants_items = true;
+        return false;
+    }
+    if !cargo::holds(judging.carried, missing) {
+        found.wants_items = true;
+        return true;
+    }
+    let pos = design.units[i].pos;
+    if leans_on_scaffold(design, design.units[i], &judging.project.scaffolds) {
+        found.waiting = true;
+        return true;
+    }
+    if !crew.faces.floating.contains(&i) {
+        found.list.push((Task::Unit(i), pos));
+        return true;
+    }
+    match support::below(ctx, design, pos) {
+        support::Support::Needed(cell) => {
+            let task = Task::Support { unit: i, cell };
+            found.offer(crew.deferrals.deferred(task, ctx.now), task, cell);
+        }
+        support::Support::Standing => {
+            crew.faces.floating.remove(&i);
+            found.list.push((Task::Unit(i), pos));
+        }
+        support::Support::Impossible => {
+            crew.note = "Some blocks have nothing to be placed against".into();
+            trace!("TRACE no support under {pos:?}");
+            crew.faces.floating.remove(&i);
+            crew.deferrals.defer(Task::Unit(i), ctx.now + OUT_OF_REACH);
+        }
+    }
+    true
+}
+
+/// Stray scaffolding comes down only on the walk home or from the top of the
+/// golem's own pillar: anywhere else up high a stray may be the way down.
+fn offer_scaffolds(
+    ctx: &mut Ctx,
+    crew: &mut Crew,
+    body: &Body,
+    project: &crate::project::Project,
+    open_cells: &HashSet<[i32; 3]>,
+    found: &mut Candidates,
+) {
     let on_top = crew
         .aloft
         .perch
@@ -269,34 +355,44 @@ pub(super) fn gather(
         let hubs = Hubs::new(project.home, &trail);
         matches!(route::out(ctx, hubs, body.cell, &[]), Some(Route::Open))
     };
-    let crew = &mut job.crew;
-    if walks_home || on_top.is_some() {
-        crew.scaffolding
-            .urgent
-            .retain(|c| project.scaffolds.contains(c));
-        for cell in &project.scaffolds {
-            if on_top.is_some_and(|p| p.on_column(*cell)) {
-                continue;
-            }
-            // Scaffolding under the golem or beside and below it may be its
-            // own way down: a pillar dug out from the roof beside it
-            // stranded the golem up there.
-            if (cell[0] - body.cell[0]).abs() <= 1
-                && (cell[2] - body.cell[2]).abs() <= 1
-                && cell[1] < body.cell[1]
-            {
-                continue;
-            }
-            let task = Task::Scaffold(*cell);
-            if crew.deferrals.deferred(task, ctx.now) {
-                found.waiting = true;
-            } else if crew.scaffolding.urgent.contains(cell)
-                || !support::props_up(*cell, &open_cells)
-            {
-                found.list.push((task, *cell));
-            }
+    if !walks_home && on_top.is_none() {
+        return;
+    }
+    crew.scaffolding
+        .urgent
+        .retain(|c| project.scaffolds.contains(c));
+    for cell in &project.scaffolds {
+        if on_top.is_some_and(|p| p.on_column(*cell)) {
+            continue;
+        }
+        // Scaffolding under the golem or beside and below it may be its own
+        // way down: a pillar dug out from the roof beside it stranded the
+        // golem up there.
+        if (cell[0] - body.cell[0]).abs() <= 1
+            && (cell[2] - body.cell[2]).abs() <= 1
+            && cell[1] < body.cell[1]
+        {
+            continue;
+        }
+        let task = Task::Scaffold(*cell);
+        if crew.deferrals.deferred(task, ctx.now) {
+            found.waiting = true;
+        } else if crew.scaffolding.urgent.contains(cell) || !support::props_up(*cell, open_cells)
+        {
+            found.list.push((task, *cell));
         }
     }
+}
+
+/// Built units taken back down to open a way in to sealed work, while that
+/// work is still to be laid.
+fn offer_reopens(
+    design: &Design,
+    survey: &Survey,
+    crew: &mut Crew,
+    now: u64,
+    found: &mut Candidates,
+) {
     crew.access
         .reopen
         .retain(|sealed, _| matches!(survey.known[*sealed], Known::Place(_)));
@@ -312,51 +408,54 @@ pub(super) fn gather(
     reopen.dedup();
     for o in reopen {
         let task = Task::Reopen(o);
-        found.offer(
-            crew.deferrals.deferred(task, ctx.now),
-            task,
-            job.design.units[o].pos,
-        );
+        found.offer(crew.deferrals.deferred(task, now), task, design.units[o].pos);
     }
-    // Earth lying on work out of reach: taken off like any other job, so the
-    // nearest of it goes first and the rest waits its turn.
-    if !crew.access.digs.is_empty() {
-        let mut digs: Vec<[i32; 3]> = crew.access.digs.iter().copied().collect();
-        digs.sort_unstable();
-        let blocks = get_blocks(digs.clone());
-        for (cell, block) in digs.into_iter().zip(blocks) {
-            match block {
-                Some(b) if !open_block(ctx, b) => {
-                    let task = Task::Breakout(cell);
-                    found.offer(crew.deferrals.deferred(task, ctx.now), task, cell);
-                }
-                Some(_) => {
-                    crew.access.digs.remove(&cell);
-                }
-                None => found.waiting = true,
+}
+
+/// Earth lying on work out of reach: taken off like any other job, so the
+/// nearest of it goes first and the rest waits its turn.
+fn offer_digs(ctx: &mut Ctx, crew: &mut Crew, found: &mut Candidates) {
+    if crew.access.digs.is_empty() {
+        return;
+    }
+    let mut digs: Vec<[i32; 3]> = crew.access.digs.iter().copied().collect();
+    digs.sort_unstable();
+    let blocks = get_blocks(digs.clone());
+    for (cell, block) in digs.into_iter().zip(blocks) {
+        match block {
+            Some(b) if !open_block(ctx, b) => {
+                let task = Task::Breakout(cell);
+                found.offer(crew.deferrals.deferred(task, ctx.now), task, cell);
             }
+            Some(_) => {
+                crew.access.digs.remove(&cell);
+            }
+            None => found.waiting = true,
         }
     }
-    if !crew.access.trims.is_empty() {
-        let overgrowth = job.design.overgrowth();
-        let mut trims: Vec<[i32; 3]> = crew.access.trims.iter().copied().collect();
-        trims.sort_unstable();
-        let blocks = get_blocks(trims.clone());
-        let crew = &mut job.crew;
-        for (cell, block) in trims.into_iter().zip(blocks) {
-            match block {
-                Some(b) if overgrowth.contains(&b) => {
-                    let task = Task::Trim(cell);
-                    found.offer(crew.deferrals.deferred(task, ctx.now), task, cell);
-                }
-                Some(_) => {
-                    crew.access.trims.remove(&cell);
-                }
-                None => found.waiting = true,
+}
+
+/// Overgrowth to cut away around work nothing reaches, while it still grows.
+fn offer_trims(design: &Design, crew: &mut Crew, now: u64, found: &mut Candidates) {
+    if crew.access.trims.is_empty() {
+        return;
+    }
+    let overgrowth = design.overgrowth();
+    let mut trims: Vec<[i32; 3]> = crew.access.trims.iter().copied().collect();
+    trims.sort_unstable();
+    let blocks = get_blocks(trims.clone());
+    for (cell, block) in trims.into_iter().zip(blocks) {
+        match block {
+            Some(b) if overgrowth.contains(&b) => {
+                let task = Task::Trim(cell);
+                found.offer(crew.deferrals.deferred(task, now), task, cell);
             }
+            Some(_) => {
+                crew.access.trims.remove(&cell);
+            }
+            None => found.waiting = true,
         }
     }
-    found
 }
 
 fn exposed(ctx: &mut Ctx, cells: Vec<[i32; 3]>) -> HashSet<[i32; 3]> {
@@ -423,7 +522,7 @@ pub(super) fn leans_on_scaffold(
 }
 
 /// Whether the golem is up its scaffolding with `cell` beside it.
-fn beside_the_perch(crew: &crate::worker::crew::Crew, body: &Body, cell: [i32; 3]) -> bool {
+fn beside_the_perch(crew: &Crew, body: &Body, cell: [i32; 3]) -> bool {
     crew.aloft.perch.is_some()
         && (cell[0] - body.cell[0]).abs() + (cell[2] - body.cell[2]).abs() <= PERCH_REACH
         && cell[1] >= body.cell[1] - 1

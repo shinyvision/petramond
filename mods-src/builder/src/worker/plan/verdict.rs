@@ -7,7 +7,6 @@ use super::{defer_task, places};
 use crate::geometry::{offset, FACES};
 use crate::jobs::Job;
 use crate::survey::Known;
-use crate::worker::crew::Deferrals;
 use crate::worker::tuning::patience::{BURY_ROUNDS, DUE_PATIENCE};
 use crate::worker::tuning::waits::{BURY_WAIT, REFUSED, SEALED_WAIT, UNLOADED, UNREAD};
 use crate::worker::tuning::window::DUE_CHAIN;
@@ -50,7 +49,7 @@ pub(super) fn viability(
     // Laid now, it would bury earth still to be dug that only its cell lays
     // bare: the digging goes first, but not forever, so work nothing reaches
     // does not hold its neighbours back.
-    if buries(ctx, job, i) && Deferrals::round(&mut job.crew.deferrals.bury_waits, i, BURY_ROUNDS) {
+    if buries(ctx, job, i) && job.crew.deferrals.bury_waits.within(i, BURY_ROUNDS) {
         return Viable::Waits(BURY_WAIT);
     }
     match pocket::seals(ctx, job, i) {

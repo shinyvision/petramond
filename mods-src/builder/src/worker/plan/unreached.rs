@@ -173,14 +173,12 @@ pub(super) fn fall_out(
     // down may open a way) and then left standing: some can only be dug from
     // inside a pit, and asking forever never finishes the build.
     if let Task::Scaffold(cell) = task {
-        let tries = job.crew.scaffolding.shunned.entry(cell).or_default();
-        *tries += 1;
-        if *tries < SCAFFOLD_TRIES {
+        if job.crew.scaffolding.shunned.count(cell) < SCAFFOLD_TRIES {
             defer_task(ctx, job, task, SEALED_WAIT);
             return None;
         }
         trace!("TRACE leaving the scaffold at {cell:?} standing");
-        job.crew.scaffolding.shunned.remove(&cell);
+        job.crew.scaffolding.shunned.forget(&cell);
         job.crew.scaffolding.left_standing += 1;
         job.crew.scaffolding.urgent.retain(|c| *c != cell);
         projects.update(job.id, |p| p.scaffolds.retain(|c| *c != cell));

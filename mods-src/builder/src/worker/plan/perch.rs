@@ -1,5 +1,7 @@
 //! Planning from the top of a pillar, a roof course or a walkway.
 
+use std::ops::ControlFlow;
+
 use crate::host::prelude::*;
 
 use super::here::{behind, clear_of_body, sees_from_here};
@@ -102,7 +104,7 @@ fn try_here(
                 continue;
             }
         }
-        job.crew.deferrals.deferred.remove(&task);
+        job.crew.deferrals.deferred.lift(&task);
         return Some(Step::Centre {
             task,
             since: ctx.now,
@@ -111,6 +113,8 @@ fn try_here(
     None
 }
 
+/// Plan from up a pillar, out on its course or at a walkway's end: what the
+/// climb was for, then what is seen from here, then higher, onward or down.
 pub(super) fn from_perch(
     ctx: &mut Ctx,
     job: &mut Job,
@@ -120,16 +124,51 @@ pub(super) fn from_perch(
     perch: pillar::Pillar,
     candidates: &[(Task, [i32; 3])],
 ) -> Flow {
-    let mut higher = false;
     let top = perch.top_cell();
+    if unsettled(ctx, job, body, top) {
+        return Flow::Go(Step::Plan);
+    }
+    if let Some(flow) = work_committed(ctx, job, body, project, mode, perch) {
+        return flow;
+    }
+    if let Some(flow) = off_the_course(ctx, job, body, top) {
+        return flow;
+    }
+    let higher = match work_in_sight(ctx, job, body, project, mode, perch, candidates) {
+        ControlFlow::Break(flow) => return flow,
+        ControlFlow::Continue(higher) => higher,
+    };
+    trace::perch_top(job, body, top, candidates);
+    // Up a pillar or out on a roof course: every block it sees gets a try
+    // before it leaves, waits or no. A climb is dear, and a ridge whose blocks
+    // wait on each other for a face only starts when one is tried.
+    // (A job going home lays nothing more.)
+    if let Some(step) = try_here(ctx, job, body, project, mode, perch) {
+        return Flow::Go(step);
+    }
+    if job.crew.aloft.descending.is_some() {
+        return descending(ctx, job, body, project, perch, candidates);
+    }
+    if body.cell == top && job.crew.aloft.bridge.is_none() {
+        if let Some(flow) = onward_or_higher(ctx, job, body, perch, candidates, higher) {
+            return flow;
+        }
+    }
+    leave(ctx, job, body, project, perch, candidates)
+}
+
+/// Whether the golem, just up or just walked out, should settle onto the
+/// centre of its cell before judging what it sees.
+fn unsettled(ctx: &Ctx, job: &Job, body: &Body, top: [i32; 3]) -> bool {
+    let [dx, dz] = body.off_centre();
+    if dx.abs().max(dz.abs()) <= PERCH_OFF_CENTRE {
+        return false;
+    }
     // The perch was chosen for what its centre sees; judged from the edge the
     // jump left the golem on, a wall's corner hides it.
-    let [dx, dz] = body.off_centre();
-    if body.cell == top
-        && dx.abs().max(dz.abs()) > PERCH_OFF_CENTRE
-        && ctx.now < job.crew.aloft.settle_until
-    {
-        return Flow::Go(Step::Plan);
+    let settling = ctx.now < job.crew.aloft.settle_until;
+    if body.cell == top && settling {
+        return true;
     }
     // Likewise at a walkway's end: a reach judged from its rim fell short
     // and the walkway was taken down and laid again, over and over.
@@ -139,19 +178,25 @@ pub(super) fn from_perch(
         .bridge
         .as_ref()
         .is_some_and(|walkway| walkway.path.last() == Some(&body.cell));
-    if at_walkway_end && dx.abs().max(dz.abs()) > PERCH_OFF_CENTRE {
-        return Flow::Go(Step::Plan);
+    if at_walkway_end {
+        return true;
     }
     // And at a stance walked to along the course.
-    if job.crew.aloft.aimed.is_some_and(|(_, at)| at == body.cell)
-        && dx.abs().max(dz.abs()) > PERCH_OFF_CENTRE
-        && ctx.now < job.crew.aloft.settle_until
-    {
-        return Flow::Go(Step::Plan);
-    }
-    // What the climb or the walkway was planned for is done first, as
-    // planned: it was checked then, and is only passed over if the world no
-    // longer lets it be seen.
+    settling && job.crew.aloft.aimed.is_some_and(|(_, at)| at == body.cell)
+}
+
+/// What the climb or the walkway was planned for is done first, as planned:
+/// it was checked then, and is only passed over if the world no longer lets
+/// it be seen.
+fn work_committed(
+    ctx: &mut Ctx,
+    job: &mut Job,
+    body: &Body,
+    project: &crate::project::Project,
+    mode: Mode,
+    perch: pillar::Pillar,
+) -> Option<Flow> {
+    let top = perch.top_cell();
     let committed = match &job.crew.aloft.bridge {
         Some(walkway) if body.cell == *walkway.path.last().unwrap_or(&top) => Some(walkway.task),
         Some(_) => None,
@@ -171,90 +216,118 @@ pub(super) fn from_perch(
         .as_ref()
         .is_some_and(|w| w.top != body.cell && !w.path.contains(&body.cell))
     {
-        return Flow::Go(Step::Unbridge { since: ctx.now });
+        return Some(Flow::Go(Step::Unbridge { since: ctx.now }));
     }
     // Going home, what the climb was for is left unlaid.
-    let committed = committed.filter(|task| mode == Mode::Building || !places(job, *task));
-    if let Some(task) = committed {
-        let open = match (task, job.survey.as_ref()) {
-            (Task::Unit(i), Some(s)) => s.known[i].open() && !job.crew.built.contains(&i),
-            // Only while what it opens a way to still waits: re-laid once that
-            // stands, a climb's reopen would be dug out again forever.
-            (Task::Reopen(o), Some(s)) => {
-                matches!(s.known[o], Known::Satisfied)
-                    && job.crew.access.reopen.values().flatten().any(|v| *v == o)
+    let task = committed.filter(|task| mode == Mode::Building || !places(job, *task))?;
+    let open = still_open(ctx, job, project, perch, task);
+    let cells = task_cells(job, task);
+    // Walked out to for it and not workable after all: never this stance
+    // for it again, or the same climb is planned and left forever.
+    if open && body.cell != top && !sees_from_here(job, task, body, &cells) {
+        job.crew.deferrals.strike(task, body.cell);
+    }
+    if !open
+        || !sees_from_here(job, task, body, &cells)
+        || job.crew.deferrals.tried.contains(&task.unit())
+        || viability(ctx, job, body, task, body.pos) != Viable::Now
+    {
+        return None;
+    }
+    // Planned or not, it must not shut the way back to the top, nor wall
+    // ground off.
+    if body.cell != top && places(job, task) {
+        match way_back(ctx, job, body, top, &cells) {
+            Some(Route::Open) => {}
+            None => return Some(Flow::Go(Step::Plan)),
+            Some(_) => {
+                // Laid from here it strands the golem out here: never this
+                // stance for it again, or the climb repeats.
+                job.crew.deferrals.strike(task, body.cell);
+                job.crew.deferrals.tried.insert(task.unit());
+                defer_task(ctx, job, task, SEALED_WAIT);
+                return Some(Flow::Go(walk_to(ctx, top, Then::Regroup)));
             }
-            (Task::Trim(cell), _) => job.crew.access.trims.contains(&cell),
-            // A stray scaffold up high is work a pillar is climbed for too.
-            (Task::Scaffold(cell), _) => {
-                project.scaffolds.contains(&cell)
-                    && !perch.holds(cell)
-                    && scaffold::stands(ctx.content, cell) == Some(true)
-            }
-            _ => false,
-        };
-        let cells = task_cells(job, task);
-        // Walked out to for it and not workable after all: never this stance
-        // for it again, or the same climb is planned and left forever.
-        if open && body.cell != top && !sees_from_here(job, task, body, &cells) {
-            job.crew.deferrals.strike(task, body.cell);
         }
-        if open
-            && sees_from_here(job, task, body, &cells)
-            && !job.crew.deferrals.tried.contains(&task.unit())
-            && viability(ctx, job, body, task, body.pos) == Viable::Now
-        {
-            // Planned or not, it must not shut the way back to the top, nor
-            // wall ground off.
-            if body.cell != top && places(job, task) {
-                match way_back(ctx, job, body, top, &cells) {
-                    Some(Route::Open) => {}
-                    None => return Flow::Go(Step::Plan),
-                    Some(_) => {
-                        // Laid from here it strands the golem out here: never
-                        // this stance for it again, or the climb repeats.
-                        job.crew.deferrals.strike(task, body.cell);
-                        job.crew.deferrals.tried.insert(task.unit());
-                        defer_task(ctx, job, task, SEALED_WAIT);
-                        return Flow::Go(walk_to(ctx, top, Then::Regroup));
-                    }
-                }
-            }
-            match cutting(ctx, job, project, task, &cells) {
-                Some(false) => {}
-                None => return Flow::Go(Step::Plan),
-                Some(true) => {
-                    job.crew.deferrals.tried.insert(task.unit());
-                    defer_task(ctx, job, task, SEALED_WAIT);
-                    return Flow::Go(Step::Plan);
-                }
-            }
+    }
+    match cutting(ctx, job, project, task, &cells) {
+        Some(false) => {}
+        None => return Some(Flow::Go(Step::Plan)),
+        Some(true) => {
             job.crew.deferrals.tried.insert(task.unit());
-            job.crew.deferrals.deferred.remove(&task);
-            return Flow::Go(Step::Centre {
-                task,
-                since: ctx.now,
-            });
+            defer_task(ctx, job, task, SEALED_WAIT);
+            return Some(Flow::Go(Step::Plan));
         }
     }
-    // From up here the golem's ground is never stranded (it walked to the
-    // pillar's foot first), but ground must not be walled off nor the way back
-    // to the top cut; that is asked where it stands. Off the pillar's course
-    // altogether (fallen, knocked down), the top is no longer the way anywhere.
-    if job.crew.aloft.bridge.is_none() && body.cell != top {
-        let Some(around) = course::around(ctx, top) else {
-            return Flow::Busy(Waiting::Probe(Probe::CourseFlood));
-        };
-        if let Some(footholds) = around {
-            if !footholds.contains(&body.cell) {
-                trace!("TRACE off the course of {top:?} at {:?}", body.cell);
-                job.crew.aloft.dismount_lost();
-                job.crew.deferrals.tried.clear();
-                job.crew.trail.broken();
-                return Flow::Go(Step::Plan);
-            }
+    job.crew.deferrals.tried.insert(task.unit());
+    job.crew.deferrals.deferred.lift(&task);
+    Some(Flow::Go(Step::Centre {
+        task,
+        since: ctx.now,
+    }))
+}
+
+/// Whether the work a climb was committed to is still there to do.
+fn still_open(
+    ctx: &Ctx,
+    job: &Job,
+    project: &crate::project::Project,
+    perch: pillar::Pillar,
+    task: Task,
+) -> bool {
+    match (task, job.survey.as_ref()) {
+        (Task::Unit(i), Some(s)) => s.known[i].open() && !job.crew.built.contains(&i),
+        // Only while what it opens a way to still waits: re-laid once that
+        // stands, a climb's reopen would be dug out again forever.
+        (Task::Reopen(o), Some(s)) => {
+            matches!(s.known[o], Known::Satisfied)
+                && job.crew.access.reopen.values().flatten().any(|v| *v == o)
         }
+        (Task::Trim(cell), _) => job.crew.access.trims.contains(&cell),
+        // A stray scaffold up high is work a pillar is climbed for too.
+        (Task::Scaffold(cell), _) => {
+            project.scaffolds.contains(&cell)
+                && !perch.holds(cell)
+                && scaffold::stands(ctx.content, cell) == Some(true)
+        }
+        _ => false,
     }
+}
+
+/// From up here the golem's ground is never stranded (it walked to the
+/// pillar's foot first), but ground must not be walled off nor the way back
+/// to the top cut; that is asked where it stands. Off the pillar's course
+/// altogether (fallen, knocked down), the top is no longer the way anywhere.
+fn off_the_course(ctx: &mut Ctx, job: &mut Job, body: &Body, top: [i32; 3]) -> Option<Flow> {
+    if job.crew.aloft.bridge.is_some() || body.cell == top {
+        return None;
+    }
+    let Some(around) = course::around(ctx, top) else {
+        return Some(Flow::Busy(Waiting::Probe(Probe::CourseFlood)));
+    };
+    if around.is_some_and(|footholds| !footholds.contains(&body.cell)) {
+        trace!("TRACE off the course of {top:?} at {:?}", body.cell);
+        job.crew.aloft.dismount_lost();
+        job.crew.deferrals.tried.clear();
+        job.crew.trail.broken();
+        return Some(Flow::Go(Step::Plan));
+    }
+    None
+}
+
+/// Lay the first candidate seen from where the golem stands; else whether a
+/// higher pillar would bring some into sight.
+fn work_in_sight(
+    ctx: &mut Ctx,
+    job: &mut Job,
+    body: &Body,
+    project: &crate::project::Project,
+    mode: Mode,
+    perch: pillar::Pillar,
+    candidates: &[(Task, [i32; 3])],
+) -> ControlFlow<Flow, bool> {
+    let top = perch.top_cell();
+    let mut higher = false;
     for (task, _) in candidates {
         let cells = task_cells(job, *task);
         if !job.crew.deferrals.blind(*task, body.cell) && sees_from_here(job, *task, body, &cells) {
@@ -271,93 +344,114 @@ pub(super) fn from_perch(
                         defer_task(ctx, job, *task, SEALED_WAIT);
                         continue;
                     }
-                    None => return Flow::Go(Step::Plan),
+                    None => return ControlFlow::Break(Flow::Go(Step::Plan)),
                 }
             }
             match cutting(ctx, job, project, *task, &cells) {
                 Some(false) => {
                     let task = behind(ctx, job, project, mode, body, *task).unwrap_or(*task);
-                    return Flow::Go(Step::Centre {
+                    return ControlFlow::Break(Flow::Go(Step::Centre {
                         task,
                         since: ctx.now,
-                    });
+                    }));
                 }
                 Some(true) => defer_task(ctx, job, *task, SEALED_WAIT),
-                None => return Flow::Go(Step::Plan),
+                None => return ControlFlow::Break(Flow::Go(Step::Plan)),
             }
         } else if body.cell == top && perch.extends_to(ctx, body, &cells, &job.design.governed) {
             higher = true;
         }
     }
-    trace::perch_top(job, body, top, candidates);
-    // Up a pillar or out on a roof course: every block it sees gets a try
-    // before it leaves, waits or no. A climb is dear, and a ridge whose blocks
-    // wait on each other for a face only starts when one is tried.
-    // (A job going home lays nothing more.)
-    if let Some(step) = try_here(ctx, job, body, project, mode, perch) {
+    ControlFlow::Continue(higher)
+}
+
+/// On the way down the pillar is never raised again, but a level still
+/// bridges out to work it reaches and cannot see: the pillar underfoot is
+/// paid for, and the other way to that block is digging this one down and
+/// raising another beside it. The walkway's price against what is left of
+/// the climb keeps it from bridging near the ground.
+fn descending(
+    ctx: &mut Ctx,
+    job: &mut Job,
+    body: &Body,
+    project: &crate::project::Project,
+    perch: pillar::Pillar,
+    candidates: &[(Task, [i32; 3])],
+) -> Flow {
+    let top = perch.top_cell();
+    if let Some(step) = aloft::move_on(ctx, job, body, project, perch, candidates) {
         return Flow::Go(step);
     }
-    // On the way down the pillar is never raised again, but a level still
-    // bridges out to work it reaches and cannot see: the pillar underfoot is
-    // paid for, and the other way to that block is digging this one down and
-    // raising another beside it. The walkway's price against what is left of
-    // the climb keeps it from bridging near the ground.
-    if job.crew.aloft.descending.is_some() {
-        if let Some(step) = aloft::move_on(ctx, job, body, project, perch, candidates) {
-            return Flow::Go(step);
+    if body.cell != top {
+        if job.crew.aloft.bridge.is_some() {
+            return Flow::Go(Step::Unbridge { since: ctx.now });
         }
-        if body.cell != top {
-            if job.crew.aloft.bridge.is_some() {
-                return Flow::Go(Step::Unbridge { since: ctx.now });
-            }
-            return Flow::Go(walk_to(ctx, top, Then::Regroup));
-        }
-        return Flow::Go(Step::Descend { since: ctx.now });
+        return Flow::Go(walk_to(ctx, top, Then::Regroup));
     }
-    if body.cell == top && job.crew.aloft.bridge.is_none() {
-        if let Some(stance) = perch.onward {
-            // The course it was planned along may have changed under it since
-            // (overgrowth it stood on cut away): walking on at a hole is a fall.
-            let standing = stands_at(stance);
-            let walks = standing
-                && match route::probe(ctx, body.cell, stance, Vec::new()) {
-                    Some(route) => route == Route::Open,
-                    None => {
-                        return Flow::Busy(Waiting::Probe(Probe::Onward));
-                    }
-                };
-            job.crew.aloft.perch = Some(pillar::Pillar {
-                onward: None,
-                ..perch
-            });
-            if walks {
-                return Flow::Go(walk_to(ctx, stance, Then::Regroup));
-            }
-            return Flow::Go(Step::Plan);
+    Flow::Go(Step::Descend { since: ctx.now })
+}
+
+/// At the top with no walkway out: on to the stance the pillar was planned
+/// with, or up a few levels to work the top cannot see.
+fn onward_or_higher(
+    ctx: &mut Ctx,
+    job: &mut Job,
+    body: &Body,
+    perch: pillar::Pillar,
+    candidates: &[(Task, [i32; 3])],
+    higher: bool,
+) -> Option<Flow> {
+    if let Some(stance) = perch.onward {
+        // The course it was planned along may have changed under it since
+        // (overgrowth it stood on cut away): walking on at a hole is a fall.
+        let standing = stands_at(stance);
+        let walks = standing
+            && match route::probe(ctx, body.cell, stance, Vec::new()) {
+                Some(route) => route == Route::Open,
+                None => return Some(Flow::Busy(Waiting::Probe(Probe::Onward))),
+            };
+        job.crew.aloft.perch = Some(pillar::Pillar {
+            onward: None,
+            ..perch
+        });
+        if walks {
+            return Some(Flow::Go(walk_to(ctx, stance, Then::Regroup)));
         }
-        let levels = if higher {
-            Some(1)
-        } else {
-            match raise_for(ctx, job, body, perch, candidates) {
-                Ok(levels) => levels,
-                Err(()) => return Flow::Go(Step::Plan),
-            }
-        };
-        if let Some(levels) = levels {
-            let mut raised = perch;
-            raised.top += levels;
-            job.crew.aloft.raises += 1;
-            job.crew.aloft.dismount_to_raise();
-            return Flow::Go(Step::Climb {
-                pillar: raised,
-                level: None,
-                placed: false,
-                since: ctx.now,
-            });
-        }
+        return Some(Flow::Go(Step::Plan));
     }
-    // Work up here out of sight: along the course or out on a walkway before
-    // down and round and up again.
+    let levels = if higher {
+        1
+    } else {
+        match raise_for(ctx, job, body, perch, candidates) {
+            Ok(Some(levels)) => levels,
+            Ok(None) => return None,
+            Err(()) => return Some(Flow::Go(Step::Plan)),
+        }
+    };
+    let mut raised = perch;
+    raised.top += levels;
+    job.crew.aloft.raises += 1;
+    job.crew.aloft.dismount_to_raise();
+    Some(Flow::Go(Step::Climb {
+        pillar: raised,
+        level: None,
+        placed: false,
+        since: ctx.now,
+    }))
+}
+
+/// Nothing more to lay from here: work up here out of sight goes along the
+/// course or out on a walkway before down and round and up again; failing
+/// that, back to the top and down.
+fn leave(
+    ctx: &mut Ctx,
+    job: &mut Job,
+    body: &Body,
+    project: &crate::project::Project,
+    perch: pillar::Pillar,
+    candidates: &[(Task, [i32; 3])],
+) -> Flow {
+    let top = perch.top_cell();
     if let Some(step) = aloft::move_on(ctx, job, body, project, perch, candidates) {
         return Flow::Go(step);
     }

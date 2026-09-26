@@ -1,4 +1,3 @@
-use crate::fx::HashMap;
 use crate::host::prelude::*;
 use crate::testing::Session;
 use crate::worker::crew::{Aloft, Deferrals, Faces, Stamped};
@@ -21,10 +20,6 @@ fn work_set_aside_waits_its_time() {
     assert!(deferrals.blind(task, [1, 0, 1]));
     assert!(!deferrals.blind(task, [1, 0, 2]));
     assert!(!deferrals.blind(Task::Unit(4), [1, 0, 1]));
-
-    let mut waits = HashMap::default();
-    let rounds: Vec<bool> = (0..3).map(|_| Deferrals::round(&mut waits, 7, 2)).collect();
-    assert_eq!(rounds, vec![true, true, false]);
 }
 
 /// A stance search that found nothing stands while the golem, the site and
@@ -60,7 +55,8 @@ fn a_faceless_unit_is_propped_after_spaced_refusals() {
 
     faces.propped.insert(1, vec![[0, 0, 0], [0, 1, 0]]);
     assert_eq!(faces.unprop(1), Some(vec![[0, 0, 0], [0, 1, 0]]));
-    assert!(!faces.floating.contains(&1) && !faces.faceless.contains_key(&1));
+    assert!(!faces.floating.contains(&1));
+    assert_eq!(faces.faceless.count_spaced(1, 0, FACELESS_SPACING), 1, "tries start over");
     assert_eq!(faces.unprop(1), None);
 }
 

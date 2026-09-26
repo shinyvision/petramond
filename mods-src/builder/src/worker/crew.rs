@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::host::prelude::*;
 
+use super::backoff::{Struck, Tries, Until};
 use super::presence::Presentation;
 use super::tuning::every::SEARCH_EVERY;
 use super::tuning::patience::FACELESS_TRIES;
@@ -45,18 +46,18 @@ pub struct Crew {
 /// Work set aside, and for how long or how often.
 #[derive(Default)]
 pub struct Deferrals {
-    pub(super) deferred: HashMap<Task, u64>,
+    pub(super) deferred: Until<Task>,
     /// Stances a task was refused from for reach or sight.
-    pub(super) blind: HashSet<(Task, [i32; 3])>,
+    pub(super) blind: Struck<(Task, [i32; 3])>,
     /// Units tried from a roof course since the last block landed.
     pub(super) tried: HashSet<usize>,
     /// Rounds each placement has waited for digging it would bury.
-    pub(super) bury_waits: HashMap<usize, u8>,
+    pub(super) bury_waits: Tries<usize>,
     /// Units that would wall off ground the golem still reaches: built last.
     pub(super) cutters: HashSet<usize>,
-    pub(super) cutter_waits: HashMap<usize, u8>,
+    pub(super) cutter_waits: Tries<usize>,
     /// Rounds each unit's support column has waited for ground it would cut off.
-    pub(super) support_waits: HashMap<usize, u8>,
+    pub(super) support_waits: Tries<usize>,
     /// Counts the block changes in and around the site: what a stance search
     /// found stands until it moves on.
     site_changes: u64,
@@ -88,29 +89,21 @@ impl Deferrals {
     }
 
     pub(super) fn defer(&mut self, task: Task, until: u64) {
-        self.deferred.insert(task, until);
+        self.deferred.set(task, until);
     }
 
     pub(super) fn deferred(&self, task: Task, now: u64) -> bool {
-        self.deferred.get(&task).is_some_and(|&t| t > now)
+        self.deferred.holds(&task, now)
     }
 
     /// Whether the golem already learned it cannot see `task` from `stance`.
     pub(super) fn blind(&self, task: Task, stance: [i32; 3]) -> bool {
-        self.blind.contains(&(task, stance))
+        self.blind.struck(&(task, stance))
     }
 
     /// Never `stance` for `task` again.
     pub(super) fn strike(&mut self, task: Task, stance: [i32; 3]) {
-        self.blind.insert((task, stance));
-    }
-
-    /// Count another round unit `i` has waited in `waits`; whether it still
-    /// waits, having waited no more than `most`.
-    pub(super) fn round(waits: &mut HashMap<usize, u8>, i: usize, most: u8) -> bool {
-        let rounds = waits.entry(i).or_default();
-        *rounds += 1;
-        *rounds <= most
+        self.blind.strike((task, stance));
     }
 }
 
@@ -119,7 +112,7 @@ impl Deferrals {
 pub struct Faces {
     /// Units refused for having nothing to be placed against, and how often.
     pub(super) floating: HashSet<usize>,
-    pub(super) faceless: HashMap<usize, (u8, u64)>,
+    pub(super) faceless: Tries<usize>,
     /// Support scaffolds placed for a unit, taken down once it stands.
     pub(super) propped: HashMap<usize, Vec<[i32; 3]>>,
     /// Units a prop brought no usable face: the click that builds them lands
@@ -135,12 +128,7 @@ impl Faces {
     /// for scaffolding. Asks close together are one try, since on a wall top
     /// every block laid asks again.
     pub(super) fn faceless_try(&mut self, i: usize, now: u64) -> bool {
-        let (tries, at) = self.faceless.entry(i).or_default();
-        if *tries == 0 || now >= *at + FACELESS_SPACING {
-            *tries += 1;
-            *at = now;
-        }
-        *tries >= FACELESS_TRIES
+        self.faceless.count_spaced(i, now, FACELESS_SPACING) >= FACELESS_TRIES
     }
 
     /// Whether `unit` waits for the build itself to bring what it is placed
@@ -156,7 +144,7 @@ impl Faces {
     pub(super) fn unprop(&mut self, unit: usize) -> Option<Vec<[i32; 3]>> {
         let props = self.propped.remove(&unit)?;
         self.floating.remove(&unit);
-        self.faceless.remove(&unit);
+        self.faceless.forget(&unit);
         Some(props)
     }
 }
@@ -218,8 +206,9 @@ pub struct Access {
     /// way is weighed on is the mod's own model, and where it and the world
     /// disagree the world is right.
     pub(super) no_go: Vec<([i32; 3], [i32; 3])>,
-    /// Doors opened to reach work, and when: one is not tried twice over.
-    pub(super) door_tried: HashMap<[i32; 3], u64>,
+    /// Doors opened to reach work, left alone for a while after: one is not
+    /// tried twice over.
+    pub(super) door_tried: Until<[i32; 3]>,
     /// When the golem last looked for a door standing in the way of work.
     pub(super) door_scan_at: u64,
     /// When it last weighed digging its way to work ground shuts it out of.
@@ -248,7 +237,7 @@ pub struct ScaffoldState {
     pub(super) urgent: Vec<[i32; 3]>,
     /// Scaffolding found out of reach, and how often: a pillar the golem
     /// climbed out of a pit on cannot be walked back to.
-    pub(super) shunned: HashMap<[i32; 3], u8>,
+    pub(super) shunned: Tries<[i32; 3]>,
     /// Scaffolding given up on and left where it stands, for the report.
     pub(super) left_standing: u32,
 }
