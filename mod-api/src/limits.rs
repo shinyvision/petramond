@@ -1,10 +1,12 @@
 //! The ABI's numeric bounds, in the crate BOTH sides depend on.
 //!
 //! Every one of these is a contract a mod has to obey and the host enforces
-//! with a [`HostRet::Error`](crate::HostRet::Error) — which the SDK turns into
-//! a guest panic and the host into a disabled mod. So a mod that wants to stay
-//! inside a bound has to know its value, and the only way it can know it
-//! without guessing is to read it from here.
+//! with a typed refusal ([`ErrorCode::LimitExceeded`](crate::ErrorCode::LimitExceeded)).
+//! That code is RECOVERABLE: the SDK's `try_` wrappers hand it back as a
+//! `Result`, so a value grown past its cap by player data is something a mod
+//! shards or splits instead of a disabled mod (the plain wrappers still panic
+//! on it). A mod that wants to stay inside a bound has to know its value, and
+//! the only way it can know it without guessing is to read it from here.
 //!
 //! They live in this crate rather than beside their host-side guards because
 //! the alternative is what this replaced: the number spelled as a literal in

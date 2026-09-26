@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mod_api::{
-    ClientFrameData, ClientUiEvent, EventKind, EventPayload, GuestCall, GuestRet, HeldPose,
+    ClientFrameData, ClientUiEvent, EventFilter, EventKind, EventPayload, GuestCall, GuestRet, HeldPose,
     Outcome, PlayerSnapshot, RuntimeSide,
 };
 use petramond_world::inventory::{Hand, Inventory};
@@ -33,6 +33,7 @@ struct ClientMod {
 /// cues the server addressed at this client ([`ClientModRuntime::mod_event`]).
 struct Handler {
     kind: EventKind,
+    filter: EventFilter,
     mod_index: usize,
     handler_id: u32,
 }
@@ -157,6 +158,7 @@ impl ClientModRuntime {
                     event,
                     priority,
                     handler_id,
+                    filter,
                 } = reg
                 {
                     if client_dispatchable(event) {
@@ -164,6 +166,7 @@ impl ClientModRuntime {
                             priority,
                             Handler {
                                 kind: event,
+                                filter,
                                 mod_index,
                                 handler_id,
                             },
@@ -309,7 +312,7 @@ impl ClientModRuntime {
     ) -> bool {
         let kind = payload.kind();
         for p in &self.handlers {
-            if p.kind != kind {
+            if p.kind != kind || !p.filter.matches(payload) {
                 continue;
             }
             let loaded = &mut self.mods[p.mod_index];
@@ -371,7 +374,7 @@ impl ClientModRuntime {
         let ids: Vec<u32> = self
             .handlers
             .iter()
-            .filter(|h| h.kind == EventKind::ModEvent && h.mod_index == mod_index)
+            .filter(|h| h.kind == EventKind::ModEvent && h.mod_index == mod_index && h.filter.matches(&payload))
             .map(|h| h.handler_id)
             .collect();
         for id in ids {

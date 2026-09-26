@@ -4,6 +4,13 @@
 use mod_api::{BlockId, CollisionShape, LightData, ModelGroupData, RayFilter, RaycastHitData};
 
 use crate::__rt::host_fn;
+use crate::__rt::try_host_fn;
+
+try_host_fn! {
+    /// Read many lights, returning a batch-size refusal so callers can split it.
+    pub fn try_light_at_many(positions: Vec<[i32; 3]>) -> Vec<Option<LightData>>
+        => LightAtMany { positions } => Lights
+}
 
 host_fn! {
     /// The block at a world cell, or `None` when its section is unloaded, still
@@ -199,6 +206,12 @@ host_fn! {
     /// frozen, retry later. Never fabricated open-sky values, so light-driven
     /// policy can trust every `Some`.
     pub fn light_at(pos: [i32; 3]) -> Option<LightData> => LightAt { pos } => Light
+}
+
+host_fn! {
+    /// Read light at many positions in one host call.
+    pub fn light_at_many(positions: Vec<[i32; 3]>) -> Vec<Option<LightData>>
+        => LightAtMany { positions } => Lights
 }
 
 host_fn! {

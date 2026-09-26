@@ -4,12 +4,12 @@
 //! use the engine-reserved `petramond:` namespace), but they are typed and
 //! visible to AI via [`AiMob::tags`](crate::mob::brain::AiMob).
 
-use mod_api::{HostCall, HostRet, MobTagLookup, MobTagValue as ApiMobTagValue};
+use mod_api::{HostRet, MobTagLookup, MobTagOp, MobTagValue as ApiMobTagValue, TagCall};
 
 use crate::mob::MobTagValue;
 
 use super::entities::mob_snapshot;
-use super::guards::{kv_write_guard, live_mob, sim_query, sim_read};
+use super::guards::{batch_guard, kv_write_guard, live_mob, sim_query, sim_read};
 
 fn from_api(v: ApiMobTagValue) -> MobTagValue {
     MobTagValue::from(v)
@@ -19,9 +19,9 @@ pub(in crate::modding) fn to_api(v: &MobTagValue) -> ApiMobTagValue {
     ApiMobTagValue::from(v)
 }
 
-pub(super) fn handle_tag_call(mod_id: &str, call: HostCall) -> HostRet {
+pub(super) fn handle_tag_call(mod_id: &str, call: TagCall) -> HostRet {
     match call {
-        HostCall::MobTagGet { mob_id, key } => sim_read(|ctx| {
+        TagCall::MobTagGet { mob_id, key } => sim_read(|ctx| {
             let Some(index) = live_mob(ctx, mob_id) else {
                 return HostRet::MobTag(MobTagLookup::MissingMob);
             };
@@ -31,7 +31,7 @@ pub(super) fn handle_tag_call(mod_id: &str, call: HostCall) -> HostRet {
             };
             HostRet::MobTag(lookup)
         }),
-        HostCall::MobTagSet { mob_id, key, value } => {
+        TagCall::MobTagSet { mob_id, key, value } => {
             let value_len = match &value {
                 ApiMobTagValue::Bool(_) => 1,
                 ApiMobTagValue::I64(_) | ApiMobTagValue::F64(_) => 8,
@@ -65,7 +65,7 @@ pub(super) fn handle_tag_call(mod_id: &str, call: HostCall) -> HostRet {
                 }),
             }
         }
-        HostCall::MobTagDelete { mob_id, key } => match kv_write_guard(mod_id, &key, 0) {
+        TagCall::MobTagDelete { mob_id, key } => match kv_write_guard(mod_id, &key, 0) {
             Some(err) => err,
             None => sim_query(|ctx| {
                 let Some(index) = live_mob(ctx, mob_id) else {
@@ -85,7 +85,7 @@ pub(super) fn handle_tag_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(removed)
             }),
         },
-        HostCall::MobTagsGet { mob_id } => sim_read(|ctx| {
+        TagCall::MobTagsGet { mob_id } => sim_read(|ctx| {
             let Some(index) = live_mob(ctx, mob_id) else {
                 return HostRet::MobTags(None);
             };
@@ -96,7 +96,7 @@ pub(super) fn handle_tag_call(mod_id: &str, call: HostCall) -> HostRet {
                     .map(|tags| tags.iter().map(|(k, v)| (k.clone(), to_api(v))).collect()),
             )
         }),
-        HostCall::MobsWithTag { key, value } => sim_read(|ctx| {
+        TagCall::MobsWithTag { key, value } => sim_read(|ctx| {
             let want = value.map(from_api);
             let mobs = ctx.world.mobs();
             HostRet::Mobs(
@@ -106,15 +106,40 @@ pub(super) fn handle_tag_call(mod_id: &str, call: HostCall) -> HostRet {
                     .collect(),
             )
         }),
-        other => HostRet::Error(format!(
-            "non-tag call {other:?} mis-routed to handle_tag_call (host bug)"
-        )),
+        TagCall::MobTagsGetMany { mob_ids } => {
+            if let Some(err) = batch_guard("MobTagsGetMany mob", mob_ids.len()) {
+                return err;
+            }
+            sim_read(|ctx| HostRet::MobTagsMany(mob_ids.into_iter().map(|id| {
+                let index = live_mob(ctx, id)?;
+                ctx.world.mobs().mob_tags(index).map(|tags| {
+                    tags.iter().map(|(k, v)| (k.clone(), to_api(v))).collect()
+                })
+            }).collect()))
+        }
+        TagCall::MobTagsWrite { writes } => {
+            if let Some(err) = batch_guard("MobTagsWrite write", writes.len()) {
+                return err;
+            }
+            let mut accepted = Vec::with_capacity(writes.len());
+            for write in writes {
+                let call = match write {
+                    MobTagOp::Set { mob_id, key, value } => TagCall::MobTagSet { mob_id, key, value },
+                    MobTagOp::Delete { mob_id, key } => TagCall::MobTagDelete { mob_id, key },
+                };
+                match handle_tag_call(mod_id, call) {
+                    HostRet::Bool(ok) => accepted.push(ok),
+                    err => return err,
+                }
+            }
+            HostRet::Bools(accepted)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use mod_api::{HostCall, HostRet, MobTagValue as Api};
+    use mod_api::{calls, HostCall, HostRet, MobTagValue as Api};
 
     use crate::events::tick::TickEvents;
     use crate::events::{PostEvent, PostEventKind, PostQueue, RosterRefs, SimCtx};
@@ -152,20 +177,20 @@ mod tests {
             let set = |data: &mut ModStoreData, v: i64| {
                 handle_host_call(
                     data,
-                    HostCall::MobTagSet {
+                    HostCall::from(calls::MobTagSet {
                         mob_id: id,
                         key: "alpha:hunger".into(),
                         value: Api::I64(v),
-                    },
+                    }),
                 )
             };
             let delete = |data: &mut ModStoreData| {
                 handle_host_call(
                     data,
-                    HostCall::MobTagDelete {
+                    HostCall::from(calls::MobTagDelete {
                         mob_id: id,
                         key: "alpha:hunger".into(),
-                    },
+                    }),
                 )
             };
             assert_eq!(set(&mut data, 3), HostRet::Bool(true), "fresh insert");
@@ -199,12 +224,12 @@ mod tests {
             queue: &mut queue,
         };
         scope::enter(&mut ctx, || {
-            match handle_host_call(&mut data, HostCall::MobInfo { mob_id: id }) {
+            match handle_host_call(&mut data, HostCall::from(calls::MobInfo { mob_id: id })) {
                 HostRet::Mob(Some(snap)) => assert_eq!(snap.id, id),
                 other => panic!("live mob answers a snapshot, got {other:?}"),
             }
             assert_eq!(
-                handle_host_call(&mut data, HostCall::MobInfo { mob_id: id + 999 }),
+                handle_host_call(&mut data, HostCall::from(calls::MobInfo { mob_id: id + 999 })),
                 HostRet::Mob(None),
                 "an unknown id is honestly absent"
             );

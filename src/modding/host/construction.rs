@@ -2,7 +2,7 @@
 //! against the world. What a record costs on its own is registry-only and
 //! lives in the registry domain; the live-world questions live here.
 
-use mod_api::{BlockRecord, HostCall, HostRet, RecordPlan, RecordStatus};
+use mod_api::{BlockRecord, ConstructionCall, HostRet, RecordPlan, RecordStatus};
 use petramond_math::math::IVec3;
 use petramond_world::construction::{Plan, Record};
 
@@ -10,9 +10,9 @@ use super::guards::{batch_guard, item_stack_data, sim_read};
 use crate::schematic::CellData;
 use crate::world::construction::CellStatus;
 
-pub(super) fn handle_construction_call(call: HostCall) -> HostRet {
+pub(super) fn handle_construction_call(call: ConstructionCall) -> HostRet {
     match call {
-        HostCall::BlockRecordsAt { positions } => {
+        ConstructionCall::BlockRecordsAt { positions } => {
             if let Some(err) = batch_guard("BlockRecordsAt position", positions.len()) {
                 return err;
             }
@@ -29,7 +29,7 @@ pub(super) fn handle_construction_call(call: HostCall) -> HostRet {
                 )
             })
         }
-        HostCall::BlockRecordStatuses { cells } => {
+        ConstructionCall::BlockRecordStatuses { cells } => {
             if let Some(err) = batch_guard("BlockRecordStatuses cell", cells.len()) {
                 return err;
             }
@@ -48,9 +48,6 @@ pub(super) fn handle_construction_call(call: HostCall) -> HostRet {
                 )
             })
         }
-        other => HostRet::Error(format!(
-            "non-construction call {other:?} mis-routed to handle_construction_call (host bug)"
-        )),
     }
 }
 

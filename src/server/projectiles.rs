@@ -28,18 +28,19 @@ impl ServerGame {
     }
 
     fn resolve_item_impact(&mut self, impact: ItemImpact, events: &mut TickEvents) {
-        let Some((sticks, owner)) = self.world.dropped_items().get(impact.id).map(|it| {
+        let Some((item, sticks, owner)) = self.world.dropped_items().get(impact.id).map(|it| {
             let owner = match it.motion {
                 Motion::Flight(f) => f.owner,
                 _ => None,
             };
-            (it.stack.item.projectile().sticks, owner)
+            (it.stack.item, it.stack.item.projectile().sticks, owner)
         }) else {
             return;
         };
         let struck_block = matches!(impact.target, ImpactTarget::Block { .. });
         let mut ev = ProjectileHit {
             entity: impact.id,
+            item,
             owner,
             target: impact.target,
             pos: impact.point,

@@ -1,10 +1,10 @@
 //! Body-condition primitives. Applying never deals damage outside the tick.
 
-use mod_api::{EntityRef, HostCall, HostRet};
+use mod_api::{ConditionCall, EntityRef, HostRet};
 use petramond_world::condition::ConditionDef;
 use petramond_world::exposure::BodyExposure;
 
-use super::guards::{live_mob, sim_query};
+use super::guards::{batch_guard, live_mob, sim_query};
 
 fn with_exposure<R>(
     ctx: &mut crate::events::SimCtx<'_>,
@@ -27,12 +27,12 @@ fn with_exposure<R>(
 fn condition(call: &str, id: mod_api::ConditionId) -> Result<&'static ConditionDef, HostRet> {
     petramond_world::condition::defs()
         .get(id.0 as usize)
-        .ok_or_else(|| HostRet::Error(format!("{call}: unregistered condition id {}", id.0)))
+        .ok_or_else(|| HostRet::invalid(format!("{call}: unregistered condition id {}", id.0)))
 }
 
-pub(super) fn handle(call: HostCall) -> HostRet {
+pub(super) fn handle(call: ConditionCall) -> HostRet {
     match call {
-        HostCall::EntityConditionApply {
+        ConditionCall::EntityConditionApply {
             entity,
             condition: id,
             stage,
@@ -43,7 +43,7 @@ pub(super) fn handle(call: HostCall) -> HostRet {
                 Err(err) => return err,
             };
             if stage as usize >= def.stages.len() {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "EntityConditionApply: condition '{}' has no stage {stage}",
                     def.name
                 ));
@@ -54,7 +54,7 @@ pub(super) fn handle(call: HostCall) -> HostRet {
                 )
             })
         }
-        HostCall::EntityConditionCool {
+        ConditionCall::EntityConditionCool {
             entity,
             condition: id,
             ticks,
@@ -67,6 +67,24 @@ pub(super) fn handle(call: HostCall) -> HostRet {
                 HostRet::Bool(with_exposure(ctx, entity, |e| e.cool(def.id, ticks)).is_some())
             })
         }
-        _ => unreachable!(),
+        ConditionCall::EntityConditionsMany { ops } => {
+            if let Some(err) = batch_guard("EntityConditionsMany command", ops.len()) {
+                return err;
+            }
+            let mut accepted = Vec::with_capacity(ops.len());
+            for op in ops {
+                let call = match op {
+                    mod_api::ConditionOp::Apply { entity, condition, stage, ticks } =>
+                        ConditionCall::EntityConditionApply { entity, condition, stage, ticks },
+                    mod_api::ConditionOp::Cool { entity, condition, ticks } =>
+                        ConditionCall::EntityConditionCool { entity, condition, ticks },
+                };
+                match handle(call) {
+                    HostRet::Bool(ok) => accepted.push(ok),
+                    err => return err,
+                }
+            }
+            HostRet::Bools(accepted)
+        }
     }
 }

@@ -1,5 +1,8 @@
-//! The client-instance host-call handler: every `HostCall::Client*`
-//! variant, size/namespace-capped, plus the read-only replica scope.
+//! The client-instance host-call handlers: the whole [`ClientCall`] domain,
+//! size/namespace-capped, plus the read-only replica scope, and the
+//! [`BodyCall`] domain answered as PREDICTIONS against the local mirror.
+//! Which calls a client instance may make at all is the switchboard's
+//! decision, read from each call's declared legality.
 
 #[cfg(test)]
 mod tests;
@@ -7,11 +10,11 @@ mod validate;
 
 use std::sync::Arc;
 
-use mod_api::{HostCall, HostRet, RuntimeSide};
+use mod_api::{BodyCall, ClientCall, ErrorCode, HostRet};
 use petramond_world::item::ItemType;
 
 use crate::modding::host::guards::{key_owned_by_namespace, KV_MAX_KEY_BYTES};
-use crate::modding::host::{ModStoreData, Phase};
+use crate::modding::host::ModStoreData;
 
 use super::scope as client_scope;
 use super::state::{ClientCommand, ClientImageData, ClientOverlayRegistration};
@@ -24,320 +27,23 @@ use validate::{
     CLIENT_TEXT_BYTES_MAX, CLIENT_TEXT_RUN_MAX, CLIENT_TEXT_SCALE_MAX, CLIENT_UI_STATE_MAX,
 };
 
-/// Whether a `client_wasm` instance may issue this call.
-///
-/// EXHAUSTIVE on purpose — no wildcard arm: appending a `HostCall` variant
-/// does not compile until its side is decided here, next to the client
-/// handler. Client instances are presentation-only; anything that reaches the
-/// simulation, the registries, or the tick scheduler stays `false`.
-pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
-    match call {
-        // Instance-neutral basics. The whole REGISTRY domain (resolvers, the
-        // reverse name lookups, tag membership, item row reads) touches only
-        // the process-wide registries, so it is legal on ANY instance, like
-        // worldgen workers — a client mod interpreting `ClientBlocksAt` ids
-        // resolves the names, tag sets, and rows it compares against the
-        // same way the server side does.
-        HostCall::Log { .. }
-        | HostCall::RuntimeSide
-        | HostCall::RngU64 { .. }
-        | HostCall::ResolveBlock { .. }
-        | HostCall::ResolveItem { .. }
-        | HostCall::ResolveMob { .. }
-        | HostCall::BlockNames { .. }
-        | HostCall::ItemNames { .. }
-        | HostCall::MobNames { .. }
-        | HostCall::ResolveCondition { .. }
-        | HostCall::ConditionNames { .. }
-        | HostCall::BlocksByTag { .. }
-        | HostCall::ItemsByTag { .. }
-        | HostCall::ItemInfo { .. }
-        | HostCall::ResolveShape { .. }
-        | HostCall::ItemDataGet { .. }
-        | HostCall::ItemsWithData { .. }
-        | HostCall::BlockDataGet { .. }
-        | HostCall::BlocksWithData { .. }
-        | HostCall::BlockInfo { .. }
-        | HostCall::BlockInfos { .. }
-        | HostCall::BlockRecordPlans { .. }
-        | HostCall::StructureInfo { .. }
-        | HostCall::LootRoll { .. }
-        | HostCall::MobDataGet { .. }
-        | HostCall::MobsWithData { .. }
-        | HostCall::ResolveUndergroundBiome { .. }
-        // The shared derived-fact memo is scoped to (mod, world seed) and
-        // reads no simulation state: a client instance may share settled
-        // positional facts with its server twin exactly as worldgen workers do.
-        | HostCall::MemoGet { .. }
-        | HostCall::MemoGetMany { .. }
-        | HostCall::MemoPut { .. }
-        | HostCall::MemoClaim { .. }
-        // Pure (world seed, position) → the underground-biome partition, the
-        // same answer the carver reads. It touches no simulation state and no
-        // loaded section, and a client instance is constructed with the real
-        // world seed on both paths (`JoinData::seed` on a remote join,
-        // `World::seed` locally), so the answer is identical to the server's.
-        // This is the underground twin of `client_biome_at`.
-        | HostCall::UndergroundBiomeAt { .. }
-        | HostCall::UndergroundBiomesInBox { .. } => true,
-        // The client presentation surface (handled below).
-        HostCall::ClientRegisterOverlay { .. }
-        | HostCall::ClientRegisterKey { .. }
-        | HostCall::ClientSurfaceColumns { .. }
-        | HostCall::ClientUiStateSet { .. }
-        | HostCall::ClientUiStateGet { .. }
-        | HostCall::ClientImageSet { .. }
-        | HostCall::ClientImageBlit { .. }
-        | HostCall::ClientTextMeasure { .. }
-        | HostCall::ClientImageDrawTexts { .. }
-        | HostCall::ClientGuiOpen { .. }
-        | HostCall::ClientGuiClose
-        | HostCall::ClientCanvasOpen { .. }
-        | HostCall::ClientCanvasClose
-        | HostCall::ClientCanvasSceneSet { .. }
-        | HostCall::ClientCanvasViewSet { .. }
-        | HostCall::ClientStorageGetMany { .. }
-        | HostCall::ClientStorageSetMany { .. }
-        | HostCall::ClientStorageReadBegin { .. }
-        | HostCall::ClientStorageReadPoll { .. }
-        | HostCall::ClientEnvParams { .. }
-        | HostCall::ClientBiomeAt { .. }
-        | HostCall::ClientAmbientSet { .. }
-        | HostCall::ClientLoopSet { .. }
-        | HostCall::ClientMoodSet { .. }
-        | HostCall::ClientBlocksAt { .. }
-        | HostCall::ClientCellKvAt { .. }
-        // Held poses are pure PRESENTATION, so predicting one costs nothing
-        // when it is wrong and removes a round trip of latency when it is
-        // right (it almost always is — the rule reads local input). The mod
-        // publishes through the same `SetPlayerHeldPose` its server half
-        // uses, addressed at the local player.
-        | HostCall::SetPlayerHeldPose { .. }
-        | HostCall::SetPlayerBonePose { .. }
-        | HostCall::SetPlayerHeldDisplay { .. }
-        // A read of what the local player carries, off the replicated
-        // inventory — what lets a gesture rule predict the same refusal.
-        | HostCall::PlayerInventory { .. }
-        // ...and what the rigs PLAY, plus the clip reads a rule times itself
-        // by.
-        | HostCall::SetPlayerAnimatorParams { .. }
-        | HostCall::SetPlayerAnimatorPlays { .. }
-        | HostCall::FirePlayerAnimatorEvent { .. }
-        | HostCall::AnimationClip { .. }
-        // Taking the use gesture is what a client mod predicts BEST: the press
-        // is local input, so the answer is the same one the server reaches a
-        // round trip later.
-        | HostCall::HoldUse { .. } => true,
-        // The prediction seam (2026-07-21): a client instance may REGISTER
-        // event handlers — the client runtime keeps only the predictable PRE
-        // kinds (interact_attempt / block_place_pre / item_use_pre) as
-        // PREDICTORS, dispatched speculatively against the replica so a mod
-        // consumer is exactly as predictable as an engine one (jab/ghost
-        // parity). `PlayerState` answers the ACTOR SNAPSHOT published for
-        // the prediction dispatch (see `scope::enter_actor`) — the same
-        // query-the-snapshot doctrine as the server side.
-        // `ActingPlayer` answers the same snapshot's id.
-        HostCall::RegisterEventHandler { .. }
-        | HostCall::PlayerState
-        | HostCall::ActingPlayer => true,
-        // Simulation and registry surfaces: server-side only.
-        HostCall::CurrentTick
-        | HostCall::RegisterTickSystem { .. }
-        | HostCall::GetBlock { .. }
-        | HostCall::GetBlocks { .. }
-        | HostCall::SetBlock { .. }
-        | HostCall::SetBlocks { .. }
-        | HostCall::ScheduleTick { .. }
-        | HostCall::IsLoaded { .. }
-        | HostCall::LightAt { .. }
-        | HostCall::SpawnMob { .. }
-        | HostCall::Raycast { .. }
-        | HostCall::MobsInRadius { .. }
-        | HostCall::EntityConditionApply { .. }
-        | HostCall::EntityConditionCool { .. }
-        | HostCall::DamageMob { .. }
-        | HostCall::DespawnMob { .. }
-        | HostCall::SpawnItem { .. }
-        | HostCall::LaunchItem { .. }
-        | HostCall::ItemEntity { .. }
-        | HostCall::TakeItem { .. }
-        | HostCall::DamagePlayer { .. }
-        | HostCall::ApplyKnockback { .. }
-        | HostCall::GiveItem { .. }
-        | HostCall::GiveItemTo { .. }
-        | HostCall::SetHealth { .. }
-        | HostCall::Teleport { .. }
-        | HostCall::EmitSound { .. }
-        // A cue a mod sends TO a client — the client is the recipient, never
-        // the sender.
-        | HostCall::EmitEventTo { .. }
-        | HostCall::WorldKvGet { .. }
-        | HostCall::WorldKvSet { .. }
-        | HostCall::WorldKvDelete { .. }
-        | HostCall::SectionKvGet { .. }
-        | HostCall::SectionKvSet { .. }
-        | HostCall::SectionKvDelete { .. }
-        | HostCall::SectionKvFind { .. }
-        | HostCall::SectionKvGetMany { .. }
-        | HostCall::SectionKvSetMany { .. }
-        | HostCall::MobTagGet { .. }
-        | HostCall::MobTagSet { .. }
-        | HostCall::MobTagDelete { .. }
-        | HostCall::MobTagsGet { .. }
-        | HostCall::MobsWithTag { .. }
-        | HostCall::RegisterWorldgenFeature { .. }
-        | HostCall::RegisterStageReplacement { .. }
-        | HostCall::RegisterGenerator { .. }
-        | HostCall::GuiStateSet { .. }
-        | HostCall::GuiStateSetFor { .. }
-        | HostCall::PlayerHeld { .. }
-        | HostCall::SetPlayerHeldData { .. }
-        | HostCall::GuiViewers
-        | HostCall::GuiStateGet { .. }
-        | HostCall::GuiOpen { .. }
-        | HostCall::GuiClose
-        | HostCall::ChatSend { .. }
-        | HostCall::SoundPlayAt { .. }
-        | HostCall::SoundPlayOnMob { .. }
-        | HostCall::SoundSet { .. }
-        | HostCall::SoundStop { .. }
-        | HostCall::CollisionShapeAt { .. }
-        | HostCall::ShaderSetParam { .. }
-        | HostCall::RegisterHostileSpawner { .. }
-        | HostCall::RegisterBlockBehavior { .. }
-        | HostCall::RegisterAiNode { .. }
-        | HostCall::ContainerGet { .. }
-        | HostCall::ContainerSet { .. }
-        | HostCall::ContainerInsert { .. }
-        | HostCall::ContainerTake { .. }
-        | HostCall::ContainerTransfer { .. }
-        | HostCall::ContainerHold { .. }
-        | HostCall::WalkRegion { .. }
-        | HostCall::BlockRecordsAt { .. }
-        | HostCall::BlockRecordStatuses { .. }
-        | HostCall::ActorDig { .. }
-        | HostCall::ActorPlace { .. }
-        | HostCall::ActorPlaceCheck { .. }
-        | HostCall::ActorInteract { .. }
-        | HostCall::ActorAims { .. }
-        | HostCall::PathProbe { .. }
-        | HostCall::Footholds { .. }
-        | HostCall::MobHeldDisplay { .. }
-        | HostCall::SetMobDraw { .. }
-        | HostCall::BlockChangesSince { .. }
-        | HostCall::SchematicInfo { .. }
-        | HostCall::SchematicCells { .. }
-        | HostCall::SchematicChoose { .. }
-        | HostCall::SchematicPosition { .. }
-        | HostCall::SchematicGhostSet { .. }
-        | HostCall::RecipeResult { .. }
-        | HostCall::EffectApply { .. }
-        | HostCall::EffectsActive
-        | HostCall::SwapBlock { .. }
-        | HostCall::ContainerGetMany { .. }
-        | HostCall::MobEmitterSet { .. }
-        | HostCall::MobAnimSet { .. }
-        | HostCall::MobAnimRate { .. }
-        | HostCall::MobAnimSeek { .. }
-        | HostCall::MobAnimState { .. }
-        | HostCall::MobDrive { .. }
-        | HostCall::MobKinematic { .. }
-        | HostCall::MobMount { .. }
-        | HostCall::PlayerPoseSet { .. }
-        | HostCall::MobDismount { .. }
-        | HostCall::MobRiders { .. }
-        | HostCall::BlockModelGroup { .. }
-        | HostCall::ConsumeHeld { .. }
-        | HostCall::ReplaceHeldOne { .. }
-        | HostCall::PlayerInput { .. }
-        | HostCall::EmitterBurst { .. }
-        | HostCall::BiomeAt { .. }
-        | HostCall::SurfaceYAt { .. }
-        | HostCall::FindBlocks { .. }
-        | HostCall::MobInfo { .. }
-        | HostCall::MobCanReach { .. }
-        | HostCall::SiteOpen { .. }
-        // `terrain_solid_at` runs the density surface and the cave carve per
-        // position — a generation-cost query, not a field sample, and nothing
-        // presentation-side has a use for it. (`underground_biome_at`, which
-        // is a cheap partition lookup, is legal above.)
-        | HostCall::TerrainBlocksAt { .. }
-        | HostCall::TerrainSectionAt { .. }
-        | HostCall::TerrainHeightsAt { .. }
-        | HostCall::TerrainSolidAt { .. }
-        | HostCall::TerrainSpaceAt { .. }
-        // `surface_biome_at` builds the same generation tile — the density
-        // surface, the cave adjustment and the climate classification — so it
-        // is a generation-cost query too. A client instance that wants the
-        // biome under a column asks the REPLICA (`ClientBiomeAt`, legal
-        // above), which is what it can actually see.
-        | HostCall::SurfaceBiomeAt { .. }
-        // Presentation, but AUTHORITATIVE presentation: it writes replicated
-        // cell state the server owns. A client mirror only ever mirrors.
-        | HostCall::SetModelParts { .. }
-        | HostCall::SetBlockDraw { .. }
-        | HostCall::SetModelPartsMany { .. }
-        | HostCall::SetBlockDraws { .. }
-        // ...and its READ twin reaches the sim world's placement records the
-        // same way `BlockModelGroup` above does, so it shares that verdict.
-        | HostCall::BlockLocalToWorld { .. }
-        // Progression is authoritative player state and its events queue on
-        // the sim's post bus: unlocking from a presentation instance would
-        // write state the server owns, and a client mirror only ever mirrors.
-        | HostCall::UnlockRecipe { .. }
-        | HostCall::RecipeUnlocked { .. }
-        // The land-speed scale is SIMULATION: the server validates how fast a
-        // client may have moved (`player::movement`'s caps), so a client that
-        // predicted its own speed would be arguing with the validator. It is
-        // mirrored from the authority instead — a scalar a batch late is
-        // imperceptible, unlike the pose you are staring at.
-        | HostCall::SetPlayerAttribute { .. }
-        // Same reason: what a body is ALLOWED to do is authority, and a client
-        // predicting it would be predicting its own permission.
-        | HostCall::SetPlayerDeniedActions { .. }
-        | HostCall::EmitEvent { .. }
-        | HostCall::ItemEntitiesInRadius { .. }
-        | HostCall::ItemImpulses { .. }
-        | HostCall::Players
-        | HostCall::PlayerIdentity { .. }
-        // The explicitly addressed player calls act on authoritative
-        // sessions — server-side, like the implicit calls they twin.
-        | HostCall::PlayerStateOf { .. }
-        | HostCall::ApplyKnockbackTo { .. }
-        | HostCall::SetHealthOf { .. }
-        | HostCall::TeleportPlayer { .. }
-        | HostCall::EffectApplyTo { .. }
-        | HostCall::EffectsActiveOf { .. }
-        | HostCall::ConsumeHeldBy { .. }
-        | HostCall::ReplaceHeldOneBy { .. }
-        | HostCall::GuiStateGetFor { .. }
-        | HostCall::GuiOpenFor { .. }
-        | HostCall::GuiCloseFor { .. } => false,
-    }
-}
-
-pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
-    if data.side != RuntimeSide::Client {
-        return HostRet::Error("client host calls require a client_wasm instance".into());
-    }
+/// The presentation surface. Only a client instance reaches it (the
+/// switchboard admits a call by its declared sides), and the registrations
+/// only inside `mod_init` (their declared scope).
+pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: ClientCall) -> HostRet {
     let mod_id = data.mod_id.clone();
     let Some(client) = data.client.as_mut() else {
-        return HostRet::Error("client instance has no client state".into());
+        return HostRet::invalid("client instance has no client state".into());
     };
     match call {
-        HostCall::ClientRegisterOverlay {
+        ClientCall::ClientRegisterOverlay {
             image_key,
             anchor,
             margin,
             display_size,
         } => {
-            if data.phase != Phase::Init {
-                return HostRet::Error(
-                    "client overlays may only be registered during mod_init".into(),
-                );
-            }
             if !key_owned_by_namespace(&mod_id, &image_key) {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "client overlay image '{image_key}' must be namespaced '{mod_id}:name'"
                 ));
             }
@@ -346,7 +52,7 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 || display_size[0] > CLIENT_OVERLAY_DISPLAY_SIDE_MAX
                 || display_size[1] > CLIENT_OVERLAY_DISPLAY_SIDE_MAX
             {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "invalid client overlay display size {}x{}",
                     display_size[0], display_size[1]
                 ));
@@ -357,7 +63,7 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                     .iter()
                     .any(|overlay| overlay.image_key == image_key)
             {
-                return HostRet::Error("client overlay registration limit reached".into());
+                return HostRet::invalid("client overlay registration limit reached".into());
             }
             if !client
                 .overlays
@@ -373,31 +79,28 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             }
             HostRet::Unit
         }
-        HostCall::ClientRegisterKey {
+        ClientCall::ClientRegisterKey {
             id,
             label,
             key,
             action_id,
         } => {
-            if data.phase != Phase::Init {
-                return HostRet::Error("client keys may only be registered during mod_init".into());
-            }
             if !valid_client_key_id(&id) {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "invalid client key id '{id}' (bare lowercase snake_case, max 48 chars)"
                 ));
             }
             if label.trim().is_empty() || label.len() > 48 {
-                return HostRet::Error(format!("invalid client key label '{label}'"));
+                return HostRet::invalid(format!("invalid client key label '{label}'"));
             }
             if !valid_client_key(&key) {
-                return HostRet::Error(format!("unsupported client key '{key}'"));
+                return HostRet::invalid(format!("unsupported client key '{key}'"));
             }
             if client.key_bindings.iter().any(|b| b.id == id) {
-                return HostRet::Error(format!("client key id '{id}' registered twice"));
+                return HostRet::invalid(format!("client key id '{id}' registered twice"));
             }
             if client.key_bindings.len() >= CLIENT_KEY_BINDING_MAX {
-                return HostRet::Error("client key registration limit reached".into());
+                return HostRet::invalid("client key registration limit reached".into());
             }
             client.key_bindings.push(super::state::ClientKeyBinding {
                 id,
@@ -407,9 +110,9 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             });
             HostRet::Unit
         }
-        HostCall::ClientEnvParams { keys } => {
+        ClientCall::ClientEnvParams { keys } => {
             if keys.len() > CLIENT_ENV_PARAM_MAX {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "ClientEnvParams key count {} exceeds {CLIENT_ENV_PARAM_MAX}",
                     keys.len()
                 ));
@@ -418,15 +121,15 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 let params = world.data().environment().shader_params().clone();
                 HostRet::EnvParams(keys.iter().map(|k| params.get(k).copied()).collect())
             })
-            .unwrap_or_else(|| HostRet::Error("no client replica is active".into()))
+            .unwrap_or_else(|| HostRet::invalid("no client replica is active".into()))
         }
-        HostCall::ClientBiomeAt { pos } => client_scope::with_active(|world| {
+        ClientCall::ClientBiomeAt { pos } => client_scope::with_active(|world| {
             HostRet::MaybeByte(world.data().biome_at_world(pos[0], pos[1]))
         })
-        .unwrap_or_else(|| HostRet::Error("no client replica is active".into())),
-        HostCall::ClientBlocksAt { positions } => {
+        .unwrap_or_else(|| HostRet::invalid("no client replica is active".into())),
+        ClientCall::ClientBlocksAt { positions } => {
             if positions.len() > CLIENT_BLOCKS_QUERY_MAX {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "ClientBlocksAt position count {} exceeds {CLIENT_BLOCKS_QUERY_MAX}",
                     positions.len()
                 ));
@@ -443,11 +146,11 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                         .collect(),
                 )
             })
-            .unwrap_or_else(|| HostRet::Error("no client replica is active".into()))
+            .unwrap_or_else(|| HostRet::invalid("no client replica is active".into()))
         }
-        HostCall::ClientCellKvAt { key, cells } => {
+        ClientCall::ClientCellKvAt { key, cells } => {
             if cells.len() > CLIENT_BLOCKS_QUERY_MAX {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "ClientCellKvAt cell count {} exceeds {CLIENT_BLOCKS_QUERY_MAX}",
                     cells.len()
                 ));
@@ -455,7 +158,7 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             // Reads cross namespaces (the KV interop contract); only the key's
             // shape is validated, like the server-side KV read.
             if key.is_empty() || key.len() > KV_MAX_KEY_BYTES {
-                return HostRet::Error(format!("invalid cell KV key '{key}'"));
+                return HostRet::invalid(format!("invalid cell KV key '{key}'"));
             }
             client_scope::with_active(|world| {
                 HostRet::BytesMany(
@@ -465,9 +168,9 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                         .collect(),
                 )
             })
-            .unwrap_or_else(|| HostRet::Error("no client replica is active".into()))
+            .unwrap_or_else(|| HostRet::invalid("no client replica is active".into()))
         }
-        HostCall::ClientAmbientSet {
+        ClientCall::ClientAmbientSet {
             key,
             intensity,
             wind,
@@ -477,7 +180,7 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                     .iter()
                     .all(|w| w.is_finite() && w.abs() <= CLIENT_AMBIENT_WIND_MAX)
             {
-                return HostRet::Error(
+                return HostRet::invalid(
                     "ClientAmbientSet: intensity and wind must be finite (|wind| ≤ 64)".into(),
                 );
             }
@@ -494,9 +197,9 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 .insert(bundle.id, (intensity.clamp(0.0, 1.0), wind));
             HostRet::Bool(true)
         }
-        HostCall::ClientLoopSet { key, gain } => {
+        ClientCall::ClientLoopSet { key, gain } => {
             if !gain.is_finite() {
-                return HostRet::Error("ClientLoopSet: gain must be finite".into());
+                return HostRet::invalid("ClientLoopSet: gain must be finite".into());
             }
             let Some(sound) = petramond_world::sound_registry::by_name(&key) else {
                 return HostRet::Bool(false);
@@ -504,178 +207,18 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             client.sound_loops.insert(sound, gain.clamp(0.0, 4.0));
             HostRet::Bool(true)
         }
-        // The PREDICTED twin of the server's `SetPlayerHeldPose`: the same
-        // call, the same `BodyClaims`, addressed at the local player. A client
-        // has exactly one addressable body, so naming anybody else is a mod
-        // bug worth saying out loud rather than a silent no-op.
-        HostCall::SetPlayerHeldPose { player, main, off } => {
-            let local = super::scope::active_actor().and_then(|a| a.id);
-            if local != Some(player) {
-                return HostRet::Error(format!(
-                    "SetPlayerHeldPose: a client instance may pose only the LOCAL player \
-                     ({local:?}), not {player:?}"
-                ));
-            }
-            client.poses_hands[0] |= main.is_some();
-            client.poses_hands[1] |= off.is_some();
-            if client.body.set_held_pose(&mod_id, main, off) {
-                HostRet::Bool(true)
-            } else {
-                HostRet::Error(
-                    "SetPlayerHeldPose: non-finite rotation/translation component".into(),
-                )
-            }
-        }
-        // The PREDICTED twins of the server's animator primitives, addressed
-        // at the local player like every body write here. The latch is per
-        // `(rig, param)` / `(rig, slot)`, like bones: a mod setting one param
-        // owns that param locally from then on, and leaves every other
-        // replicated claim exactly where it was. A refused write latches
-        // nothing, or a NaN would hide the replicated claim for good.
-        HostCall::SetPlayerAnimatorParams { player, params } => {
-            let local = super::scope::active_actor().and_then(|a| a.id);
-            if local != Some(player) {
-                return HostRet::Error(format!(
-                    "SetPlayerAnimatorParams: a client instance may animate only the LOCAL player \
-                     ({local:?}), not {player:?}"
-                ));
-            }
-            let params = match crate::player::animator::resolve_params(params) {
-                Ok(params) => params,
-                Err(e) => return HostRet::Error(format!("SetPlayerAnimatorParams: {e}")),
-            };
-            let keys: Vec<_> = params.iter().map(|p| (p.rig, p.param)).collect();
-            if !client.body.set_animator_params(&mod_id, params) {
-                return HostRet::Error("SetPlayerAnimatorParams: non-finite value".into());
-            }
-            client.owns_animator.params.extend(keys);
-            HostRet::Bool(true)
-        }
-        HostCall::SetPlayerAnimatorPlays { player, plays } => {
-            let local = super::scope::active_actor().and_then(|a| a.id);
-            if local != Some(player) {
-                return HostRet::Error(format!(
-                    "SetPlayerAnimatorPlays: a client instance may animate only the LOCAL player \
-                     ({local:?}), not {player:?}"
-                ));
-            }
-            let plays = match crate::player::animator::resolve_plays(plays) {
-                Ok(plays) => plays,
-                Err(e) => return HostRet::Error(format!("SetPlayerAnimatorPlays: {e}")),
-            };
-            let keys: Vec<_> = plays.iter().map(|p| (p.rig, p.slot)).collect();
-            if !client.body.set_animator_plays(&mod_id, plays) {
-                return HostRet::Error(
-                    "SetPlayerAnimatorPlays: non-finite progress or rate".into(),
-                );
-            }
-            client.owns_animator.slots.extend(keys);
-            HostRet::Bool(true)
-        }
-        HostCall::FirePlayerAnimatorEvent { player, rig, event } => {
-            let local = super::scope::active_actor().and_then(|a| a.id);
-            if local != Some(player) {
-                return HostRet::Error(format!(
-                    "FirePlayerAnimatorEvent: a client instance may animate only the LOCAL player \
-                     ({local:?}), not {player:?}"
-                ));
-            }
-            let (rig, event) = match crate::player::animator::resolve_event(&rig, &event) {
-                Ok(resolved) => resolved,
-                Err(e) => return HostRet::Error(format!("FirePlayerAnimatorEvent: {e}")),
-            };
-            client.animator_events.push((rig, event));
-            HostRet::Bool(true)
-        }
-        HostCall::AnimationClip { rig, clip } => {
-            HostRet::AnimationClip(crate::player::animator::clip_info(&rig, &clip))
-        }
-        HostCall::PlayerInventory { player } => {
-            let local = super::scope::active_actor().and_then(|a| a.id);
-            if local != Some(player) {
-                return HostRet::Error(format!(
-                    "PlayerInventory: a client instance may read only the LOCAL player \
-                     ({local:?}), not {player:?}"
-                ));
-            }
-            match super::scope::with_inventory(super::super::host::player::carried_slots) {
-                Some(slots) => HostRet::ContainerSlots(Some(slots)),
-                None => HostRet::Error("PlayerInventory: no inventory is published".into()),
-            }
-        }
-        // What the hand displays: the same predicted path, the same latch.
-        HostCall::SetPlayerHeldDisplay { player, main, off } => {
-            let local = super::scope::active_actor().and_then(|a| a.id);
-            if local != Some(player) {
-                return HostRet::Error(format!(
-                    "SetPlayerHeldDisplay: a client instance may dress only the LOCAL player \
-                     ({local:?}), not {player:?}"
-                ));
-            }
-            let item = |name: &Option<String>| match name {
-                None => Ok(None),
-                Some(name) => ItemType::by_name(name).map(Some).ok_or_else(|| {
-                    HostRet::Error(format!("SetPlayerHeldDisplay: unknown item '{name}'"))
-                }),
-            };
-            let (main, off) = match (item(&main), item(&off)) {
-                (Ok(main), Ok(off)) => (main, off),
-                (Err(e), _) | (_, Err(e)) => return e,
-            };
-            client.displays_hands[0] |= main.is_some();
-            client.displays_hands[1] |= off.is_some();
-            client.body.set_held_display(&mod_id, main, off);
-            HostRet::Bool(true)
-        }
-        // The body counterpart, same predicted path and same local-only rule.
-        HostCall::SetPlayerBonePose { player, bones } => {
-            let local = super::scope::active_actor().and_then(|a| a.id);
-            if local != Some(player) {
-                return HostRet::Error(format!(
-                    "SetPlayerBonePose: a client instance may pose only the LOCAL player \
-                     ({local:?}), not {player:?}"
-                ));
-            }
-            // Names resolve to rig ids here, exactly as on the server.
-            let Some(bones) = crate::modding::resolve_bone_poses(bones) else {
-                return HostRet::Error(crate::modding::BONE_POSE_REFUSAL.into());
-            };
-            // Latch per BONE, not per body: a mod bending an arm owns that
-            // arm locally, but must not blank an unrelated bone another pack
-            // is bending server-side.
-            let keys: Vec<u16> = bones.iter().map(|b| b.bone).collect();
-            if !client.body.set_bone_poses(&mod_id, bones) {
-                return HostRet::Error(crate::modding::BONE_POSE_REFUSAL.into());
-            }
-            client.poses_bones.extend(keys);
-            HostRet::Bool(true)
-        }
-        // The PREDICTED twin of the server's `HoldUse`: a client has one
-        // addressable body, so the only question is whether this mod is taking
-        // its press.
-        HostCall::HoldUse { player } => {
-            let local = super::scope::active_actor().and_then(|a| a.id);
-            if local != Some(player) {
-                return HostRet::Error(format!(
-                    "HoldUse: a client instance may take only the LOCAL player's gesture \
-                     ({local:?}), not {player:?}"
-                ));
-            }
-            client.holds_use = true;
-            HostRet::Bool(true)
-        }
-        HostCall::ClientMoodSet { darken, desaturate } => {
+        ClientCall::ClientMoodSet { darken, desaturate } => {
             if !darken.is_finite() || !desaturate.is_finite() {
-                return HostRet::Error("ClientMoodSet: values must be finite".into());
+                return HostRet::invalid("ClientMoodSet: values must be finite".into());
             }
             // The clamp IS the safety contract: no mod can black the screen
             // out; it can only be moody about it.
             client.mood = [darken.clamp(0.0, 0.5), desaturate.clamp(0.0, 0.5)];
             HostRet::Bool(true)
         }
-        HostCall::ClientSurfaceColumns { queries } => {
+        ClientCall::ClientSurfaceColumns { queries } => {
             if queries.len() > CLIENT_SURFACE_QUERY_MAX {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "ClientSurfaceColumns query count {} exceeds {CLIENT_SURFACE_QUERY_MAX}",
                     queries.len()
                 ));
@@ -715,39 +258,39 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                     .collect();
                 HostRet::ClientSurfaceColumns(columns)
             })
-            .unwrap_or_else(|| HostRet::Error("no client replica is active".into()))
+            .unwrap_or_else(|| HostRet::invalid("no client replica is active".into()))
         }
-        HostCall::ClientUiStateSet { key, value } => {
+        ClientCall::ClientUiStateSet { key, value } => {
             if !key_owned_by_namespace(&mod_id, &key) {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "client UI key '{key}' must be namespaced '{mod_id}:name'"
                 ));
             }
             if !validate::gui_value_fits(&value) {
-                return HostRet::Error("client UI value exceeds its size limit".into());
+                return HostRet::invalid("client UI value exceeds its size limit".into());
             }
             if !client.ui_state.contains_key(&key) && client.ui_state.len() >= CLIENT_UI_STATE_MAX {
-                return HostRet::Error("client UI state entry limit reached".into());
+                return HostRet::invalid("client UI state entry limit reached".into());
             }
             Arc::make_mut(&mut client.ui_state).insert(key, value);
             HostRet::Unit
         }
-        HostCall::ClientUiStateGet { key } => {
+        ClientCall::ClientUiStateGet { key } => {
             if !key_owned_by_namespace(&mod_id, &key) {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "client UI key '{key}' must be namespaced '{mod_id}:name'"
                 ));
             }
             HostRet::GuiValue(client.ui_state.get(&key).cloned())
         }
-        HostCall::ClientImageSet {
+        ClientCall::ClientImageSet {
             key,
             width,
             height,
             rgba,
         } => {
             if !key_owned_by_namespace(&mod_id, &key) {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "client image key '{key}' must be namespaced '{mod_id}:name'"
                 ));
             }
@@ -757,13 +300,13 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 || height > CLIENT_IMAGE_SIDE_MAX
                 || rgba.len() != width as usize * height as usize * 4
             {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "invalid client image {width}x{height} with {} RGBA bytes",
                     rgba.len()
                 ));
             }
             if !client.images.contains_key(&key) && client.images.len() >= CLIENT_IMAGE_MAX {
-                return HostRet::Error("client image limit reached".into());
+                return HostRet::invalid("client image limit reached".into());
             }
             let revision = client.next_image_revision;
             client.next_image_revision = client.next_image_revision.wrapping_add(1).max(1);
@@ -780,14 +323,14 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             );
             HostRet::Unit
         }
-        HostCall::ClientImageBlit {
+        ClientCall::ClientImageBlit {
             key,
             origin,
             size,
             rgba,
         } => {
             if !key_owned_by_namespace(&mod_id, &key) {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "client image key '{key}' must be namespaced '{mod_id}:name'"
                 ));
             }
@@ -796,7 +339,7 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 .get(&key)
                 .map(|image| (image.width as usize, image.height as usize))
             else {
-                return HostRet::Error(format!("client image '{key}' has not been published"));
+                return HostRet::invalid(format!("client image '{key}' has not been published"));
             };
             let (w, h) = (size[0] as usize, size[1] as usize);
             if w == 0
@@ -805,7 +348,7 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 || origin[1] as usize + h > height
                 || rgba.len() != w * h * 4
             {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "invalid client image blit {w}x{h} at ({}, {}) with {} RGBA bytes into {width}x{height}",
                     origin[0],
                     origin[1],
@@ -830,28 +373,28 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 .push((revision, [origin[0], origin[1], size[0], size[1]]));
             HostRet::Unit
         }
-        HostCall::ClientTextMeasure { text, scale } => {
+        ClientCall::ClientTextMeasure { text, scale } => {
             if scale == 0 || scale > CLIENT_TEXT_SCALE_MAX {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "client text scale {scale} must be 1..={CLIENT_TEXT_SCALE_MAX}"
                 ));
             }
             if text.len() > CLIENT_TEXT_BYTES_MAX || text.contains(['\n', '\r']) {
-                return HostRet::Error("invalid single-line client text".into());
+                return HostRet::invalid("invalid single-line client text".into());
             }
             // Mod canvases measure and draw with the UI theme's font.
             let [width, height] = crate::gui::doc_theme::ui_font().measure_scaled(&text, scale);
             let Ok(width) = u16::try_from(width) else {
-                return HostRet::Error("client text width exceeds u16".into());
+                return HostRet::invalid("client text width exceeds u16".into());
             };
             let Ok(height) = u16::try_from(height) else {
-                return HostRet::Error("client text height exceeds u16".into());
+                return HostRet::invalid("client text height exceeds u16".into());
             };
             HostRet::ClientTextSize([width, height])
         }
-        HostCall::ClientImageDrawTexts { key, runs } => {
+        ClientCall::ClientImageDrawTexts { key, runs } => {
             if !key_owned_by_namespace(&mod_id, &key) {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "client image key '{key}' must be namespaced '{mod_id}:name'"
                 ));
             }
@@ -863,10 +406,10 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                         || run.text.contains(['\n', '\r'])
                 })
             {
-                return HostRet::Error("invalid client text run batch".into());
+                return HostRet::invalid("invalid client text run batch".into());
             }
             if !client.images.contains_key(&key) {
-                return HostRet::Error(format!("client image '{key}' has not been published"));
+                return HostRet::invalid(format!("client image '{key}' has not been published"));
             }
             let revision = client.next_image_revision;
             client.next_image_revision = client.next_image_revision.wrapping_add(1).max(1);
@@ -889,14 +432,14 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             image.recent_blits.clear();
             HostRet::Unit
         }
-        HostCall::ClientGuiOpen { kind_key } => {
+        ClientCall::ClientGuiOpen { kind_key } => {
             if !key_owned_by_namespace(&mod_id, &kind_key) {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "client GUI kind '{kind_key}' must be namespaced '{mod_id}:name'"
                 ));
             }
             if client.commands.len() >= CLIENT_COMMAND_MAX {
-                return HostRet::Error("client GUI command queue limit reached".into());
+                return HostRet::invalid("client GUI command queue limit reached".into());
             }
             client.commands.push(ClientCommand::OpenGui {
                 owner: mod_id,
@@ -904,18 +447,18 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             });
             HostRet::Bool(true)
         }
-        HostCall::ClientGuiClose => {
+        ClientCall::ClientGuiClose => {
             if client.commands.len() >= CLIENT_COMMAND_MAX {
-                return HostRet::Error("client GUI command queue limit reached".into());
+                return HostRet::invalid("client GUI command queue limit reached".into());
             }
             client
                 .commands
                 .push(ClientCommand::CloseGui { owner: mod_id });
             HostRet::Unit
         }
-        HostCall::ClientCanvasOpen { canvas_key, size } => {
+        ClientCall::ClientCanvasOpen { canvas_key, size } => {
             if !key_owned_by_namespace(&mod_id, &canvas_key) {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "client canvas '{canvas_key}' must be namespaced '{mod_id}:name'"
                 ));
             }
@@ -924,13 +467,13 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 || size[0] > CLIENT_CANVAS_SIDE_MAX
                 || size[1] > CLIENT_CANVAS_SIDE_MAX
             {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "invalid client canvas size {}x{}",
                     size[0], size[1]
                 ));
             }
             if client.commands.len() >= CLIENT_COMMAND_MAX {
-                return HostRet::Error("client command queue limit reached".into());
+                return HostRet::invalid("client command queue limit reached".into());
             }
             client.commands.push(ClientCommand::OpenCanvas {
                 owner: mod_id,
@@ -939,33 +482,33 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             });
             HostRet::Bool(true)
         }
-        HostCall::ClientCanvasClose => {
+        ClientCall::ClientCanvasClose => {
             if client.commands.len() >= CLIENT_COMMAND_MAX {
-                return HostRet::Error("client command queue limit reached".into());
+                return HostRet::invalid("client command queue limit reached".into());
             }
             client
                 .commands
                 .push(ClientCommand::CloseCanvas { owner: mod_id });
             HostRet::Unit
         }
-        HostCall::ClientCanvasSceneSet {
+        ClientCall::ClientCanvasSceneSet {
             canvas_key,
             elements,
         } => {
             if !key_owned_by_namespace(&mod_id, &canvas_key) {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "client canvas key '{canvas_key}' must be namespaced '{mod_id}:name'"
                 ));
             }
             if elements.len() > CLIENT_CANVAS_ELEMENT_MAX {
-                return HostRet::Error("client canvas element limit reached".into());
+                return HostRet::invalid("client canvas element limit reached".into());
             }
             if let Some(image_key) = elements
                 .iter()
                 .map(client_canvas_element_image_key)
                 .find(|key| !key_owned_by_namespace(&mod_id, key))
             {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "client canvas image '{}' must be namespaced '{mod_id}:name'",
                     image_key
                 ));
@@ -974,37 +517,37 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 .iter()
                 .any(|element| !client_canvas_element_valid(element))
             {
-                return HostRet::Error("client canvas element geometry is invalid".into());
+                return HostRet::invalid("client canvas element geometry is invalid".into());
             }
             if !client.canvas_scenes.contains_key(&canvas_key)
                 && client.canvas_scenes.len() >= CLIENT_CANVAS_MAX
             {
-                return HostRet::Error("client canvas limit reached".into());
+                return HostRet::invalid("client canvas limit reached".into());
             }
             client.canvas_scenes.entry(canvas_key).or_default().elements = elements;
             HostRet::Unit
         }
-        HostCall::ClientCanvasViewSet { canvas_key, offset } => {
+        ClientCall::ClientCanvasViewSet { canvas_key, offset } => {
             if !key_owned_by_namespace(&mod_id, &canvas_key) {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "client canvas key '{canvas_key}' must be namespaced '{mod_id}:name'"
                 ));
             }
             if !offset[0].is_finite() || !offset[1].is_finite() {
-                return HostRet::Error("client canvas view offset must be finite".into());
+                return HostRet::invalid("client canvas view offset must be finite".into());
             }
             if !client.canvas_scenes.contains_key(&canvas_key)
                 && client.canvas_scenes.len() >= CLIENT_CANVAS_MAX
             {
-                return HostRet::Error("client canvas limit reached".into());
+                return HostRet::invalid("client canvas limit reached".into());
             }
             client.canvas_scenes.entry(canvas_key).or_default().offset = offset;
             HostRet::Unit
         }
-        HostCall::ClientStorageGetMany { keys } => {
+        ClientCall::ClientStorageGetMany { keys } => {
             for key in &keys {
                 if !key_owned_by_namespace(&mod_id, key) {
-                    return HostRet::Error(format!(
+                    return HostRet::invalid(format!(
                         "client storage key '{key}' must be namespaced '{mod_id}:name'"
                     ));
                 }
@@ -1016,40 +559,40 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                         .map(|value| value.map(mod_api::ByteBuf::from))
                         .collect(),
                 ),
-                Err(error) => HostRet::Error(error),
+                Err(error) => HostRet::invalid(error),
             }
         }
-        HostCall::ClientStorageReadBegin { keys } => {
+        ClientCall::ClientStorageReadBegin { keys } => {
             for key in &keys {
                 if !key_owned_by_namespace(&mod_id, key) {
-                    return HostRet::Error(format!(
+                    return HostRet::invalid(format!(
                         "client storage key '{key}' must be namespaced '{mod_id}:name'"
                     ));
                 }
             }
             match client.storage.read_begin(keys) {
                 Ok(ticket) => HostRet::U64(ticket),
-                Err(error) => HostRet::Error(error),
+                Err(error) => HostRet::invalid(error),
             }
         }
-        HostCall::ClientStorageReadPoll { ticket } => match client.storage.read_poll(ticket) {
+        ClientCall::ClientStorageReadPoll { ticket } => match client.storage.read_poll(ticket) {
             Ok(values) => HostRet::ClientStorageRead(values.map(|values| {
                 values
                     .into_iter()
                     .map(|value| value.map(mod_api::ByteBuf::from))
                     .collect()
             })),
-            Err(error) => HostRet::Error(error),
+            Err(error) => HostRet::invalid(error),
         },
-        HostCall::ClientStorageSetMany { entries } => {
+        ClientCall::ClientStorageSetMany { entries } => {
             for (key, value) in &entries {
                 if !key_owned_by_namespace(&mod_id, key) {
-                    return HostRet::Error(format!(
+                    return HostRet::invalid(format!(
                         "client storage key '{key}' must be namespaced '{mod_id}:name'"
                     ));
                 }
                 if key.len() > super::storage::KEY_MAX || value.len() > super::storage::VALUE_MAX {
-                    return HostRet::Error(format!(
+                    return HostRet::invalid(format!(
                         "client storage entry '{key}' exceeds key/value limits"
                     ));
                 }
@@ -1060,11 +603,193 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 .collect();
             match client.storage.set_many(entries) {
                 Ok(()) => HostRet::Bool(true),
-                Err(error) => HostRet::Error(error),
+                Err(error) => HostRet::invalid(error),
             }
         }
-        other => HostRet::Error(format!(
-            "non-client call {other:?} mis-routed to handle_client_call (host bug)"
-        )),
+    }
+}
+
+/// The body domain on a client instance: every write is a PREDICTION
+/// against the local mirror, addressed at the local player, and the actor is
+/// the snapshot the prediction dispatch published (see `scope::enter_actor`)
+/// — the same query-the-snapshot doctrine as the server side.
+pub(in crate::modding) fn handle_body_call(data: &mut ModStoreData, call: BodyCall) -> HostRet {
+    let mod_id = data.mod_id.clone();
+    let Some(client) = data.client.as_mut() else {
+        return HostRet::invalid("client instance has no client state".into());
+    };
+    match call {
+        BodyCall::PlayerState => match super::scope::active_actor() {
+            Some(actor) => HostRet::Player(Box::new(actor)),
+            None => HostRet::error(
+                ErrorCode::NoContext,
+                "PlayerState on a client instance is available during prediction dispatches only"
+                    .into(),
+            ),
+        },
+        // Outside a prediction dispatch a client instance acts for nobody.
+        BodyCall::ActingPlayer => {
+            HostRet::ActingPlayer(super::scope::active_actor().and_then(|actor| actor.id))
+        }
+        // The PREDICTED twin of the server's `SetPlayerHeldPose`: the same
+        // call, the same `BodyClaims`, addressed at the local player. A client
+        // has exactly one addressable body, so naming anybody else is a mod
+        // bug worth saying out loud rather than a silent no-op.
+        BodyCall::SetPlayerHeldPose { player, main, off } => {
+            let local = super::scope::active_actor().and_then(|a| a.id);
+            if local != Some(player) {
+                return HostRet::invalid(format!(
+                    "SetPlayerHeldPose: a client instance may pose only the LOCAL player \
+                     ({local:?}), not {player:?}"
+                ));
+            }
+            client.poses_hands[0] |= main.is_some();
+            client.poses_hands[1] |= off.is_some();
+            if client.body.set_held_pose(&mod_id, main, off) {
+                HostRet::Bool(true)
+            } else {
+                HostRet::invalid(
+                    "SetPlayerHeldPose: non-finite rotation/translation component".into(),
+                )
+            }
+        }
+        // The PREDICTED twins of the server's animator primitives, addressed
+        // at the local player like every body write here. The latch is per
+        // `(rig, param)` / `(rig, slot)`, like bones: a mod setting one param
+        // owns that param locally from then on, and leaves every other
+        // replicated claim exactly where it was. A refused write latches
+        // nothing, or a NaN would hide the replicated claim for good.
+        BodyCall::SetPlayerAnimatorParams { player, params } => {
+            let local = super::scope::active_actor().and_then(|a| a.id);
+            if local != Some(player) {
+                return HostRet::invalid(format!(
+                    "SetPlayerAnimatorParams: a client instance may animate only the LOCAL player \
+                     ({local:?}), not {player:?}"
+                ));
+            }
+            let params = match crate::player::animator::resolve_params(params) {
+                Ok(params) => params,
+                Err(e) => return HostRet::invalid(format!("SetPlayerAnimatorParams: {e}")),
+            };
+            let keys: Vec<_> = params.iter().map(|p| (p.rig, p.param)).collect();
+            if !client.body.set_animator_params(&mod_id, params) {
+                return HostRet::invalid("SetPlayerAnimatorParams: non-finite value".into());
+            }
+            client.owns_animator.params.extend(keys);
+            HostRet::Bool(true)
+        }
+        BodyCall::SetPlayerAnimatorPlays { player, plays } => {
+            let local = super::scope::active_actor().and_then(|a| a.id);
+            if local != Some(player) {
+                return HostRet::invalid(format!(
+                    "SetPlayerAnimatorPlays: a client instance may animate only the LOCAL player \
+                     ({local:?}), not {player:?}"
+                ));
+            }
+            let plays = match crate::player::animator::resolve_plays(plays) {
+                Ok(plays) => plays,
+                Err(e) => return HostRet::invalid(format!("SetPlayerAnimatorPlays: {e}")),
+            };
+            let keys: Vec<_> = plays.iter().map(|p| (p.rig, p.slot)).collect();
+            if !client.body.set_animator_plays(&mod_id, plays) {
+                return HostRet::invalid(
+                    "SetPlayerAnimatorPlays: non-finite progress or rate".into(),
+                );
+            }
+            client.owns_animator.slots.extend(keys);
+            HostRet::Bool(true)
+        }
+        BodyCall::FirePlayerAnimatorEvent { player, rig, event } => {
+            let local = super::scope::active_actor().and_then(|a| a.id);
+            if local != Some(player) {
+                return HostRet::invalid(format!(
+                    "FirePlayerAnimatorEvent: a client instance may animate only the LOCAL player \
+                     ({local:?}), not {player:?}"
+                ));
+            }
+            let (rig, event) = match crate::player::animator::resolve_event(&rig, &event) {
+                Ok(resolved) => resolved,
+                Err(e) => return HostRet::invalid(format!("FirePlayerAnimatorEvent: {e}")),
+            };
+            client.animator_events.push((rig, event));
+            HostRet::Bool(true)
+        }
+        BodyCall::AnimationClip { rig, clip } => {
+            HostRet::AnimationClip(crate::player::animator::clip_info(&rig, &clip))
+        }
+        BodyCall::PlayerInventory { player } => {
+            let local = super::scope::active_actor().and_then(|a| a.id);
+            if local != Some(player) {
+                return HostRet::invalid(format!(
+                    "PlayerInventory: a client instance may read only the LOCAL player \
+                     ({local:?}), not {player:?}"
+                ));
+            }
+            match super::scope::with_inventory(super::super::host::player::carried_slots) {
+                Some(slots) => HostRet::ContainerSlots(Some(slots)),
+                None => HostRet::invalid("PlayerInventory: no inventory is published".into()),
+            }
+        }
+        // What the hand displays: the same predicted path, the same latch.
+        BodyCall::SetPlayerHeldDisplay { player, main, off } => {
+            let local = super::scope::active_actor().and_then(|a| a.id);
+            if local != Some(player) {
+                return HostRet::invalid(format!(
+                    "SetPlayerHeldDisplay: a client instance may dress only the LOCAL player \
+                     ({local:?}), not {player:?}"
+                ));
+            }
+            let item = |name: &Option<String>| match name {
+                None => Ok(None),
+                Some(name) => ItemType::by_name(name).map(Some).ok_or_else(|| {
+                    HostRet::invalid(format!("SetPlayerHeldDisplay: unknown item '{name}'"))
+                }),
+            };
+            let (main, off) = match (item(&main), item(&off)) {
+                (Ok(main), Ok(off)) => (main, off),
+                (Err(e), _) | (_, Err(e)) => return e,
+            };
+            client.displays_hands[0] |= main.is_some();
+            client.displays_hands[1] |= off.is_some();
+            client.body.set_held_display(&mod_id, main, off);
+            HostRet::Bool(true)
+        }
+        // The body counterpart, same predicted path and same local-only rule.
+        BodyCall::SetPlayerBonePose { player, bones } => {
+            let local = super::scope::active_actor().and_then(|a| a.id);
+            if local != Some(player) {
+                return HostRet::invalid(format!(
+                    "SetPlayerBonePose: a client instance may pose only the LOCAL player \
+                     ({local:?}), not {player:?}"
+                ));
+            }
+            // Names resolve to rig ids here, exactly as on the server.
+            let Some(bones) = crate::modding::resolve_bone_poses(bones) else {
+                return HostRet::invalid(crate::modding::BONE_POSE_REFUSAL.into());
+            };
+            // Latch per BONE, not per body: a mod bending an arm owns that
+            // arm locally, but must not blank an unrelated bone another pack
+            // is bending server-side.
+            let keys: Vec<u16> = bones.iter().map(|b| b.bone).collect();
+            if !client.body.set_bone_poses(&mod_id, bones) {
+                return HostRet::invalid(crate::modding::BONE_POSE_REFUSAL.into());
+            }
+            client.poses_bones.extend(keys);
+            HostRet::Bool(true)
+        }
+        // The PREDICTED twin of the server's `HoldUse`: a client has one
+        // addressable body, so the only question is whether this mod is taking
+        // its press.
+        BodyCall::HoldUse { player } => {
+            let local = super::scope::active_actor().and_then(|a| a.id);
+            if local != Some(player) {
+                return HostRet::invalid(format!(
+                    "HoldUse: a client instance may take only the LOCAL player's gesture \
+                     ({local:?}), not {player:?}"
+                ));
+            }
+            client.holds_use = true;
+            HostRet::Bool(true)
+        }
     }
 }

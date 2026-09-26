@@ -34,7 +34,7 @@ thread_local! {
     static INSTALLED: RefCell<HashMap<String, AiNodeRegistration>> =
         RefCell::new(HashMap::new());
     /// The game tick of the in-flight detached AI dispatch — what
-    /// `HostCall::CurrentTick` reads when no sim scope is active.
+    /// `CoreCall::CurrentTick` reads when no sim scope is active.
     static DETACHED_TICK: Cell<Option<u64>> = const { Cell::new(None) };
 }
 

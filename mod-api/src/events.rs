@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 use crate::data::{EntityRef, ItemStackData, MobTagValue};
 use crate::ids::{BlockId, ItemId, MobId, PlayerId};
 
+mod filter;
+
+pub use filter::*;
+
 /// A pre-event handler's verdict. The first `Cancel` wins AND ends the
 /// dispatch — handlers after it never run on the consumed event. A handler
 /// that runs always sees a live event (with any earlier mutations) and may
@@ -16,17 +20,17 @@ pub enum Outcome {
 }
 
 /// Every dispatchable event, pre and post.
-/// Registration key for [`HostCall::RegisterEventHandler`].
+/// Registration key for [`CoreCall::RegisterEventHandler`](crate::CoreCall::RegisterEventHandler).
 ///
-/// A handler acts for the event's own player ([`HostCall::ActingPlayer`]):
+/// A handler acts for the event's own player ([`BodyCall::ActingPlayer`](crate::BodyCall::ActingPlayer)):
 /// the clicking, placing, breaking, damaged, dying, collecting or
 /// GUI-opening session — including for the payloads that name no player
 /// (`PlayerDamaged`, `PlayerDied`, `ContainerOpened`/`ContainerClosed`,
 /// `ItemUsePre`). World events (mob life, sections, a mob's action, a mod's
 /// own event) are actor-less.
 ///
-/// [`HostCall::RegisterEventHandler`]: crate::HostCall::RegisterEventHandler
-/// [`HostCall::ActingPlayer`]: crate::HostCall::ActingPlayer
+/// [`CoreCall::RegisterEventHandler`]: crate::CoreCall::RegisterEventHandler
+/// [`BodyCall::ActingPlayer`]: crate::BodyCall::ActingPlayer
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum EventKind {
     BlockPlacePre,
@@ -54,10 +58,12 @@ pub enum EventKind {
     MobDamaged,
     Interacted,
     /// Every mod-authored event, whoever emitted it
-    /// ([`HostCall::EmitEvent`]). Handlers filter by the payload's key; there
-    /// is no per-key registration.
+    /// ([`CoreCall::EmitEvent`](crate::CoreCall::EmitEvent)). Register with
+    /// an [`EventFilter`] `keys` lane to receive only the keys (or key
+    /// prefixes) a handler cares about; the host drops the rest before any
+    /// crossing.
     ///
-    /// [`HostCall::EmitEvent`]: crate::HostCall::EmitEvent
+    /// [`CoreCall::EmitEvent`]: crate::CoreCall::EmitEvent
     ModEvent,
     /// A use gesture NOTHING claimed — the fall-through, fired once after the
     /// whole interact chain passed (including on a click at nothing at all).
@@ -66,12 +72,12 @@ pub enum EventKind {
     /// continuous use is something the player asked for, and because a client
     /// predicts the press and nothing else.
     ///
-    /// This is where a CONTINUOUS use lives: call [`HostCall::HoldUse`] to take
+    /// This is where a CONTINUOUS use lives: call [`BodyCall::HoldUse`](crate::BodyCall::HoldUse) to take
     /// the press and keep it until the button comes up. Cancel only ends the
     /// dispatch for later handlers — by the time this fires the chain has
     /// already passed, so nothing happened to the world and no hand jabs.
     ///
-    /// [`HostCall::HoldUse`]: crate::HostCall::HoldUse
+    /// [`BodyCall::HoldUse`]: crate::BodyCall::HoldUse
     UseUnclaimed,
     /// PRE — the player's primary-button press as its most primitive
     /// gesture: what the crosshair held (a block, a live mob, another
@@ -81,19 +87,19 @@ pub enum EventKind {
     /// melee (the crosshair hit, the air punch) stands down for it, the
     /// hand still swings, the attack cooldown still arms, and landing the
     /// hit — when, on whom, how hard — is the claimant's to do through
-    /// [`HostCall::DamageMob`] / [`HostCall::DamagePlayer`] naming the
+    /// [`EntityCall::DamageMob`](crate::EntityCall::DamageMob) / [`PlayerCall::DamagePlayer`](crate::PlayerCall::DamagePlayer) naming the
     /// presser as the attacker. Mining is the held button on a block, not
     /// the press, so it runs whoever takes the press.
     ///
-    /// [`HostCall::DamageMob`]: crate::HostCall::DamageMob
-    /// [`HostCall::DamagePlayer`]: crate::HostCall::DamagePlayer
+    /// [`EntityCall::DamageMob`]: crate::EntityCall::DamageMob
+    /// [`PlayerCall::DamagePlayer`]: crate::PlayerCall::DamagePlayer
     AttackAttempt,
-    /// PRE — an item entity in FLIGHT ([`HostCall::LaunchItem`]) struck
+    /// PRE — an item entity in FLIGHT ([`EntityCall::LaunchItem`](crate::EntityCall::LaunchItem)) struck
     /// something: the first live body (a mob, a player) or collidable block
     /// along this tick's motion. The payload names the ENTITY and the HIT —
     /// what was struck, where, how fast; what is flying, its instance data
     /// and who launched it are the entity's own facts, read through
-    /// [`HostCall::ItemEntity`] (the entity is still live for the whole
+    /// [`EntityCall::ItemEntity`](crate::EntityCall::ItemEntity) (the entity is still live for the whole
     /// dispatch, whatever fate it is headed for). The payload's `fate` is
     /// what becomes of the entity once the dispatch ends — the engine's
     /// default (LODGED in the block it struck when the row's
@@ -110,8 +116,8 @@ pub enum EventKind {
     /// player, and is actor-less otherwise — so a handler addresses bodies by
     /// the ids it is handed, never by `PlayerState` alone.
     ///
-    /// [`HostCall::LaunchItem`]: crate::HostCall::LaunchItem
-    /// [`HostCall::ItemEntity`]: crate::HostCall::ItemEntity
+    /// [`EntityCall::LaunchItem`]: crate::EntityCall::LaunchItem
+    /// [`EntityCall::ItemEntity`]: crate::EntityCall::ItemEntity
     ProjectileHit,
     ActorActed,
     SchematicChosen,
@@ -162,10 +168,10 @@ pub enum DamageSource {
     MobAttack {
         key: String,
     },
-    /// A mod's [`HostCall::DamagePlayer`]; `mod_id` is the calling mod's
+    /// A mod's [`PlayerCall::DamagePlayer`](crate::PlayerCall::DamagePlayer); `mod_id` is the calling mod's
     /// pack id, so handlers can filter by origin.
     ///
-    /// [`HostCall::DamagePlayer`]: crate::HostCall::DamagePlayer
+    /// [`PlayerCall::DamagePlayer`]: crate::PlayerCall::DamagePlayer
     Mod {
         mod_id: String,
     },
@@ -174,9 +180,9 @@ pub enum DamageSource {
         block: BlockId,
     },
     /// A pulse of an active body condition (resolve names with
-    /// [`HostCall::ConditionNames`]).
+    /// [`RegistryCall::ConditionNames`](crate::RegistryCall::ConditionNames)).
     ///
-    /// [`HostCall::ConditionNames`]: crate::HostCall::ConditionNames
+    /// [`RegistryCall::ConditionNames`]: crate::RegistryCall::ConditionNames
     Condition {
         condition: crate::ConditionId,
     },
@@ -308,11 +314,11 @@ pub enum EventPayload {
         block: BlockId,
         facing: Facing,
         /// Who is placing: a player's click or a mob acting through
-        /// [`HostCall::ActorPlace`](crate::HostCall::ActorPlace).
+        /// [`ActorCall::ActorPlace`](crate::ActorCall::ActorPlace).
         actor: EntityRef,
     },
     /// PRE — a break about to clear the cell, by a player's mining or a mob
-    /// acting through [`HostCall::ActorDig`](crate::HostCall::ActorDig).
+    /// acting through [`ActorCall::ActorDig`](crate::ActorCall::ActorDig).
     /// Cancel = unbreakable (the block stays). Sim-destroyed blocks (natural
     /// breaks) never dispatch it.
     BlockBreakPre {
@@ -323,10 +329,10 @@ pub enum EventPayload {
         /// regardless, so a handler that only wants harvested breaks gates
         /// on this itself.
         harvested: bool,
-        /// Who is breaking: a player (whose held tool [`HostCall::PlayerHeld`]
+        /// Who is breaking: a player (whose held tool [`PlayerCall::PlayerHeld`](crate::PlayerCall::PlayerHeld)
         /// reads) or a mob.
         ///
-        /// [`HostCall::PlayerHeld`]: crate::HostCall::PlayerHeld
+        /// [`PlayerCall::PlayerHeld`]: crate::PlayerCall::PlayerHeld
         actor: EntityRef,
         /// Mutable: written back by the engine after the dispatch. `None` =
         /// the engine's own drop tables roll as usual; `Some(stacks)` = the
@@ -341,12 +347,12 @@ pub enum EventPayload {
     /// crosshair held (a block cell + face, a live mob), nothing more.
     /// Cancel = the attempt was consumed; the block's built-in capability,
     /// the held item's own use, and placement are all skipped. Handlers gate
-    /// their own claim by querying the world ([`HostCall::GetBlock`]) and the
-    /// acting player's snapshot ([`HostCall::PlayerState`]: held item,
+    /// their own claim by querying the world ([`BlockCall::GetBlock`](crate::BlockCall::GetBlock)) and the
+    /// acting player's snapshot ([`BodyCall::PlayerState`](crate::BodyCall::PlayerState): held item,
     /// sneak) — attempt context is never pre-interpreted onto the event.
     ///
-    /// [`HostCall::GetBlock`]: crate::HostCall::GetBlock
-    /// [`HostCall::PlayerState`]: crate::HostCall::PlayerState
+    /// [`BlockCall::GetBlock`]: crate::BlockCall::GetBlock
+    /// [`BodyCall::PlayerState`]: crate::BodyCall::PlayerState
     InteractAttempt {
         /// The clicked block cell, if the crosshair held a block.
         block: Option<[i32; 3]>,
@@ -356,14 +362,14 @@ pub enum EventPayload {
         /// The clicked mob's stable session id, if the crosshair held a live
         /// mob (authoritatively validated — a forged, vanished, dead, or
         /// occluded claim never appears here). THE mob address for calls and
-        /// cross-tick mod state; species via [`HostCall::MobInfo`].
+        /// cross-tick mod state; species via [`EntityCall::MobInfo`](crate::EntityCall::MobInfo).
         ///
-        /// [`HostCall::MobInfo`]: crate::HostCall::MobInfo
+        /// [`EntityCall::MobInfo`]: crate::EntityCall::MobInfo
         mob: Option<u64>,
         /// The interacting session's player id (for per-player calls such as
-        /// [`HostCall::MobMount`]).
+        /// [`EntityCall::MobMount`](crate::EntityCall::MobMount)).
         ///
-        /// [`HostCall::MobMount`]: crate::HostCall::MobMount
+        /// [`EntityCall::MobMount`]: crate::EntityCall::MobMount
         player: PlayerId,
     },
     ItemUsePre {
@@ -427,10 +433,10 @@ pub enum EventPayload {
         pos: [f64; 3],
     },
     /// POST — a mob entered the live world (natural, hostile-planner, or a
-    /// mod's [`HostCall::SpawnMob`]; save-restores announce as
+    /// mod's [`EntityCall::SpawnMob`](crate::EntityCall::SpawnMob); save-restores announce as
     /// `section_loaded` instead). Carries the newborn's stable `id`.
     ///
-    /// [`HostCall::SpawnMob`]: crate::HostCall::SpawnMob
+    /// [`EntityCall::SpawnMob`]: crate::EntityCall::SpawnMob
     MobSpawned {
         /// Stable session id the mob now answers to.
         id: u64,
@@ -459,11 +465,11 @@ pub enum EventPayload {
     },
     /// POST — a player left a seat or pose anchor, however it happened (the
     /// engine's sneak gesture, the mount or rider dying, the rider leaving or
-    /// turning spectator, or a mod's [`HostCall::MobDismount`]). The mounting
+    /// turning spectator, or a mod's [`EntityCall::MobDismount`](crate::EntityCall::MobDismount)). The mounting
     /// mod uses it to update rider policy (who controls the vehicle).
     /// Mounting has no event: only a mod's own mount/pose call starts one.
     ///
-    /// [`HostCall::MobDismount`]: crate::HostCall::MobDismount
+    /// [`EntityCall::MobDismount`]: crate::EntityCall::MobDismount
     PlayerDismounted {
         player_id: PlayerId,
         /// The mount that was left (the mob may already be gone; an anchor's
@@ -471,12 +477,12 @@ pub enum EventPayload {
         mount: crate::MountTarget,
     },
     /// POST — a key BECAME PRESENT in a live mob's tag map through the ABI
-    /// tag surface ([`HostCall::MobTagSet`] inserting a new key). Presence
+    /// tag surface ([`TagCall::MobTagSet`](crate::TagCall::MobTagSet) inserting a new key). Presence
     /// transitions only: overwriting an existing key's value is silent, and
     /// engine-internal tag churn (health, the confined refresh, spawn
     /// seeding, save restore) and AI-decision writes fire nothing.
     ///
-    /// [`HostCall::MobTagSet`]: crate::HostCall::MobTagSet
+    /// [`TagCall::MobTagSet`]: crate::TagCall::MobTagSet
     MobTagAdded {
         /// The mob's stable session id.
         mob_id: u64,
@@ -487,12 +493,12 @@ pub enum EventPayload {
         value: MobTagValue,
     },
     /// POST — a present key was DELETED from a live mob's tag map through
-    /// the ABI tag surface ([`HostCall::MobTagDelete`]). Same scope rules as
+    /// the ABI tag surface ([`TagCall::MobTagDelete`](crate::TagCall::MobTagDelete)). Same scope rules as
     /// [`MobTagAdded`](Self::MobTagAdded). This is the composable
     /// state-transition hook: e.g. removing a maturity tag is what grows a
     /// juvenile, whoever removes it.
     ///
-    /// [`HostCall::MobTagDelete`]: crate::HostCall::MobTagDelete
+    /// [`TagCall::MobTagDelete`]: crate::TagCall::MobTagDelete
     MobTagRemoved {
         mob_id: u64,
         kind: MobId,
@@ -514,7 +520,7 @@ pub enum EventPayload {
     },
     /// POST — an item kind entered a player's inventory for the FIRST time
     /// ever, from ANY source: a pickup, a craft, a furnace output, a chest
-    /// withdrawal, a mod's [`HostCall::GiveItem`]. The engine owns the
+    /// withdrawal, a mod's [`PlayerCall::GiveItem`](crate::PlayerCall::GiveItem). The engine owns the
     /// per-player "ever held" set that makes this a once-per-kind transition
     /// (it persists with the player), so a handler needs no memory of its own.
     ///
@@ -522,7 +528,7 @@ pub enum EventPayload {
     /// listens on it (see the crafting docs), and a mod that wants "the first
     /// time the player holds X" should too rather than polling an inventory.
     ///
-    /// [`HostCall::GiveItem`]: crate::HostCall::GiveItem
+    /// [`PlayerCall::GiveItem`]: crate::PlayerCall::GiveItem
     ItemObtained {
         player: PlayerId,
         item: ItemId,
@@ -557,12 +563,12 @@ pub enum EventPayload {
         player: PlayerId,
         consumed: bool,
     },
-    /// POST — a mod emitted its own event ([`HostCall::EmitEvent`]). `key` is
+    /// POST — a mod emitted its own event ([`CoreCall::EmitEvent`](crate::CoreCall::EmitEvent)). `key` is
     /// namespaced to the EMITTING mod (`"farming:harvest_complete"`) and
-    /// `data` is that mod's own opaque payload; every registered handler sees
-    /// every mod event, so filter on `key` first.
+    /// `data` is that mod's own opaque payload. A handler registered without
+    /// a `keys` filter sees every mod event and must filter on `key` itself.
     ///
-    /// [`HostCall::EmitEvent`]: crate::HostCall::EmitEvent
+    /// [`CoreCall::EmitEvent`]: crate::CoreCall::EmitEvent
     ModEvent {
         key: String,
         #[serde(with = "serde_bytes")]
@@ -572,9 +578,9 @@ pub enum EventPayload {
     ///
     /// The same context [`InteractAttempt`](Self::InteractAttempt) carries, and
     /// every field may be absent: a click at empty air is exactly the case this
-    /// exists for. [`HostCall::HoldUse`] is what takes the press.
+    /// exists for. [`BodyCall::HoldUse`](crate::BodyCall::HoldUse) is what takes the press.
     ///
-    /// [`HostCall::HoldUse`]: crate::HostCall::HoldUse
+    /// [`BodyCall::HoldUse`]: crate::BodyCall::HoldUse
     UseUnclaimed {
         block: Option<[i32; 3]>,
         face: Option<[i32; 3]>,
@@ -603,12 +609,16 @@ pub enum EventPayload {
     /// PRE — a flying item struck something ([`EventKind::ProjectileHit`]);
     /// `fate` is the mutable consequence, the verdict only ends or continues
     /// the dispatch — see the kind. The entity itself (its stack, its
-    /// launcher) is one [`HostCall::ItemEntity`] away.
+    /// launcher) is one [`EntityCall::ItemEntity`](crate::EntityCall::ItemEntity) away.
     ///
-    /// [`HostCall::ItemEntity`]: crate::HostCall::ItemEntity
+    /// [`EntityCall::ItemEntity`]: crate::EntityCall::ItemEntity
     ProjectileHit {
         /// The item entity's stable session id.
         entity: u64,
+        /// What is flying — the entity's item, so a handler (and an
+        /// [`EventFilter`] `items` lane) knows whose projectile this is
+        /// without a lookup.
+        item: ItemId,
         target: ProjectileTarget,
         /// Where the impact is, in world space.
         pos: [f64; 3],
@@ -619,13 +629,13 @@ pub enum EventPayload {
         /// as the engine's default; the echoed value is applied.
         fate: ProjectileFate,
     },
-    /// POST — a queued actor action ([`HostCall::ActorDig`]'s break,
-    /// [`HostCall::ActorPlace`]) had its turn. `refusal` is `None` when it
+    /// POST — a queued actor action ([`ActorCall::ActorDig`](crate::ActorCall::ActorDig)'s break,
+    /// [`ActorCall::ActorPlace`](crate::ActorCall::ActorPlace)) had its turn. `refusal` is `None` when it
     /// happened, else why it did not: the world or the actor changed since
     /// the request, or a pre-event handler cancelled it.
     ///
-    /// [`HostCall::ActorDig`]: crate::HostCall::ActorDig
-    /// [`HostCall::ActorPlace`]: crate::HostCall::ActorPlace
+    /// [`ActorCall::ActorDig`]: crate::ActorCall::ActorDig
+    /// [`ActorCall::ActorPlace`]: crate::ActorCall::ActorPlace
     ActorActed {
         actor: EntityRef,
         pos: [i32; 3],
@@ -633,19 +643,19 @@ pub enum EventPayload {
         refusal: Option<crate::data::ActionRefusal>,
     },
     /// POST — `player` chose `asset` for the open choice `tag`
-    /// ([`HostCall::SchematicChoose`]); the world holds it.
+    /// ([`SchematicCall::SchematicChoose`](crate::SchematicCall::SchematicChoose)); the world holds it.
     ///
-    /// [`HostCall::SchematicChoose`]: crate::HostCall::SchematicChoose
+    /// [`SchematicCall::SchematicChoose`]: crate::SchematicCall::SchematicChoose
     SchematicChosen {
         player: PlayerId,
         tag: String,
         asset: crate::data::SchematicId,
     },
     /// POST — `player` anchored `asset` for the open positioning `tag`
-    /// ([`HostCall::SchematicPosition`]) with its turned minimum corner at
+    /// ([`SchematicCall::SchematicPosition`](crate::SchematicCall::SchematicPosition)) with its turned minimum corner at
     /// `origin`.
     ///
-    /// [`HostCall::SchematicPosition`]: crate::HostCall::SchematicPosition
+    /// [`SchematicCall::SchematicPosition`]: crate::SchematicCall::SchematicPosition
     SchematicPositioned {
         player: PlayerId,
         tag: String,

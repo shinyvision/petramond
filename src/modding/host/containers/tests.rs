@@ -1,3 +1,4 @@
+use mod_api::calls;
 use mod_api::{HostCall, HostRet};
 
 use crate::events::tick::TickEvents;
@@ -45,7 +46,7 @@ fn container_calls_canonicalize_to_the_group_anchor() {
     scope::enter(&mut ctx, || {
         let set = handle_host_call(
             &mut store,
-            HostCall::ContainerSet {
+            HostCall::from(calls::ContainerSet {
                 at: far.to_array().into(),
                 slots: vec![(
                     0,
@@ -55,15 +56,15 @@ fn container_calls_canonicalize_to_the_group_anchor() {
                         data: Vec::new(),
                     }),
                 )],
-            },
+            }),
         );
         assert_eq!(set, HostRet::Bool(true));
         // Reading through a different cell (the anchor) sees the write.
         let got = handle_host_call(
             &mut store,
-            HostCall::ContainerGet {
+            HostCall::from(calls::ContainerGet {
                 at: anchor.to_array().into(),
-            },
+            }),
         );
         let HostRet::ContainerSlots(Some(slots)) = got else {
             panic!("expected slots from the anchor, got {got:?}");
@@ -112,21 +113,21 @@ fn transfers_respect_target_admission_and_preserve_items_on_failure() {
         assert_eq!(
             handle_host_call(
                 &mut store,
-                HostCall::ContainerInsert {
+                HostCall::from(calls::ContainerInsert {
                     at: machine.to_array().into(),
                     stack: coal.clone()
-                }
+                })
             ),
             HostRet::ItemStack(None)
         );
         assert_eq!(
             handle_host_call(
                 &mut store,
-                HostCall::ContainerTake {
+                HostCall::from(calls::ContainerTake {
                     at: machine.to_array().into(),
                     slot: petramond_world::furnace::SLOT_FUEL as u32,
                     count: 2
-                }
+                })
             ),
             HostRet::ItemStack(Some(stack("petramond:coal", 2)))
         );
@@ -134,31 +135,31 @@ fn transfers_respect_target_admission_and_preserve_items_on_failure() {
         assert_eq!(
             handle_host_call(
                 &mut store,
-                HostCall::ContainerInsert {
+                HostCall::from(calls::ContainerInsert {
                     at: machine.to_array().into(),
                     stack: stone.clone()
-                }
+                })
             ),
             HostRet::ItemStack(Some(stone.clone()))
         );
         assert_eq!(
             handle_host_call(
                 &mut store,
-                HostCall::ContainerInsert {
+                HostCall::from(calls::ContainerInsert {
                     at: chest.to_array().into(),
                     stack: stone
-                }
+                })
             ),
             HostRet::ItemStack(None)
         );
         assert_eq!(
             handle_host_call(
                 &mut store,
-                HostCall::ContainerTake {
+                HostCall::from(calls::ContainerTake {
                     at: chest.to_array().into(),
                     slot: 0,
                     count: 9
-                }
+                })
             ),
             HostRet::ItemStack(Some(stack("petramond:stone", 4)))
         );
@@ -166,10 +167,10 @@ fn transfers_respect_target_admission_and_preserve_items_on_failure() {
         assert_eq!(
             handle_host_call(
                 &mut store,
-                HostCall::ContainerInsert {
+                HostCall::from(calls::ContainerInsert {
                     at: [6, 64, 1].into(),
                     stack: coal.clone()
-                }
+                })
             ),
             HostRet::ItemStack(Some(coal))
         );
@@ -191,10 +192,10 @@ fn transfers_respect_target_admission_and_preserve_items_on_failure() {
         assert_eq!(
             handle_host_call(
                 &mut store,
-                HostCall::ContainerInsert {
+                HostCall::from(calls::ContainerInsert {
                     at: chest.to_array().into(),
                     stack: incoming.clone()
-                }
+                })
             ),
             HostRet::ItemStack(Some(incoming))
         );
@@ -237,42 +238,42 @@ fn a_transfer_moves_only_what_the_destination_admits() {
         let mut call = |c| handle_host_call(&mut store, c);
         // The furnace's only coal cell is its fuel slot, nearly full.
         assert_eq!(
-            call(HostCall::ContainerInsert {
+            call(HostCall::from(calls::ContainerInsert {
                 at: machine.to_array().into(),
                 stack: coal(60),
-            }),
+            })),
             HostRet::ItemStack(None)
         );
         assert_eq!(
-            call(HostCall::ContainerInsert {
+            call(HostCall::from(calls::ContainerInsert {
                 at: chest.to_array().into(),
                 stack: coal(64),
-            }),
+            })),
             HostRet::ItemStack(None)
         );
         assert_eq!(
-            call(HostCall::ContainerTransfer {
+            call(HostCall::from(calls::ContainerTransfer {
                 from: chest.to_array().into(),
                 slot: 0,
                 to: machine.to_array().into(),
                 count: 64,
-            }),
+            })),
             HostRet::ItemStack(Some(coal(4))),
             "only the fuel slot's room moves"
         );
-        let HostRet::ContainerSlots(Some(slots)) = call(HostCall::ContainerGet {
+        let HostRet::ContainerSlots(Some(slots)) = call(HostCall::from(calls::ContainerGet {
             at: chest.to_array().into(),
-        }) else {
+        })) else {
             panic!("the chest has slots");
         };
         assert_eq!(slots[0], Some(coal(60)), "the refused part stayed put");
         assert_eq!(
-            call(HostCall::ContainerTransfer {
+            call(HostCall::from(calls::ContainerTransfer {
                 from: chest.to_array().into(),
                 slot: 0,
                 to: [9, 64, 9].into(),
                 count: 1,
-            }),
+            })),
             HostRet::ItemStack(None),
             "a destination with no slots takes nothing"
         );
@@ -322,12 +323,12 @@ fn a_mobs_carried_slots_are_a_container_and_spill_when_it_leaves() {
     scope::enter(&mut ctx, || {
         let mut call = |c| handle_host_call(&mut store, c);
         assert_eq!(
-            call(HostCall::ContainerTransfer {
+            call(HostCall::from(calls::ContainerTransfer {
                 from: mod_api::ContainerAddress::Mob(mob),
                 slot: 0,
                 to: chest.to_array().into(),
                 count: 5,
-            }),
+            })),
             HostRet::ItemStack(Some(mod_api::ItemStackData {
                 item: "petramond:coal".into(),
                 count: 5,
@@ -336,10 +337,10 @@ fn a_mobs_carried_slots_are_a_container_and_spill_when_it_leaves() {
         );
         assert!(
             matches!(
-                call(HostCall::ContainerSet {
+                call(HostCall::from(calls::ContainerSet {
                     at: mod_api::ContainerAddress::Mob(mob),
                     slots: vec![(0, None)],
-                }),
+                })),
                 HostRet::Bool(false)
             ),
             "writes stay with the species' own pack"

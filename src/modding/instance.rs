@@ -137,7 +137,7 @@ impl ModInstance {
     /// [`call_init`](Self::call_init) WITHOUT publishing a simulation context —
     /// how per-thread worldgen instances initialize: registrations are still
     /// accepted (and later ignored — the MAIN load already recorded them), but
-    /// any sim-scoped host call gets `HostRet::Error`, so a gen-hook mod's init
+    /// any sim-scoped host call gets `HostRet::Err`, so a gen-hook mod's init
     /// must stay pure (registrations, `ResolveBlock`, `Log`, `RngU64`).
     pub(super) fn call_init_detached(&mut self) {
         debug_assert!(self.store.data().phase == Phase::Init);

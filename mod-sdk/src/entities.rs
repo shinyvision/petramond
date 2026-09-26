@@ -2,9 +2,73 @@
 //! emitters, riding, kinematic drive, named animations, and dropped-item
 //! spawns.
 
-use mod_api::{EntityRef, Facing, MobAnimStateData, MobRidersData, MobSnapshot, PlayerId};
+use mod_api::{
+    ConditionOp, EntityRef, Facing, MobAnimOp, MobAnimStateData, MobDriveData,
+    MobKinematicData, MobRidersData, MobSnapshot, PlayerId,
+};
 
 use crate::__rt::host_fn;
+use crate::__rt::try_host_fn;
+
+try_host_fn! {
+    /// Drive a population, returning a batch-size refusal so callers can split it.
+    pub fn try_mob_drive_many(drives: Vec<MobDriveData>) -> Vec<bool>
+        => MobDriveMany { drives } => Bools
+}
+
+try_host_fn! {
+    /// Place a population, returning a batch-size refusal so callers can split it.
+    pub fn try_mob_kinematic_many(poses: Vec<MobKinematicData>) -> Vec<bool>
+        => MobKinematicMany { poses } => Bools
+}
+
+try_host_fn! {
+    /// Apply animations, returning a batch-size refusal so callers can split it.
+    pub fn try_mob_anim_many(ops: Vec<MobAnimOp>) -> Vec<bool>
+        => MobAnimMany { ops } => Bools
+}
+
+try_host_fn! {
+    /// Read riders, returning a batch-size refusal so callers can split it.
+    pub fn try_mob_riders_many(mob_ids: Vec<u64>) -> Vec<Option<MobRidersData>>
+        => MobRidersMany { mob_ids } => RidersMany
+}
+
+try_host_fn! {
+    /// Apply conditions, returning a batch-size refusal so callers can split it.
+    pub fn try_entity_conditions_many(ops: Vec<ConditionOp>) -> Vec<bool>
+        => EntityConditionsMany { ops } => Bools
+}
+
+host_fn! {
+    /// Drive a population in request order; one success flag per intent.
+    pub fn mob_drive_many(drives: Vec<MobDriveData>) -> Vec<bool>
+        => MobDriveMany { drives } => Bools
+}
+
+host_fn! {
+    /// Place a population kinematically in one host call.
+    pub fn mob_kinematic_many(poses: Vec<MobKinematicData>) -> Vec<bool>
+        => MobKinematicMany { poses } => Bools
+}
+
+host_fn! {
+    /// Apply named animation commands in request order.
+    pub fn mob_anim_many(ops: Vec<MobAnimOp>) -> Vec<bool>
+        => MobAnimMany { ops } => Bools
+}
+
+host_fn! {
+    /// Read rider lists for many mobs in one host call.
+    pub fn mob_riders_many(mob_ids: Vec<u64>) -> Vec<Option<MobRidersData>>
+        => MobRidersMany { mob_ids } => RidersMany
+}
+
+host_fn! {
+    /// Apply body condition commands in request order.
+    pub fn entity_conditions_many(ops: Vec<ConditionOp>) -> Vec<bool>
+        => EntityConditionsMany { ops } => Bools
+}
 
 /// The horizontal direction a mob yaw faces — MOB convention: yaw `0` faces
 /// `-Z`. The frame [`mob_drive`] velocities/yaws and `mobs.json` seat offsets

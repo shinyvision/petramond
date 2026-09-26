@@ -107,7 +107,7 @@ pub mod mods {
 /// Recipe-catalog lookups for pack checks.
 pub mod recipes_query {
     /// The `class` route for `item_key`, as the resulting item key — the same
-    /// answer a machine gets from `HostCall::RecipeResult`. `None` when the
+    /// answer a machine gets from `ContainerCall::RecipeResult`. `None` when the
     /// item is unknown or the route does not exist.
     pub fn process(
         catalog: &petramond_world::crafting::Recipes,

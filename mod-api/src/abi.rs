@@ -53,7 +53,13 @@ impl fmt::Display for AbiVersion {
 
 /// The ABI revision this crate describes — what the engine speaks and what
 /// every guest built against this crate declares.
-pub const ABI_VERSION: AbiVersion = AbiVersion { major: 1, minor: 1 };
+///
+/// 2.0 nested [`HostCall`](crate::HostCall) by domain (a call is
+/// `[domain][call][fields]` on the wire), replaced the stringly
+/// `HostRet::Error` with the typed [`HostRet::Err`](crate::HostRet::Err),
+/// added event-subscription filters to `RegisterEventHandler`, and stopped
+/// echoing payloads the engine never reads back.
+pub const ABI_VERSION: AbiVersion = AbiVersion { major: 2, minor: 0 };
 
 /// A set of optional host feature domains. A guest declares the ones it cannot
 /// run without (`Mod::REQUIRES` in the SDK); the host refuses a guest whose
@@ -257,13 +263,18 @@ pub fn negotiate(
 pub enum Decoded<T> {
     Known(T),
     /// A variant index past the end of `T`: a newer peer (same major) using a
-    /// call this side predates. Answer `Unsupported`, do not trap.
+    /// call this side predates. Answer `Unsupported`, do not trap. For the
+    /// nested [`HostCall`](crate::HostCall), `domain` is the known domain
+    /// whose call list `variant` runs past (`None` when the domain index
+    /// itself is the unknown one, and for the flat enums).
     Unknown {
+        domain: Option<u32>,
         variant: u32,
     },
 }
 
-/// Decode a call enum (`HostCall` on the host, `GuestCall` in the guest),
+/// Decode a flat call enum (`GuestCall` in the guest; the host's nested
+/// `HostCall` goes through [`decode_host_call`](crate::decode_host_call)),
 /// telling an unknown-but-well-framed variant apart from a malformed buffer.
 /// postcard leads an enum with its variant index as a varint, so a payload
 /// whose index is past the enum's last variant is a call from a newer ABI
@@ -273,7 +284,10 @@ pub fn decode_call<T: DeserializeOwned>(bytes: &[u8]) -> Result<Decoded<T>, post
         Ok(call) => Ok(Decoded::Known(call)),
         Err(e) => match postcard::take_from_bytes::<u32>(bytes) {
             Ok((variant, _)) if variant as usize >= variant_count::<T>() => {
-                Ok(Decoded::Unknown { variant })
+                Ok(Decoded::Unknown {
+                    domain: None,
+                    variant,
+                })
             }
             _ => Err(e),
         },
@@ -336,7 +350,7 @@ impl<'de> Deserializer<'de> for VariantCounter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{encode, GuestCall, HostCall};
+    use crate::{calls, decode_host_call, encode, GuestCall, HostCall};
 
     const HOST: AbiVersion = AbiVersion { major: 3, minor: 2 };
 
@@ -417,21 +431,53 @@ mod tests {
 
     #[test]
     fn decode_call_tells_unknown_variants_from_malformed_bytes() {
-        let known = encode(&HostCall::CurrentTick).unwrap();
+        let known = encode(&GuestCall::TickSystem { id: 3 }).unwrap();
         assert_eq!(
-            decode_call::<HostCall>(&known).unwrap(),
-            Decoded::Known(HostCall::CurrentTick)
+            decode_call::<GuestCall>(&known).unwrap(),
+            Decoded::Known(GuestCall::TickSystem { id: 3 })
         );
         // Varint 16383: far past the last variant, well-framed.
         assert_eq!(
             decode_call::<GuestCall>(&[0xff, 0x7f]).unwrap(),
-            Decoded::Unknown { variant: 16383 }
+            Decoded::Unknown {
+                domain: None,
+                variant: 16383
+            }
         );
         // A known variant index with a truncated body is a broken peer.
         let mut truncated = encode(&GuestCall::TickSystem { id: 300 }).unwrap();
         truncated.pop();
         assert!(decode_call::<GuestCall>(&truncated).is_err());
         assert!(decode_call::<GuestCall>(&[]).is_err());
+    }
+
+    #[test]
+    fn decode_host_call_tells_unknown_calls_at_both_levels() {
+        let tick = HostCall::from(calls::CurrentTick);
+        let known = encode(&tick).unwrap();
+        assert_eq!(decode_host_call(&known).unwrap(), Decoded::Known(tick));
+        // A domain index past the last domain.
+        assert_eq!(
+            decode_host_call(&[0xff, 0x7f]).unwrap(),
+            Decoded::Unknown {
+                domain: None,
+                variant: 16383
+            }
+        );
+        // A known domain (Core = 0) with a call index past its end.
+        let core_calls = HostCall::DOMAINS[0].1.len() as u8;
+        assert_eq!(
+            decode_host_call(&[0, core_calls]).unwrap(),
+            Decoded::Unknown {
+                domain: Some(0),
+                variant: core_calls as u32
+            }
+        );
+        // A known call with a truncated body is a broken peer.
+        let mut truncated = encode(&HostCall::from(calls::GetBlock { pos: [1, 2, 3] })).unwrap();
+        truncated.pop();
+        assert!(decode_host_call(&truncated).is_err());
+        assert!(decode_host_call(&[]).is_err());
     }
 
     #[test]
@@ -450,7 +496,10 @@ mod tests {
         }
         assert_eq!(
             decode_call::<Three>(&[3]).unwrap(),
-            Decoded::Unknown { variant: 3 }
+            Decoded::Unknown {
+                domain: None,
+                variant: 3
+            }
         );
     }
 }

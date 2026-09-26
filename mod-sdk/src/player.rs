@@ -7,6 +7,13 @@ use mod_api::{
 };
 
 use crate::__rt::host_fn;
+use crate::__rt::try_host_fn;
+
+try_host_fn! {
+    /// Read inputs, returning a batch-size refusal so callers can split it.
+    pub fn try_player_inputs(player_ids: Vec<PlayerId>) -> Vec<Option<PlayerInputData>>
+        => PlayerInputs { player_ids } => PlayerInputs
+}
 
 /// The horizontal direction a player yaw faces — PLAYER convention: yaw `0`
 /// faces `+Z` (π apart from the mob convention, [`crate::mob_facing_xz`]);
@@ -45,6 +52,12 @@ host_fn! {
     /// pressing. `None` = no such player connected.
     pub fn player_input(player_id: PlayerId) -> Option<PlayerInputData>
         => PlayerInput { player_id } => PlayerInput
+}
+
+host_fn! {
+    /// Read inputs for several players in one host call.
+    pub fn player_inputs(player_ids: Vec<PlayerId>) -> Vec<Option<PlayerInputData>>
+        => PlayerInputs { player_ids } => PlayerInputs
 }
 
 host_fn! {

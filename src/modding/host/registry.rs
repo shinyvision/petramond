@@ -4,27 +4,27 @@
 //! whole domain is legal on ANY instance (server, worldgen workers, client),
 //! any time.
 
-use mod_api::{HostCall, HostRet};
+use mod_api::{HostRet, RegistryCall};
 
 use super::guards::batch_guard;
 
 /// The registry-query family (block + item + mob-species resolvers, tag
 /// membership, reverse name lookups, item row reads).
-pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
+pub(super) fn handle_registry_call(call: RegistryCall) -> HostRet {
     match call {
-        HostCall::BlockRecordPlans { records } => {
+        RegistryCall::BlockRecordPlans { records } => {
             if let Some(err) = batch_guard("BlockRecordPlans record", records.len()) {
                 return err;
             }
             HostRet::RecordPlans(records.iter().map(super::construction::plan_out).collect())
         }
-        HostCall::MobDataGet { mob, key } => HostRet::Bytes(
+        RegistryCall::MobDataGet { mob, key } => HostRet::Bytes(
             crate::mob::defs()
                 .get(mob.0 as usize)
                 .and_then(|def| def.data_value(&key))
                 .map(|value| value.as_bytes().to_vec()),
         ),
-        HostCall::MobsWithData { key } => HostRet::MobDataRows(
+        RegistryCall::MobsWithData { key } => HostRet::MobDataRows(
             crate::mob::defs()
                 .iter()
                 .filter_map(|def| {
@@ -33,7 +33,7 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
                 })
                 .collect(),
         ),
-        HostCall::LootRoll { key, mut seed } => HostRet::Loot(
+        RegistryCall::LootRoll { key, mut seed } => HostRet::Loot(
             petramond_world::loot::catalog()
                 .roll(&key, || super::splitmix_next(&mut seed))
                 .map(|stacks| {
@@ -43,16 +43,16 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
                         .collect()
                 }),
         ),
-        HostCall::StructureInfo { key } => HostRet::StructureInfo(
+        RegistryCall::StructureInfo { key } => HostRet::StructureInfo(
             petramond_world::structure::by_key(&key).map(|template| Box::new(template.info())),
         ),
-        HostCall::ResolveBlock { name } => HostRet::Block(
+        RegistryCall::ResolveBlock { name } => HostRet::Block(
             petramond_world::registry::names()
                 .blocks
                 .id(&name)
                 .map(mod_api::BlockId),
         ),
-        HostCall::ResolveItem { name } => HostRet::Item(
+        RegistryCall::ResolveItem { name } => HostRet::Item(
             petramond_world::registry::names()
                 .items
                 .id(&name)
@@ -62,7 +62,7 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
         // holding a stale id degrades, it is not a protocol break. Their id
         // lists share the sim batch cap (a legitimate batch never exceeds
         // the 256-id space anyway).
-        HostCall::BlockNames { blocks } => match batch_guard("BlockNames id", blocks.len()) {
+        RegistryCall::BlockNames { blocks } => match batch_guard("BlockNames id", blocks.len()) {
             Some(err) => err,
             None => HostRet::Names(
                 blocks
@@ -76,7 +76,7 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
                     .collect(),
             ),
         },
-        HostCall::ItemNames { items } => match batch_guard("ItemNames id", items.len()) {
+        RegistryCall::ItemNames { items } => match batch_guard("ItemNames id", items.len()) {
             Some(err) => err,
             None => HostRet::Names(
                 items
@@ -93,10 +93,10 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
         // Mob species speak their `mobs.json` KEY (the string the whole mob
         // surface already uses); the def table is id-ordered, so id → key is
         // an index and key → id the shared O(1) hash index.
-        HostCall::ResolveMob { key } => {
+        RegistryCall::ResolveMob { key } => {
             HostRet::MobKind(crate::mob::by_key(&key).map(|m| mod_api::MobId(m.0)))
         }
-        HostCall::ResolveCondition { key } => {
+        RegistryCall::ResolveCondition { key } => {
             HostRet::Condition(petramond_world::condition::by_name(&key).map(|id| {
                 let def = id.def();
                 mod_api::ConditionInfoData {
@@ -106,7 +106,7 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
                 }
             }))
         }
-        HostCall::ConditionNames { conditions } => {
+        RegistryCall::ConditionNames { conditions } => {
             match batch_guard("ConditionNames id", conditions.len()) {
                 Some(err) => err,
                 None => HostRet::Names(
@@ -121,7 +121,7 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
                 ),
             }
         }
-        HostCall::MobNames { mobs } => match batch_guard("MobNames id", mobs.len()) {
+        RegistryCall::MobNames { mobs } => match batch_guard("MobNames id", mobs.len()) {
             Some(err) => err,
             None => HostRet::Names(
                 mobs.iter()
@@ -135,7 +135,7 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
         },
         // Tag membership never interns: a name nothing lists is an empty
         // set, and a query cannot grow the tag table.
-        HostCall::BlocksByTag { tag } => {
+        RegistryCall::BlocksByTag { tag } => {
             HostRet::BlockList(match petramond_world::block::BlockTag::lookup(&tag) {
                 Some(t) => petramond_world::block::Block::all()
                     .iter()
@@ -145,7 +145,7 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
                 None => Vec::new(),
             })
         }
-        HostCall::ItemsByTag { tag } => {
+        RegistryCall::ItemsByTag { tag } => {
             HostRet::ItemList(match petramond_world::item::ItemTag::lookup(&tag) {
                 Some(t) => petramond_world::item::ItemType::all()
                     .iter()
@@ -158,7 +158,7 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
         // The row AS A STACK CARRIES IT: the instance data interns to the
         // same variant the inventory would hold, so `ItemStack::tool` applies
         // an augment's override exactly as mining and melee do.
-        HostCall::ItemInfo { item, data } => {
+        RegistryCall::ItemInfo { item, data } => {
             let variant = match super::guards::intern_abi_data("ItemInfo", &data) {
                 Ok(v) => v,
                 Err(e) => return e,
@@ -171,17 +171,17 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
         }
         // The shape-kind resolver: like the block/item/mob resolvers, a key→id
         // lookup over the process-wide registry, unknown key = `None`.
-        HostCall::ResolveShape { key } => {
+        RegistryCall::ResolveShape { key } => {
             HostRet::MaybeU16(petramond_world::block::shape_kind_id_by_key(&key))
         }
         // The row-data interop surface: opaque raw JSON a consuming system's
         // key names — same never-interns contract as the tag queries.
-        HostCall::ItemDataGet { item, key } => HostRet::Bytes(
+        RegistryCall::ItemDataGet { item, key } => HostRet::Bytes(
             petramond_world::item::ItemType(item.0)
                 .data_value(&key)
                 .map(|v| v.as_bytes().to_vec()),
         ),
-        HostCall::ItemsWithData { key } => HostRet::ItemDataRows(
+        RegistryCall::ItemsWithData { key } => HostRet::ItemDataRows(
             petramond_world::item::ItemType::all()
                 .iter()
                 .filter_map(|i| {
@@ -190,17 +190,17 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
                 })
                 .collect(),
         ),
-        HostCall::BlockDataGet { block, key } => HostRet::Bytes(
+        RegistryCall::BlockDataGet { block, key } => HostRet::Bytes(
             petramond_world::block::Block::from_id(block.0)
                 .data_value(&key)
                 .map(|v| v.as_bytes().to_vec()),
         ),
-        HostCall::BlockInfo { block } => HostRet::BlockInfo(block_info_data(block).map(Box::new)),
-        HostCall::BlockInfos { blocks } => match batch_guard("BlockInfos id", blocks.len()) {
+        RegistryCall::BlockInfo { block } => HostRet::BlockInfo(block_info_data(block).map(Box::new)),
+        RegistryCall::BlockInfos { blocks } => match batch_guard("BlockInfos id", blocks.len()) {
             Some(err) => err,
             None => HostRet::BlockInfos(blocks.into_iter().map(block_info_data).collect()),
         },
-        HostCall::BlocksWithData { key } => HostRet::BlockDataRows(
+        RegistryCall::BlocksWithData { key } => HostRet::BlockDataRows(
             petramond_world::block::Block::all()
                 .iter()
                 .filter_map(|b| {
@@ -209,9 +209,6 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
                 })
                 .collect(),
         ),
-        other => HostRet::Error(format!(
-            "non-registry call {other:?} mis-routed to handle_registry_call (host bug)"
-        )),
     }
 }
 
@@ -343,7 +340,7 @@ fn fluid_info(f: &petramond_world::fluid::FluidDef) -> mod_api::FluidInfoData {
 
 #[cfg(test)]
 mod tests {
-    use mod_api::{HostCall, HostRet};
+    use mod_api::{calls, HostCall, HostRet};
 
     use crate::modding::host::{handle_host_call, ModStoreData};
 
@@ -356,9 +353,9 @@ mod tests {
         let mut store = ModStoreData::new("somemod", 1);
         let got = handle_host_call(
             &mut store,
-            HostCall::ResolveItem {
+            HostCall::from(calls::ResolveItem {
                 name: "petramond:stick".into(),
-            },
+            }),
         );
         let HostRet::Item(Some(id)) = got else {
             panic!("expected a resolved id for petramond:stick, got {got:?}");
@@ -367,9 +364,9 @@ mod tests {
         // id → name inverts the resolution; an out-of-range id is None.
         let names = handle_host_call(
             &mut store,
-            HostCall::ItemNames {
+            HostCall::from(calls::ItemNames {
                 items: vec![id, mod_api::ItemId(u16::MAX)],
-            },
+            }),
         );
         assert_eq!(
             names,
@@ -377,25 +374,25 @@ mod tests {
         );
         let unknown = handle_host_call(
             &mut store,
-            HostCall::ResolveItem {
+            HostCall::from(calls::ResolveItem {
                 name: "somemod:not_a_thing".into(),
-            },
+            }),
         );
         assert_eq!(unknown, HostRet::Item(None));
 
         // The block side mirrors it.
         let got = handle_host_call(
             &mut store,
-            HostCall::ResolveBlock {
+            HostCall::from(calls::ResolveBlock {
                 name: "petramond:air".into(),
-            },
+            }),
         );
         assert_eq!(got, HostRet::Block(Some(mod_api::BlockId(0))));
         let names = handle_host_call(
             &mut store,
-            HostCall::BlockNames {
+            HostCall::from(calls::BlockNames {
                 blocks: vec![mod_api::BlockId(0), mod_api::BlockId(u16::MAX)],
-            },
+            }),
         );
         assert_eq!(
             names,
@@ -404,9 +401,9 @@ mod tests {
         assert_eq!(
             handle_host_call(
                 &mut store,
-                HostCall::ResolveBlock {
+                HostCall::from(calls::ResolveBlock {
                     name: "no_such:block".into(),
-                },
+                }),
             ),
             HostRet::Block(None)
         );
@@ -414,9 +411,9 @@ mod tests {
         // The mob-species side mirrors it (key vocabulary).
         let got = handle_host_call(
             &mut store,
-            HostCall::ResolveMob {
+            HostCall::from(calls::ResolveMob {
                 key: "petramond:owl".into(),
-            },
+            }),
         );
         let HostRet::MobKind(Some(kind)) = got else {
             panic!("expected a resolved species id for petramond:owl, got {got:?}");
@@ -425,18 +422,18 @@ mod tests {
         assert_eq!(
             handle_host_call(
                 &mut store,
-                HostCall::MobNames {
+                HostCall::from(calls::MobNames {
                     mobs: vec![kind, mod_api::MobId(u8::MAX)],
-                },
+                }),
             ),
             HostRet::Names(vec![Some("petramond:owl".into()), None])
         );
         assert_eq!(
             handle_host_call(
                 &mut store,
-                HostCall::ResolveMob {
+                HostCall::from(calls::ResolveMob {
                     key: "no_such:mob".into(),
-                },
+                }),
             ),
             HostRet::MobKind(None)
         );
@@ -450,9 +447,9 @@ mod tests {
         let mut data = ModStoreData::new("alpha", 1);
         let HostRet::BlockList(leaves) = handle_host_call(
             &mut data,
-            HostCall::BlocksByTag {
+            HostCall::from(calls::BlocksByTag {
                 tag: "petramond:leaves".into(),
-            },
+            }),
         ) else {
             panic!("block list expected");
         };
@@ -462,7 +459,7 @@ mod tests {
         assert!(!leaves.contains(&mod_api::BlockId(petramond_world::block::Block::Stone.id())));
         for tag in ["no_such_tag", "mymod:no_such_tag"] {
             assert_eq!(
-                handle_host_call(&mut data, HostCall::BlocksByTag { tag: tag.into() }),
+                handle_host_call(&mut data, HostCall::from(calls::BlocksByTag { tag: tag.into() })),
                 HostRet::BlockList(Vec::new()),
                 "unlisted tag '{tag}' must read as an empty set"
             );
@@ -477,9 +474,9 @@ mod tests {
         let mut data = ModStoreData::new("alpha", 1);
         let HostRet::ItemList(shovels) = handle_host_call(
             &mut data,
-            HostCall::ItemsByTag {
+            HostCall::from(calls::ItemsByTag {
                 tag: "petramond:shovels".into(),
-            },
+            }),
         ) else {
             panic!("item list expected");
         };
@@ -495,7 +492,7 @@ mod tests {
         assert!(!shovels.contains(&by_name("petramond:stick")));
         for tag in ["no_such_tag", "mymod:no_such_tag"] {
             assert_eq!(
-                handle_host_call(&mut data, HostCall::ItemsByTag { tag: tag.into() }),
+                handle_host_call(&mut data, HostCall::from(calls::ItemsByTag { tag: tag.into() })),
                 HostRet::ItemList(Vec::new()),
                 "unlisted tag '{tag}' must read as an empty set"
             );
@@ -511,10 +508,10 @@ mod tests {
         let mut data = ModStoreData::new("alpha", 1);
         let HostRet::ItemInfo(Some(info)) = handle_host_call(
             &mut data,
-            HostCall::ItemInfo {
+            HostCall::from(calls::ItemInfo {
                 item: "petramond:iron_pickaxe".into(),
                 data: vec![],
-            },
+            }),
         ) else {
             panic!("item info expected");
         };
@@ -525,10 +522,10 @@ mod tests {
 
         let HostRet::ItemInfo(Some(stone)) = handle_host_call(
             &mut data,
-            HostCall::ItemInfo {
+            HostCall::from(calls::ItemInfo {
                 item: "petramond:stone".into(),
                 data: vec![],
-            },
+            }),
         ) else {
             panic!("item info expected");
         };
@@ -540,10 +537,10 @@ mod tests {
         assert_eq!(
             handle_host_call(
                 &mut data,
-                HostCall::ItemInfo {
+                HostCall::from(calls::ItemInfo {
                     item: "alpha:not_a_thing".into(),
                     data: vec![],
-                },
+                }),
             ),
             HostRet::ItemInfo(None)
         );

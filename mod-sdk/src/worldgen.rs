@@ -3,6 +3,7 @@
 //! seeding contract. (Block/item name resolution lives in
 //! [`crate::registry`].)
 
+use mod_api::calls;
 use mod_api::{BlockId, WorldgenStage};
 mod colony;
 mod terrain;
@@ -160,7 +161,7 @@ host_fn! {
 /// [`terrain_blocks_at`] for one whole 16³ section, in section order
 /// (`(y * 16 + z) * 16 + x`), without shipping every position.
 pub fn terrain_section_at(section: [i32; 3]) -> Vec<BlockId> {
-    match crate::__rt::host_call(&crate::HostCall::TerrainSectionAt { section }) {
+    match crate::__rt::host_call(&crate::HostCall::from(calls::TerrainSectionAt { section })) {
         crate::HostRet::SectionBlocks(bytes) => bytes
             .chunks_exact(2)
             .map(|pair| BlockId(u16::from_le_bytes([pair[0], pair[1]])))

@@ -12,7 +12,7 @@
 //! the engine range in pack load order, so it has no constant here and
 //! [`name`] / [`by_name`] do not know it. UNDERGROUND biomes are the
 //! precedent for addressing such ids: the ABI speaks NAMES and session ids
-//! ([`HostCall::ResolveUndergroundBiome`](crate::HostCall) +
+//! ([`WorldgenCall::ResolveUndergroundBiome`](crate::HostCall) +
 //! `UndergroundBiomeAt`), and there is deliberately no frozen name table
 //! here for them.
 

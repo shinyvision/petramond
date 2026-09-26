@@ -479,16 +479,16 @@ mod bridge {
             .expect("no fake world is installed on this thread");
         let mut state = world.state_mut();
         match call {
-            HostCall::WorldKvGet { key } => HostRet::Bytes(state.kv.get(key).cloned()),
-            HostCall::WorldKvSet { key, value } => {
+            HostCall::Kv(mod_sdk::KvCall::WorldKvGet { key }) => HostRet::Bytes(state.kv.get(key).cloned()),
+            HostCall::Kv(mod_sdk::KvCall::WorldKvSet { key, value }) => {
                 state.kv.insert(key.clone(), value.clone());
                 HostRet::Unit
             }
-            HostCall::WorldKvDelete { key } => HostRet::Bool(state.kv.remove(key).is_some()),
-            HostCall::BlockChangesSince { since } => {
+            HostCall::Kv(mod_sdk::KvCall::WorldKvDelete { key }) => HostRet::Bool(state.kv.remove(key).is_some()),
+            HostCall::Block(mod_sdk::BlockCall::BlockChangesSince { since }) => {
                 HostRet::BlockChanges(super::answers::changes_since(&state, *since))
             }
-            HostCall::Log { msg } => {
+            HostCall::Core(mod_sdk::CoreCall::Log { msg }) => {
                 state.deeds.push(Deed::Logged(msg.clone()));
                 HostRet::Unit
             }

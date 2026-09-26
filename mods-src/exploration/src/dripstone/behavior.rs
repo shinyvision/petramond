@@ -391,12 +391,12 @@ mod tests {
         static ONCE: OnceLock<()> = OnceLock::new();
         ONCE.get_or_init(|| {
             let _ = mod_sdk::__rt::NATIVE_HOST.set(Box::new(|call| match call {
-                HostCall::GetBlock { pos } => HostRet::Block(with(|f| f.seen(*pos))),
-                HostCall::SetBlock { pos, block } => {
+                HostCall::Block(mod_sdk::BlockCall::GetBlock { pos }) => HostRet::Block(with(|f| f.seen(*pos))),
+                HostCall::Block(mod_sdk::BlockCall::SetBlock { pos, block }) => {
                     with(|f| f.write(*pos, *block));
                     HostRet::Bool(true)
                 }
-                HostCall::CollisionShapeAt { pos } => HostRet::CollisionShape(with(|f| {
+                HostCall::Block(mod_sdk::BlockCall::CollisionShapeAt { pos }) => HostRet::CollisionShape(with(|f| {
                     f.blocks.get(pos).map(|id| {
                         if *id == ROCK.0 || *id == DRIPSTONE.0 {
                             CollisionShape::Full
@@ -405,29 +405,29 @@ mod tests {
                         }
                     })
                 })),
-                HostCall::SwapBlock { pos, block } => {
+                HostCall::Block(mod_sdk::BlockCall::SwapBlock { pos, block }) => {
                     with(|f| f.blocks.insert(*pos, block.0));
                     HostRet::Bool(true)
                 }
-                HostCall::SectionKvGet { pos, key } => {
+                HostCall::Kv(mod_sdk::KvCall::SectionKvGet { pos, key }) => {
                     HostRet::Bytes(with(|f| f.kv.get(&(*pos, key.clone())).cloned()))
                 }
-                HostCall::SectionKvSet { pos, key, value } => {
+                HostCall::Kv(mod_sdk::KvCall::SectionKvSet { pos, key, value }) => {
                     with(|f| f.kv.insert((*pos, key.clone()), value.clone()));
                     HostRet::Bool(true)
                 }
-                HostCall::RngU64 { .. } => HostRet::U64(with(|f| {
+                HostCall::Core(mod_sdk::CoreCall::RngU64 { .. }) => HostRet::U64(with(|f| {
                     if f.rolls.is_empty() {
                         0
                     } else {
                         f.rolls.remove(0)
                     }
                 })),
-                HostCall::LaunchItem { pos, .. } => {
+                HostCall::Entity(mod_sdk::EntityCall::LaunchItem { pos, .. }) => {
                     with(|f| f.launched.push(cell(*pos)));
                     HostRet::U64(1)
                 }
-                HostCall::SpawnItem { pos, .. } => {
+                HostCall::Entity(mod_sdk::EntityCall::SpawnItem { pos, .. }) => {
                     with(|f| f.dropped.push(cell(*pos)));
                     HostRet::Bool(true)
                 }

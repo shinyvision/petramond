@@ -81,8 +81,10 @@ pub enum GuestCall {
     TickSystem {
         id: u32,
     },
-    /// Handle one event with the handler registered under `id`. The guest
-    /// returns the (possibly mutated) payload in [`GuestRet::Event`]. The
+    /// Handle one event with the handler registered under `id` (only events
+    /// its registration filter admitted reach it). The guest returns its
+    /// verdict, and for a kind with mutable fields the (possibly mutated)
+    /// payload, in [`GuestRet::Event`]. The
     /// event's kind is the payload's variant ([`EventPayload::kind`]) — this
     /// hot dispatch deliberately carries no redundant kind lane.
     HandleEvent {
@@ -142,7 +144,7 @@ pub enum GuestCall {
     /// A button of the mod's own GUI was clicked (dispatched on the tick, in
     /// click order, to the mod whose namespace `kind_key` carries). `at` is
     /// the block or mob the GUI session is anchored on (`None` for an
-    /// unanchored [`HostCall::GuiOpen`]). → [`GuestRet::Unit`].
+    /// unanchored [`GuiCall::GuiOpen`](crate::GuiCall::GuiOpen)). → [`GuestRet::Unit`].
     GuiClick {
         kind_key: String,
         widget_id: String,
@@ -159,7 +161,7 @@ pub enum GuestCall {
 
     // --- block behaviors --------------------------------------------------------
     /// A hook fired on a block whose row's `behavior` the mod registered via
-    /// [`HostCall::RegisterBlockBehavior`]. Dispatched on the game tick, in
+    /// [`CoreCall::RegisterBlockBehavior`](crate::CoreCall::RegisterBlockBehavior). Dispatched on the game tick, in
     /// hook-fire order, right after the world's own scheduled/random ticks —
     /// so a handler edits the world through sim host calls one dispatch step
     /// later than an engine-compiled behavior would. → [`GuestRet::Unit`].
@@ -171,7 +173,7 @@ pub enum GuestCall {
 
     // --- Scripted AI nodes (landed 2026-07-06) ------------------------------
     /// One AI decision for one mob, this tick — the node the mod registered
-    /// via [`HostCall::RegisterAiNode`]. DECISION-ONLY: the dispatch runs
+    /// via [`CoreCall::RegisterAiNode`](crate::CoreCall::RegisterAiNode). DECISION-ONLY: the dispatch runs
     /// inside the mob tick with NO simulation scope, so sim host calls
     /// (world edits, spawns, player state) error here; the core calls
     /// (`CurrentTick`, RNG, log) work, and `ctx.tick` already carries the
@@ -255,11 +257,16 @@ pub enum GuestCall {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum GuestRet {
     Unit,
-    /// Reply to [`GuestCall::HandleEvent`]: the verdict plus the payload echoed
-    /// back so the engine can read the mutable fields.
+    /// Reply to [`GuestCall::HandleEvent`]: the verdict, plus — for the kinds
+    /// whose payload has mutable fields ([`EventKind::echoes_payload`]) — the
+    /// payload echoed back so the engine can read them. Every other kind
+    /// answers `payload: None`: an observe-only dispatch does not pay to
+    /// copy its payload back out.
+    ///
+    /// [`EventKind::echoes_payload`]: crate::EventKind::echoes_payload
     Event {
         outcome: Outcome,
-        payload: EventPayload,
+        payload: Option<EventPayload>,
     },
     /// Reply to [`GuestCall::GenFeature`] and to non-climate/terrain
     /// [`GuestCall::GenStage`]: world-position block writes, applied in order

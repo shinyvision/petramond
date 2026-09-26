@@ -16,7 +16,9 @@
 //! capability negotiation). The rules for changing this crate:
 //!
 //! - **Minor bump** (`ABI_VERSION.minor`): the ABI only GROWS — a variant
-//!   appended at the END of a call/reply enum, or a new [`Capabilities`] bit.
+//!   appended at the END of a call/reply enum (for the nested [`HostCall`]:
+//!   a call at the end of its domain enum, or a domain at the end of
+//!   [`HostCall`]), or a new [`Capabilities`] bit.
 //!   Older guests keep working: a call they do not know is answered with
 //!   [`GuestRet::Unsupported`], and a newer guest's unknown call to an older
 //!   host gets [`HostRet::Unsupported`]. A new reply variant may only answer a
@@ -29,14 +31,24 @@
 //!
 //! `wire_pin` records the encoding of every variant so neither kind of change
 //! happens by accident.
+//!
+//! # Legality and errors
+//!
+//! Every host call is declared with its [`Legality`] (the instance sides it
+//! reaches, whether it is confined to `mod_init`, whether it mutates); the
+//! host derives its gates from [`HostCall::legality`], never from a list of
+//! its own. A refused call answers a typed [`HostError`] (see [`ErrorCode`]
+//! for which refusals a mod can recover from).
 
 mod abi;
 pub mod biome;
 mod client;
 mod data;
+mod error;
 mod events;
 mod ids;
 pub mod json;
+mod legality;
 mod limits;
 mod protocol;
 mod sched;
@@ -50,8 +62,10 @@ mod wire_pin;
 pub use abi::*;
 pub use client::*;
 pub use data::*;
+pub use error::*;
 pub use events::*;
 pub use ids::*;
+pub use legality::*;
 pub use limits::*;
 pub use protocol::*;
 pub use sched::*;

@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 use crate::ids::{BlockId, ItemId, MobId, PlayerId};
 
 mod ai;
+mod batch;
 mod construction;
 
 pub use ai::*;
+pub use batch::*;
 pub use construction::*;
 
 /// Maximum UTF-8 byte length of a named mob animation crossing the mod API.
@@ -24,12 +26,12 @@ pub const MAX_MOB_ANIM_PHASE_MAGNITUDE: f32 = 1_000_000.0;
 pub const MAX_MOB_ANIM_RATE_MAGNITUDE: f32 = 1_000.0;
 
 /// One value of the open GUI session's state map. Written by mods
-/// on the tick ([`HostCall::GuiStateSet`]); read per frame by the renderer to
+/// on the tick ([`GuiCall::GuiStateSet`](crate::GuiCall::GuiStateSet)); read per frame by the renderer to
 /// drive `label` text, `rotimage` angles (radians, `F32`), and mod overlay
 /// fractions. Keys are mod-local: the map belongs to one GUI session (cleared
 /// on open/close), so no namespace prefix is enforced.
 ///
-/// [`HostCall::GuiStateSet`]: crate::HostCall::GuiStateSet
+/// [`GuiCall::GuiStateSet`]: crate::GuiCall::GuiStateSet
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum GuiValue {
     F32(f32),
@@ -50,7 +52,7 @@ pub enum MobTagValue {
     Str(String),
 }
 
-/// The outcome of [`HostCall::MobTagGet`](crate::HostCall::MobTagGet): a mob
+/// The outcome of [`TagCall::MobTagGet`](crate::TagCall::MobTagGet): a mob
 /// that is GONE (dead, unloaded, never spawned) is told apart from a live mob
 /// simply not carrying the key — the two mean different things to a mod
 /// (retry vs. store), so they are never conflated.
@@ -64,15 +66,15 @@ pub enum MobTagLookup {
     Value(MobTagValue),
 }
 
-/// A live mob's snapshot for [`HostCall::MobsInRadius`] /
-/// [`HostCall::MobsWithTag`]. The mob's ADDRESS is the stable
+/// A live mob's snapshot for [`EntityCall::MobsInRadius`](crate::EntityCall::MobsInRadius) /
+/// [`TagCall::MobsWithTag`](crate::TagCall::MobsWithTag). The mob's ADDRESS is the stable
 /// [`id`](Self::id) — every mob call and event payload speaks it
 /// (see the mob-addressing note on [`HostCall`](crate::HostCall)). `index` is
 /// only an intra-tick JOIN key against other snapshots taken this tick; it is
 /// never accepted by a call and renumbers on any removal.
 ///
-/// [`HostCall::MobsInRadius`]: crate::HostCall::MobsInRadius
-/// [`HostCall::MobsWithTag`]: crate::HostCall::MobsWithTag
+/// [`EntityCall::MobsInRadius`]: crate::EntityCall::MobsInRadius
+/// [`TagCall::MobsWithTag`]: crate::TagCall::MobsWithTag
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct MobSnapshot {
     /// Live-set list position THIS TICK — an intra-tick join key only, never
@@ -83,12 +85,12 @@ pub struct MobSnapshot {
     /// a snapshot carries no `"pack:species"` string, because a crowd query
     /// answers dozens of snapshots per tick and a heap string per mob is the
     /// most expensive thing in the whole marshalling. Resolve a key ONCE with
-    /// [`HostCall::ResolveMob`] (or [`HostCall::MobNames`] for the reverse)
+    /// [`RegistryCall::ResolveMob`](crate::RegistryCall::ResolveMob) (or [`RegistryCall::MobNames`](crate::RegistryCall::MobNames) for the reverse)
     /// and compare ids.
     ///
     /// [`EventPayload::MobDied`]: crate::EventPayload::MobDied
-    /// [`HostCall::ResolveMob`]: crate::HostCall::ResolveMob
-    /// [`HostCall::MobNames`]: crate::HostCall::MobNames
+    /// [`RegistryCall::ResolveMob`]: crate::RegistryCall::ResolveMob
+    /// [`RegistryCall::MobNames`]: crate::RegistryCall::MobNames
     pub kind: MobId,
     /// Feet position.
     pub pos: [f64; 3],
@@ -99,31 +101,31 @@ pub struct MobSnapshot {
     pub id: u64,
     /// Body facing, radians about +Y. MOB convention: yaw `0` faces `-Z`,
     /// so the facing direction is `(-sin yaw, 0, -cos yaw)` — the same frame
-    /// [`HostCall::MobDrive`] yaws speak.
+    /// [`EntityCall::MobDrive`](crate::EntityCall::MobDrive) yaws speak.
     ///
-    /// [`HostCall::MobDrive`]: crate::HostCall::MobDrive
+    /// [`EntityCall::MobDrive`]: crate::EntityCall::MobDrive
     pub yaw: f32,
     /// Body pitch, radians about the lateral axis inside the yaw, positive =
     /// nose up. `0` for every body the engine moves itself; a body a mod
-    /// authors through [`HostCall::MobKinematic`] reads back what it was
+    /// authors through [`EntityCall::MobKinematic`](crate::EntityCall::MobKinematic) reads back what it was
     /// given, and a released body eases back to level.
     ///
-    /// [`HostCall::MobKinematic`]: crate::HostCall::MobKinematic
+    /// [`EntityCall::MobKinematic`]: crate::EntityCall::MobKinematic
     pub pitch: f32,
     /// Body roll, radians about the facing axis inside the yaw and pitch,
     /// positive = right side up. Level and authored exactly like `pitch`.
     pub roll: f32,
     /// Current velocity (m/s). Read-only; steer through
-    /// [`HostCall::MobDrive`].
+    /// [`EntityCall::MobDrive`](crate::EntityCall::MobDrive).
     ///
-    /// [`HostCall::MobDrive`]: crate::HostCall::MobDrive
+    /// [`EntityCall::MobDrive`]: crate::EntityCall::MobDrive
     pub vel: [f32; 3],
     /// Whether the body rests on the ground this tick (the same fact the
     /// engine's own locomotion gates jumps on) — with
     /// [`moving`](Self::moving), what a gait policy needs to decide a
-    /// [`HostCall::MobDrive`] launch.
+    /// [`EntityCall::MobDrive`](crate::EntityCall::MobDrive) launch.
     ///
-    /// [`HostCall::MobDrive`]: crate::HostCall::MobDrive
+    /// [`EntityCall::MobDrive`]: crate::EntityCall::MobDrive
     pub on_ground: bool,
     /// Whether the brain's WALKING locomotion drove the body this tick — the
     /// same fact that selects the walk pose. Deliberate motion only: shoves
@@ -154,20 +156,20 @@ pub struct MobSnapshot {
     pub conditions: Vec<ConditionData>,
 }
 
-/// One item entity's snapshot ([`HostCall::ItemEntity`]): a stack loose in
+/// One item entity's snapshot ([`EntityCall::ItemEntity`](crate::EntityCall::ItemEntity)): a stack loose in
 /// the world, in flight, or lodged in a block.
 ///
-/// [`HostCall::ItemEntity`]: crate::HostCall::ItemEntity
+/// [`EntityCall::ItemEntity`]: crate::EntityCall::ItemEntity
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ItemEntityData {
     /// Stable session id — THE item-entity address (event payloads, calls).
     pub id: u64,
     /// What it is: item, count, instance data.
     pub stack: ItemStackData,
-    /// Who launched it ([`HostCall::LaunchItem`]), while it is in flight;
+    /// Who launched it ([`EntityCall::LaunchItem`](crate::EntityCall::LaunchItem)), while it is in flight;
     /// `None` for a drop, or once it has come to rest.
     ///
-    /// [`HostCall::LaunchItem`]: crate::HostCall::LaunchItem
+    /// [`EntityCall::LaunchItem`]: crate::EntityCall::LaunchItem
     pub owner: Option<EntityRef>,
     /// Centre, world space.
     pub pos: [f64; 3],
@@ -181,10 +183,10 @@ pub struct ItemEntityData {
 pub enum ItemMotion {
     /// An ordinary drop: falling, settling, drifting to a reaching player.
     Loose,
-    /// Launched and flying ([`HostCall::LaunchItem`]): pointed along its
+    /// Launched and flying ([`EntityCall::LaunchItem`](crate::EntityCall::LaunchItem)): pointed along its
     /// velocity, striking what it meets.
     ///
-    /// [`HostCall::LaunchItem`]: crate::HostCall::LaunchItem
+    /// [`EntityCall::LaunchItem`]: crate::EntityCall::LaunchItem
     Flight,
     /// Lodged in `cell`, heading kept, until that block goes.
     Stuck { cell: [i32; 3] },
@@ -192,20 +194,20 @@ pub enum ItemMotion {
 
 /// A living thing a call can name as the ACTOR behind something — the
 /// attacker a damage request is landed on behalf of
-/// ([`HostCall::DamageMob`], [`HostCall::DamagePlayer`]). Players by
+/// ([`EntityCall::DamageMob`](crate::EntityCall::DamageMob), [`PlayerCall::DamagePlayer`](crate::PlayerCall::DamagePlayer)). Players by
 /// session id, mobs by their stable id.
 ///
-/// [`HostCall::DamageMob`]: crate::HostCall::DamageMob
-/// [`HostCall::DamagePlayer`]: crate::HostCall::DamagePlayer
+/// [`EntityCall::DamageMob`]: crate::EntityCall::DamageMob
+/// [`PlayerCall::DamagePlayer`]: crate::PlayerCall::DamagePlayer
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum EntityRef {
     Player(PlayerId),
     Mob(u64),
 }
 
-/// What stops a [`HostCall::Raycast`].
+/// What stops a [`BlockCall::Raycast`](crate::BlockCall::Raycast).
 ///
-/// [`HostCall::Raycast`]: crate::HostCall::Raycast
+/// [`BlockCall::Raycast`]: crate::BlockCall::Raycast
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RayFilter {
     /// What the crosshair selects: every block with a selection shape —
@@ -219,9 +221,9 @@ pub enum RayFilter {
     Collidable,
 }
 
-/// One [`HostCall::Raycast`] hit.
+/// One [`BlockCall::Raycast`](crate::BlockCall::Raycast) hit.
 ///
-/// [`HostCall::Raycast`]: crate::HostCall::Raycast
+/// [`BlockCall::Raycast`]: crate::BlockCall::Raycast
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
 pub struct RaycastHitData {
     /// The cell the ray stopped in.
@@ -241,26 +243,26 @@ pub struct RaycastHitData {
 pub enum MountTarget {
     /// Live mob, addressed by its stable session id.
     Mob(u64),
-    /// A static world-space pose anchor ([`HostCall::PlayerPoseSet`]) — the
+    /// A static world-space pose anchor ([`EntityCall::PlayerPoseSet`](crate::EntityCall::PlayerPoseSet)) — the
     /// anchor position the pose was pinned at.
     ///
-    /// [`HostCall::PlayerPoseSet`]: crate::HostCall::PlayerPoseSet
+    /// [`EntityCall::PlayerPoseSet`]: crate::EntityCall::PlayerPoseSet
     Anchor([f64; 3]),
 }
 
-/// Named actor-pose vocabulary for [`HostCall::PlayerPoseSet`] (`0` is
+/// Named actor-pose vocabulary for [`EntityCall::PlayerPoseSet`](crate::EntityCall::PlayerPoseSet) (`0` is
 /// reserved). Unknown values pin the body in its ordinary rest pose — like a
 /// disabled pack, never an error.
 ///
-/// [`HostCall::PlayerPoseSet`]: crate::HostCall::PlayerPoseSet
+/// [`EntityCall::PlayerPoseSet`]: crate::EntityCall::PlayerPoseSet
 pub mod pose {
     /// Seated: thighs forward, shins down — chairs, benches, sofas.
     pub const SITTING: u8 = 1;
 }
 
-/// One rider of a mount, for [`HostCall::MobRiders`].
+/// One rider of a mount, for [`EntityCall::MobRiders`](crate::EntityCall::MobRiders).
 ///
-/// [`HostCall::MobRiders`]: crate::HostCall::MobRiders
+/// [`EntityCall::MobRiders`]: crate::EntityCall::MobRiders
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub struct MobRiderData {
     /// Seat index into the mount's declared `seats` list.
@@ -270,9 +272,9 @@ pub struct MobRiderData {
 }
 
 /// Seat declaration and current occupants of one mount, for
-/// [`HostCall::MobRiders`].
+/// [`EntityCall::MobRiders`](crate::EntityCall::MobRiders).
 ///
-/// [`HostCall::MobRiders`]: crate::HostCall::MobRiders
+/// [`EntityCall::MobRiders`]: crate::EntityCall::MobRiders
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct MobRidersData {
     /// Number of seats declared by the mount's row. Valid seat indices
@@ -291,11 +293,11 @@ impl MobRidersData {
 }
 
 /// A placed model-block group's world placement, for
-/// [`HostCall::BlockModelGroup`] — everything block-local policy (a seat
+/// [`EntityCall::BlockModelGroup`](crate::EntityCall::BlockModelGroup) — everything block-local policy (a seat
 /// layout, a machine front) needs to map its own footprint-space data into
 /// the world.
 ///
-/// [`HostCall::BlockModelGroup`]: crate::HostCall::BlockModelGroup
+/// [`EntityCall::BlockModelGroup`]: crate::EntityCall::BlockModelGroup
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ModelGroupData {
     /// The group's BASE cell (the rotated footprint's min corner).
@@ -305,9 +307,9 @@ pub struct ModelGroupData {
 }
 
 /// Authoritative playback state of one active named mob animation, for
-/// [`HostCall::MobAnimState`].
+/// [`EntityCall::MobAnimState`](crate::EntityCall::MobAnimState).
 ///
-/// [`HostCall::MobAnimState`]: crate::HostCall::MobAnimState
+/// [`EntityCall::MobAnimState`]: crate::EntityCall::MobAnimState
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
 pub struct MobAnimStateData {
     /// Absolute authored-animation phase in seconds.
@@ -319,11 +321,11 @@ pub struct MobAnimStateData {
     pub seek: Option<f32>,
 }
 
-/// One player's movement intent this tick, for [`HostCall::PlayerInput`] —
+/// One player's movement intent this tick, for [`PlayerCall::PlayerInput`](crate::PlayerCall::PlayerInput) —
 /// decomposed into the player's own yaw frame so a driving mod never touches
 /// the world-space wish plumbing.
 ///
-/// [`HostCall::PlayerInput`]: crate::HostCall::PlayerInput
+/// [`PlayerCall::PlayerInput`]: crate::PlayerCall::PlayerInput
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
 pub struct PlayerInputData {
     /// Forward(+)/back(−) along the player's facing, `[-1, 1]`.
@@ -377,7 +379,7 @@ impl HeldPoseData {
     }
 }
 
-/// One hand's held-item pose for [`HostCall::SetPlayerHeldPose`]: an offset
+/// One hand's held-item pose for [`BodyCall::SetPlayerHeldPose`](crate::BodyCall::SetPlayerHeldPose): an offset
 /// per VIEW, because the two views hold an item from different authored poses
 /// (`firstperson_righthand` vs `thirdperson_righthand`), so the same intent is
 /// a different delta in each.
@@ -386,7 +388,7 @@ impl HeldPoseData {
 /// Blockbench applies to a left-hand slot (negate the x-translation and the
 /// y/z rotations).
 ///
-/// [`HostCall::SetPlayerHeldPose`]: crate::HostCall::SetPlayerHeldPose
+/// [`BodyCall::SetPlayerHeldPose`]: crate::BodyCall::SetPlayerHeldPose
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Default)]
 pub struct HeldPose {
     /// Composed onto the item's `firstperson_*hand` hold — the wielder's own
@@ -466,7 +468,7 @@ impl BonePoseData {
     }
 }
 
-/// The player rig's bone names, for [`HostCall::SetPlayerBonePose`]. Any
+/// The player rig's bone names, for [`BodyCall::SetPlayerBonePose`](crate::BodyCall::SetPlayerBonePose). Any
 /// authored name works; these are the shipped rig's, named by intent rather
 /// than by how the model file spells them.
 ///
@@ -474,7 +476,7 @@ impl BonePoseData {
 /// model's LEFT (the body faces engine-forward, which swaps the sides you
 /// see), so reaching for `"right_shoulder"` by intuition moves the wrong arm.
 ///
-/// [`HostCall::SetPlayerBonePose`]: crate::HostCall::SetPlayerBonePose
+/// [`BodyCall::SetPlayerBonePose`]: crate::BodyCall::SetPlayerBonePose
 pub mod bone {
     /// The head — rotating it composes with, and is overridden by, the
     /// engine's own head-look when an animation is not driving the head.
@@ -496,7 +498,7 @@ pub mod bone {
 }
 
 /// One thing a body does with its hands, and can be barred from doing
-/// ([`HostCall::SetPlayerDeniedActions`]).
+/// ([`PlayerCall::SetPlayerDeniedActions`](crate::PlayerCall::SetPlayerDeniedActions)).
 ///
 /// These are the three gates a player's own buttons drive, and they stay
 /// separate because they are separate gates: a body that can still mine but
@@ -507,7 +509,7 @@ pub mod bone {
 /// what lets the same press that raises a guard be the press the guard
 /// swallows.
 ///
-/// [`HostCall::SetPlayerDeniedActions`]: crate::HostCall::SetPlayerDeniedActions
+/// [`PlayerCall::SetPlayerDeniedActions`]: crate::PlayerCall::SetPlayerDeniedActions
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BodyAction {
     /// Swing at a mob, another player, or the air.
@@ -520,7 +522,7 @@ pub enum BodyAction {
 }
 
 /// One of a body's engine QUANTITIES a claim can scale
-/// ([`HostCall::SetPlayerAttribute`]): the engine keeps the base — a
+/// ([`PlayerCall::SetPlayerAttribute`](crate::PlayerCall::SetPlayerAttribute)): the engine keeps the base — a
 /// constant, a mode, a formula — and the resolved claims multiply it.
 ///
 /// The vocabulary is engine-defined and grows by appending a variant at the
@@ -528,7 +530,7 @@ pub enum BodyAction {
 /// (product across claimants, `1.0` releases), never an absolute, so any
 /// two packs' claims compose without an order to argue about.
 ///
-/// [`HostCall::SetPlayerAttribute`]: crate::HostCall::SetPlayerAttribute
+/// [`PlayerCall::SetPlayerAttribute`]: crate::PlayerCall::SetPlayerAttribute
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PlayerAttribute {
     /// The land-speed multiplier: scales whatever mode the player's own
@@ -577,7 +579,7 @@ pub enum SwingKind {
 }
 
 /// What a body's hands are doing with the PRIMARY button this tick (client:
-/// frame), as [`HostCall::PlayerState`] / [`HostCall::Players`] publish it —
+/// frame), as [`BodyCall::PlayerState`](crate::BodyCall::PlayerState) / [`PlayerCall::Players`](crate::PlayerCall::Players) publish it —
 /// the raw swing facts a body-animating mod keys its own clock off.
 ///
 /// Deliberately raw TRIGGERS, not a phase: each side runs its own clock off
@@ -585,8 +587,8 @@ pub enum SwingKind {
 /// recoil-cue pattern does. The mining level is a LEVEL (the held button is
 /// working a block), the one-shots are edges the newest wins.
 ///
-/// [`HostCall::PlayerState`]: crate::HostCall::PlayerState
-/// [`HostCall::Players`]: crate::HostCall::Players
+/// [`BodyCall::PlayerState`]: crate::BodyCall::PlayerState
+/// [`PlayerCall::Players`]: crate::PlayerCall::Players
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct HandSwing {
     /// The MAIN hand is mid-mine (held button on a block, timer running).
@@ -597,9 +599,9 @@ pub struct HandSwing {
     pub off: Option<SwingKind>,
 }
 
-/// The player's state for [`HostCall::PlayerState`].
+/// The player's state for [`BodyCall::PlayerState`](crate::BodyCall::PlayerState).
 ///
-/// [`HostCall::PlayerState`]: crate::HostCall::PlayerState
+/// [`BodyCall::PlayerState`]: crate::BodyCall::PlayerState
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PlayerSnapshot {
     /// WHOSE state this is — the identity every player-addressed HostCall
@@ -625,10 +627,10 @@ pub struct PlayerSnapshot {
     /// [`EventPayload::InteractAttempt`]: crate::EventPayload::InteractAttempt
     pub sneak: bool,
     /// The selected hotbar stack's item (`None` = empty hand); bridge with
-    /// [`HostCall::ItemNames`] / [`HostCall::ResolveItem`].
+    /// [`RegistryCall::ItemNames`](crate::RegistryCall::ItemNames) / [`RegistryCall::ResolveItem`](crate::RegistryCall::ResolveItem).
     ///
-    /// [`HostCall::ItemNames`]: crate::HostCall::ItemNames
-    /// [`HostCall::ResolveItem`]: crate::HostCall::ResolveItem
+    /// [`RegistryCall::ItemNames`]: crate::RegistryCall::ItemNames
+    /// [`RegistryCall::ResolveItem`]: crate::RegistryCall::ResolveItem
     pub held: Option<ItemId>,
     /// The OFF-HAND slot's item (`None` = empty). Always literally that slot,
     /// unlike [`held`](Self::held), which resolves the ACTING hand during a use
@@ -643,35 +645,35 @@ pub struct PlayerSnapshot {
     /// [`EventPayload::InteractAttempt`]: crate::EventPayload::InteractAttempt
     pub use_held: bool,
     /// Whether THIS caller holds the actor's current use gesture — took the
-    /// press ([`HostCall::HoldUse`]) and has not seen the button come up.
+    /// press ([`BodyCall::HoldUse`](crate::BodyCall::HoldUse)) and has not seen the button come up.
     ///
     /// The predicate a CONTINUOUS use is written against, in place of
     /// [`use_held`](Self::use_held): a raw held button says nothing about
     /// whether the press was yours, so a pack keying off it starts its own
     /// interaction on top of whatever the click actually did.
     ///
-    /// [`HostCall::HoldUse`]: crate::HostCall::HoldUse
+    /// [`BodyCall::HoldUse`]: crate::BodyCall::HoldUse
     pub holds_use: bool,
     /// The selected stack's count (0 = empty hand) — lets a consumer gate an
     /// atomic multi-item spend (the trough's three-wheat fill) exactly.
     pub held_count: u8,
     /// The world-space anchor this player is pose-pinned at
-    /// ([`HostCall::PlayerPoseSet`]), or `None` when not posed. THE occupancy
+    /// ([`EntityCall::PlayerPoseSet`](crate::EntityCall::PlayerPoseSet)), or `None` when not posed. THE occupancy
     /// read model for static seats: a consumer derives "is this seat taken"
     /// by comparing its own seat anchors against the roster — the engine's
     /// registry is always truth, so there is no mod-side bookkeeping to
     /// desync. Anchors round-trip verbatim (`f64` bit-exact), so exact
     /// equality against the anchor a mod passed is sound.
     ///
-    /// [`HostCall::PlayerPoseSet`]: crate::HostCall::PlayerPoseSet
+    /// [`EntityCall::PlayerPoseSet`]: crate::EntityCall::PlayerPoseSet
     pub pose_anchor: Option<[f64; 3]>,
     /// What this body's hands did with the action buttons this tick (client:
     /// this frame) — the swing facts a hand-animating mod keys its clock
     /// off. A mod that animates a gesture itself stands the engine's copy
     /// down by setting the param the rig's gate for that gesture reads
-    /// ([`HostCall::SetPlayerAnimatorParams`]).
+    /// ([`BodyCall::SetPlayerAnimatorParams`](crate::BodyCall::SetPlayerAnimatorParams)).
     ///
-    /// [`HostCall::SetPlayerAnimatorParams`]: crate::HostCall::SetPlayerAnimatorParams
+    /// [`BodyCall::SetPlayerAnimatorParams`]: crate::BodyCall::SetPlayerAnimatorParams
     pub swing: HandSwing,
     /// Body extents, the same envelope the engine collides and targets:
     /// a box `half_width` either side of the feet, `height` tall, with the
@@ -702,9 +704,9 @@ pub struct ConditionData {
     pub elapsed: u32,
 }
 
-/// A condition row, answered by [`HostCall::ResolveCondition`].
+/// A condition row, answered by [`RegistryCall::ResolveCondition`](crate::RegistryCall::ResolveCondition).
 ///
-/// [`HostCall::ResolveCondition`]: crate::HostCall::ResolveCondition
+/// [`RegistryCall::ResolveCondition`]: crate::RegistryCall::ResolveCondition
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ConditionInfoData {
     pub id: crate::ConditionId,
@@ -720,10 +722,10 @@ impl ConditionInfoData {
     }
 }
 
-/// One entry of [`HostCall::Players`]: a connected player's session id plus
+/// One entry of [`PlayerCall::Players`](crate::PlayerCall::Players): a connected player's session id plus
 /// their state snapshot.
 ///
-/// [`HostCall::Players`]: crate::HostCall::Players
+/// [`PlayerCall::Players`]: crate::PlayerCall::Players
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PlayerListEntry {
     /// The session's player id — the value per-player calls
@@ -732,7 +734,7 @@ pub struct PlayerListEntry {
     pub state: PlayerSnapshot,
 }
 
-/// One session with a mod GUI open, as [`HostCall::GuiViewers`] reports it.
+/// One session with a mod GUI open, as [`GuiCall::GuiViewers`](crate::GuiCall::GuiViewers) reports it.
 ///
 /// `anchor` is the cell the session was opened on — the SAME cell a machine is
 /// keyed at (its container anchor), so matching a viewer to one of your placed
@@ -740,7 +742,7 @@ pub struct PlayerListEntry {
 /// opened on. `None` for a GUI with nothing behind it (a station, an
 /// unanchored `GuiOpen`).
 ///
-/// [`HostCall::GuiViewers`]: crate::HostCall::GuiViewers
+/// [`GuiCall::GuiViewers`]: crate::GuiCall::GuiViewers
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct GuiViewerData {
     pub player_id: PlayerId,
@@ -851,7 +853,7 @@ pub enum DrawPrim {
 }
 
 /// What a burst's particles are cut from, named by the event that fires it
-/// ([`HostCall::EmitterBurst`](crate::HostCall::EmitterBurst)). The bundle row
+/// ([`SoundCall::EmitterBurst`](crate::SoundCall::EmitterBurst)). The bundle row
 /// owns how the particles fly; this is only what they show.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum ParticleTexture {
@@ -889,9 +891,9 @@ impl From<[i32; 3]> for ContainerAddress {
     }
 }
 
-/// A connected player's lasting identity ([`HostCall::PlayerIdentity`]).
+/// A connected player's lasting identity ([`PlayerCall::PlayerIdentity`](crate::PlayerCall::PlayerIdentity)).
 ///
-/// [`HostCall::PlayerIdentity`]: crate::HostCall::PlayerIdentity
+/// [`PlayerCall::PlayerIdentity`]: crate::PlayerCall::PlayerIdentity
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PlayerIdentityData {
     /// The player's stable name — what their saved state is keyed by, unlike
@@ -918,12 +920,12 @@ pub struct ItemStackData {
     pub data: Vec<(String, Vec<u8>)>,
 }
 
-/// One item's registry row (see [`HostCall::ItemInfo`]) — the stable,
+/// One item's registry row (see [`RegistryCall::ItemInfo`](crate::RegistryCall::ItemInfo)) — the stable,
 /// mod-relevant fields of its `items.json` row, the same data engine
 /// mechanics read. Presentation internals (sprite/model/held pose) stay
 /// engine-side. Session-stable: cache it mod-side, never re-ask per tick.
 ///
-/// [`HostCall::ItemInfo`]: crate::HostCall::ItemInfo
+/// [`RegistryCall::ItemInfo`]: crate::RegistryCall::ItemInfo
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ItemInfoData {
     /// Effective per-slot stack cap (durable items — tools — never stack).
@@ -970,13 +972,13 @@ pub struct ToolInfoData {
     pub knockback: f32,
 }
 
-/// One block's registry row (see [`HostCall::BlockInfo`]) — the stable,
+/// One block's registry row (see [`RegistryCall::BlockInfo`](crate::RegistryCall::BlockInfo)) — the stable,
 /// mod-relevant harvest facts of its `blocks.json` row, the same data the
 /// engine's own break gate reads (so a mod computing over a break never
 /// re-implements the material→tool ladder). Session-stable: cache it
 /// mod-side, never re-ask per tick.
 ///
-/// [`HostCall::BlockInfo`]: crate::HostCall::BlockInfo
+/// [`RegistryCall::BlockInfo`]: crate::RegistryCall::BlockInfo
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct BlockInfoData {
     /// The row's `material` string (`"stone"`, `"dirt"`, `"ore"`, `"wood"`,
@@ -1013,7 +1015,7 @@ pub struct BlockInfoData {
 }
 
 /// The axes a body's draw set is drawn in (see
-/// [`HostCall::SetMobDraw`](crate::HostCall::SetMobDraw)).
+/// [`EntityCall::SetMobDraw`](crate::EntityCall::SetMobDraw)).
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum DrawFrame {
     /// Turning with the body's yaw: something it wears.
@@ -1103,17 +1105,17 @@ pub enum BlockHookKind {
     /// The probabilistic per-section random tick (a few cells per section per
     /// game tick). Mod-behavior blocks always receive random ticks.
     RandomTick,
-    /// A scheduled tick previously requested via [`HostCall::ScheduleTick`].
+    /// A scheduled tick previously requested via [`BlockCall::ScheduleTick`](crate::BlockCall::ScheduleTick).
     ///
-    /// [`HostCall::ScheduleTick`]: crate::HostCall::ScheduleTick
+    /// [`BlockCall::ScheduleTick`]: crate::BlockCall::ScheduleTick
     ScheduledTick,
     /// The cell or one of its 6 neighbours changed (the ANNOUNCE phase).
     NeighborUpdate,
 }
 
-/// One active status effect crossing the ABI (see [`HostCall::EffectsActive`]).
+/// One active status effect crossing the ABI (see [`PlayerCall::EffectsActive`](crate::PlayerCall::EffectsActive)).
 ///
-/// [`HostCall::EffectsActive`]: crate::HostCall::EffectsActive
+/// [`PlayerCall::EffectsActive`]: crate::PlayerCall::EffectsActive
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct EffectStateData {
     /// The effect's registry key (`"petramond:regeneration"`, `"mod_id:haste"`).
@@ -1122,10 +1124,10 @@ pub struct EffectStateData {
     pub remaining: u32,
 }
 
-/// Cached light at a loaded cell (see [`HostCall::LightAt`]), all on the
+/// Cached light at a loaded cell (see [`BlockCall::LightAt`](crate::BlockCall::LightAt)), all on the
 /// renderer's 6-bit `0..=63` scale; `combined = max(sky, block)`.
 ///
-/// [`HostCall::LightAt`]: crate::HostCall::LightAt
+/// [`BlockCall::LightAt`]: crate::BlockCall::LightAt
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub struct LightData {
     pub combined: u8,
@@ -1142,11 +1144,11 @@ pub struct LightData {
 }
 
 /// The collision-shape CLASS of a world cell (see
-/// [`HostCall::CollisionShapeAt`]) — generic physics with no gameplay policy
+/// [`BlockCall::CollisionShapeAt`](crate::BlockCall::CollisionShapeAt)) — generic physics with no gameplay policy
 /// baked in. Spawn/placement rules compose on top of it in mod code (e.g.
 /// `Full` + not tagged `petramond:leaves`).
 ///
-/// [`HostCall::CollisionShapeAt`]: crate::HostCall::CollisionShapeAt
+/// [`BlockCall::CollisionShapeAt`]: crate::BlockCall::CollisionShapeAt
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CollisionShape {
     /// No collision boxes: air, any fluid, walk-through cover (tall grass).
@@ -1195,12 +1197,12 @@ pub enum AnimatorClock {
 }
 
 /// One graph param a mod sets on one of a player's rigs, for
-/// [`HostCall::SetPlayerAnimatorParams`]. `rig` names a registered rig
+/// [`BodyCall::SetPlayerAnimatorParams`](crate::BodyCall::SetPlayerAnimatorParams). `rig` names a registered rig
 /// ([`rig`]); params are the rig graph's own declared vocabulary (`params`
 /// in its animator document). A rig or param name the engine lacks is
 /// refused at the call.
 ///
-/// [`HostCall::SetPlayerAnimatorParams`]: crate::HostCall::SetPlayerAnimatorParams
+/// [`BodyCall::SetPlayerAnimatorParams`]: crate::BodyCall::SetPlayerAnimatorParams
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AnimatorParam {
     pub rig: String,
@@ -1209,14 +1211,14 @@ pub struct AnimatorParam {
 }
 
 /// One montage a mod holds in a slot of one of a player's rigs, for
-/// [`HostCall::SetPlayerAnimatorPlays`]. `rig` names a registered rig
+/// [`BodyCall::SetPlayerAnimatorPlays`](crate::BodyCall::SetPlayerAnimatorPlays). `rig` names a registered rig
 /// ([`rig`]); `slot` and `clip` are the rig graph's declared slot and its
 /// library's clip (`petramond:fp_slash_a`). `clock` is how the clip
 /// advances ([`AnimatorClock`]). `mirror` plays it reflected left↔right (a
 /// main-hand clip on the off hand); `priority` refuses a lower-priority
 /// newcomer to the same slot while this play stands.
 ///
-/// [`HostCall::SetPlayerAnimatorPlays`]: crate::HostCall::SetPlayerAnimatorPlays
+/// [`BodyCall::SetPlayerAnimatorPlays`]: crate::BodyCall::SetPlayerAnimatorPlays
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AnimatorPlay {
     pub rig: String,
@@ -1250,9 +1252,9 @@ impl AnimatorPlay {
     }
 }
 
-/// What [`HostCall::AnimationClip`] answers about one clip.
+/// What [`BodyCall::AnimationClip`](crate::BodyCall::AnimationClip) answers about one clip.
 ///
-/// [`HostCall::AnimationClip`]: crate::HostCall::AnimationClip
+/// [`BodyCall::AnimationClip`]: crate::BodyCall::AnimationClip
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AnimationClipInfo {
     /// Seconds.

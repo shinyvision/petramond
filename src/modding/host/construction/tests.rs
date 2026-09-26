@@ -1,3 +1,4 @@
+use mod_api::calls;
 use mod_api::{
     ActionRefusal, ActorAction, DigProgress, EntityRef, HostCall, HostRet, PlaceRequest,
 };
@@ -77,12 +78,12 @@ fn aim(
     let feet = server.world().mobs().instances()[0].pos;
     match call(
         server,
-        HostCall::ActorAims {
+        HostCall::from(calls::ActorAims {
             actor: EntityRef::Mob(mob),
             from: vec![[feet.x, feet.y, feet.z]],
             pos: pos.to_array(),
             record,
-        },
+        }),
     ) {
         HostRet::Aims(aims) => aims[0],
         other => panic!("unexpected aims answer {other:?}"),
@@ -122,12 +123,12 @@ fn a_dig_accrues_on_consecutive_ticks_and_collects_its_drop() {
     let dig = |server: &mut ServerGame| {
         call(
             server,
-            HostCall::ActorDig {
+            HostCall::from(calls::ActorDig {
                 actor: EntityRef::Mob(mob),
                 pos: target.to_array(),
                 tool_slot: None,
                 collect: true,
-            },
+            }),
         )
     };
     let mut ticks = 0;
@@ -178,12 +179,12 @@ fn an_interrupted_dig_starts_over() {
         server.world_mut().restore_tick(tick);
         match call(
             server,
-            HostCall::ActorDig {
+            HostCall::from(calls::ActorDig {
                 actor: EntityRef::Mob(mob),
                 pos: target.to_array(),
                 tool_slot: None,
                 collect: false,
-            },
+            }),
         ) {
             HostRet::Dig(DigProgress::Digging { progress }) => progress,
             other => panic!("unexpected dig answer {other:?}"),
@@ -208,12 +209,12 @@ fn a_placement_pays_once_from_the_actors_slots_and_needs_a_face() {
     let place = |server: &mut ServerGame, at: IVec3| {
         call(
             server,
-            HostCall::ActorPlace {
+            HostCall::from(calls::ActorPlace {
                 actor: EntityRef::Mob(mob),
                 pos: at.to_array(),
                 record: stone_record(),
                 pay: true,
-            },
+            }),
         )
     };
     let on_floor = IVec3::new(10, 65, 9);
@@ -277,12 +278,12 @@ fn reach_is_measured_from_the_actors_eye() {
     ))]);
     let reply = call(
         &mut server,
-        HostCall::ActorPlace {
+        HostCall::from(calls::ActorPlace {
             actor: EntityRef::Mob(mob),
             pos: [14, 65, 14],
             record: stone_record(),
             pay: true,
-        },
+        }),
     );
     assert_eq!(
         reply,
@@ -291,12 +292,12 @@ fn reach_is_measured_from_the_actors_eye() {
     assert!(matches!(
         call(
             &mut server,
-            HostCall::ActorDig {
+            HostCall::from(calls::ActorDig {
                 actor: EntityRef::Mob(mob + 1000),
                 pos: [9, 64, 8],
                 tool_slot: None,
                 collect: false,
-            },
+            }),
         ),
         HostRet::Dig(DigProgress::Refused(ActionRefusal::NoActor))
     ));
@@ -361,14 +362,14 @@ fn a_mob_stepping_aside_under_its_own_power_reads_as_walking() {
     let stepped = |server: &mut ServerGame, gait| {
         let reply = call(
             server,
-            HostCall::MobDrive {
+            HostCall::from(calls::MobDrive {
                 mob_id: mob,
                 horizontal: Some([0.8, 0.0]),
                 vertical: None,
                 yaw: None,
                 while_walking: false,
                 gait,
-            },
+            }),
         );
         assert_eq!(reply, HostRet::Bool(true));
         let before = server.world().mobs().instances()[0].pos;
@@ -406,12 +407,12 @@ fn a_cell_of_two_parts_goes_in_a_click_at_a_time_each_paid_with_its_own_item() {
         look(server, mob, cell, Some(record.clone()));
         let answer = call(
             server,
-            HostCall::ActorPlace {
+            HostCall::from(calls::ActorPlace {
                 actor: EntityRef::Mob(mob),
                 pos: cell.to_array(),
                 record: record.clone(),
                 pay: true,
-            },
+            }),
         );
         assert_eq!(answer, HostRet::Place(PlaceRequest::Queued));
         assert_eq!(drain(server), vec![(ActorAction::Place, None)]);

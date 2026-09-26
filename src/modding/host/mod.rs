@@ -7,10 +7,11 @@
 //! interruption armed by a background ticker thread so a runaway mod traps out
 //! instead of hanging the tick loop.
 //!
-//! Call handling is split per capability domain (one submodule per family);
-//! the exhaustive switchboard in [`handle_host_call`] routes every ABI
-//! variant to its home, so a new variant cannot compile without picking
-//! one. The client-instance surface lives in [`super::client`].
+//! Call handling is split per ABI domain (one submodule per domain enum of
+//! [`HostCall`]); the switchboard in [`handle_host_call`] gates every call on
+//! its declared legality and routes it on its domain, and each handler
+//! matches its own domain exhaustively. The client-instance surface lives in
+//! [`super::client`].
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -18,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
-use mod_api::{Decoded, HostCall, HostRet, RuntimeSide};
+use mod_api::{Decoded, ErrorCode, HostCall, HostRet, RuntimeSide, Scope};
 use wasmtime::{
     AsContextMut, Caller, Config, Engine, Linker, Memory, StoreLimits, StoreLimitsBuilder,
     TypedFunc,
@@ -156,6 +157,9 @@ pub(in crate::modding) enum Registration {
         event: mod_api::EventKind,
         priority: i32,
         handler_id: u32,
+        /// Which events of the kind the handler wants — evaluated before
+        /// every dispatch, so a filtered-out event never crosses.
+        filter: mod_api::EventFilter,
     },
     WorldgenFeature {
         stage: mod_api::WorldgenStage,
@@ -306,11 +310,10 @@ impl ModStoreData {
         self.world_seed
     }
 
+    /// Record a registration. The `mod_init` window itself is enforced by
+    /// the switchboard from the call's declared scope, before any handler
+    /// runs.
     pub(super) fn register(&mut self, reg: Registration) -> HostRet {
-        if self.phase != Phase::Init {
-            return self
-                .refuse_registration("mod registrations may only be registered during mod_init");
-        }
         self.stats.registered += 1;
         self.pending.push(reg);
         HostRet::Unit
@@ -319,9 +322,9 @@ impl ModStoreData {
     /// Refuse a registration (out of window, or a shape the host cannot
     /// honour), counting it so the per-mod stats show a pack whose init is
     /// misfiring.
-    pub(super) fn refuse_registration(&mut self, why: impl Into<String>) -> HostRet {
+    pub(super) fn refuse_registration(&mut self, code: ErrorCode, why: String) -> HostRet {
         self.stats.rejected_registrations += 1;
-        HostRet::Error(why.into())
+        HostRet::error(code, why)
     }
 
     pub(super) fn rng_next(&mut self, stream_key: &str) -> u64 {
@@ -407,13 +410,21 @@ pub(in crate::modding) fn short_debug(value: &dyn std::fmt::Debug, cap: usize) -
     w.out
 }
 
-/// THE host-call switchboard: routes every ABI variant to its category
-/// handler below (exhaustive, so a new variant must pick a home here). Calls
-/// that need the live simulation reach it through the [`guards`] wrappers
-/// (`sim_read` shared, `sim_query`/`sim_call`/`sim_mutate` exclusive);
-/// everything else lives on the store. A read-only dispatch admits only the
-/// calls [`guards::read_only_permits`] lists.
-pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
+/// THE host-call switchboard. Every call first passes [`admit`] — the gates
+/// derived from the call's declared [`Legality`](mod_api::Legality) — and is
+/// then routed on its DOMAIN to the handler that matches that domain's enum
+/// exhaustively, so a new call cannot compile without a handler arm and
+/// cannot be misrouted. Calls that need the live simulation reach it through
+/// the [`guards`] wrappers (`sim_read` shared, `sim_query`/`sim_call`/
+/// `sim_mutate` exclusive); everything else lives on the store.
+///
+/// Takes any domain call (`calls::GetBlock { .. }`) as well as a wrapped
+/// [`HostCall`].
+pub(in crate::modding) fn handle_host_call(
+    data: &mut ModStoreData,
+    call: impl Into<HostCall>,
+) -> HostRet {
+    let call = call.into();
     data.stats.host_calls += 1;
     #[cfg(test)]
     if let Some((id, hook)) = HOST_CALL_TEST_HOOK.lock().unwrap().as_ref() {
@@ -421,279 +432,66 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
             hook();
         }
     }
-    if super::scope::read_only_active() && !guards::read_only_permits(&call) {
-        return HostRet::Error(format!(
-            "{} is not allowed during a read-only dispatch (e.g. a shape placement plan)",
-            short_debug(&call, 48)
+    if let Err(refusal) = admit(data, &call) {
+        return refusal;
+    }
+    let client = data.side == RuntimeSide::Client;
+    match call {
+        HostCall::Core(call) => core::handle_core_call(data, call),
+        HostCall::Block(call) => blocks::handle_block_call(&data.mod_id, call),
+        HostCall::Entity(call) => entities::handle_entity_call(&data.mod_id, call),
+        HostCall::Player(call) => player::handle_player_call(&data.mod_id, call),
+        // A client instance's body calls are PREDICTIONS against its own
+        // mirror (and its actor is the prediction dispatch's snapshot), so
+        // they land on the client store; the server answers them
+        // authoritatively. Both handlers match the whole domain.
+        HostCall::Body(call) if client => super::client::handle_body_call(data, call),
+        HostCall::Body(call) => player::handle_body_call(&data.mod_id, call),
+        HostCall::Sound(call) => sounds::handle_sound_call(&data.mod_id, call),
+        HostCall::Kv(call) => kv::handle_kv_call(&data.mod_id, call),
+        HostCall::Tag(call) => tags::handle_tag_call(&data.mod_id, call),
+        HostCall::Registry(call) => registry::handle_registry_call(call),
+        HostCall::Worldgen(call) => worldgen::handle_worldgen_call(data, call),
+        HostCall::Memo(call) => memo::handle_memo_call(data, call),
+        HostCall::Gui(call) => gui::handle_gui_call(&data.mod_id, call),
+        HostCall::Container(call) => containers::handle_container_call(&data.mod_id, call),
+        HostCall::Client(call) => super::client::handle_client_call(data, call),
+        HostCall::ItemMotion(call) => item_motion::handle(call),
+        HostCall::Condition(call) => conditions::handle(call),
+        HostCall::Construction(call) => construction::handle_construction_call(call),
+        HostCall::Actor(call) => actors::handle_actor_call(&data.mod_id, call),
+        HostCall::Schematic(call) => schematics::handle_schematic_call(&data.mod_id, call),
+    }
+}
+
+/// The legality gates, all read from the call's declared
+/// [`Legality`](mod_api::Legality): the instance side, the `mod_init`
+/// window, and the read-only dispatch. A refusal here never reaches a
+/// handler.
+fn admit(data: &mut ModStoreData, call: &HostCall) -> Result<(), HostRet> {
+    let legality = call.legality();
+    if !legality.sides.allows(data.side) {
+        return Err(HostRet::error(
+            ErrorCode::WrongSide,
+            format!("{} is not available to a {:?} instance", call.name(), data.side),
         ));
     }
-    if data.side == RuntimeSide::Client && !super::client::client_capability(&call) {
-        return HostRet::Error(
-            "simulation host calls are unavailable to a client_wasm instance".into(),
-        );
+    if legality.scope == Scope::Init && data.phase != Phase::Init {
+        return Err(data.refuse_registration(
+            ErrorCode::NotInInit,
+            format!("{} is legal only during mod_init", call.name()),
+        ));
     }
-    // A client instance's `PlayerState` answers the actor snapshot published
-    // by the prediction dispatch — never the sim query path below.
-    if data.side == RuntimeSide::Client && matches!(call, HostCall::PlayerState) {
-        return match super::client::scope::active_actor() {
-            Some(actor) => HostRet::Player(Box::new(actor)),
-            None => HostRet::Error(
-                "PlayerState on a client instance is available during prediction dispatches only"
-                    .into(),
+    if super::scope::read_only_active() && !guards::read_only_permits(call) {
+        return Err(HostRet::error(
+            ErrorCode::ReadOnly,
+            format!(
+                "{} is not allowed during a read-only dispatch (e.g. a shape placement plan)",
+                call.name()
             ),
-        };
+        ));
     }
-    // ...and its `ActingPlayer` that snapshot's id: outside a prediction
-    // dispatch a client instance acts for nobody.
-    if data.side == RuntimeSide::Client && matches!(call, HostCall::ActingPlayer) {
-        return HostRet::ActingPlayer(
-            super::client::scope::active_actor().and_then(|actor| actor.id),
-        );
-    }
-    // A client instance's body writes are PREDICTIONS against its own mirror,
-    // not sim mutations, so they land on the client store beside the rest of
-    // the presentation surface. Every call listed as a client capability must
-    // be routed here too — one that is permitted but not routed falls through
-    // to the sim handler and dies on "no simulation context is active".
-    if data.side == RuntimeSide::Client
-        && matches!(
-            call,
-            HostCall::SetPlayerHeldPose { .. }
-                | HostCall::SetPlayerBonePose { .. }
-                | HostCall::SetPlayerHeldDisplay { .. }
-                | HostCall::SetPlayerAnimatorParams { .. }
-                | HostCall::SetPlayerAnimatorPlays { .. }
-                | HostCall::FirePlayerAnimatorEvent { .. }
-                | HostCall::AnimationClip { .. }
-                | HostCall::HoldUse { .. }
-                | HostCall::PlayerInventory { .. }
-        )
-    {
-        return super::client::handle_client_call(data, call);
-    }
-    match call {
-        HostCall::Log { .. }
-        | HostCall::RuntimeSide
-        | HostCall::CurrentTick
-        | HostCall::RngU64 { .. }
-        | HostCall::RegisterTickSystem { .. }
-        | HostCall::RegisterEventHandler { .. }
-        | HostCall::RegisterHostileSpawner { .. }
-        | HostCall::RegisterBlockBehavior { .. }
-        | HostCall::RegisterAiNode { .. }
-        | HostCall::EmitEvent { .. }
-        | HostCall::EmitEventTo { .. }
-        | HostCall::ShaderSetParam { .. } => core::handle_core_call(data, call),
-        HostCall::GetBlock { .. }
-        | HostCall::GetBlocks { .. }
-        | HostCall::BlockChangesSince { .. }
-        | HostCall::SetBlock { .. }
-        | HostCall::SetBlocks { .. }
-        | HostCall::ScheduleTick { .. }
-        | HostCall::IsLoaded { .. }
-        | HostCall::LightAt { .. }
-        | HostCall::CollisionShapeAt { .. }
-        | HostCall::BiomeAt { .. }
-        | HostCall::SurfaceYAt { .. }
-        | HostCall::FindBlocks { .. }
-        | HostCall::SwapBlock { .. }
-        | HostCall::SetModelParts { .. }
-        | HostCall::SetBlockDraw { .. }
-        | HostCall::SetBlockDraws { .. }
-        | HostCall::SetModelPartsMany { .. }
-        | HostCall::BlockLocalToWorld { .. }
-        | HostCall::Raycast { .. } => blocks::handle_block_call(&data.mod_id, call),
-        HostCall::ItemEntitiesInRadius { .. } | HostCall::ItemImpulses { .. } => {
-            item_motion::handle(call)
-        }
-        HostCall::EntityConditionApply { .. } | HostCall::EntityConditionCool { .. } => {
-            conditions::handle(call)
-        }
-        HostCall::SpawnMob { .. }
-        | HostCall::MobInfo { .. }
-        | HostCall::MobCanReach { .. }
-        | HostCall::PathProbe { .. }
-        | HostCall::WalkRegion { .. }
-        | HostCall::Footholds { .. }
-        | HostCall::MobHeldDisplay { .. }
-        | HostCall::SetMobDraw { .. }
-        | HostCall::SiteOpen { .. }
-        | HostCall::MobsInRadius { .. }
-        | HostCall::DamageMob { .. }
-        | HostCall::DespawnMob { .. }
-        | HostCall::MobEmitterSet { .. }
-        | HostCall::MobAnimSet { .. }
-        | HostCall::MobAnimRate { .. }
-        | HostCall::MobAnimSeek { .. }
-        | HostCall::MobAnimState { .. }
-        | HostCall::MobDrive { .. }
-        | HostCall::MobKinematic { .. }
-        | HostCall::MobMount { .. }
-        | HostCall::PlayerPoseSet { .. }
-        | HostCall::MobDismount { .. }
-        | HostCall::MobRiders { .. }
-        | HostCall::BlockModelGroup { .. }
-        | HostCall::SpawnItem { .. }
-        | HostCall::LaunchItem { .. }
-        | HostCall::ItemEntity { .. } => entities::handle_entity_call(&data.mod_id, call),
-        HostCall::PlayerState
-        | HostCall::DamagePlayer { .. }
-        | HostCall::ApplyKnockback { .. }
-        | HostCall::GiveItem { .. }
-        | HostCall::GiveItemTo { .. }
-        | HostCall::ConsumeHeld { .. }
-        | HostCall::ReplaceHeldOne { .. }
-        | HostCall::SetHealth { .. }
-        | HostCall::Teleport { .. }
-        | HostCall::EffectApply { .. }
-        | HostCall::EffectsActive
-        | HostCall::PlayerInput { .. }
-        | HostCall::Players
-        | HostCall::PlayerIdentity { .. }
-        | HostCall::UnlockRecipe { .. }
-        | HostCall::RecipeUnlocked { .. }
-        | HostCall::PlayerHeld { .. }
-        | HostCall::SetPlayerHeldData { .. }
-        | HostCall::SetPlayerAttribute { .. }
-        | HostCall::SetPlayerHeldPose { .. }
-        | HostCall::SetPlayerBonePose { .. }
-        | HostCall::SetPlayerAnimatorParams { .. }
-        | HostCall::SetPlayerAnimatorPlays { .. }
-        | HostCall::FirePlayerAnimatorEvent { .. }
-        | HostCall::AnimationClip { .. }
-        | HostCall::SetPlayerDeniedActions { .. }
-        | HostCall::HoldUse { .. }
-        | HostCall::TakeItem { .. }
-        | HostCall::SetPlayerHeldDisplay { .. }
-        | HostCall::PlayerInventory { .. }
-        | HostCall::ChatSend { .. }
-        | HostCall::ActingPlayer
-        | HostCall::PlayerStateOf { .. }
-        | HostCall::ApplyKnockbackTo { .. }
-        | HostCall::SetHealthOf { .. }
-        | HostCall::TeleportPlayer { .. }
-        | HostCall::EffectApplyTo { .. }
-        | HostCall::EffectsActiveOf { .. }
-        | HostCall::ConsumeHeldBy { .. }
-        | HostCall::ReplaceHeldOneBy { .. } => player::handle_player_call(&data.mod_id, call),
-        HostCall::EmitSound { .. }
-        | HostCall::SoundPlayAt { .. }
-        | HostCall::SoundPlayOnMob { .. }
-        | HostCall::SoundSet { .. }
-        | HostCall::SoundStop { .. }
-        | HostCall::EmitterBurst { .. } => sounds::handle_sound_call(&data.mod_id, call),
-        HostCall::WorldKvGet { .. }
-        | HostCall::WorldKvSet { .. }
-        | HostCall::WorldKvDelete { .. }
-        | HostCall::SectionKvGet { .. }
-        | HostCall::SectionKvSet { .. }
-        | HostCall::SectionKvDelete { .. }
-        | HostCall::SectionKvFind { .. }
-        | HostCall::SectionKvGetMany { .. }
-        | HostCall::SectionKvSetMany { .. } => kv::handle_kv_call(&data.mod_id, call),
-        HostCall::MobTagGet { .. }
-        | HostCall::MobTagSet { .. }
-        | HostCall::MobTagDelete { .. }
-        | HostCall::MobTagsGet { .. }
-        | HostCall::MobsWithTag { .. } => tags::handle_tag_call(&data.mod_id, call),
-        HostCall::SchematicInfo { .. }
-        | HostCall::SchematicCells { .. }
-        | HostCall::SchematicChoose { .. }
-        | HostCall::SchematicPosition { .. }
-        | HostCall::SchematicGhostSet { .. } => {
-            schematics::handle_schematic_call(&data.mod_id, call)
-        }
-        HostCall::BlockRecordsAt { .. } | HostCall::BlockRecordStatuses { .. } => {
-            construction::handle_construction_call(call)
-        }
-        HostCall::ActorDig { .. }
-        | HostCall::ActorPlace { .. }
-        | HostCall::ActorPlaceCheck { .. }
-        | HostCall::ActorInteract { .. }
-        | HostCall::ActorAims { .. } => actors::handle_actor_call(&data.mod_id, call),
-        HostCall::BlockRecordPlans { .. }
-        | HostCall::StructureInfo { .. }
-        | HostCall::LootRoll { .. }
-        | HostCall::MobDataGet { .. }
-        | HostCall::MobsWithData { .. }
-        | HostCall::ResolveBlock { .. }
-        | HostCall::ResolveItem { .. }
-        | HostCall::ResolveMob { .. }
-        | HostCall::BlockNames { .. }
-        | HostCall::ItemNames { .. }
-        | HostCall::MobNames { .. }
-        | HostCall::ResolveCondition { .. }
-        | HostCall::ConditionNames { .. }
-        | HostCall::BlocksByTag { .. }
-        | HostCall::ItemsByTag { .. }
-        | HostCall::ItemInfo { .. }
-        | HostCall::ResolveShape { .. }
-        | HostCall::ItemDataGet { .. }
-        | HostCall::ItemsWithData { .. }
-        | HostCall::BlockDataGet { .. }
-        | HostCall::BlocksWithData { .. }
-        | HostCall::BlockInfo { .. }
-        | HostCall::BlockInfos { .. } => registry::handle_registry_call(call),
-        HostCall::RegisterWorldgenFeature { .. }
-        | HostCall::RegisterStageReplacement { .. }
-        | HostCall::RegisterGenerator { .. }
-        | HostCall::ResolveUndergroundBiome { .. }
-        | HostCall::UndergroundBiomeAt { .. }
-        | HostCall::UndergroundBiomesInBox { .. }
-        | HostCall::TerrainBlocksAt { .. }
-        | HostCall::TerrainSectionAt { .. }
-        | HostCall::TerrainHeightsAt { .. }
-        | HostCall::TerrainSolidAt { .. }
-        | HostCall::TerrainSpaceAt { .. }
-        | HostCall::SurfaceBiomeAt { .. } => worldgen::handle_worldgen_call(data, call),
-        HostCall::MemoGet { .. }
-        | HostCall::MemoGetMany { .. }
-        | HostCall::MemoPut { .. }
-        | HostCall::MemoClaim { .. } => memo::handle_memo_call(data, call),
-        HostCall::GuiStateSet { .. }
-        | HostCall::GuiStateSetFor { .. }
-        | HostCall::GuiViewers
-        | HostCall::GuiStateGet { .. }
-        | HostCall::GuiOpen { .. }
-        | HostCall::GuiClose
-        | HostCall::GuiStateGetFor { .. }
-        | HostCall::GuiOpenFor { .. }
-        | HostCall::GuiCloseFor { .. } => gui::handle_gui_call(&data.mod_id, call),
-        HostCall::ContainerGet { .. }
-        | HostCall::ContainerGetMany { .. }
-        | HostCall::ContainerSet { .. }
-        | HostCall::ContainerInsert { .. }
-        | HostCall::ContainerTake { .. }
-        | HostCall::ContainerTransfer { .. }
-        | HostCall::ContainerHold { .. }
-        | HostCall::RecipeResult { .. } => containers::handle_container_call(&data.mod_id, call),
-        HostCall::ClientRegisterOverlay { .. }
-        | HostCall::ClientRegisterKey { .. }
-        | HostCall::ClientSurfaceColumns { .. }
-        | HostCall::ClientUiStateSet { .. }
-        | HostCall::ClientUiStateGet { .. }
-        | HostCall::ClientImageSet { .. }
-        | HostCall::ClientImageBlit { .. }
-        | HostCall::ClientTextMeasure { .. }
-        | HostCall::ClientImageDrawTexts { .. }
-        | HostCall::ClientGuiOpen { .. }
-        | HostCall::ClientGuiClose
-        | HostCall::ClientCanvasOpen { .. }
-        | HostCall::ClientCanvasClose
-        | HostCall::ClientCanvasSceneSet { .. }
-        | HostCall::ClientCanvasViewSet { .. }
-        | HostCall::ClientStorageGetMany { .. }
-        | HostCall::ClientStorageSetMany { .. }
-        | HostCall::ClientStorageReadBegin { .. }
-        | HostCall::ClientStorageReadPoll { .. }
-        | HostCall::ClientEnvParams { .. }
-        | HostCall::ClientBiomeAt { .. }
-        | HostCall::ClientAmbientSet { .. }
-        | HostCall::ClientLoopSet { .. }
-        | HostCall::ClientMoodSet { .. }
-        | HostCall::ClientBlocksAt { .. }
-        | HostCall::ClientCellKvAt { .. } => super::client::handle_client_call(data, call),
-    }
+    Ok(())
 }
 
 /// Build the linker exposing the single guest import,
@@ -724,11 +522,11 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                 // well-framed call past the enum's end comes from a guest
                 // built against a newer ABI minor: decline it with
                 // `Unsupported` instead.
-                let call = match mod_api::decode_call::<HostCall>(&buf) {
+                let call = match mod_api::decode_host_call(&buf) {
                     Ok(Decoded::Known(call)) => Some(call),
-                    Ok(Decoded::Unknown { variant }) => {
+                    Ok(Decoded::Unknown { domain, variant }) => {
                         log::debug!(
-                            "mod '{}': host call #{variant} is newer than mod ABI {}; \
+                            "mod '{}': host call {domain:?}/#{variant} is newer than mod ABI {}; \
                              replying Unsupported",
                             caller.data().mod_id,
                             mod_api::ABI_VERSION,

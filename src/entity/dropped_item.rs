@@ -279,7 +279,7 @@ impl DroppedItem {
     }
 
     /// Spawn ONE item launched from `pos` at `vel`, in flight for `owner`
-    /// (`HostCall::LaunchItem`). A zero velocity has no heading to fly along,
+    /// (`EntityCall::LaunchItem`). A zero velocity has no heading to fly along,
     /// so it is a loose drop from rest instead. `ticks_lived` starts at 0:
     /// the pickup delay keeps the launcher from vacuuming it straight back.
     pub fn launched(

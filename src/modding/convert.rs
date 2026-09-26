@@ -315,6 +315,7 @@ pub(super) fn projectile_hit(ev: &ProjectileHit) -> api::EventPayload {
     use crate::world::ImpactTarget;
     api::EventPayload::ProjectileHit {
         entity: ev.entity,
+        item: api::ItemId(ev.item.id()),
         target: match ev.target {
             ImpactTarget::Mob(id) => api::ProjectileTarget::Mob(id),
             ImpactTarget::Player(id) => api::ProjectileTarget::Player(api::PlayerId(id.0)),

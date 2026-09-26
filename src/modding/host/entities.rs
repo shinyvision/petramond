@@ -1,8 +1,10 @@
 //! Entity calls: mob spawn/query/damage/despawn, keyed particle emitters,
 //! and deterministic dropped-item spawns.
 
+mod intents;
+
 use mod_api::{
-    HostCall, HostRet, MobAnimStateData, MobRiderData, MobRidersData, MobSnapshot,
+    EntityCall, HostRet, MobAnimStateData, MobRiderData, MobRidersData, MobSnapshot,
     MAX_MOB_ANIM_NAME_BYTES, MAX_MOB_ANIM_PHASE_MAGNITUDE, MAX_MOB_ANIM_RATE_MAGNITUDE,
 };
 
@@ -25,7 +27,7 @@ fn anim_name_guard(call: &str, anim: &str) -> Result<(), HostRet> {
     if anim.len() <= MAX_MOB_ANIM_NAME_BYTES {
         Ok(())
     } else {
-        Err(HostRet::Error(format!(
+        Err(HostRet::invalid(format!(
             "{call}: animation name is {} bytes; the limit is {MAX_MOB_ANIM_NAME_BYTES}",
             anim.len()
         )))
@@ -36,7 +38,7 @@ fn magnitude_guard(call: &str, field: &str, value: f32, max: f32) -> Result<(), 
     if value.is_finite() && value.abs() <= max {
         Ok(())
     } else {
-        Err(HostRet::Error(format!(
+        Err(HostRet::invalid(format!(
             "{call}: {field} must be finite with magnitude <= {max}"
         )))
     }
@@ -82,7 +84,7 @@ pub(super) fn attack_source(
         None => DamageSource::Mod(mod_id),
         Some(mod_api::EntityRef::Player(id)) => {
             if !ctx.world.player_roster().iter().any(|r| r.id == id.0) {
-                return Err(HostRet::Error(format!(
+                return Err(HostRet::invalid(format!(
                     "{call}: attacker player {} is not a connected session",
                     id.0
                 )));
@@ -123,16 +125,16 @@ pub(super) fn item_entity_data(it: &DroppedItem) -> mod_api::ItemEntityData {
 }
 
 /// Entity calls (mob spawn/query/hurt/despawn, item drops).
-pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
+pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
     match call {
-        HostCall::SpawnMob {
+        EntityCall::SpawnMob {
             key,
             pos,
             yaw,
             checked,
         } => match finite_pos(pos, "SpawnMob.pos") {
             Err(e) => e,
-            Ok(_) if !yaw.is_finite() => HostRet::Error("SpawnMob.yaw must be finite".into()),
+            Ok(_) if !yaw.is_finite() => HostRet::invalid("SpawnMob.yaw must be finite".into()),
             Ok(pos) => sim_query(|ctx| {
                 let Some(kind) = crate::mob::by_key(&key) else {
                     log::warn!("[mod {mod_id}] SpawnMob: unknown species '{key}'");
@@ -149,12 +151,12 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::SpawnedMob(spawned)
             }),
         },
-        HostCall::MobInfo { mob_id } => sim_query(|ctx| {
+        EntityCall::MobInfo { mob_id } => sim_query(|ctx| {
             HostRet::Mob(
                 live_mob(ctx, mob_id).map(|i| mob_snapshot(i, &ctx.world.mobs().instances()[i])),
             )
         }),
-        HostCall::MobCanReach { mob_id, cell } => sim_query(|ctx| {
+        EntityCall::MobCanReach { mob_id, cell } => sim_query(|ctx| {
             HostRet::Bool(live_mob(ctx, mob_id).is_some_and(|i| {
                 crate::mob::mob_can_reach(
                     ctx.world,
@@ -163,7 +165,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 )
             }))
         }),
-        HostCall::PathProbe {
+        EntityCall::PathProbe {
             key,
             from,
             to,
@@ -189,7 +191,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 ))
             })
         }
-        HostCall::WalkRegion {
+        EntityCall::WalkRegion {
             key,
             from,
             min,
@@ -220,7 +222,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 ))
             })
         }
-        HostCall::Footholds { key, cells } => {
+        EntityCall::Footholds { key, cells } => {
             if let Some(err) = batch_guard("Footholds cell", cells.len()) {
                 return err;
             }
@@ -232,7 +234,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bools(crate::mob::footholds(ctx.world, kind, &cells))
             })
         }
-        HostCall::MobHeldDisplay { mob_id, main, off } => {
+        EntityCall::MobHeldDisplay { mob_id, main, off } => {
             let resolve = |name: &Option<String>| match name {
                 None => Ok(None),
                 Some(name) => item_by_name(name).map(Some).ok_or(()),
@@ -248,7 +250,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(true)
             })
         }
-        HostCall::SetMobDraw {
+        EntityCall::SetMobDraw {
             mob_id,
             frame,
             prims,
@@ -270,7 +272,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(true)
             })
         }
-        HostCall::SiteOpen { key, cell } => sim_query(|ctx| {
+        EntityCall::SiteOpen { key, cell } => sim_query(|ctx| {
             let Some(kind) = crate::mob::by_key(&key) else {
                 log::warn!("[mod {mod_id}] SiteOpen: unknown species '{key}'");
                 return HostRet::Bool(false);
@@ -281,11 +283,11 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 petramond_math::math::IVec3::new(cell[0], cell[1], cell[2]),
             ))
         }),
-        HostCall::MobsInRadius { pos, radius } => match finite_pos(pos, "MobsInRadius.pos") {
+        EntityCall::MobsInRadius { pos, radius } => match finite_pos(pos, "MobsInRadius.pos") {
             Err(e) => e,
             Ok(pos) => sim_query(|ctx| {
                 if !radius.is_finite() {
-                    return HostRet::Error("MobsInRadius: non-finite radius".into());
+                    return HostRet::invalid("MobsInRadius: non-finite radius".into());
                 }
                 let r2 = radius * radius;
                 let out = ctx
@@ -301,7 +303,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Mobs(out)
             }),
         },
-        HostCall::DamageMob {
+        EntityCall::DamageMob {
             mob_id,
             amount,
             origin,
@@ -328,7 +330,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 })
             }
         },
-        HostCall::DespawnMob { mob_id } => sim_query(|ctx| {
+        EntityCall::DespawnMob { mob_id } => sim_query(|ctx| {
             let Some(index) = live_mob(ctx, mob_id) else {
                 return HostRet::Bool(false);
             };
@@ -336,7 +338,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
         }),
         // Presentation-only mob state (no bus funnel), so unlike DamageMob it
         // applies immediately instead of queueing a DeferredAction.
-        HostCall::MobEmitterSet {
+        EntityCall::MobEmitterSet {
             mob_id,
             key,
             active,
@@ -347,7 +349,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             HostRet::Bool(ctx.world.mobs_mut().set_mob_emitter(index, &key, active))
         }),
         // The animation sibling of MobEmitterSet.
-        HostCall::MobAnimSet {
+        EntityCall::MobAnimSet {
             mob_id,
             anim,
             active,
@@ -360,7 +362,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(ctx.world.mobs_mut().set_mob_anim(index, &anim, active))
             }),
         },
-        HostCall::MobAnimRate { mob_id, anim, rate } => {
+        EntityCall::MobAnimRate { mob_id, anim, rate } => {
             if let Err(e) = anim_name_guard("MobAnimRate", &anim) {
                 return e;
             }
@@ -376,7 +378,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(ctx.world.mobs_mut().set_mob_anim_rate(index, &anim, rate))
             })
         }
-        HostCall::MobAnimSeek {
+        EntityCall::MobAnimSeek {
             mob_id,
             anim,
             phase,
@@ -408,7 +410,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
         }
         // Kinematic drive intent for this tick (see `Instance::set_drive`);
         // immediate like every presentation/locomotion primitive.
-        HostCall::MobDrive {
+        EntityCall::MobDrive {
             mob_id,
             horizontal,
             vertical,
@@ -420,22 +422,22 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 || vertical.is_some_and(|v| !v.is_finite())
                 || yaw.is_some_and(|y| !y.is_finite())
             {
-                return HostRet::Error("MobDrive: non-finite velocity/yaw".into());
+                return HostRet::invalid("MobDrive: non-finite velocity/yaw".into());
             }
             if while_walking && horizontal.is_some() {
-                return HostRet::Error(
+                return HostRet::invalid(
                     "MobDrive: a walking-gated intent cannot carry horizontal velocity — \
                      walking IS the horizontal locomotion"
                         .into(),
                 );
             }
             if horizontal.is_some_and(|v| v[0].hypot(v[1]) > MAX_MOB_DRIVE_SPEED) {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "MobDrive: horizontal speed exceeds {MAX_MOB_DRIVE_SPEED} m/s"
                 ));
             }
             if vertical.is_some_and(|v| v.abs() > MAX_MOB_DRIVE_SPEED) {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "MobDrive: vertical speed exceeds {MAX_MOB_DRIVE_SPEED} m/s"
                 ));
             }
@@ -455,7 +457,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
         }
         // Kinematic placement for this tick (see `Instance::set_kinematic`):
         // the mod authored the pose, the engine presents it.
-        HostCall::MobKinematic {
+        EntityCall::MobKinematic {
             mob_id,
             pos,
             yaw,
@@ -464,13 +466,13 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
         } => {
             let tilt = Tilt::new(pitch, roll);
             if !pos.iter().all(|c| c.is_finite()) || !yaw.is_finite() || !tilt.is_finite() {
-                return HostRet::Error("MobKinematic: non-finite pose".into());
+                return HostRet::invalid("MobKinematic: non-finite pose".into());
             }
             if pitch.abs() > std::f32::consts::FRAC_PI_2 {
-                return HostRet::Error("MobKinematic: pitch outside ±π/2".into());
+                return HostRet::invalid("MobKinematic: pitch outside ±π/2".into());
             }
             if roll.abs() > std::f32::consts::PI {
-                return HostRet::Error("MobKinematic: roll outside ±π".into());
+                return HostRet::invalid("MobKinematic: roll outside ±π".into());
             }
             sim_query(move |ctx| {
                 let Some(index) = live_mob(ctx, mob_id) else {
@@ -483,21 +485,21 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                     .set_mob_kinematic(index, pos, yaw, tilt)
                 {
                     Ok(placed) => HostRet::Bool(placed),
-                    Err(distance) => HostRet::Error(format!(
+                    Err(distance) => HostRet::invalid(format!(
                         "MobKinematic: placement {distance} blocks away exceeds the \
                          {MAX_SAFE_EXTERNAL_SWEEP_DISTANCE}-block sweep bound"
                     )),
                 }
             })
         }
-        HostCall::MobMount {
+        EntityCall::MobMount {
             mob_id,
             player_id,
             seat,
         } => sim_query(|ctx| {
             HostRet::Bool(ctx.world.try_mount_player(player_id.0, mob_id, seat))
         }),
-        HostCall::PlayerPoseSet {
+        EntityCall::PlayerPoseSet {
             player_id,
             anchor,
             yaw,
@@ -508,7 +510,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 Err(e) => return e,
             };
             if !yaw.is_finite() {
-                return HostRet::Error("PlayerPoseSet: non-finite yaw".into());
+                return HostRet::invalid("PlayerPoseSet: non-finite yaw".into());
             }
             if pose == 0 {
                 return HostRet::Bool(false); // reserved "no pose" value
@@ -524,10 +526,10 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 ))
             })
         }
-        HostCall::MobDismount { player_id } => sim_query(|ctx| {
+        EntityCall::MobDismount { player_id } => sim_query(|ctx| {
             HostRet::Bool(ctx.world.riding_mut().dismount(player_id.0).is_some())
         }),
-        HostCall::MobRiders { mob_id } => sim_query(|ctx| {
+        EntityCall::MobRiders { mob_id } => sim_query(|ctx| {
             let Some(index) = live_mob(ctx, mob_id) else {
                 return HostRet::Riders(None);
             };
@@ -545,7 +547,54 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 .collect();
             HostRet::Riders(Some(MobRidersData { capacity, riders }))
         }),
-        HostCall::BlockModelGroup { pos } => sim_query(|ctx| {
+        EntityCall::MobDriveMany { drives } => {
+            if let Some(err) = batch_guard("MobDriveMany drive", drives.len()) {
+                return err;
+            }
+            for drive in &drives {
+                if let Err(err) = intents::drive_guard(drive) {
+                    return err;
+                }
+            }
+            sim_query(|ctx| HostRet::Bools(drives.into_iter().map(|d| intents::apply_drive(ctx, d)).collect()))
+        }
+        EntityCall::MobKinematicMany { poses } => {
+            if let Some(err) = batch_guard("MobKinematicMany pose", poses.len()) {
+                return err;
+            }
+            let tilts = match poses.iter().map(intents::kinematic_guard).collect::<Result<Vec<_>, _>>() {
+                Ok(tilts) => tilts,
+                Err(err) => return err,
+            };
+            sim_query(|ctx| {
+                let mut accepted = Vec::with_capacity(poses.len());
+                for (pose, tilt) in poses.into_iter().zip(tilts) {
+                    match intents::apply_kinematic(ctx, pose, tilt) {
+                        Ok(ok) => accepted.push(ok),
+                        Err(err) => return err,
+                    }
+                }
+                HostRet::Bools(accepted)
+            })
+        }
+        EntityCall::MobAnimMany { ops } => {
+            if let Some(err) = batch_guard("MobAnimMany command", ops.len()) {
+                return err;
+            }
+            for op in &ops {
+                if let Err(err) = intents::anim_guard(op) {
+                    return err;
+                }
+            }
+            sim_query(|ctx| HostRet::Bools(ops.iter().map(|op| intents::apply_anim(ctx, op)).collect()))
+        }
+        EntityCall::MobRidersMany { mob_ids } => {
+            if let Some(err) = batch_guard("MobRidersMany mob", mob_ids.len()) {
+                return err;
+            }
+            sim_query(|ctx| HostRet::RidersMany(mob_ids.into_iter().map(|id| intents::riders(ctx, id)).collect()))
+        }
+        EntityCall::BlockModelGroup { pos } => sim_query(|ctx| {
             let p = petramond_math::math::IVec3::new(pos[0], pos[1], pos[2]);
             HostRet::ModelGroup(ctx.world.model_group(p).map(|(_, base, _)| {
                 mod_api::ModelGroupData {
@@ -559,7 +608,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 }
             }))
         }),
-        HostCall::MobAnimState { mob_id, anim } => {
+        EntityCall::MobAnimState { mob_id, anim } => {
             if let Err(e) = anim_name_guard("MobAnimState", &anim) {
                 return e;
             }
@@ -576,7 +625,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 }))
             })
         }
-        HostCall::SpawnItem {
+        EntityCall::SpawnItem {
             item,
             count,
             pos,
@@ -601,7 +650,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 })
             }
         },
-        HostCall::LaunchItem {
+        EntityCall::LaunchItem {
             item,
             pos,
             vel,
@@ -632,7 +681,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 })
             }
         },
-        HostCall::ItemEntity { entity } => sim_query(|ctx| {
+        EntityCall::ItemEntity { entity } => sim_query(|ctx| {
             HostRet::ItemEntity(
                 ctx.world
                     .dropped_items()
@@ -640,9 +689,6 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                     .map(|item| Box::new(item_entity_data(item))),
             )
         }),
-        other => HostRet::Error(format!(
-            "non-entity call {other:?} mis-routed to handle_entity_call (host bug)"
-        )),
     }
 }
 
@@ -753,7 +799,7 @@ pub(super) fn give_item_to(
 #[cfg(test)]
 mod tests {
     use mod_api::{
-        HostCall, HostRet, MobAnimStateData, MobRidersData, MAX_MOB_ANIM_NAME_BYTES,
+        calls, HostCall, HostRet, MobAnimStateData, MobRidersData, MAX_MOB_ANIM_NAME_BYTES,
         MAX_MOB_ANIM_PHASE_MAGNITUDE, MAX_MOB_ANIM_RATE_MAGNITUDE,
     };
     use petramond_math::world_pos::WorldPos;
@@ -790,12 +836,12 @@ mod tests {
             assert!(matches!(
                 handle_host_call(
                     &mut data,
-                    HostCall::SpawnMob {
+                    HostCall::from(calls::SpawnMob {
                         key: "petramond:owl".into(),
                         pos: [8.5, 64.0, 8.5],
                         yaw: 0.0,
                         checked: false,
-                    },
+                    }),
                 ),
                 HostRet::SpawnedMob(Some(_))
             ));
@@ -823,12 +869,12 @@ mod tests {
             queue: &mut queue,
         };
         scope::enter(&mut ctx, || {
-            let checked = |pos| HostCall::SpawnMob {
+            let checked = |pos| HostCall::from(calls::SpawnMob {
                 key: "petramond:owl".into(),
                 pos,
                 yaw: 0.0,
                 checked: true,
-            };
+            });
             assert_eq!(
                 handle_host_call(&mut data, checked([8.5, 64.0, 8.5])),
                 HostRet::SpawnedMob(None),
@@ -854,12 +900,12 @@ mod tests {
             assert!(matches!(
                 handle_host_call(
                     &mut data,
-                    HostCall::SpawnMob {
+                    HostCall::from(calls::SpawnMob {
                         key: "petramond:owl".into(),
                         pos: [8.5, 64.0, 8.5],
                         yaw: 0.0,
                         checked: true,
-                    },
+                    }),
                 ),
                 HostRet::SpawnedMob(Some(_))
             ));
@@ -891,10 +937,10 @@ mod tests {
         scope::enter(&mut ctx, || {
             let before = match handle_host_call(
                 &mut data,
-                HostCall::MobsInRadius {
+                HostCall::from(calls::MobsInRadius {
                     pos: [0.0, 80.0, 0.0],
                     radius: 10.0,
-                },
+                }),
             ) {
                 HostRet::Mobs(mobs) => mobs,
                 other => panic!("MobsInRadius returned {other:?}"),
@@ -906,19 +952,19 @@ mod tests {
             assert_eq!(
                 handle_host_call(
                     &mut data,
-                    HostCall::DespawnMob {
+                    HostCall::from(calls::DespawnMob {
                         mob_id: before[0].id
-                    }
+                    })
                 ),
                 HostRet::Bool(true)
             );
 
             let after = match handle_host_call(
                 &mut data,
-                HostCall::MobsInRadius {
+                HostCall::from(calls::MobsInRadius {
                     pos: [0.0, 80.0, 0.0],
                     radius: 10.0,
-                },
+                }),
             ) {
                 HostRet::Mobs(mobs) => mobs,
                 other => panic!("MobsInRadius returned {other:?}"),
@@ -934,57 +980,57 @@ mod tests {
     fn mob_animation_and_drive_calls_reject_unbounded_guest_control_state() {
         let rejected = |call| {
             assert!(
-                matches!(super::handle_entity_call("alpha", call), HostRet::Error(_)),
+                matches!(super::handle_entity_call("alpha", call), HostRet::Err(_)),
                 "out-of-envelope call must be a protocol error"
             );
         };
 
-        rejected(HostCall::MobAnimSet {
+        rejected(HostCall::from(calls::MobAnimSet {
             mob_id: 1,
             anim: "a".repeat(MAX_MOB_ANIM_NAME_BYTES + 1),
             active: true,
-        });
-        rejected(HostCall::MobAnimRate {
+        }));
+        rejected(HostCall::from(calls::MobAnimRate {
             mob_id: 1,
             anim: "row".into(),
             rate: MAX_MOB_ANIM_RATE_MAGNITUDE * 2.0,
-        });
-        rejected(HostCall::MobAnimSeek {
+        }));
+        rejected(HostCall::from(calls::MobAnimSeek {
             mob_id: 1,
             anim: "row".into(),
             phase: MAX_MOB_ANIM_PHASE_MAGNITUDE * 2.0,
             rate: 1.0,
-        });
-        rejected(HostCall::MobAnimSeek {
+        }));
+        rejected(HostCall::from(calls::MobAnimSeek {
             mob_id: 1,
             anim: "row".into(),
             phase: 0.0,
             rate: MAX_MOB_ANIM_RATE_MAGNITUDE * 2.0,
-        });
-        rejected(HostCall::MobDrive {
+        }));
+        rejected(HostCall::from(calls::MobDrive {
             mob_id: 1,
             horizontal: Some([super::MAX_MOB_DRIVE_SPEED * 2.0, 0.0]),
             vertical: None,
             yaw: None,
             while_walking: false,
             gait: false,
-        });
-        rejected(HostCall::MobDrive {
+        }));
+        rejected(HostCall::from(calls::MobDrive {
             mob_id: 1,
             horizontal: None,
             vertical: Some(super::MAX_MOB_DRIVE_SPEED * 2.0),
             yaw: None,
             while_walking: false,
             gait: false,
-        });
-        rejected(HostCall::MobDrive {
+        }));
+        rejected(HostCall::from(calls::MobDrive {
             mob_id: 1,
             horizontal: Some([1.0, 0.0]),
             vertical: Some(1.0),
             yaw: None,
             while_walking: true,
             gait: false,
-        });
+        }));
     }
 
     #[test]
@@ -1008,11 +1054,11 @@ mod tests {
 
         scope::enter(&mut ctx, || {
             assert_eq!(
-                handle_host_call(&mut data, HostCall::MobRiders { mob_id: u64::MAX }),
+                handle_host_call(&mut data, HostCall::from(calls::MobRiders { mob_id: u64::MAX })),
                 HostRet::Riders(None)
             );
             assert_eq!(
-                handle_host_call(&mut data, HostCall::MobRiders { mob_id }),
+                handle_host_call(&mut data, HostCall::from(calls::MobRiders { mob_id })),
                 HostRet::Riders(Some(MobRidersData {
                     capacity: crate::mob::def(crate::mob::Mob::Owl).seats.len() as u8,
                     riders: Vec::new(),
@@ -1021,43 +1067,43 @@ mod tests {
             assert_eq!(
                 handle_host_call(
                     &mut data,
-                    HostCall::MobAnimState {
+                    HostCall::from(calls::MobAnimState {
                         mob_id,
                         anim: "row".into(),
-                    }
+                    })
                 ),
                 HostRet::MobAnimState(None)
             );
             assert_eq!(
                 handle_host_call(
                     &mut data,
-                    HostCall::MobAnimSet {
+                    HostCall::from(calls::MobAnimSet {
                         mob_id,
                         anim: "row".into(),
                         active: true,
-                    }
+                    })
                 ),
                 HostRet::Bool(true)
             );
             assert_eq!(
                 handle_host_call(
                     &mut data,
-                    HostCall::MobAnimSeek {
+                    HostCall::from(calls::MobAnimSeek {
                         mob_id,
                         anim: "row".into(),
                         phase: 1.5,
                         rate: -0.75,
-                    }
+                    })
                 ),
                 HostRet::Bool(true)
             );
             assert_eq!(
                 handle_host_call(
                     &mut data,
-                    HostCall::MobAnimState {
+                    HostCall::from(calls::MobAnimState {
                         mob_id,
                         anim: "row".into(),
-                    }
+                    })
                 ),
                 HostRet::MobAnimState(Some(MobAnimStateData {
                     phase: 0.0,
@@ -1113,51 +1159,51 @@ mod tests {
             };
             refused(
                 &mut data,
-                HostCall::MobAnimSet {
+                HostCall::from(calls::MobAnimSet {
                     mob_id,
                     anim: "row".into(),
                     active: true,
-                },
+                }),
             );
             refused(
                 &mut data,
-                HostCall::MobDrive {
+                HostCall::from(calls::MobDrive {
                     mob_id,
                     horizontal: Some([1.0, 0.0]),
                     vertical: None,
                     yaw: None,
                     while_walking: false,
                     gait: false,
-                },
+                }),
             );
             refused(
                 &mut data,
-                HostCall::MobEmitterSet {
+                HostCall::from(calls::MobEmitterSet {
                     mob_id,
                     key: "petramond:burn_light".into(),
                     active: true,
-                },
+                }),
             );
             refused(
                 &mut data,
-                HostCall::MobTagSet {
+                HostCall::from(calls::MobTagSet {
                     mob_id,
                     key: "alpha:x".into(),
                     value: mod_api::MobTagValue::I64(1),
-                },
+                }),
             );
             assert_eq!(
                 handle_host_call(
                     &mut data,
-                    HostCall::MobTagGet {
+                    HostCall::from(calls::MobTagGet {
                         mob_id,
                         key: "alpha:x".into(),
-                    }
+                    })
                 ),
                 HostRet::MobTag(mod_api::MobTagLookup::MissingMob)
             );
             assert_eq!(
-                handle_host_call(&mut data, HostCall::MobRiders { mob_id }),
+                handle_host_call(&mut data, HostCall::from(calls::MobRiders { mob_id })),
                 HostRet::Riders(None)
             );
         });

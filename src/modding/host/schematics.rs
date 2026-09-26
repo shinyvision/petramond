@@ -2,7 +2,7 @@
 //! asking a player's client to choose or position one, and anchoring ghosts.
 
 use mod_api::{
-    BlockRecord, HostCall, HostRet, SchematicCellsData, SchematicInfoData, SchematicLookup,
+    BlockRecord, HostRet, SchematicCall, SchematicCellsData, SchematicInfoData, SchematicLookup,
 };
 use petramond_math::math::IVec3;
 
@@ -10,9 +10,9 @@ use super::guards::{key_owned_by_namespace, sim_query};
 use crate::events::DeferredAction;
 use crate::schematic::store::Lookup;
 
-pub(super) fn handle_schematic_call(mod_id: &str, call: HostCall) -> HostRet {
+pub(super) fn handle_schematic_call(mod_id: &str, call: SchematicCall) -> HostRet {
     match call {
-        HostCall::SchematicInfo { asset } => sim_query(|ctx| {
+        SchematicCall::SchematicInfo { asset } => sim_query(|ctx| {
             HostRet::Schematic(match ctx.world.schematics_mut().store.lookup(&asset) {
                 Lookup::Missing => SchematicLookup::Missing,
                 Lookup::Loading => SchematicLookup::Loading,
@@ -25,7 +25,7 @@ pub(super) fn handle_schematic_call(mod_id: &str, call: HostCall) -> HostRet {
                 }),
             })
         }),
-        HostCall::SchematicCells {
+        SchematicCall::SchematicCells {
             asset,
             section,
             turns,
@@ -51,7 +51,7 @@ pub(super) fn handle_schematic_call(mod_id: &str, call: HostCall) -> HostRet {
                     }),
             )
         }),
-        HostCall::SchematicChoose { player, tag } => {
+        SchematicCall::SchematicChoose { player, tag } => {
             if !key_owned_by_namespace(mod_id, &tag) {
                 return namespace_error("SchematicChoose tag", mod_id, &tag);
             }
@@ -65,7 +65,7 @@ pub(super) fn handle_schematic_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(true)
             })
         }
-        HostCall::SchematicPosition {
+        SchematicCall::SchematicPosition {
             player,
             tag,
             asset,
@@ -92,7 +92,7 @@ pub(super) fn handle_schematic_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(true)
             })
         }
-        HostCall::SchematicGhostSet { key, ghost } => {
+        SchematicCall::SchematicGhostSet { key, ghost } => {
             if !key_owned_by_namespace(mod_id, &key) {
                 return namespace_error("SchematicGhostSet key", mod_id, &key);
             }
@@ -128,14 +128,11 @@ pub(super) fn handle_schematic_call(mod_id: &str, call: HostCall) -> HostRet {
                 }
             })
         }
-        other => HostRet::Error(format!(
-            "non-schematic call {other:?} mis-routed to handle_schematic_call (host bug)"
-        )),
     }
 }
 
 fn namespace_error(what: &str, mod_id: &str, key: &str) -> HostRet {
-    HostRet::Error(format!(
+    HostRet::invalid(format!(
         "{what} '{key}' must use this mod's own namespace ('{mod_id}:name')"
     ))
 }

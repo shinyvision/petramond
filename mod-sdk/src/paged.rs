@@ -8,7 +8,7 @@ use crate::SIM_BATCH_MAX;
 ///
 /// Every batched call a mod makes over a list it does not bound itself goes
 /// through here, because an over-cap batch is not a slow call — it is a
-/// `HostRet::Error`, which the SDK turns into a guest panic and the host into
+/// `HostRet::Err`, which the SDK turns into a guest panic and the host into
 /// a DISABLED MOD.
 ///
 /// `call` must answer one reply per item, as every `*_many` / batched SDK

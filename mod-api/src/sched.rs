@@ -33,13 +33,13 @@ pub enum AttachSide {
 /// `Climate` assigns the per-column biome map; `Terrain` is the block fill plus
 /// cave carve; `Underground` scatters ores/blobs; `Vegetation` places
 /// single-block ground plants; `Trees` places the tree features. Features
-/// ([`HostCall::RegisterWorldgenFeature`]) attach AFTER a stage (`Climate` is
+/// ([`WorldgenCall::RegisterWorldgenFeature`](crate::WorldgenCall::RegisterWorldgenFeature)) attach AFTER a stage (`Climate` is
 /// not a valid feature attach point — it is column-level, before any blocks
-/// exist); replacements ([`HostCall::RegisterStageReplacement`]) substitute the
+/// exist); replacements ([`WorldgenCall::RegisterStageReplacement`](crate::WorldgenCall::RegisterStageReplacement)) substitute the
 /// engine stage itself.
 ///
-/// [`HostCall::RegisterWorldgenFeature`]: crate::HostCall::RegisterWorldgenFeature
-/// [`HostCall::RegisterStageReplacement`]: crate::HostCall::RegisterStageReplacement
+/// [`WorldgenCall::RegisterWorldgenFeature`]: crate::WorldgenCall::RegisterWorldgenFeature
+/// [`WorldgenCall::RegisterStageReplacement`]: crate::WorldgenCall::RegisterStageReplacement
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum WorldgenStage {
     Climate,

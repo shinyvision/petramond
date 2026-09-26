@@ -16,52 +16,53 @@ fn abi_roundtrip_host_and_guest_calls() {
         assert_eq!(back, v);
     }
 
-    roundtrip(HostCall::Log {
+    roundtrip(HostCall::from(calls::Log {
         msg: "hello".into(),
-    });
-    roundtrip(HostCall::CurrentTick);
-    roundtrip(HostCall::RngU64 {
+    }));
+    roundtrip(HostCall::from(calls::CurrentTick));
+    roundtrip(HostCall::from(calls::RngU64 {
         stream_key: "spawn".into(),
-    });
-    roundtrip(HostCall::RegisterTickSystem {
+    }));
+    roundtrip(HostCall::from(calls::RegisterTickSystem {
         stage: Stage::Spawning,
         attach: AttachSide::After,
         priority: -3,
         system_id: 42,
-    });
-    roundtrip(HostCall::RegisterEventHandler {
+    }));
+    roundtrip(HostCall::from(calls::RegisterEventHandler {
         event: EventKind::BlockPlaced,
         priority: 7,
         handler_id: 9,
-    });
-    roundtrip(HostCall::GetBlock { pos: [1, -64, 3] });
-    roundtrip(HostCall::GetBlocks {
+        filter: EventFilter::default(),
+    }));
+    roundtrip(HostCall::from(calls::GetBlock { pos: [1, -64, 3] }));
+    roundtrip(HostCall::from(calls::GetBlocks {
         positions: vec![[0, 0, 0], [1, 2, 3]],
-    });
-    roundtrip(HostCall::SetBlock {
+    }));
+    roundtrip(HostCall::from(calls::SetBlock {
         pos: [5, 70, -2],
         block: BlockId(3),
-    });
-    roundtrip(HostCall::SetBlocks {
+    }));
+    roundtrip(HostCall::from(calls::SetBlocks {
         blocks: vec![([0, 64, 0], BlockId(1)), ([0, 65, 0], BlockId(0))],
-    });
-    roundtrip(HostCall::ScheduleTick {
+    }));
+    roundtrip(HostCall::from(calls::ScheduleTick {
         pos: [9, 60, 9],
         delay: 5,
-    });
-    roundtrip(HostCall::IsLoaded { pos: [8, 0, 8] });
-    roundtrip(HostCall::LightAt { pos: [8, 64, 8] });
-    roundtrip(HostCall::SpawnMob {
+    }));
+    roundtrip(HostCall::from(calls::IsLoaded { pos: [8, 0, 8] }));
+    roundtrip(HostCall::from(calls::LightAt { pos: [8, 64, 8] }));
+    roundtrip(HostCall::from(calls::SpawnMob {
         key: "zombies:zombie".into(),
         pos: [0.5, 64.0, 0.5],
         yaw: 1.5,
         checked: false,
-    });
-    roundtrip(HostCall::MobsInRadius {
+    }));
+    roundtrip(HostCall::from(calls::MobsInRadius {
         pos: [0.0, 64.0, 0.0],
         radius: 16.0,
-    });
-    roundtrip(HostCall::DamageMob {
+    }));
+    roundtrip(HostCall::from(calls::DamageMob {
         mob_id: 3,
         amount: 2.5,
         origin: Some([1.0, 64.0, 1.0]),
@@ -69,14 +70,14 @@ fn abi_roundtrip_host_and_guest_calls() {
             components: vec![crate::events::MobDamageFeedbackComponent::Immunity { ticks: 10 }],
         }),
         attacker: Some(crate::EntityRef::Player(PlayerId(2))),
-    });
-    roundtrip(HostCall::DespawnMob { mob_id: 7 });
-    roundtrip(HostCall::MobEmitterSet {
+    }));
+    roundtrip(HostCall::from(calls::DespawnMob { mob_id: 7 }));
+    roundtrip(HostCall::from(calls::MobEmitterSet {
         mob_id: 5,
         key: "petramond:burn_light".into(),
         active: true,
-    });
-    roundtrip(HostCall::EmitterBurst {
+    }));
+    roundtrip(HostCall::from(calls::EmitterBurst {
         key: "petramond:water_splash".into(),
         pos: [0.5, 64.0, 0.5],
         intensity: 4.5,
@@ -85,157 +86,157 @@ fn abi_roundtrip_host_and_guest_calls() {
             block: crate::BlockId(3),
             tint: None,
         }),
-    });
-    roundtrip(HostCall::SpawnItem {
+    }));
+    roundtrip(HostCall::from(calls::SpawnItem {
         item: "petramond:stick".into(),
         count: 4,
         pos: [0.5, 64.0, 0.5],
         data: vec![("m:tint".into(), vec![9, 8, 7])],
-    });
-    roundtrip(HostCall::PlayerState);
-    roundtrip(HostCall::DamagePlayer {
+    }));
+    roundtrip(HostCall::from(calls::PlayerState));
+    roundtrip(HostCall::from(calls::DamagePlayer {
         player: PlayerId(1),
         amount: 4,
         origin: Some([1.0, 64.0, 1.0]),
         attacker: Some(crate::EntityRef::Mob(9)),
-    });
-    roundtrip(HostCall::ApplyKnockback {
+    }));
+    roundtrip(HostCall::from(calls::ApplyKnockback {
         impulse: [1.0, 3.0, -1.0],
-    });
-    roundtrip(HostCall::GiveItem {
+    }));
+    roundtrip(HostCall::from(calls::GiveItem {
         item: "petramond:diamond".into(),
         count: 1,
         data: Vec::new(),
-    });
-    roundtrip(HostCall::SetHealth { value: 20 });
-    roundtrip(HostCall::Teleport {
+    }));
+    roundtrip(HostCall::from(calls::SetHealth { value: 20 }));
+    roundtrip(HostCall::from(calls::Teleport {
         pos: [10.5, 80.0, -4.5],
-    });
-    roundtrip(HostCall::EmitSound {
+    }));
+    roundtrip(HostCall::from(calls::EmitSound {
         key: "mymod:zap".into(),
         pos: Some([0.0, 64.0, 0.0]),
-    });
-    roundtrip(HostCall::WorldKvGet {
+    }));
+    roundtrip(HostCall::from(calls::WorldKvGet {
         key: "petramond:time".into(),
-    });
-    roundtrip(HostCall::WorldKvSet {
+    }));
+    roundtrip(HostCall::from(calls::WorldKvSet {
         key: "petramond:time".into(),
         value: vec![1, 2, 3],
-    });
-    roundtrip(HostCall::WorldKvDelete {
+    }));
+    roundtrip(HostCall::from(calls::WorldKvDelete {
         key: "petramond:time".into(),
-    });
-    roundtrip(HostCall::SectionKvGet {
+    }));
+    roundtrip(HostCall::from(calls::SectionKvGet {
         pos: [4, -60, 4],
         key: "farm:moisture".into(),
-    });
-    roundtrip(HostCall::SectionKvSet {
+    }));
+    roundtrip(HostCall::from(calls::SectionKvSet {
         pos: [4, -60, 4],
         key: "farm:moisture".into(),
         value: vec![7],
-    });
-    roundtrip(HostCall::SectionKvDelete {
+    }));
+    roundtrip(HostCall::from(calls::SectionKvDelete {
         pos: [4, -60, 4],
         key: "farm:moisture".into(),
-    });
-    roundtrip(HostCall::MobTagGet {
+    }));
+    roundtrip(HostCall::from(calls::MobTagGet {
         mob_id: 2,
         key: "zombies:target".into(),
-    });
-    roundtrip(HostCall::MobTagSet {
+    }));
+    roundtrip(HostCall::from(calls::MobTagSet {
         mob_id: 2,
         key: "zombies:target".into(),
         value: MobTagValue::Bool(true),
-    });
-    roundtrip(HostCall::MobTagDelete {
+    }));
+    roundtrip(HostCall::from(calls::MobTagDelete {
         mob_id: 2,
         key: "zombies:target".into(),
-    });
-    roundtrip(HostCall::MobTagsGet { mob_id: 2 });
-    roundtrip(HostCall::MobsWithTag {
+    }));
+    roundtrip(HostCall::from(calls::MobTagsGet { mob_id: 2 }));
+    roundtrip(HostCall::from(calls::MobsWithTag {
         key: "zombies:target".into(),
         value: Some(MobTagValue::I64(-3)),
-    });
-    roundtrip(HostCall::MobsWithTag {
+    }));
+    roundtrip(HostCall::from(calls::MobsWithTag {
         key: "petramond:confined".into(),
         value: None,
-    });
-    roundtrip(HostCall::ResolveBlock {
+    }));
+    roundtrip(HostCall::from(calls::ResolveBlock {
         name: "kitchen:oven".into(),
-    });
-    roundtrip(HostCall::RegisterWorldgenFeature {
+    }));
+    roundtrip(HostCall::from(calls::RegisterWorldgenFeature {
         feature_id: 3,
         stage: WorldgenStage::Trees,
         filter: Default::default(),
-    });
-    roundtrip(HostCall::RegisterStageReplacement {
+    }));
+    roundtrip(HostCall::from(calls::RegisterStageReplacement {
         stage: WorldgenStage::Terrain,
         callback_id: 9,
-    });
-    roundtrip(HostCall::RegisterGenerator { callback_id: 1 });
-    roundtrip(HostCall::GuiStateSet {
+    }));
+    roundtrip(HostCall::from(calls::RegisterGenerator { callback_id: 1 }));
+    roundtrip(HostCall::from(calls::GuiStateSet {
         key: "wheel:angle".into(),
         value: GuiValue::F32(1.25),
-    });
-    roundtrip(HostCall::GuiStateGet {
+    }));
+    roundtrip(HostCall::from(calls::GuiStateGet {
         key: "wheel:result".into(),
-    });
-    roundtrip(HostCall::GuiOpen {
+    }));
+    roundtrip(HostCall::from(calls::GuiOpen {
         kind_key: "wheel:wheel".into(),
         at: Some(crate::ContainerAddress::Block([1, 2, 3])),
-    });
-    roundtrip(HostCall::GuiClose);
-    roundtrip(HostCall::ChatSend {
+    }));
+    roundtrip(HostCall::from(calls::GuiClose));
+    roundtrip(HostCall::from(calls::ChatSend {
         text: "$[fg=yellow]Hello".into(),
         targets: None,
-    });
-    roundtrip(HostCall::ChatSend {
+    }));
+    roundtrip(HostCall::from(calls::ChatSend {
         text: "whisper".into(),
         targets: Some(vec![PlayerId(0), PlayerId(2)]),
-    });
-    roundtrip(HostCall::SoundPlayAt {
+    }));
+    roundtrip(HostCall::from(calls::SoundPlayAt {
         key: "zombies:groan".into(),
         pos: [4.5, 64.0, -2.5],
         volume: 0.8,
         pitch: 0.95,
-    });
-    roundtrip(HostCall::SoundPlayOnMob {
+    }));
+    roundtrip(HostCall::from(calls::SoundPlayOnMob {
         mob_id: 42,
         key: "zombies:groan".into(),
         volume: 0.7,
         pitch: 1.05,
-    });
-    roundtrip(HostCall::SoundStop { handle: 99 });
-    roundtrip(HostCall::SoundSet {
+    }));
+    roundtrip(HostCall::from(calls::SoundStop { handle: 99 }));
+    roundtrip(HostCall::from(calls::SoundSet {
         handle: 99,
         volume: 0.4,
         pitch: 1.2,
-    });
-    roundtrip(HostCall::CollisionShapeAt { pos: [8, 63, 8] });
+    }));
+    roundtrip(HostCall::from(calls::CollisionShapeAt { pos: [8, 63, 8] }));
     roundtrip(HostRet::CollisionShape(Some(CollisionShape::Partial)));
     roundtrip(HostRet::CollisionShape(None));
-    roundtrip(HostCall::ShaderSetParam {
+    roundtrip(HostCall::from(calls::ShaderSetParam {
         key: "petramond:light".into(),
         value: [0.75, 0.0, 0.0, 1.0],
-    });
-    roundtrip(HostCall::RegisterHostileSpawner {
+    }));
+    roundtrip(HostCall::from(calls::RegisterHostileSpawner {
         callback_id: 7,
         priority: -1,
-    });
-    roundtrip(HostCall::RuntimeSide);
-    roundtrip(HostCall::ClientRegisterOverlay {
+    }));
+    roundtrip(HostCall::from(calls::RuntimeSide));
+    roundtrip(HostCall::from(calls::ClientRegisterOverlay {
         image_key: "minimap:hud".into(),
         anchor: ClientOverlayAnchor::TopRight,
         margin: [8, 8],
         display_size: [256, 256],
-    });
-    roundtrip(HostCall::ClientRegisterKey {
+    }));
+    roundtrip(HostCall::from(calls::ClientRegisterKey {
         id: "open_map".into(),
         label: "Open World Map".into(),
         key: "key_m".into(),
         action_id: 1,
-    });
-    roundtrip(HostCall::ClientSurfaceColumns {
+    }));
+    roundtrip(HostCall::from(calls::ClientSurfaceColumns {
         queries: vec![
             ClientSurfaceQuery {
                 coord: [-12, 34],
@@ -246,31 +247,31 @@ fn abi_roundtrip_host_and_guest_calls() {
                 revision: 17,
             },
         ],
-    });
-    roundtrip(HostCall::ClientImageBlit {
+    }));
+    roundtrip(HostCall::from(calls::ClientImageBlit {
         key: "minimap:full_tile_0".into(),
         origin: [32, 64],
         size: [2, 1],
         rgba: vec![1, 2, 3, 255, 4, 5, 6, 255],
-    });
-    roundtrip(HostCall::ClientUiStateSet {
+    }));
+    roundtrip(HostCall::from(calls::ClientUiStateSet {
         key: "minimap:waypoint_name".into(),
         value: GuiValue::Str("Home".into()),
-    });
-    roundtrip(HostCall::ClientUiStateGet {
+    }));
+    roundtrip(HostCall::from(calls::ClientUiStateGet {
         key: "minimap:waypoint_name".into(),
-    });
-    roundtrip(HostCall::ClientImageSet {
+    }));
+    roundtrip(HostCall::from(calls::ClientImageSet {
         key: "minimap:hud".into(),
         width: 2,
         height: 1,
         rgba: vec![1, 2, 3, 255, 4, 5, 6, 255],
-    });
-    roundtrip(HostCall::ClientTextMeasure {
+    }));
+    roundtrip(HostCall::from(calls::ClientTextMeasure {
         text: "Waypoint".into(),
         scale: 2,
-    });
-    roundtrip(HostCall::ClientImageDrawTexts {
+    }));
+    roundtrip(HostCall::from(calls::ClientImageDrawTexts {
         key: "minimap:hud".into(),
         runs: vec![ClientTextRun {
             text: "W".into(),
@@ -278,17 +279,17 @@ fn abi_roundtrip_host_and_guest_calls() {
             scale: 2,
             color: [255, 255, 255, 255],
         }],
-    });
-    roundtrip(HostCall::ClientGuiOpen {
+    }));
+    roundtrip(HostCall::from(calls::ClientGuiOpen {
         kind_key: "minimap:edit_waypoint".into(),
-    });
-    roundtrip(HostCall::ClientGuiClose);
-    roundtrip(HostCall::ClientCanvasOpen {
+    }));
+    roundtrip(HostCall::from(calls::ClientGuiClose));
+    roundtrip(HostCall::from(calls::ClientCanvasOpen {
         canvas_key: "minimap:full_map".into(),
         size: [640, 640],
-    });
-    roundtrip(HostCall::ClientCanvasClose);
-    roundtrip(HostCall::ClientCanvasSceneSet {
+    }));
+    roundtrip(HostCall::from(calls::ClientCanvasClose));
+    roundtrip(HostCall::from(calls::ClientCanvasSceneSet {
         canvas_key: "minimap:full_map".into(),
         elements: vec![
             ClientCanvasElement::Image {
@@ -300,30 +301,30 @@ fn abi_roundtrip_host_and_guest_calls() {
                 center: [160.0, 160.0],
             },
         ],
-    });
-    roundtrip(HostCall::ClientCanvasViewSet {
+    }));
+    roundtrip(HostCall::from(calls::ClientCanvasViewSet {
         canvas_key: "minimap:full_map".into(),
         offset: [-80.0, 24.0],
-    });
-    roundtrip(HostCall::ClientStorageReadBegin {
+    }));
+    roundtrip(HostCall::from(calls::ClientStorageReadBegin {
         keys: vec!["minimap:tile:0:0".into(), "minimap:tile:1:0".into()],
-    });
-    roundtrip(HostCall::ClientStorageReadPoll { ticket: 7 });
-    roundtrip(HostCall::ReplaceHeldOne {
+    }));
+    roundtrip(HostCall::from(calls::ClientStorageReadPoll { ticket: 7 }));
+    roundtrip(HostCall::from(calls::ReplaceHeldOne {
         item: ItemId(3),
         replacement: "petramond:water_bucket".into(),
-    });
+    }));
     roundtrip(HostRet::ClientStorageRead(None));
     roundtrip(HostRet::ClientStorageRead(Some(vec![
         Some(ByteBuf::from(vec![1, 2, 3])),
         None,
     ])));
-    roundtrip(HostCall::ClientStorageGetMany {
+    roundtrip(HostCall::from(calls::ClientStorageGetMany {
         keys: vec!["minimap:tile/-1/2".into(), "minimap:waypoints".into()],
-    });
-    roundtrip(HostCall::ClientStorageSetMany {
+    }));
+    roundtrip(HostCall::from(calls::ClientStorageSetMany {
         entries: vec![("minimap:tile/-1/2".into(), ByteBuf::from(vec![7, 8, 9]))],
-    });
+    }));
     roundtrip(HostRet::RuntimeSide(RuntimeSide::Client));
     roundtrip(HostRet::ClientSurfaceColumns(vec![
         None,
@@ -412,19 +413,19 @@ fn abi_roundtrip_host_and_guest_calls() {
         callback_id: 7,
         candidate: candidate.clone(),
     });
-    roundtrip(HostCall::RegisterBlockBehavior {
+    roundtrip(HostCall::from(calls::RegisterBlockBehavior {
         key: "mymod:zapper".into(),
         callback_id: 3,
-    });
+    }));
     roundtrip(GuestCall::BlockBehavior {
         callback_id: 3,
         kind: BlockHookKind::ScheduledTick,
         pos: [4, 65, -2],
     });
-    roundtrip(HostCall::RegisterAiNode {
+    roundtrip(HostCall::from(calls::RegisterAiNode {
         key: "mymod:levitate".into(),
         callback_id: 9,
-    });
+    }));
     roundtrip(GuestCall::AiNode {
         callback_id: 9,
         ctx: AiNodeCtx {
@@ -498,7 +499,7 @@ fn abi_roundtrip_host_and_guest_calls() {
     roundtrip(GuestRet::HostileSpawn(None));
     roundtrip(HostRet::Unit);
     roundtrip(HostRet::U64(u64::MAX));
-    roundtrip(HostRet::Error("nope".into()));
+    roundtrip(HostRet::invalid("nope".into()));
     roundtrip(HostRet::Bool(true));
     roundtrip(HostRet::Block(Some(BlockId(9))));
     roundtrip(HostRet::Blocks(vec![None, Some(BlockId(0))]));
@@ -557,13 +558,13 @@ fn abi_roundtrip_host_and_guest_calls() {
     roundtrip(HostRet::Bytes(Some(vec![1, 2, 3])));
     roundtrip(GuestRet::Event {
         outcome: Outcome::Continue,
-        payload: EventPayload::PlayerDamagePre {
+        payload: Some(EventPayload::PlayerDamagePre {
             amount: 2,
             source: DamageSource::MobAttack {
                 key: "zombies:zombie".into(),
             },
             origin: Some([0.0, 80.0, 0.0]),
-        },
+        }),
     });
     roundtrip(GuestCall::TickSystem { id: 3 });
     roundtrip(GuestCall::HandleEvent {
@@ -579,29 +580,29 @@ fn abi_roundtrip_host_and_guest_calls() {
     });
     roundtrip(GuestRet::Event {
         outcome: Outcome::Cancel,
-        payload: EventPayload::PlayerDamagePre {
+        payload: Some(EventPayload::PlayerDamagePre {
             amount: -4,
             source: DamageSource::Fall,
             origin: None,
-        },
+        }),
     });
     roundtrip(EventPayload::ContainerOpened {
         kind: ContainerKind::new("petramond:furnace"),
         at: Some(crate::ContainerAddress::Block([1, -64, 3])),
     });
-    roundtrip(HostCall::BlockNames {
+    roundtrip(HostCall::from(calls::BlockNames {
         blocks: vec![BlockId(0), BlockId(200)],
-    });
-    roundtrip(HostCall::ItemNames {
+    }));
+    roundtrip(HostCall::from(calls::ItemNames {
         items: vec![ItemId(3)],
-    });
+    }));
     roundtrip(HostRet::Names(vec![Some("petramond:stone".into()), None]));
-    roundtrip(HostCall::ResolveMob {
+    roundtrip(HostCall::from(calls::ResolveMob {
         key: "petramond:sheep".into(),
-    });
-    roundtrip(HostCall::MobNames {
+    }));
+    roundtrip(HostCall::from(calls::MobNames {
         mobs: vec![MobId(0), MobId(9)],
-    });
+    }));
     roundtrip(HostRet::MobKind(Some(MobId(2))));
 }
 

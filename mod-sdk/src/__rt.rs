@@ -87,13 +87,13 @@ pub fn host_call(call: &HostCall) -> HostRet {
     ret
 }
 
-/// Registration replies must be `Unit`; an [`HostRet::Error`] (e.g.
+/// Registration replies must be `Unit`; an [`HostRet::Err`] (e.g.
 /// registering outside `mod_init`) is a mod bug — panic loudly, which
 /// traps and disables the mod.
 pub fn expect_unit(what: &str, ret: HostRet) {
     match ret {
         HostRet::Unit => {}
-        HostRet::Error(e) => panic!("{what} rejected: {e}"),
+        HostRet::Err(e) => panic!("{what} rejected: {e}"),
         other => panic!("{what} returned {other:?}"),
     }
 }
@@ -119,7 +119,7 @@ macro_rules! host_fn {
         $vis fn $name($($arg: $aty),*) {
             $crate::__rt::expect_unit(
                 stringify!($call),
-                $crate::__rt::host_call(&$crate::HostCall::$call $({ $($field)* })?),
+                $crate::__rt::host_call(&$crate::HostCall::from($crate::calls::$call $({ $($field)* })?)),
             );
         }
     };
@@ -144,7 +144,7 @@ macro_rules! host_fn {
     ) => {
         $(#[$meta])*
         $vis fn $name($($arg: $aty),*) -> $ret {
-            match $crate::__rt::host_call(&$crate::HostCall::$call $({ $($field)* })?) {
+            match $crate::__rt::host_call(&$crate::HostCall::from($crate::calls::$call $({ $($field)* })?)) {
                 $retpat => $map,
                 other => panic!("{} returned {other:?}", stringify!($call)),
             }
@@ -153,6 +153,55 @@ macro_rules! host_fn {
 }
 pub(crate) use host_fn;
 
+/// A data-dependent refusal returns to the caller. A protocol or programming
+/// error still traps, just as it does in the ordinary wrappers.
+pub fn recoverable(what: &str, ret: HostRet) -> Result<HostRet, mod_api::HostError> {
+    match ret {
+        HostRet::Err(error) if error.code.is_recoverable() => Err(error),
+        HostRet::Err(error) => panic!("{what} rejected: {error}"),
+        other => Ok(other),
+    }
+}
+
+macro_rules! try_host_fn {
+    (
+        $(#[$meta:meta])*
+        $vis:vis fn $name:ident($($arg:ident: $aty:ty),* $(,)?)
+            => $call:ident $({ $($field:tt)* })?
+    ) => {
+        $(#[$meta])*
+        $vis fn $name($($arg: $aty),*) -> Result<(), $crate::HostError> {
+            let ret = $crate::__rt::recoverable(
+                stringify!($call),
+                $crate::__rt::host_call(&$crate::HostCall::from($crate::calls::$call $({ $($field)* })?)),
+            )?;
+            match ret {
+                $crate::HostRet::Unit => Ok(()),
+                other => panic!("{} returned {other:?}", stringify!($call)),
+            }
+        }
+    };
+    (
+        $(#[$meta:meta])*
+        $vis:vis fn $name:ident($($arg:ident: $aty:ty),* $(,)?) -> $ret:ty
+            => $call:ident $({ $($field:tt)* })?
+            => $retvar:ident
+    ) => {
+        $(#[$meta])*
+        $vis fn $name($($arg: $aty),*) -> Result<$ret, $crate::HostError> {
+            let ret = $crate::__rt::recoverable(
+                stringify!($call),
+                $crate::__rt::host_call(&$crate::HostCall::from($crate::calls::$call $({ $($field)* })?)),
+            )?;
+            match ret {
+                $crate::HostRet::$retvar(value) => Ok(value),
+                other => panic!("{} returned {other:?}", stringify!($call)),
+            }
+        }
+    };
+}
+pub(crate) use try_host_fn;
+
 /// `mod_init`: record the host's side of the ABI handshake, then run the
 /// mod's registration window.
 pub fn init<T: crate::Mod>(slot: &ModSlot<T>, host_abi: u32, host_caps: u64) {
@@ -160,9 +209,9 @@ pub fn init<T: crate::Mod>(slot: &ModSlot<T>, host_abi: u32, host_caps: u64) {
     // Panics abort the guest (a trap); surface the message through the
     // host log first so the disable line has a cause next to it.
     std::panic::set_hook(Box::new(|info| {
-        let _ = host_call(&HostCall::Log {
+        let _ = host_call(&HostCall::from(mod_api::calls::Log {
             msg: format!("PANIC: {info}"),
-        });
+        }));
     }));
     let slot = unsafe { &mut *slot.0.get() };
     slot.insert(T::default()).init();
@@ -193,6 +242,7 @@ fn dispatch_call<T: crate::Mod>(mod_: &mut T, call: GuestCall) -> GuestRet {
         }
         GuestCall::HandleEvent { id, mut payload } => {
             let outcome = mod_.handle_event(id, &mut payload);
+            let payload = payload.kind().echoes_payload().then_some(payload);
             GuestRet::Event { outcome, payload }
         }
         GuestCall::GenFeature {

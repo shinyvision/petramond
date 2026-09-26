@@ -1,26 +1,27 @@
+use mod_api::calls;
 use super::*;
 use petramond_math::world_pos::WorldPos;
 
 #[test]
 fn malformed_requests_are_rejected_before_entering_simulation() {
     for radius in [-1.0, f32::NAN, f32::INFINITY, 65.0] {
-        let result = handle(HostCall::ItemEntitiesInRadius {
+        let result = handle(HostCall::from(calls::ItemEntitiesInRadius {
             pos: [0.0; 3],
             radius,
             limit: 1,
-        });
-        assert!(matches!(result, HostRet::Error(message) if message.contains("radius")));
+        }));
+        assert!(matches!(result, HostRet::Err(message) if message.detail.contains("radius")));
     }
-    let result = handle(HostCall::ItemEntitiesInRadius {
+    let result = handle(HostCall::from(calls::ItemEntitiesInRadius {
         pos: [0.0; 3],
         radius: 1.0,
         limit: mod_api::SIM_BATCH_MAX as u32 + 1,
-    });
-    assert!(matches!(result, HostRet::Error(message) if message.contains("limit")));
-    let result = handle(HostCall::ItemImpulses {
+    }));
+    assert!(matches!(result, HostRet::Err(message) if message.detail.contains("limit")));
+    let result = handle(HostCall::from(calls::ItemImpulses {
         impulses: vec![(1, [0.0; 3]), (2, [f32::NAN; 3])],
-    });
-    assert!(matches!(result, HostRet::Error(message) if message.contains("delta")));
+    }));
+    assert!(matches!(result, HostRet::Err(message) if message.detail.contains("delta")));
 }
 
 #[test]
@@ -58,31 +59,31 @@ fn read_only_dispatch_can_query_but_cannot_change_item_velocity() {
     scope::enter_read_only(&mut ctx, || {
         let got = handle_host_call(
             &mut store,
-            HostCall::ItemEntitiesInRadius {
+            HostCall::from(calls::ItemEntitiesInRadius {
                 pos: pos.to_array(),
                 radius: 1.0,
                 limit: 1,
-            },
+            }),
         );
         assert!(
             matches!(got, HostRet::ItemEntities(items) if items.len() == 1 && items[0].id == id)
         );
         let denied = handle_host_call(
             &mut store,
-            HostCall::ItemImpulses {
+            HostCall::from(calls::ItemImpulses {
                 impulses: vec![(id, [1.0, 0.0, 0.0])],
-            },
+            }),
         );
-        assert!(matches!(denied, HostRet::Error(_)));
+        assert!(matches!(denied, HostRet::Err(_)));
     });
     assert_eq!(ctx.world.dropped_items().get(id).unwrap().vel, before);
     scope::enter(&mut ctx, || {
         assert_eq!(
             handle_host_call(
                 &mut store,
-                HostCall::ItemImpulses {
+                HostCall::from(calls::ItemImpulses {
                     impulses: vec![(id, [1.0, 0.0, 0.0])],
-                }
+                })
             ),
             HostRet::Bools(vec![true])
         );

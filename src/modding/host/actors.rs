@@ -2,9 +2,7 @@
 //! player's clicks meet, and asks where it would have to look to. Each request
 //! is judged here and re-proven at its turn in the tick (`server::actors`).
 
-use mod_api::{
-    ActionRefusal, BlockRecord, DigProgress, EntityRef, HostCall, HostRet, PlaceRequest,
-};
+use mod_api::{ActionRefusal, ActorCall, BlockRecord, DigProgress, EntityRef, HostRet, PlaceRequest};
 use petramond_math::math::IVec3;
 use petramond_world::construction::Record;
 
@@ -13,9 +11,9 @@ use super::guards::{batch_guard, finite_pos, key_owned_by_namespace, sim_query};
 use crate::events::{DeferredAction, SimCtx};
 use crate::world::actor::PlaceCheck;
 
-pub(super) fn handle_actor_call(mod_id: &str, call: HostCall) -> HostRet {
+pub(super) fn handle_actor_call(mod_id: &str, call: ActorCall) -> HostRet {
     match call {
-        HostCall::ActorDig {
+        ActorCall::ActorDig {
             actor,
             pos,
             tool_slot,
@@ -28,7 +26,7 @@ pub(super) fn handle_actor_call(mod_id: &str, call: HostCall) -> HostRet {
                 },
             )
         }),
-        HostCall::ActorPlace {
+        ActorCall::ActorPlace {
             actor,
             pos,
             record,
@@ -42,7 +40,7 @@ pub(super) fn handle_actor_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Place(place(ctx, actor, IVec3::from_array(pos), record, pay))
             })
         }
-        HostCall::ActorInteract { actor, pos } => sim_query(|ctx| {
+        ActorCall::ActorInteract { actor, pos } => sim_query(|ctx| {
             let EntityRef::Mob(mob_id) = actor else {
                 return HostRet::Bool(false);
             };
@@ -60,7 +58,7 @@ pub(super) fn handle_actor_call(mod_id: &str, call: HostCall) -> HostRet {
                 .push_action(DeferredAction::ActorInteract { mob_id, pos });
             HostRet::Bool(true)
         }),
-        HostCall::ActorPlaceCheck {
+        ActorCall::ActorPlaceCheck {
             actor,
             from,
             pos,
@@ -87,7 +85,7 @@ pub(super) fn handle_actor_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Place(judge(ctx, &standing, IVec3::from_array(pos), &record, pay))
             })
         }
-        HostCall::ActorAims {
+        ActorCall::ActorAims {
             actor,
             from,
             pos,
@@ -130,9 +128,6 @@ pub(super) fn handle_actor_call(mod_id: &str, call: HostCall) -> HostRet {
                 )
             })
         }
-        other => HostRet::Error(format!(
-            "non-actor call {other:?} mis-routed to handle_actor_call (host bug)"
-        )),
     }
 }
 

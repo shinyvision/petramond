@@ -5,7 +5,7 @@
 //! actor and refuse an actor-less dispatch; their `...For` twins name the
 //! session — a machine's gauges belong to whoever is looking at it.
 
-use mod_api::{HostCall, HostRet};
+use mod_api::{GuiCall, HostRet};
 
 use crate::events::{DeferredAction, SimCtx};
 use crate::player::PlayerId;
@@ -65,9 +65,9 @@ fn state_get(ctx: &mut SimCtx<'_>, player: PlayerId, key: &str) -> Option<mod_ap
 /// Mod-GUI calls (session state map plus open/close).
 /// State keys are mod-local: the map belongs to one GUI session (cleared
 /// on open/close), so unlike the persistent KV no prefix is enforced.
-pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
+pub(super) fn handle_gui_call(mod_id: &str, call: GuiCall) -> HostRet {
     match call {
-        HostCall::GuiStateSet { key, value } => sim_mutate(|ctx| {
+        GuiCall::GuiStateSet { key, value } => sim_mutate(|ctx| {
             let id = actor_for(ctx, "GuiStateSet", "GuiStateSetFor")?;
             let value = crate::modding::convert::gui_value(value);
             ctx.with_gui_state(id, |map| {
@@ -77,7 +77,7 @@ pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
         }),
         // The per-SESSION write: a machine's gauges reach the session that is
         // looking at it, however many players stand at machines.
-        HostCall::GuiStateSetFor {
+        GuiCall::GuiStateSetFor {
             player_id,
             key,
             value,
@@ -91,7 +91,7 @@ pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
                 .is_some(),
             )
         }),
-        HostCall::GuiViewers => sim_query(|ctx| {
+        GuiCall::GuiViewers => sim_query(|ctx| {
             HostRet::GuiViewers(
                 ctx.gui_viewers()
                     .into_iter()
@@ -111,45 +111,42 @@ pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
                     .collect(),
             )
         }),
-        HostCall::GuiStateGet { key } => sim_query(|ctx| {
+        GuiCall::GuiStateGet { key } => sim_query(|ctx| {
             match actor_for(ctx, "GuiStateGet", "GuiStateGetFor") {
                 Ok(id) => HostRet::GuiValue(state_get(ctx, id, &key)),
                 Err(e) => e,
             }
         }),
-        HostCall::GuiStateGetFor { player_id, key } => {
+        GuiCall::GuiStateGetFor { player_id, key } => {
             sim_query(|ctx| HostRet::GuiValue(state_get(ctx, PlayerId(player_id.0), &key)))
         }
-        HostCall::GuiOpen { kind_key, at } => sim_query(|ctx| {
+        GuiCall::GuiOpen { kind_key, at } => sim_query(|ctx| {
             match actor_for(ctx, "GuiOpen", "GuiOpenFor") {
                 Ok(id) => HostRet::Bool(open_gui(ctx, mod_id, id, &kind_key, at)),
                 Err(e) => e,
             }
         }),
-        HostCall::GuiOpenFor {
+        GuiCall::GuiOpenFor {
             player_id,
             kind_key,
             at,
         } => sim_query(|ctx| {
             HostRet::Bool(open_gui(ctx, mod_id, PlayerId(player_id.0), &kind_key, at))
         }),
-        HostCall::GuiClose => sim_mutate(|ctx| {
+        GuiCall::GuiClose => sim_mutate(|ctx| {
             let id = actor_for(ctx, "GuiClose", "GuiCloseFor")?;
             close_gui(ctx, id);
             Ok(())
         }),
-        HostCall::GuiCloseFor { player_id } => {
+        GuiCall::GuiCloseFor { player_id } => {
             sim_query(|ctx| HostRet::Bool(close_gui(ctx, PlayerId(player_id.0))))
         }
-        other => HostRet::Error(format!(
-            "non-GUI call {other:?} mis-routed to handle_gui_call (host bug)"
-        )),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use mod_api::{GuiValue, HostCall, HostRet};
+    use mod_api::{calls, GuiValue, HostCall, HostRet};
 
     use crate::events::tick::TickEvents;
     use crate::events::{OpenGui, PostQueue, RosterRefs, SessionPlayerRef, SimCtx};
@@ -210,7 +207,7 @@ mod tests {
 
             // Who is looking, and at what: the machine's anchor, so matching
             // a viewer to a placed machine is an equality test.
-            let HostRet::GuiViewers(viewers) = handle_host_call(&mut data, HostCall::GuiViewers)
+            let HostRet::GuiViewers(viewers) = handle_host_call(&mut data, HostCall::from(calls::GuiViewers))
             else {
                 panic!("GuiViewers answers its own reply kind");
             };
@@ -231,12 +228,12 @@ mod tests {
             assert!(matches!(
                 handle_host_call(
                     &mut data,
-                    HostCall::GuiStateSet {
+                    HostCall::from(calls::GuiStateSet {
                         key: "doctest:level".into(),
                         value: GuiValue::F32(1.0),
-                    }
+                    })
                 ),
-                HostRet::Error(_)
+                HostRet::Err(_)
             ));
 
             // One reading per viewer, under the SAME flat key — which is
@@ -246,11 +243,11 @@ mod tests {
                 assert_eq!(
                     handle_host_call(
                         &mut data,
-                        HostCall::GuiStateSetFor {
+                        HostCall::from(calls::GuiStateSetFor {
                             player_id: v.player_id,
                             key: "doctest:level".into(),
                             value: GuiValue::F32(level),
-                        }
+                        })
                     ),
                     HostRet::Bool(true)
                 );
@@ -258,10 +255,10 @@ mod tests {
             assert_eq!(
                 handle_host_call(
                     &mut data,
-                    HostCall::GuiStateGetFor {
+                    HostCall::from(calls::GuiStateGetFor {
                         player_id: mod_api::PlayerId(1),
                         key: "doctest:level".into(),
-                    }
+                    })
                 ),
                 HostRet::GuiValue(Some(GuiValue::F32(0.75)))
             );
@@ -269,11 +266,11 @@ mod tests {
             assert_eq!(
                 handle_host_call(
                     &mut data,
-                    HostCall::GuiStateSetFor {
+                    HostCall::from(calls::GuiStateSetFor {
                         player_id: mod_api::PlayerId(99),
                         key: "doctest:level".into(),
                         value: GuiValue::F32(1.0),
-                    }
+                    })
                 ),
                 HostRet::Bool(false)
             );

@@ -2,7 +2,7 @@
 //! data rides the typed TAG map — see `tags.rs`).
 //! Writes pass the namespace/size guard; reads cross namespaces.
 
-use mod_api::{HostCall, HostRet};
+use mod_api::{ErrorCode, HostRet, KvCall};
 
 use petramond_math::math::IVec3;
 
@@ -24,16 +24,16 @@ fn guarded_write(
 
 /// Persistent-KV calls (world / section-cell surfaces; writes pass
 /// [`kv_write_guard`]).
-pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
+pub(super) fn handle_kv_call(mod_id: &str, call: KvCall) -> HostRet {
     match call {
-        HostCall::SectionKvFind { section, key } => sim_read(|ctx| {
+        KvCall::SectionKvFind { section, key } => sim_read(|ctx| {
             use petramond_world::chunk::SectionPos;
             let Some(origin) = section
                 .into_iter()
                 .map(|n| n.checked_mul(16))
                 .collect::<Option<Vec<_>>>()
             else {
-                return HostRet::Error("section coordinates overflow".into());
+                return HostRet::invalid("section coordinates overflow".into());
             };
             if !ctx
                 .world
@@ -66,16 +66,16 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
                     .collect(),
             ))
         }),
-        HostCall::WorldKvGet { key } => {
+        KvCall::WorldKvGet { key } => {
             sim_read(|ctx| HostRet::Bytes(ctx.world.data().world_kv_get(&key).map(<[u8]>::to_vec)))
         }
-        HostCall::WorldKvSet { key, value } => guarded_write(mod_id, key, value.len(), |key| {
+        KvCall::WorldKvSet { key, value } => guarded_write(mod_id, key, value.len(), |key| {
             sim_call(|ctx| ctx.world.world_kv_set(key, value))
         }),
-        HostCall::WorldKvDelete { key } => guarded_write(mod_id, key, 0, |key| {
+        KvCall::WorldKvDelete { key } => guarded_write(mod_id, key, 0, |key| {
             sim_query(|ctx| HostRet::Bool(ctx.world.world_kv_remove(&key)))
         }),
-        HostCall::SectionKvGet { pos, key } => sim_read(|ctx| {
+        KvCall::SectionKvGet { pos, key } => sim_read(|ctx| {
             let p = IVec3::from(pos);
             HostRet::Bytes(
                 ctx.world
@@ -83,7 +83,7 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
                     .map(<[u8]>::to_vec),
             )
         }),
-        HostCall::SectionKvSet { pos, key, value } => {
+        KvCall::SectionKvSet { pos, key, value } => {
             guarded_write(mod_id, key, value.len(), |key| {
                 sim_query(|ctx| {
                     let p = IVec3::from(pos);
@@ -93,15 +93,16 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
                     if ctx.world.data().cell_kv_get(p.x, p.y, p.z, &key).is_none()
                         && ctx.world.data().cell_kv_count(p.x, p.y, p.z) >= CELL_KV_MAX_KEYS
                     {
-                        return HostRet::Error(format!(
-                            "cell {p:?} already holds {CELL_KV_MAX_KEYS} KV keys"
-                        ));
+                        return HostRet::error(
+                            ErrorCode::LimitExceeded,
+                            format!("cell {p:?} already holds {CELL_KV_MAX_KEYS} KV keys"),
+                        );
                     }
                     HostRet::Bool(ctx.world.cell_kv_set(p.x, p.y, p.z, key, value))
                 })
             })
         }
-        HostCall::SectionKvDelete { pos, key } => guarded_write(mod_id, key, 0, |key| {
+        KvCall::SectionKvDelete { pos, key } => guarded_write(mod_id, key, 0, |key| {
             sim_query(|ctx| {
                 let p = IVec3::from(pos);
                 HostRet::Bool(ctx.world.cell_kv_remove(p.x, p.y, p.z, &key))
@@ -110,7 +111,7 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
         // ONE key across many cells: the shape a machine KIND reads and writes
         // its state in, and the reason it exists is that the per-cell form
         // made a mod's tick cost one crossing per placed machine.
-        HostCall::SectionKvGetMany { key, positions } => {
+        KvCall::SectionKvGetMany { key, positions } => {
             if let Some(err) = batch_guard("SectionKvGetMany position", positions.len()) {
                 return err;
             }
@@ -128,7 +129,7 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
                 )
             })
         }
-        HostCall::SectionKvSetMany { key, writes } => {
+        KvCall::SectionKvSetMany { key, writes } => {
             if let Some(err) = batch_guard("SectionKvSetMany write", writes.len()) {
                 return err;
             }
@@ -161,9 +162,6 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
                 })
             })
         }
-        other => HostRet::Error(format!(
-            "non-KV call {other:?} mis-routed to handle_kv_call (host bug)"
-        )),
     }
 }
 

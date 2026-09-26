@@ -72,7 +72,7 @@ pub fn prewarm_modules() {
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use mod_api::{EventKind, EventPayload, GuestCall, GuestRet, HostileSpawnCandidate};
+use mod_api::{EventFilter, EventKind, EventPayload, GuestCall, GuestRet, HostileSpawnCandidate};
 
 use crate::events::tick::TickEvents;
 use crate::events::{
@@ -687,7 +687,8 @@ fn apply_registration(
             event,
             priority,
             handler_id,
-        } => wire_event_handler(shared, event, priority, handler_id, bus),
+            filter,
+        } => wire_event_handler(shared, event, priority, handler_id, filter, bus),
         // Gen/spawner/behavior registrations go to their own registries in
         // `initialize`, never to the bus/scheduler.
         Registration::WorldgenFeature { .. }
@@ -702,15 +703,21 @@ fn apply_registration(
 }
 
 /// Dispatch one event to the guest handler and return its verdict + echoed
-/// payload. `None` = mod disabled (now or earlier): the event proceeds as if
-/// unhandled. A reply of the wrong shape is a protocol break and disables the
-/// mod like any trap.
+/// payload (echoed only for the kinds whose payload has mutable fields).
+/// `None` = the handler's filter did not admit the event (it never crosses),
+/// or the mod is disabled (now or earlier): either way the event proceeds as
+/// if unhandled. A reply of the wrong shape is a protocol break and disables
+/// the mod like any trap.
 fn call_event(
     inst: &SharedInstance,
+    filter: &EventFilter,
     ctx: &mut SimCtx,
     handler_id: u32,
     payload: EventPayload,
-) -> Option<(mod_api::Outcome, EventPayload)> {
+) -> Option<(mod_api::Outcome, Option<EventPayload>)> {
+    if !filter.matches(&payload) {
+        return None;
+    }
     let call = GuestCall::HandleEvent {
         id: handler_id,
         payload,
@@ -731,13 +738,14 @@ fn wire_event_handler(
     event: EventKind,
     priority: i32,
     handler_id: u32,
+    filter: EventFilter,
     bus: &mut EventBus,
 ) {
     // Post kinds: observe-only, one generic wrapper.
     if let Some(kind) = convert::post_kind(event) {
         let inst = Arc::clone(shared);
         bus.on_post(kind, priority, move |ctx, ev| {
-            call_event(&inst, ctx, handler_id, convert::post_event(ev));
+            call_event(&inst, &filter, ctx, handler_id, convert::post_event(ev));
         });
         return;
     }
@@ -747,7 +755,7 @@ fn wire_event_handler(
     match event {
         EventKind::BlockPlacePre => {
             bus.on_block_place_pre(priority, move |ctx, ev| {
-                match call_event(&inst, ctx, handler_id, convert::block_place_pre(ev)) {
+                match call_event(&inst, &filter, ctx, handler_id, convert::block_place_pre(ev)) {
                     Some((outcome, _)) => convert::outcome(outcome),
                     None => Outcome::Continue,
                 }
@@ -755,7 +763,7 @@ fn wire_event_handler(
         }
         EventKind::CellsEditPre => {
             bus.on_cells_edit_pre(priority, move |ctx, ev| {
-                match call_event(&inst, ctx, handler_id, convert::cells_edit_pre(ev)) {
+                match call_event(&inst, &filter, ctx, handler_id, convert::cells_edit_pre(ev)) {
                     Some((outcome, _)) => convert::outcome(outcome),
                     None => Outcome::Continue,
                 }
@@ -763,9 +771,9 @@ fn wire_event_handler(
         }
         EventKind::BlockBreakPre => {
             bus.on_block_break_pre(priority, move |ctx, ev| {
-                match call_event(&inst, ctx, handler_id, convert::block_break_pre(ev)) {
+                match call_event(&inst, &filter, ctx, handler_id, convert::block_break_pre(ev)) {
                     Some((outcome, echoed)) => {
-                        if let EventPayload::BlockBreakPre { drops, .. } = echoed {
+                        if let Some(EventPayload::BlockBreakPre { drops, .. }) = echoed {
                             ev.drops = drops.map(|stacks| {
                                 stacks.iter().filter_map(convert::item_stack_in).collect()
                             });
@@ -777,14 +785,14 @@ fn wire_event_handler(
             })
         }
         EventKind::InteractAttempt => bus.on_interact_attempt(priority, move |ctx, ev| {
-            match call_event(&inst, ctx, handler_id, convert::interact_attempt(ev)) {
+            match call_event(&inst, &filter, ctx, handler_id, convert::interact_attempt(ev)) {
                 Some((outcome, _)) => convert::outcome(outcome),
                 None => Outcome::Continue,
             }
         }),
         EventKind::UseUnclaimed => {
             bus.on_use_unclaimed(priority, move |ctx, ev| {
-                match call_event(&inst, ctx, handler_id, convert::use_unclaimed(ev)) {
+                match call_event(&inst, &filter, ctx, handler_id, convert::use_unclaimed(ev)) {
                     Some((outcome, _)) => convert::outcome(outcome),
                     None => Outcome::Continue,
                 }
@@ -792,23 +800,23 @@ fn wire_event_handler(
         }
         EventKind::AttackAttempt => {
             bus.on_attack_attempt(priority, move |ctx, ev| {
-                match call_event(&inst, ctx, handler_id, convert::attack_attempt(ev)) {
+                match call_event(&inst, &filter, ctx, handler_id, convert::attack_attempt(ev)) {
                     Some((outcome, _)) => convert::outcome(outcome),
                     None => Outcome::Continue,
                 }
             })
         }
         EventKind::ItemUsePre => bus.on_item_use_pre(priority, move |ctx, ev| {
-            match call_event(&inst, ctx, handler_id, convert::item_use_pre(ev)) {
+            match call_event(&inst, &filter, ctx, handler_id, convert::item_use_pre(ev)) {
                 Some((outcome, _)) => convert::outcome(outcome),
                 None => Outcome::Continue,
             }
         }),
         EventKind::ProjectileHit => {
             bus.on_projectile_hit(priority, move |ctx, ev| {
-                match call_event(&inst, ctx, handler_id, convert::projectile_hit(ev)) {
+                match call_event(&inst, &filter, ctx, handler_id, convert::projectile_hit(ev)) {
                     Some((outcome, echoed)) => {
-                        if let EventPayload::ProjectileHit { fate, .. } = echoed {
+                        if let Some(EventPayload::ProjectileHit { fate, .. }) = echoed {
                             ev.fate = convert::fate_in(fate);
                         }
                         convert::outcome(outcome)
@@ -819,11 +827,11 @@ fn wire_event_handler(
         }
         EventKind::MobDamagePre => {
             bus.on_mob_damage_pre(priority, move |ctx, ev| {
-                match call_event(&inst, ctx, handler_id, convert::mob_damage_pre(ev)) {
+                match call_event(&inst, &filter, ctx, handler_id, convert::mob_damage_pre(ev)) {
                     Some((outcome, echoed)) => {
-                        if let EventPayload::MobDamagePre {
+                        if let Some(EventPayload::MobDamagePre {
                             amount, feedback, ..
-                        } = echoed
+                        }) = echoed
                         {
                             ev.amount = amount;
                             ev.feedback = mob_damage_feedback(feedback);
@@ -835,9 +843,9 @@ fn wire_event_handler(
             })
         }
         EventKind::PlayerDamagePre => bus.on_player_damage_pre(priority, move |ctx, ev| {
-            match call_event(&inst, ctx, handler_id, convert::player_damage_pre(ev)) {
+            match call_event(&inst, &filter, ctx, handler_id, convert::player_damage_pre(ev)) {
                 Some((outcome, echoed)) => {
-                    if let EventPayload::PlayerDamagePre { amount, .. } = echoed {
+                    if let Some(EventPayload::PlayerDamagePre { amount, .. }) = echoed {
                         ev.amount = amount;
                     }
                     convert::outcome(outcome)

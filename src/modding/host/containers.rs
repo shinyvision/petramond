@@ -2,7 +2,7 @@
 //! recipe reads machine mods compose with. (Item registry reads live in the
 //! `registry` domain.)
 
-use mod_api::{HostCall, HostRet};
+use mod_api::{ContainerCall, HostRet};
 
 use crate::events::SimCtx;
 
@@ -12,12 +12,12 @@ mod access;
 
 /// Mod container slots + the machine recipe read that makes furnace-like
 /// mod logic possible without duplicating engine data.
-pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
+pub(super) fn handle_container_call(mod_id: &str, call: ContainerCall) -> HostRet {
     match call {
-        HostCall::ContainerGet { at } => {
+        ContainerCall::ContainerGet { at } => {
             sim_query(|ctx| HostRet::ContainerSlots(read_slots(ctx, at)))
         }
-        HostCall::ContainerGetMany { addresses } => {
+        ContainerCall::ContainerGetMany { addresses } => {
             if let Some(err) = batch_guard("ContainerGetMany address", addresses.len()) {
                 return err;
             }
@@ -25,7 +25,7 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Containers(addresses.iter().map(|&at| read_slots(ctx, at)).collect())
             })
         }
-        HostCall::ContainerInsert { at, stack } => {
+        ContainerCall::ContainerInsert { at, stack } => {
             let Some(item) = item_by_name(&stack.item) else {
                 return HostRet::ItemStack(Some(stack));
             };
@@ -44,7 +44,7 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::ItemStack(remainder.map(item_stack_data))
             })
         }
-        HostCall::ContainerHold { at, actor, open } => sim_query(|ctx| {
+        ContainerCall::ContainerHold { at, actor, open } => sim_query(|ctx| {
             let mod_api::EntityRef::Mob(mob_id) = actor else {
                 return HostRet::Bool(false);
             };
@@ -61,10 +61,10 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 .push_action(crate::events::DeferredAction::ContainerHold { mob_id, pos, open });
             HostRet::Bool(true)
         }),
-        HostCall::ContainerTake { at, slot, count } => sim_query(|ctx| {
+        ContainerCall::ContainerTake { at, slot, count } => sim_query(|ctx| {
             HostRet::ItemStack(take(ctx, at, slot, count).map(item_stack_data))
         }),
-        HostCall::ContainerTransfer {
+        ContainerCall::ContainerTransfer {
             from,
             slot,
             to,
@@ -102,7 +102,7 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
             }
             HostRet::ItemStack(moved.map(item_stack_data))
         }),
-        HostCall::ContainerSet { at, slots } => {
+        ContainerCall::ContainerSet { at, slots } => {
             if let Some(err) = batch_guard("ContainerSet slot entry", slots.len()) {
                 return err;
             }
@@ -112,7 +112,7 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
             for (i, slot) in &slots {
                 let i = *i as usize;
                 if i >= petramond_world::container::MAX_CONTAINER_SLOTS {
-                    return HostRet::Error(format!(
+                    return HostRet::invalid(format!(
                         "ContainerSet: slot {i} is past the cap ({})",
                         petramond_world::container::MAX_CONTAINER_SLOTS
                     ));
@@ -186,7 +186,7 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(true)
             })
         }
-        HostCall::RecipeResult { class, item } => {
+        ContainerCall::RecipeResult { class, item } => {
             let Some(recipes) = crate::modding::active_recipes() else {
                 log::warn!("[mod {mod_id}] RecipeResult: no recipe catalog installed");
                 return HostRet::ItemStack(None);
@@ -196,9 +196,6 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
             };
             HostRet::ItemStack(recipes.process(&class, item).map(item_stack_data))
         }
-        other => HostRet::Error(format!(
-            "non-container call {other:?} mis-routed to handle_container_call (host bug)"
-        )),
     }
 }
 

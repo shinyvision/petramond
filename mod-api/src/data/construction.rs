@@ -67,11 +67,11 @@ pub enum RecordStatus {
     },
 }
 
-/// Why an actor's world action did not happen (see [`HostCall::ActorDig`]
-/// and [`HostCall::ActorPlace`]).
+/// Why an actor's world action did not happen (see [`ActorCall::ActorDig`](crate::ActorCall::ActorDig)
+/// and [`ActorCall::ActorPlace`](crate::ActorCall::ActorPlace)).
 ///
-/// [`HostCall::ActorDig`]: crate::HostCall::ActorDig
-/// [`HostCall::ActorPlace`]: crate::HostCall::ActorPlace
+/// [`ActorCall::ActorDig`]: crate::ActorCall::ActorDig
+/// [`ActorCall::ActorPlace`]: crate::ActorCall::ActorPlace
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ActionRefusal {
     /// The actor is not a live mob.
@@ -107,15 +107,15 @@ pub enum ActionRefusal {
     /// The target changed between the request and its turn.
     Changed,
     /// The actor is not looking at it: its gaze lands elsewhere, or on a
-    /// face that would not place this (see `HostCall::ActorAims`).
+    /// face that would not place this (see `ActorCall::ActorAims`).
     NotAimed,
     /// Every face seen from there places the object turned another way.
     Misaligned,
 }
 
-/// Where an actor's dig stands after one [`HostCall::ActorDig`] tick.
+/// Where an actor's dig stands after one [`ActorCall::ActorDig`](crate::ActorCall::ActorDig) tick.
 ///
-/// [`HostCall::ActorDig`]: crate::HostCall::ActorDig
+/// [`ActorCall::ActorDig`]: crate::ActorCall::ActorDig
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
 pub enum DigProgress {
     /// Still digging: `progress` of the break's full duration, 0..1.
@@ -128,9 +128,9 @@ pub enum DigProgress {
     Refused(ActionRefusal),
 }
 
-/// The answer to one [`HostCall::ActorPlace`].
+/// The answer to one [`ActorCall::ActorPlace`](crate::ActorCall::ActorPlace).
 ///
-/// [`HostCall::ActorPlace`]: crate::HostCall::ActorPlace
+/// [`ActorCall::ActorPlace`]: crate::ActorCall::ActorPlace
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
 pub enum PlaceRequest {
     /// Valid now and queued for this tick; its outcome arrives as
@@ -141,9 +141,9 @@ pub enum PlaceRequest {
     Refused(ActionRefusal),
 }
 
-/// What one bounded route search learned (see [`HostCall::PathProbe`]).
+/// What one bounded route search learned (see [`EntityCall::PathProbe`](crate::EntityCall::PathProbe)).
 ///
-/// [`HostCall::PathProbe`]: crate::HostCall::PathProbe
+/// [`EntityCall::PathProbe`]: crate::EntityCall::PathProbe
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Route {
     /// The body can walk there.
@@ -154,9 +154,9 @@ pub enum Route {
     Undecided,
 }
 
-/// What one bounded walkable-region flood learned (see [`HostCall::WalkRegion`]).
+/// What one bounded walkable-region flood learned (see [`EntityCall::WalkRegion`](crate::EntityCall::WalkRegion)).
 ///
-/// [`HostCall::WalkRegion`]: crate::HostCall::WalkRegion
+/// [`EntityCall::WalkRegion`]: crate::EntityCall::WalkRegion
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum Flood {
     /// Every foothold reached, breadth first, each with the moves between it
@@ -169,9 +169,9 @@ pub enum Flood {
     Deferred,
 }
 
-/// A stretch of the world's change log (see [`HostCall::BlockChangesSince`]).
+/// A stretch of the world's change log (see [`BlockCall::BlockChangesSince`](crate::BlockCall::BlockChangesSince)).
 ///
-/// [`HostCall::BlockChangesSince`]: crate::HostCall::BlockChangesSince
+/// [`BlockCall::BlockChangesSince`]: crate::BlockCall::BlockChangesSince
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct BlockChanges {
     /// The entry to ask from next time.
@@ -187,7 +187,7 @@ pub struct BlockChanges {
 pub enum ActorAction {
     Dig,
     Place,
-    /// Used the block ([`HostCall::ActorInteract`](crate::HostCall::ActorInteract)).
+    /// Used the block ([`ActorCall::ActorInteract`](crate::ActorCall::ActorInteract)).
     Use,
 }
 
@@ -203,15 +203,15 @@ pub struct SchematicInfoData {
     pub size: [i32; 3],
     /// Stored cells (selected positions, explicit air included).
     pub cells: u64,
-    /// Stored sections, each read with [`HostCall::SchematicCells`].
+    /// Stored sections, each read with [`SchematicCall::SchematicCells`](crate::SchematicCall::SchematicCells).
     ///
-    /// [`HostCall::SchematicCells`]: crate::HostCall::SchematicCells
+    /// [`SchematicCall::SchematicCells`]: crate::SchematicCall::SchematicCells
     pub sections: u32,
 }
 
-/// Where a schematic stands for a reader ([`HostCall::SchematicInfo`]).
+/// Where a schematic stands for a reader ([`SchematicCall::SchematicInfo`](crate::SchematicCall::SchematicInfo)).
 ///
-/// [`HostCall::SchematicInfo`]: crate::HostCall::SchematicInfo
+/// [`SchematicCall::SchematicInfo`]: crate::SchematicCall::SchematicInfo
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum SchematicLookup {
     /// The world holds no such asset.
@@ -233,9 +233,9 @@ pub struct SchematicCellsData {
     pub palette: Vec<BlockRecord>,
 }
 
-/// A retained anchored ghost ([`HostCall::SchematicGhostSet`]).
+/// A retained anchored ghost ([`SchematicCall::SchematicGhostSet`](crate::SchematicCall::SchematicGhostSet)).
 ///
-/// [`HostCall::SchematicGhostSet`]: crate::HostCall::SchematicGhostSet
+/// [`SchematicCall::SchematicGhostSet`]: crate::SchematicCall::SchematicGhostSet
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SchematicGhostData {
     pub asset: SchematicId,
@@ -245,7 +245,7 @@ pub struct SchematicGhostData {
     /// Who sees it; empty = every player.
     pub viewers: Vec<PlayerId>,
     /// A viewer positioning a schematic under this ghost's own key
-    /// ([`HostCall::SchematicPosition`](crate::HostCall::SchematicPosition),
+    /// ([`SchematicCall::SchematicPosition`](crate::SchematicCall::SchematicPosition),
     /// `tag` = the key) does not see it meanwhile: the old placement steps
     /// aside for the one being chosen, and returns if they back out.
     pub yields_to_positioning: bool,

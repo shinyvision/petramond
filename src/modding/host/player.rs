@@ -8,7 +8,7 @@
 //! its body with an explicitly addressed twin (`PlayerStateOf`, `GiveItemTo`,
 //! `TeleportPlayer`, ...), so the two addressings can never disagree.
 
-use mod_api::{HostCall, HostRet, PlayerSnapshot};
+use mod_api::{BodyCall, HostRet, PlayerCall, PlayerSnapshot};
 
 use crate::events::{DeferredAction, SimCtx};
 use crate::player::PlayerId;
@@ -146,25 +146,26 @@ fn replace_held_one(
 
 /// Player calls (snapshot, damage/kill through the funnel, inventory,
 /// movement primitives).
-pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
+/// One player's movement intent this tick, in the ABI's shape.
+fn player_input(ctx: &SimCtx<'_>, player: mod_api::PlayerId) -> Option<mod_api::PlayerInputData> {
+    ctx.world
+        .player_input(player.0)
+        .map(|i| mod_api::PlayerInputData {
+            forward: i.forward,
+            strafe: i.strafe,
+            jump: i.jump,
+            sneak: i.sneak,
+            yaw: i.yaw,
+            pitch: i.pitch,
+        })
+}
+
+pub(super) fn handle_player_call(mod_id: &str, call: PlayerCall) -> HostRet {
     match call {
-        HostCall::ActingPlayer => sim_read(|ctx| {
-            HostRet::ActingPlayer(ctx.actor.map(|id| mod_api::PlayerId(id.0)))
-        }),
-        HostCall::PlayerState => sim_query(|ctx| {
-            let id = match actor_for(ctx, "PlayerState", "PlayerStateOf") {
-                Ok(id) => id,
-                Err(e) => return e,
-            };
-            match player_snapshot(ctx, id, mod_id) {
-                Some(snapshot) => HostRet::Player(Box::new(snapshot)),
-                None => HostRet::Error(format!("PlayerState: actor {} is not connected", id.0)),
-            }
-        }),
-        HostCall::PlayerStateOf { player } => sim_query(|ctx| {
+        PlayerCall::PlayerStateOf { player } => sim_query(|ctx| {
             HostRet::PlayerOf(player_snapshot(ctx, PlayerId(player.0), mod_id).map(Box::new))
         }),
-        HostCall::PlayerIdentity { player } => sim_read(|ctx| {
+        PlayerCall::PlayerIdentity { player } => sim_read(|ctx| {
             HostRet::Identity(
                 ctx.world
                     .player_roster()
@@ -176,7 +177,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                     }),
             )
         }),
-        HostCall::Players => sim_query(|ctx| {
+        PlayerCall::Players => sim_query(|ctx| {
             let entries = ctx
                 .player_ids()
                 .into_iter()
@@ -189,7 +190,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 .collect();
             HostRet::Players(entries)
         }),
-        HostCall::DamagePlayer {
+        PlayerCall::DamagePlayer {
             player,
             amount,
             origin,
@@ -214,7 +215,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 })
             }
         },
-        HostCall::ApplyKnockback { impulse } => match finite3(impulse, "ApplyKnockback.impulse") {
+        PlayerCall::ApplyKnockback { impulse } => match finite3(impulse, "ApplyKnockback.impulse") {
             Err(e) => e,
             Ok(impulse) => sim_mutate(|ctx| {
                 let id = actor_for(ctx, "ApplyKnockback", "ApplyKnockbackTo")?;
@@ -222,7 +223,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 Ok(())
             }),
         },
-        HostCall::ApplyKnockbackTo { player, impulse } => {
+        PlayerCall::ApplyKnockbackTo { player, impulse } => {
             match finite3(impulse, "ApplyKnockbackTo.impulse") {
                 Err(e) => e,
                 Ok(impulse) => sim_query(|ctx| {
@@ -231,7 +232,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 }),
             }
         }
-        HostCall::GiveItem { item, count, data } => {
+        PlayerCall::GiveItem { item, count, data } => {
             let variant = match super::guards::intern_abi_data("GiveItem", &data) {
                 Ok(v) => v,
                 Err(e) => return e,
@@ -249,7 +250,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(true)
             })
         }
-        HostCall::GiveItemTo {
+        PlayerCall::GiveItemTo {
             player,
             item,
             count,
@@ -271,7 +272,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
         // The per-player, per-stack held read: the stack's instance data
         // rides along, which the row-level `PlayerState.held` cannot carry.
         // An unresolvable id answers `None`, like every id-addressed read.
-        HostCall::PlayerHeld { player } => sim_query(move |ctx| {
+        PlayerCall::PlayerHeld { player } => sim_query(move |ctx| {
             let id = crate::player::PlayerId(player.0);
             HostRet::HeldStack(
                 // The acting hand's stack (only the actor is ever mid-ladder,
@@ -287,7 +288,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
         // refuses rather than clobbers. Explicit player addressing like
         // GiveItemTo; the slot write bumps the inventory revision, so
         // replication is automatic.
-        HostCall::SetPlayerHeldData {
+        PlayerCall::SetPlayerHeldData {
             player,
             expect_item,
             expect_data,
@@ -348,26 +349,26 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
         // Atomic: only an acting-hand stack holding at least `count` of `item`
         // consumes. During the ladder's off-hand pass this spends the
         // off-hand.
-        HostCall::ConsumeHeld { item, count } => sim_query(|ctx| {
+        PlayerCall::ConsumeHeld { item, count } => sim_query(|ctx| {
             match actor_for(ctx, "ConsumeHeld", "ConsumeHeldBy") {
                 Ok(id) => HostRet::Bool(consume_held(ctx, id, item, count)),
                 Err(e) => e,
             }
         }),
-        HostCall::ConsumeHeldBy {
+        PlayerCall::ConsumeHeldBy {
             player,
             item,
             count,
         } => sim_query(|ctx| {
             HostRet::Bool(consume_held(ctx, PlayerId(player.0), item, count))
         }),
-        HostCall::ReplaceHeldOne { item, replacement } => sim_query(|ctx| {
+        PlayerCall::ReplaceHeldOne { item, replacement } => sim_query(|ctx| {
             match actor_for(ctx, "ReplaceHeldOne", "ReplaceHeldOneBy") {
                 Ok(id) => HostRet::Bool(replace_held_one(ctx, mod_id, id, item, &replacement)),
                 Err(e) => e,
             }
         }),
-        HostCall::ReplaceHeldOneBy {
+        PlayerCall::ReplaceHeldOneBy {
             player,
             item,
             replacement,
@@ -375,28 +376,27 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             let id = PlayerId(player.0);
             HostRet::Bool(replace_held_one(ctx, mod_id, id, item, &replacement))
         }),
-        HostCall::PlayerInput { player_id } => sim_query(|ctx| {
-            HostRet::PlayerInput(ctx.world.player_input(player_id.0).map(|i| {
-                mod_api::PlayerInputData {
-                    forward: i.forward,
-                    strafe: i.strafe,
-                    jump: i.jump,
-                    sneak: i.sneak,
-                    yaw: i.yaw,
-                    pitch: i.pitch,
-                }
-            }))
-        }),
-        HostCall::SetHealth { value } => sim_mutate(|ctx| {
+        PlayerCall::PlayerInput { player_id } => {
+            sim_read(|ctx| HostRet::PlayerInput(player_input(ctx, player_id)))
+        }
+        PlayerCall::PlayerInputs { player_ids } => {
+            if let Some(err) = batch_guard("PlayerInputs player", player_ids.len()) {
+                return err;
+            }
+            sim_read(|ctx| {
+                HostRet::PlayerInputs(player_ids.iter().map(|&id| player_input(ctx, id)).collect())
+            })
+        }
+        PlayerCall::SetHealth { value } => sim_mutate(|ctx| {
             let id = actor_for(ctx, "SetHealth", "SetHealthOf")?;
             ctx.with_player(id, |p| p.set_health(value));
             Ok(())
         }),
-        HostCall::SetHealthOf { player, value } => sim_query(|ctx| {
+        PlayerCall::SetHealthOf { player, value } => sim_query(|ctx| {
             let hit = ctx.with_player(PlayerId(player.0), |p| p.set_health(value));
             HostRet::Bool(hit.is_some())
         }),
-        HostCall::Teleport { pos } => match super::guards::finite_pos(pos, "Teleport.pos") {
+        PlayerCall::Teleport { pos } => match super::guards::finite_pos(pos, "Teleport.pos") {
             Err(e) => e,
             Ok(pos) => sim_mutate(|ctx| {
                 let id = actor_for(ctx, "Teleport", "TeleportPlayer")?;
@@ -404,7 +404,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 Ok(())
             }),
         },
-        HostCall::TeleportPlayer { player, pos } => {
+        PlayerCall::TeleportPlayer { player, pos } => {
             match super::guards::finite_pos(pos, "TeleportPlayer.pos") {
                 Err(e) => e,
                 Ok(pos) => sim_query(|ctx| {
@@ -415,22 +415,22 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
         }
         // Status effects are player-state primitives like SetHealth: direct
         // mutation, no events.
-        HostCall::EffectApply { key, ticks } => sim_query(|ctx| {
+        PlayerCall::EffectApply { key, ticks } => sim_query(|ctx| {
             match actor_for(ctx, "EffectApply", "EffectApplyTo") {
                 Ok(id) => HostRet::Bool(apply_effect(ctx, mod_id, id, &key, ticks)),
                 Err(e) => e,
             }
         }),
-        HostCall::EffectApplyTo { player, key, ticks } => sim_query(|ctx| {
+        PlayerCall::EffectApplyTo { player, key, ticks } => sim_query(|ctx| {
             HostRet::Bool(apply_effect(ctx, mod_id, PlayerId(player.0), &key, ticks))
         }),
-        HostCall::EffectsActive => sim_query(|ctx| {
+        PlayerCall::EffectsActive => sim_query(|ctx| {
             match actor_for(ctx, "EffectsActive", "EffectsActiveOf") {
                 Ok(id) => HostRet::Effects(effects_of(ctx, id).unwrap_or_default()),
                 Err(e) => e,
             }
         }),
-        HostCall::EffectsActiveOf { player } => {
+        PlayerCall::EffectsActiveOf { player } => {
             sim_query(|ctx| HostRet::EffectsOf(effects_of(ctx, PlayerId(player.0))))
         }
         // Body-level player-state primitives like SetHealth: direct mutation
@@ -439,7 +439,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
         // addressing doctrine), never the actor. `BodyClaims` owns the
         // invariants: the claim is keyed by THIS mod, non-finite is refused
         // whole, and finite values clamp.
-        HostCall::SetPlayerAttribute {
+        PlayerCall::SetPlayerAttribute {
             player,
             attribute,
             scale,
@@ -452,123 +452,16 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                     None => HostRet::Bool(false),
                     Some(true) => HostRet::Bool(true),
                     Some(false) => {
-                        HostRet::Error(format!("SetPlayerAttribute: {scale} is not finite"))
+                        HostRet::invalid(format!("SetPlayerAttribute: {scale} is not finite"))
                     }
                 }
             })
         }
-        HostCall::SetPlayerHeldPose { player, main, off } => {
-            let mod_id = mod_id.to_owned();
-            sim_query(move |ctx| {
-                match ctx.with_player(crate::player::PlayerId(player.0), |p| {
-                    p.claims.set_held_pose(&mod_id, main, off)
-                }) {
-                    None => HostRet::Bool(false),
-                    Some(true) => HostRet::Bool(true),
-                    Some(false) => HostRet::Error(
-                        "SetPlayerHeldPose: non-finite rotation/translation component".into(),
-                    ),
-                }
-            })
-        }
-        // The animator primitives: names resolve to graph ids HERE, once, so
-        // the claim, the wire row and the render frame carry plain ids; a
-        // name a rig's graph lacks is loud, like a typo'd item.
-        HostCall::SetPlayerAnimatorParams { player, params } => {
-            let params = match crate::player::animator::resolve_params(params) {
-                Ok(params) => params,
-                Err(e) => return HostRet::Error(format!("SetPlayerAnimatorParams: {e}")),
-            };
-            let mod_id = mod_id.to_owned();
-            sim_query(move |ctx| {
-                match ctx.with_player(crate::player::PlayerId(player.0), |p| {
-                    p.claims.set_animator_params(&mod_id, params)
-                }) {
-                    None => HostRet::Bool(false),
-                    Some(true) => HostRet::Bool(true),
-                    Some(false) => {
-                        HostRet::Error("SetPlayerAnimatorParams: non-finite value".into())
-                    }
-                }
-            })
-        }
-        HostCall::SetPlayerAnimatorPlays { player, plays } => {
-            let plays = match crate::player::animator::resolve_plays(plays) {
-                Ok(plays) => plays,
-                Err(e) => return HostRet::Error(format!("SetPlayerAnimatorPlays: {e}")),
-            };
-            let mod_id = mod_id.to_owned();
-            sim_query(move |ctx| {
-                match ctx.with_player(crate::player::PlayerId(player.0), |p| {
-                    p.claims.set_animator_plays(&mod_id, plays)
-                }) {
-                    None => HostRet::Bool(false),
-                    Some(true) => HostRet::Bool(true),
-                    Some(false) => {
-                        HostRet::Error("SetPlayerAnimatorPlays: non-finite progress or rate".into())
-                    }
-                }
-            })
-        }
-        // An edge: queued on the tick's feed, replicated to every mirror of
-        // the body (the player's own viewmodel included).
-        HostCall::FirePlayerAnimatorEvent { player, rig, event } => {
-            let (rig, event) = match crate::player::animator::resolve_event(&rig, &event) {
-                Ok(resolved) => resolved,
-                Err(e) => return HostRet::Error(format!("FirePlayerAnimatorEvent: {e}")),
-            };
-            sim_query(move |ctx| {
-                let Some(s) = ctx.session_index(crate::player::PlayerId(player.0)) else {
-                    return HostRet::Bool(false);
-                };
-                ctx.feed.player(s).animator_events.push((rig, event));
-                HostRet::Bool(true)
-            })
-        }
-        HostCall::AnimationClip { rig, clip } => {
-            HostRet::AnimationClip(crate::player::animator::clip_info(&rig, &clip))
-        }
-        // The action-denial claim. Infallible below the ABI (a set of enum
-        // values has no malformed form), so the only answer is whether the
-        // addressed session is reachable.
-        // Taking the use gesture is a body write like the claims beside it:
-        // addressed at a session, keyed by the caller, transient.
-        HostCall::HoldUse { player } => {
-            let claimant = mod_id.to_owned();
-            sim_query(move |ctx| {
-                let wrote = ctx.with_player(crate::player::PlayerId(player.0), |p| {
-                    p.use_gesture = crate::player::UseGesture::Held(claimant.as_str().into());
-                });
-                HostRet::Bool(wrote.is_some())
-            })
-        }
-        // What a hand DISPLAYS: the pose seam's shape (a per-mod claim on
-        // the addressed body, last claim wins). Names resolve to ids HERE,
-        // once, so the claim, the wire row and the render frame all carry a
-        // plain id.
-        HostCall::SetPlayerHeldDisplay { player, main, off } => {
-            let mod_id = mod_id.to_owned();
-            let (main, off) = match (display_item(&main), display_item(&off)) {
-                (Ok(main), Ok(off)) => (main, off),
-                (Err(e), _) | (_, Err(e)) => return e,
-            };
-            sim_query(move |ctx| {
-                let wrote = ctx.with_player(crate::player::PlayerId(player.0), |p| {
-                    p.claims.set_held_display(&mod_id, main, off);
-                });
-                HostRet::Bool(wrote.is_some())
-            })
-        }
-        HostCall::PlayerInventory { player } => sim_query(move |ctx| {
-            HostRet::ContainerSlots(ctx.with_player(crate::player::PlayerId(player.0), |p| {
-                carried_slots(&p.inventory)
-            }))
-        }),
         // The spend half of a launch: `count` of `item` out of the named
         // session's inventory, whole or nothing, ONE variant. The variant
         // filter is COMPARED against the carried stacks, never interned: a
         // spend that finds nothing must not mint a permanent row.
-        HostCall::TakeItem {
+        PlayerCall::TakeItem {
             player,
             item,
             count,
@@ -594,7 +487,10 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::ItemStack(taken.map(super::guards::item_stack_data))
             })
         }
-        HostCall::SetPlayerDeniedActions { player, actions } => {
+        // The action-denial claim. Infallible below the ABI (a set of enum
+        // values has no malformed form), so the only answer is whether the
+        // addressed session is reachable.
+        PlayerCall::SetPlayerDeniedActions { player, actions } => {
             let mod_id = mod_id.to_owned();
             let denied = crate::player::DeniedActions::of(actions);
             sim_query(move |ctx| {
@@ -604,24 +500,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(wrote.is_some())
             })
         }
-        HostCall::SetPlayerBonePose { player, bones } => {
-            // Names resolve to rig ids HERE, once, so nothing below this
-            // boundary carries a string.
-            let Some(bones) = crate::modding::resolve_bone_poses(bones) else {
-                return HostRet::Error(crate::modding::BONE_POSE_REFUSAL.into());
-            };
-            let mod_id = mod_id.to_owned();
-            sim_query(move |ctx| {
-                // The claim's own validation cannot fail here — `resolve` has
-                // already rejected the one thing it refuses — so the only
-                // answer left is whether the addressed session exists.
-                let wrote = ctx.with_player(crate::player::PlayerId(player.0), |p| {
-                    p.claims.set_bone_poses(&mod_id, bones);
-                });
-                HostRet::Bool(wrote.is_some())
-            })
-        }
-        HostCall::ChatSend { text, targets } => sim_query(|ctx| {
+        PlayerCall::ChatSend { text, targets } => sim_query(|ctx| {
             if let Some(err) = batch_guard("ChatSend target", targets.as_ref().map_or(0, Vec::len))
             {
                 return err;
@@ -638,7 +517,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
         }),
         // Progression is per-player state, so both arms address a player
         // explicitly (the addressing doctrine) — never the actor.
-        HostCall::UnlockRecipe { player, recipe } => sim_query(|ctx| {
+        PlayerCall::UnlockRecipe { player, recipe } => sim_query(|ctx| {
             // A key no catalog row owns would sit in the player's record
             // forever, unlocking nothing and never failing — refuse it, so a
             // typo shows up as a `false` the mod can log.
@@ -663,7 +542,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 }
             }
         }),
-        HostCall::RecipeUnlocked { player, recipe } => sim_query(|ctx| {
+        PlayerCall::RecipeUnlocked { player, recipe } => sim_query(|ctx| {
             let unlocked = ctx
                 .with_player(crate::player::PlayerId(player.0), |p| {
                     p.progression.is_unlocked(&recipe)
@@ -671,9 +550,148 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 .unwrap_or(false);
             HostRet::Bool(unlocked)
         }),
-        other => HostRet::Error(format!(
-            "non-player call {other:?} mis-routed to handle_player_call (host bug)"
-        )),
+    }
+}
+
+/// The body domain on the SERVER: the authoritative answers to the calls
+/// a client instance also serves as predictions (see
+/// `client::handle_body_call`).
+pub(super) fn handle_body_call(mod_id: &str, call: BodyCall) -> HostRet {
+    match call {
+        BodyCall::ActingPlayer => sim_read(|ctx| {
+            HostRet::ActingPlayer(ctx.actor.map(|id| mod_api::PlayerId(id.0)))
+        }),
+        BodyCall::PlayerState => sim_query(|ctx| {
+            let id = match actor_for(ctx, "PlayerState", "PlayerStateOf") {
+                Ok(id) => id,
+                Err(e) => return e,
+            };
+            match player_snapshot(ctx, id, mod_id) {
+                Some(snapshot) => HostRet::Player(Box::new(snapshot)),
+                None => HostRet::invalid(format!("PlayerState: actor {} is not connected", id.0)),
+            }
+        }),
+        BodyCall::SetPlayerHeldPose { player, main, off } => {
+            let mod_id = mod_id.to_owned();
+            sim_query(move |ctx| {
+                match ctx.with_player(crate::player::PlayerId(player.0), |p| {
+                    p.claims.set_held_pose(&mod_id, main, off)
+                }) {
+                    None => HostRet::Bool(false),
+                    Some(true) => HostRet::Bool(true),
+                    Some(false) => HostRet::invalid(
+                        "SetPlayerHeldPose: non-finite rotation/translation component".into(),
+                    ),
+                }
+            })
+        }
+        // The animator primitives: names resolve to graph ids HERE, once, so
+        // the claim, the wire row and the render frame carry plain ids; a
+        // name a rig's graph lacks is loud, like a typo'd item.
+        BodyCall::SetPlayerAnimatorParams { player, params } => {
+            let params = match crate::player::animator::resolve_params(params) {
+                Ok(params) => params,
+                Err(e) => return HostRet::invalid(format!("SetPlayerAnimatorParams: {e}")),
+            };
+            let mod_id = mod_id.to_owned();
+            sim_query(move |ctx| {
+                match ctx.with_player(crate::player::PlayerId(player.0), |p| {
+                    p.claims.set_animator_params(&mod_id, params)
+                }) {
+                    None => HostRet::Bool(false),
+                    Some(true) => HostRet::Bool(true),
+                    Some(false) => {
+                        HostRet::invalid("SetPlayerAnimatorParams: non-finite value".into())
+                    }
+                }
+            })
+        }
+        BodyCall::SetPlayerAnimatorPlays { player, plays } => {
+            let plays = match crate::player::animator::resolve_plays(plays) {
+                Ok(plays) => plays,
+                Err(e) => return HostRet::invalid(format!("SetPlayerAnimatorPlays: {e}")),
+            };
+            let mod_id = mod_id.to_owned();
+            sim_query(move |ctx| {
+                match ctx.with_player(crate::player::PlayerId(player.0), |p| {
+                    p.claims.set_animator_plays(&mod_id, plays)
+                }) {
+                    None => HostRet::Bool(false),
+                    Some(true) => HostRet::Bool(true),
+                    Some(false) => {
+                        HostRet::invalid("SetPlayerAnimatorPlays: non-finite progress or rate".into())
+                    }
+                }
+            })
+        }
+        // An edge: queued on the tick's feed, replicated to every mirror of
+        // the body (the player's own viewmodel included).
+        BodyCall::FirePlayerAnimatorEvent { player, rig, event } => {
+            let (rig, event) = match crate::player::animator::resolve_event(&rig, &event) {
+                Ok(resolved) => resolved,
+                Err(e) => return HostRet::invalid(format!("FirePlayerAnimatorEvent: {e}")),
+            };
+            sim_query(move |ctx| {
+                let Some(s) = ctx.session_index(crate::player::PlayerId(player.0)) else {
+                    return HostRet::Bool(false);
+                };
+                ctx.feed.player(s).animator_events.push((rig, event));
+                HostRet::Bool(true)
+            })
+        }
+        BodyCall::AnimationClip { rig, clip } => {
+            HostRet::AnimationClip(crate::player::animator::clip_info(&rig, &clip))
+        }
+        // Taking the use gesture is a body write like the claims beside it:
+        // addressed at a session, keyed by the caller, transient.
+        BodyCall::HoldUse { player } => {
+            let claimant = mod_id.to_owned();
+            sim_query(move |ctx| {
+                let wrote = ctx.with_player(crate::player::PlayerId(player.0), |p| {
+                    p.use_gesture = crate::player::UseGesture::Held(claimant.as_str().into());
+                });
+                HostRet::Bool(wrote.is_some())
+            })
+        }
+        // What a hand DISPLAYS: the pose seam's shape (a per-mod claim on
+        // the addressed body, last claim wins). Names resolve to ids HERE,
+        // once, so the claim, the wire row and the render frame all carry a
+        // plain id.
+        BodyCall::SetPlayerHeldDisplay { player, main, off } => {
+            let mod_id = mod_id.to_owned();
+            let (main, off) = match (display_item(&main), display_item(&off)) {
+                (Ok(main), Ok(off)) => (main, off),
+                (Err(e), _) | (_, Err(e)) => return e,
+            };
+            sim_query(move |ctx| {
+                let wrote = ctx.with_player(crate::player::PlayerId(player.0), |p| {
+                    p.claims.set_held_display(&mod_id, main, off);
+                });
+                HostRet::Bool(wrote.is_some())
+            })
+        }
+        BodyCall::PlayerInventory { player } => sim_query(move |ctx| {
+            HostRet::ContainerSlots(ctx.with_player(crate::player::PlayerId(player.0), |p| {
+                carried_slots(&p.inventory)
+            }))
+        }),
+        BodyCall::SetPlayerBonePose { player, bones } => {
+            // Names resolve to rig ids HERE, once, so nothing below this
+            // boundary carries a string.
+            let Some(bones) = crate::modding::resolve_bone_poses(bones) else {
+                return HostRet::invalid(crate::modding::BONE_POSE_REFUSAL.into());
+            };
+            let mod_id = mod_id.to_owned();
+            sim_query(move |ctx| {
+                // The claim's own validation cannot fail here — `resolve` has
+                // already rejected the one thing it refuses — so the only
+                // answer left is whether the addressed session exists.
+                let wrote = ctx.with_player(crate::player::PlayerId(player.0), |p| {
+                    p.claims.set_bone_poses(&mod_id, bones);
+                });
+                HostRet::Bool(wrote.is_some())
+            })
+        }
     }
 }
 
@@ -684,7 +702,7 @@ fn display_item(name: &Option<String>) -> Result<Option<ItemType>, HostRet> {
         None => Ok(None),
         Some(name) => item_by_name(name)
             .map(Some)
-            .ok_or_else(|| HostRet::Error(format!("SetPlayerHeldDisplay: unknown item '{name}'"))),
+            .ok_or_else(|| HostRet::invalid(format!("SetPlayerHeldDisplay: unknown item '{name}'"))),
     }
 }
 
@@ -700,7 +718,7 @@ pub(in crate::modding) fn carried_slots(
 
 #[cfg(test)]
 mod tests {
-    use mod_api::{HostCall, HostRet};
+    use mod_api::{calls, HostCall, HostRet};
 
     use crate::events::tick::TickEvents;
     use crate::events::{PostQueue, RosterRefs, SessionPlayerRef, SimCtx};
@@ -724,12 +742,12 @@ mod tests {
         let write = |data: &mut ModStoreData, expect: &variant::VariantMap| {
             handle_host_call(
                 data,
-                HostCall::SetPlayerHeldData {
+                HostCall::from(calls::SetPlayerHeldData {
                     player: mod_api::PlayerId(0),
                     expect_item: "petramond:stick".into(),
                     expect_data: abi(expect),
                     data: abi(&stamp(1)),
-                },
+                }),
             )
         };
 
@@ -791,12 +809,12 @@ mod tests {
         let take = |data: &mut ModStoreData, count: u8, filter: Option<&variant::VariantMap>| {
             handle_host_call(
                 data,
-                HostCall::TakeItem {
+                HostCall::from(calls::TakeItem {
                     player: mod_api::PlayerId(0),
                     item: "petramond:stick".into(),
                     count,
                     data: filter.map(abi),
-                },
+                }),
             )
         };
 
@@ -887,19 +905,19 @@ mod tests {
         let unlock = |data: &mut ModStoreData, id: u8| {
             handle_host_call(
                 data,
-                HostCall::UnlockRecipe {
+                HostCall::from(calls::UnlockRecipe {
                     player: mod_api::PlayerId(id),
                     recipe: key.clone(),
-                },
+                }),
             )
         };
         let query = |data: &mut ModStoreData, id: u8| {
             handle_host_call(
                 data,
-                HostCall::RecipeUnlocked {
+                HostCall::from(calls::RecipeUnlocked {
                     player: mod_api::PlayerId(id),
                     recipe: key.clone(),
-                },
+                }),
             )
         };
 
@@ -941,10 +959,10 @@ mod tests {
                 assert_eq!(
                     handle_host_call(
                         &mut data,
-                        HostCall::UnlockRecipe {
+                        HostCall::from(calls::UnlockRecipe {
                             player: mod_api::PlayerId(0),
                             recipe: "alpha:typo".into(),
-                        },
+                        }),
                     ),
                     HostRet::Bool(false)
                 );
@@ -975,21 +993,21 @@ mod tests {
         let scale = |data: &mut ModStoreData, id: u8, v: f32| {
             handle_host_call(
                 data,
-                HostCall::SetPlayerAttribute {
+                HostCall::from(calls::SetPlayerAttribute {
                     player: mod_api::PlayerId(id),
                     attribute: mod_api::PlayerAttribute::MoveSpeed,
                     scale: v,
-                },
+                }),
             )
         };
         let pose = |data: &mut ModStoreData, id: u8, main: Option<mod_api::HeldPose>| {
             handle_host_call(
                 data,
-                HostCall::SetPlayerHeldPose {
+                HostCall::from(calls::SetPlayerHeldPose {
                     player: mod_api::PlayerId(id),
                     main,
                     off: None,
-                },
+                }),
             )
         };
         let guard = mod_api::HeldPose {
@@ -1039,10 +1057,10 @@ mod tests {
                 // A non-finite claim is a loud error, not a stored value.
                 let mut nan = guard;
                 nan.first_person.translation[0] = f32::NAN;
-                assert!(matches!(pose(&mut alpha, 0, Some(nan)), HostRet::Error(_)));
+                assert!(matches!(pose(&mut alpha, 0, Some(nan)), HostRet::Err(_)));
                 assert!(matches!(
                     scale(&mut alpha, 0, f32::INFINITY),
-                    HostRet::Error(_)
+                    HostRet::Err(_)
                 ));
 
                 // A clear addressed at the OTHER session is a valid write —
@@ -1104,16 +1122,16 @@ mod tests {
         };
         scope::enter(&mut ctx, || {
             assert_eq!(
-                handle_host_call(&mut data, HostCall::ActingPlayer),
+                handle_host_call(&mut data, HostCall::from(calls::ActingPlayer)),
                 HostRet::ActingPlayer(Some(mod_api::PlayerId(1)))
             );
-            let HostRet::Player(state) = handle_host_call(&mut data, HostCall::PlayerState) else {
+            let HostRet::Player(state) = handle_host_call(&mut data, HostCall::from(calls::PlayerState)) else {
                 panic!("the actor's snapshot");
             };
             assert_eq!(state.id, Some(mod_api::PlayerId(1)));
             assert_eq!(state.pos[0], 4.0, "the actor's body, not session 0's");
             assert_eq!(
-                handle_host_call(&mut data, HostCall::SetHealth { value: 5 }),
+                handle_host_call(&mut data, HostCall::from(calls::SetHealth { value: 5 })),
                 HostRet::Unit
             );
         });
@@ -1122,43 +1140,43 @@ mod tests {
         ctx.actor = None;
         scope::enter(&mut ctx, || {
             assert_eq!(
-                handle_host_call(&mut data, HostCall::ActingPlayer),
+                handle_host_call(&mut data, HostCall::from(calls::ActingPlayer)),
                 HostRet::ActingPlayer(None)
             );
             assert!(matches!(
-                handle_host_call(&mut data, HostCall::PlayerState),
-                HostRet::Error(_)
+                handle_host_call(&mut data, HostCall::from(calls::PlayerState)),
+                HostRet::Err(_)
             ));
             assert!(matches!(
-                handle_host_call(&mut data, HostCall::SetHealth { value: 1 }),
-                HostRet::Error(_)
+                handle_host_call(&mut data, HostCall::from(calls::SetHealth { value: 1 })),
+                HostRet::Err(_)
             ));
             assert_eq!(
                 handle_host_call(
                     &mut data,
-                    HostCall::SetHealthOf {
+                    HostCall::from(calls::SetHealthOf {
                         player: mod_api::PlayerId(0),
                         value: 7,
-                    }
+                    })
                 ),
                 HostRet::Bool(true)
             );
             assert_eq!(
                 handle_host_call(
                     &mut data,
-                    HostCall::SetHealthOf {
+                    HostCall::from(calls::SetHealthOf {
                         player: mod_api::PlayerId(9),
                         value: 7,
-                    }
+                    })
                 ),
                 HostRet::Bool(false),
                 "no such session"
             );
             let HostRet::PlayerOf(Some(state)) = handle_host_call(
                 &mut data,
-                HostCall::PlayerStateOf {
+                HostCall::from(calls::PlayerStateOf {
                     player: mod_api::PlayerId(1),
-                },
+                }),
             ) else {
                 panic!("the named session's snapshot");
             };

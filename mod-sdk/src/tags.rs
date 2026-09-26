@@ -9,9 +9,22 @@
 //! reads may cross namespaces. A mob carries at most 32 tags; replacing an
 //! existing key never counts against the cap.
 
-use mod_api::{MobSnapshot, MobTagLookup, MobTagValue};
+use mod_api::{MobSnapshot, MobTagLookup, MobTagOp, MobTagValue};
 
 use crate::__rt::host_fn;
+use crate::__rt::try_host_fn;
+
+try_host_fn! {
+    /// Read whole tag maps, returning a batch-size refusal so callers can split it.
+    pub fn try_mob_tags_get_many(mob_ids: Vec<u64>) -> Vec<Option<Vec<(String, MobTagValue)>>>
+        => MobTagsGetMany { mob_ids } => MobTagsMany
+}
+
+try_host_fn! {
+    /// Write tags, returning a batch-size refusal so callers can split it.
+    pub fn try_mob_tags_write(writes: Vec<MobTagOp>) -> Vec<bool>
+        => MobTagsWrite { writes } => Bools
+}
 
 host_fn! {
     /// Read one tag on a live mob (STABLE mob id). The [`MobTagLookup`]
@@ -123,4 +136,16 @@ mod tests {
         assert_eq!(<[i32; 3]>::from_tag(&MobTagValue::I64(4)), None);
         assert_eq!(<[f64; 3]>::from_tag(&[1, 2, 3].to_tag()), None, "a cell is no point");
     }
+}
+
+host_fn! {
+    /// Read whole tag maps for a population in one host call.
+    pub fn mob_tags_get_many(mob_ids: Vec<u64>) -> Vec<Option<Vec<(String, MobTagValue)>>>
+        => MobTagsGetMany { mob_ids } => MobTagsMany
+}
+
+host_fn! {
+    /// Apply tag writes in order; one success flag per write.
+    pub fn mob_tags_write(writes: Vec<MobTagOp>) -> Vec<bool>
+        => MobTagsWrite { writes } => Bools
 }

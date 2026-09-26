@@ -114,6 +114,9 @@ pub struct ProjectileHit {
     /// The striking entity's stable id — the entity is live for the whole
     /// dispatch, so what is flying is a store lookup away.
     pub entity: u64,
+    /// What is flying (the entity's item) — carried so handlers and their
+    /// subscription filters know whose projectile it is without a lookup.
+    pub item: ItemType,
     /// Who launched it: whose session the dispatch acts as.
     pub owner: Option<crate::mob::EntityRef>,
     pub target: crate::world::ImpactTarget,

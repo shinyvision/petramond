@@ -1,3 +1,4 @@
+use mod_api::calls;
 use mod_api::{HostCall, HostRet};
 
 use crate::modding::host::{handle_host_call, ModStoreData, Phase, Registration};
@@ -11,37 +12,37 @@ fn gen_registrations_gate_on_the_init_window() {
     assert_eq!(
         handle_host_call(
             &mut data,
-            HostCall::RegisterWorldgenFeature {
+            HostCall::from(calls::RegisterWorldgenFeature {
                 feature_id: 1,
                 stage: mod_api::WorldgenStage::Trees,
                 filter: Default::default(),
-            },
+            }),
         ),
         HostRet::Unit
     );
     assert!(matches!(
         handle_host_call(
             &mut data,
-            HostCall::RegisterWorldgenFeature {
+            HostCall::from(calls::RegisterWorldgenFeature {
                 feature_id: 2,
                 stage: mod_api::WorldgenStage::Climate,
                 filter: Default::default(),
-            },
+            }),
         ),
-        HostRet::Error(_)
+        HostRet::Err(_)
     ));
     assert_eq!(
         handle_host_call(
             &mut data,
-            HostCall::RegisterStageReplacement {
+            HostCall::from(calls::RegisterStageReplacement {
                 stage: mod_api::WorldgenStage::Terrain,
                 callback_id: 3,
-            },
+            }),
         ),
         HostRet::Unit
     );
     assert_eq!(
-        handle_host_call(&mut data, HostCall::RegisterGenerator { callback_id: 4 }),
+        handle_host_call(&mut data, HostCall::from(calls::RegisterGenerator { callback_id: 4 })),
         HostRet::Unit
     );
     assert_eq!(data.stats.registered, 3);
@@ -50,20 +51,20 @@ fn gen_registrations_gate_on_the_init_window() {
     // Outside the window every gen registration is rejected...
     data.phase = Phase::Run;
     for call in [
-        HostCall::RegisterWorldgenFeature {
+        HostCall::from(calls::RegisterWorldgenFeature {
             feature_id: 1,
             stage: mod_api::WorldgenStage::Trees,
             filter: Default::default(),
-        },
-        HostCall::RegisterStageReplacement {
+        }),
+        HostCall::from(calls::RegisterStageReplacement {
             stage: mod_api::WorldgenStage::Terrain,
             callback_id: 3,
-        },
-        HostCall::RegisterGenerator { callback_id: 4 },
+        }),
+        HostCall::from(calls::RegisterGenerator { callback_id: 4 }),
     ] {
         assert!(matches!(
             handle_host_call(&mut data, call),
-            HostRet::Error(_)
+            HostRet::Err(_)
         ));
     }
     // ...and the in-window Climate refusal above counted too.
@@ -83,13 +84,13 @@ fn inverted_feature_bounds_are_rejected_at_registration() {
         assert!(matches!(
             handle_host_call(
                 &mut data,
-                HostCall::RegisterWorldgenFeature {
+                HostCall::from(calls::RegisterWorldgenFeature {
                     feature_id: 1,
                     stage: mod_api::WorldgenStage::Trees,
                     filter,
-                },
+                }),
             ),
-            HostRet::Error(_)
+            HostRet::Err(_)
         ));
     }
     assert_eq!(data.stats.registered, 0);
@@ -97,11 +98,11 @@ fn inverted_feature_bounds_are_rejected_at_registration() {
     assert_eq!(
         handle_host_call(
             &mut data,
-            HostCall::RegisterWorldgenFeature {
+            HostCall::from(calls::RegisterWorldgenFeature {
                 feature_id: 1,
                 stage: mod_api::WorldgenStage::Trees,
                 filter: mod_api::GenFeatureFilter::y_band(-10, 10).without_blocks(),
-            },
+            }),
         ),
         HostRet::Unit,
         "an ordered band registers"
@@ -119,9 +120,9 @@ fn underground_biome_calls_answer_outside_the_init_window() {
 
     let id = match handle_host_call(
         &mut data,
-        HostCall::ResolveUndergroundBiome {
+        HostCall::from(calls::ResolveUndergroundBiome {
             key: "petramond:stone".into(),
-        },
+        }),
     ) {
         HostRet::MaybeByte(id) => id.expect("a shipped row resolves"),
         other => panic!("{other:?}"),
@@ -134,9 +135,9 @@ fn underground_biome_calls_answer_outside_the_init_window() {
     assert_eq!(
         handle_host_call(
             &mut data,
-            HostCall::ResolveUndergroundBiome {
+            HostCall::from(calls::ResolveUndergroundBiome {
                 key: "nope:nothing".into(),
-            },
+            }),
         ),
         HostRet::MaybeByte(None),
         "an unknown name degrades, it is not an error"
@@ -145,9 +146,9 @@ fn underground_biome_calls_answer_outside_the_init_window() {
     let positions = vec![[0, -20, 0], [244, 0, 244], [-500, -60, 300]];
     let ids = match handle_host_call(
         &mut data,
-        HostCall::UndergroundBiomeAt {
+        HostCall::from(calls::UndergroundBiomeAt {
             positions: positions.clone(),
-        },
+        }),
     ) {
         HostRet::UndergroundBiomes(ids) => ids,
         other => panic!("{other:?}"),
@@ -172,9 +173,9 @@ fn underground_biome_calls_answer_outside_the_init_window() {
     ];
     match handle_host_call(
         &mut data,
-        HostCall::UndergroundBiomeAt {
+        HostCall::from(calls::UndergroundBiomeAt {
             positions: extremes.clone(),
-        },
+        }),
     ) {
         HostRet::UndergroundBiomes(ids) => assert_eq!(ids.len(), extremes.len()),
         other => panic!("{other:?}"),
@@ -194,9 +195,9 @@ fn the_surface_biome_query_batches_across_tiles_in_any_order() {
     let columns = vec![[3, 5], [900, -1100], [-40, 12], [900, -1100], [-1500, 700]];
     let ids = match handle_host_call(
         &mut data,
-        HostCall::SurfaceBiomeAt {
+        HostCall::from(calls::SurfaceBiomeAt {
             columns: columns.clone(),
-        },
+        }),
     ) {
         HostRet::SurfaceBiomes(ids) => ids,
         other => panic!("{other:?}"),
@@ -210,9 +211,9 @@ fn the_surface_biome_query_batches_across_tiles_in_any_order() {
         );
         let alone = match handle_host_call(
             &mut data,
-            HostCall::SurfaceBiomeAt {
+            HostCall::from(calls::SurfaceBiomeAt {
                 columns: vec![*column],
-            },
+            }),
         ) {
             HostRet::SurfaceBiomes(ids) => ids[0],
             other => panic!("{other:?}"),
@@ -224,9 +225,9 @@ fn the_surface_biome_query_batches_across_tiles_in_any_order() {
     // multiply — a guest may not steer a host call into overflow.
     match handle_host_call(
         &mut data,
-        HostCall::SurfaceBiomeAt {
+        HostCall::from(calls::SurfaceBiomeAt {
             columns: vec![[i32::MIN, i32::MAX], [i32::MAX, i32::MIN]],
-        },
+        }),
     ) {
         HostRet::SurfaceBiomes(ids) => assert_eq!(ids.len(), 2),
         other => panic!("{other:?}"),

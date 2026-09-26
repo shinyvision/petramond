@@ -226,7 +226,7 @@ pub struct BlockModelDef {
     /// Authored cube NAMES that are OPTIONAL per placed instance, in a fixed
     /// order: bit `i` of a cell's parts mask shows `parts[i]`. Hidden unless
     /// the mask says otherwise, so a row that declares them looks like its
-    /// base self until a mod sets the mask (`HostCall::SetModelParts`).
+    /// base self until a mod sets the mask (`BlockCall::SetModelParts`).
     ///
     /// This is what a machine with several INDEPENDENT visual states uses
     /// instead of a block row per combination: the forge's basin holds any of

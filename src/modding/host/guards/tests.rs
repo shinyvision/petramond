@@ -1,3 +1,4 @@
+use mod_api::calls;
 use mod_api::{BlockId, HostCall, HostRet};
 
 use crate::events::tick::TickEvents;
@@ -45,67 +46,67 @@ fn a_read_only_dispatch_refuses_every_write_and_answers_reads() {
     };
     scope::enter_read_only(&mut ctx, || {
         let writes = [
-            HostCall::WorldKvDelete {
+            HostCall::from(calls::WorldKvDelete {
                 key: "fixture:k".into(),
-            },
-            HostCall::SectionKvDelete {
+            }),
+            HostCall::from(calls::SectionKvDelete {
                 pos: [1, 64, 1],
                 key: "fixture:c".into(),
-            },
-            HostCall::MobTagDelete {
+            }),
+            HostCall::from(calls::MobTagDelete {
                 mob_id: 0,
                 key: "fixture:t".into(),
-            },
-            HostCall::SetBlock {
+            }),
+            HostCall::from(calls::SetBlock {
                 pos: [1, 64, 1],
                 block: BlockId(Block::Air.id()),
-            },
-            HostCall::SectionKvSet {
+            }),
+            HostCall::from(calls::SectionKvSet {
                 pos: [1, 64, 1],
                 key: "fixture:c".into(),
                 value: vec![9],
-            },
-            HostCall::WorldKvSet {
+            }),
+            HostCall::from(calls::WorldKvSet {
                 key: "fixture:k".into(),
                 value: vec![9],
-            },
-            HostCall::MemoPut {
+            }),
+            HostCall::from(calls::MemoPut {
                 key: b"k".to_vec(),
                 value: b"v".to_vec(),
-            },
+            }),
         ];
         for call in writes {
             let what = format!("{call:?}");
             assert!(
-                matches!(handle_host_call(&mut store, call), HostRet::Error(_)),
+                matches!(handle_host_call(&mut store, call), HostRet::Err(_)),
                 "{what} must be refused in a read-only dispatch"
             );
         }
         assert_eq!(
             handle_host_call(
                 &mut store,
-                HostCall::WorldKvGet {
+                HostCall::from(calls::WorldKvGet {
                     key: "fixture:k".into()
-                }
+                })
             ),
             HostRet::Bytes(Some(vec![1]))
         );
         assert_eq!(
             handle_host_call(
                 &mut store,
-                HostCall::SectionKvGet {
+                HostCall::from(calls::SectionKvGet {
                     pos: [1, 64, 1],
                     key: "fixture:c".into()
-                }
+                })
             ),
             HostRet::Bytes(Some(vec![2]))
         );
         assert_eq!(
-            handle_host_call(&mut store, HostCall::GetBlock { pos: [1, 64, 1] }),
+            handle_host_call(&mut store, HostCall::from(calls::GetBlock { pos: [1, 64, 1] })),
             HostRet::Block(Some(BlockId(Block::Stone.id())))
         );
         assert_eq!(
-            handle_host_call(&mut store, HostCall::CurrentTick),
+            handle_host_call(&mut store, HostCall::from(calls::CurrentTick)),
             HostRet::U64(0)
         );
     });
@@ -134,19 +135,19 @@ fn an_ordinary_dispatch_still_deletes() {
         assert_eq!(
             handle_host_call(
                 &mut store,
-                HostCall::WorldKvDelete {
+                HostCall::from(calls::WorldKvDelete {
                     key: "fixture:k".into()
-                }
+                })
             ),
             HostRet::Bool(true)
         );
         assert_eq!(
             handle_host_call(
                 &mut store,
-                HostCall::SectionKvDelete {
+                HostCall::from(calls::SectionKvDelete {
                     pos: [1, 64, 1],
                     key: "fixture:c".into()
-                }
+                })
             ),
             HostRet::Bool(true)
         );
@@ -157,16 +158,16 @@ fn an_ordinary_dispatch_still_deletes() {
 
 #[test]
 fn the_read_only_allow_list_admits_reads_only() {
-    assert!(read_only_permits(&HostCall::GetBlock { pos: [0, 0, 0] }));
-    assert!(read_only_permits(&HostCall::WorldKvGet { key: "a:b".into() }));
-    assert!(!read_only_permits(&HostCall::WorldKvDelete { key: "a:b".into() }));
-    assert!(!read_only_permits(&HostCall::SectionKvDelete {
+    assert!(read_only_permits(&HostCall::from(calls::GetBlock { pos: [0, 0, 0] })));
+    assert!(read_only_permits(&HostCall::from(calls::WorldKvGet { key: "a:b".into() })));
+    assert!(!read_only_permits(&HostCall::from(calls::WorldKvDelete { key: "a:b".into() })));
+    assert!(!read_only_permits(&HostCall::from(calls::SectionKvDelete {
         pos: [0, 0, 0],
         key: "a:b".into()
-    }));
-    assert!(!read_only_permits(&HostCall::MobTagDelete {
+    })));
+    assert!(!read_only_permits(&HostCall::from(calls::MobTagDelete {
         mob_id: 1,
         key: "a:b".into()
-    }));
-    assert!(!read_only_permits(&HostCall::SetBlocks { blocks: Vec::new() }));
+    })));
+    assert!(!read_only_permits(&HostCall::from(calls::SetBlocks { blocks: Vec::new() })));
 }

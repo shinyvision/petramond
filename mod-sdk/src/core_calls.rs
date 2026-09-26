@@ -3,7 +3,8 @@
 //! (tick systems, event handlers, spawners, block behaviors, AI nodes) and
 //! shader parameters.
 
-use mod_api::{AttachSide, EventKind, HostCall, RuntimeSide, Stage};
+use mod_api::calls;
+use mod_api::{AttachSide, EventFilter, EventKind, HostCall, RuntimeSide, Stage};
 
 // Imported for intra-doc links only.
 #[allow(unused_imports)]
@@ -11,10 +12,11 @@ use crate::Mod;
 
 use crate::__rt;
 use crate::__rt::host_fn;
+use crate::__rt::try_host_fn;
 
 /// Log a line through the engine's logger.
 pub fn log(msg: &str) {
-    __rt::host_call(&HostCall::Log { msg: msg.into() });
+    __rt::host_call(&HostCall::from(calls::Log { msg: msg.into() }));
 }
 
 host_fn! {
@@ -41,11 +43,29 @@ host_fn! {
         => RegisterTickSystem { stage, attach, priority, system_id }
 }
 
-host_fn! {
-    /// Register an event handler. Only legal during [`Mod::init`]; `handler_id`
-    /// is echoed to [`Mod::handle_event`].
-    pub fn register_event_handler(event: EventKind, priority: i32, handler_id: u32)
-        => RegisterEventHandler { event, priority, handler_id }
+/// Register an event handler for every event of `event`. Only legal during
+/// [`Mod::init`]; `handler_id` is echoed to [`Mod::handle_event`].
+pub fn register_event_handler(event: EventKind, priority: i32, handler_id: u32) {
+    register_event_handler_filtered(event, priority, handler_id, EventFilter::default());
+}
+
+/// Register a handler for events matching `filter`. The host checks the filter
+/// before entering the guest and rejects filters incompatible with `event`.
+pub fn register_event_handler_filtered(
+    event: EventKind,
+    priority: i32,
+    handler_id: u32,
+    filter: EventFilter,
+) {
+    __rt::expect_unit(
+        "RegisterEventHandler",
+        __rt::host_call(&HostCall::from(calls::RegisterEventHandler {
+            event,
+            priority,
+            handler_id,
+            filter,
+        })),
+    );
 }
 
 host_fn! {
@@ -90,6 +110,12 @@ host_fn! {
     ///
     /// [`EventKind::ModEvent`]: mod_api::EventKind::ModEvent
     pub fn emit_event(key: &str, data: &[u8])
+        => EmitEvent { key: key.into(), data: data.to_vec() }
+}
+
+try_host_fn! {
+    /// Emit an event, returning a data-size refusal to the caller.
+    pub fn try_emit_event(key: &str, data: &[u8])
         => EmitEvent { key: key.into(), data: data.to_vec() }
 }
 

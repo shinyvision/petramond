@@ -2,6 +2,7 @@
 //! registration window) against hand-built hostile WAT guests, plus fixture
 //! helpers for real bundled mods.
 
+use mod_api::calls;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -246,12 +247,12 @@ const CALL_STAGE_ADDR: u32 = 1024;
 fn guest_with_data(id: &str, extra_data: &str, body: &str) -> ModInstance {
     guest_registering(
         id,
-        &HostCall::RegisterTickSystem {
+        &HostCall::from(calls::RegisterTickSystem {
             stage: ApiStage::Mining,
             attach: AttachSide::Before,
             priority: 0,
             system_id: 7,
-        },
+        }),
         extra_data,
         body,
     )
@@ -302,11 +303,12 @@ fn echoing_guest(id: &str, event: mod_api::EventKind, reply: &mod_api::GuestRet)
     let packed = (u64::from(CALL_STAGE_ADDR) << 32) | bytes.len() as u64;
     guest_registering(
         id,
-        &HostCall::RegisterEventHandler {
+        &HostCall::from(calls::RegisterEventHandler {
             event,
             priority: 0,
             handler_id: 1,
-        },
+            filter: mod_api::EventFilter::default(),
+        }),
         &data,
         &format!("(i64.const {packed})"),
     )
@@ -390,25 +392,25 @@ fn trapping_mod_is_disabled_and_the_tick_continues() {
 }
 
 /// Contract: the registration window is `mod_init` only — a registration
-/// attempted during a tick dispatch is rejected (HostRet::Error), does not
+/// attempted during a tick dispatch is rejected (HostRet::Err), does not
 /// attach anything, and does NOT disable the mod by itself.
 #[test]
 fn registration_outside_init_is_rejected() {
     // mod_dispatch re-issues the same registration call, ignores the reply,
     // and answers GuestRet::Unit from the staged data segment.
-    let body = "(drop (call $hd (i32.const 0) (i32.const 5)))\n    (i64.const 2199023255553)";
+    let body = "(drop (call $hd (i32.const 0) (i32.const 6)))\n    (i64.const 2199023255553)";
     // Verify the literals the WAT hardcodes: the registration payload length
     // and the packed (512, 1) reply address.
     assert_eq!(
-        mod_api::encode(&HostCall::RegisterTickSystem {
+        mod_api::encode(&HostCall::from(calls::RegisterTickSystem {
             stage: ApiStage::Mining,
             attach: AttachSide::Before,
             priority: 0,
             system_id: 7,
-        })
+        }))
         .unwrap()
         .len(),
-        5
+        6
     );
     assert_eq!(mod_api::pack_ptr_len(512, 1), 2199023255553);
 
@@ -439,7 +441,7 @@ fn registration_outside_init_is_rejected() {
 fn host_call_spinning_dispatch_is_disabled_by_the_call_cap() {
     let mut instance = hostile_guest_with_id(
         "spinny",
-        "(loop $spin (drop (call $hd (i32.const 0) (i32.const 5))) (br $spin))\n    (i64.const 0)",
+        "(loop $spin (drop (call $hd (i32.const 0) (i32.const 6))) (br $spin))\n    (i64.const 0)",
     );
     instance.call_init_detached();
     assert!(!instance.disabled());
@@ -475,9 +477,9 @@ fn watchdog_charges_guest_compute_only_inner() {
     *super::host::HOST_CALL_TEST_HOOK.lock().unwrap() = Some(("stally".into(), stall));
     let mut instance = hostile_guest_with_id(
         "stally",
-        "(drop (call $hd (i32.const 0) (i32.const 5)))\n    \
-         (drop (call $hd (i32.const 0) (i32.const 5)))\n    \
-         (drop (call $hd (i32.const 0) (i32.const 5)))\n    \
+        "(drop (call $hd (i32.const 0) (i32.const 6)))\n    \
+         (drop (call $hd (i32.const 0) (i32.const 6)))\n    \
+         (drop (call $hd (i32.const 0) (i32.const 6)))\n    \
          (i64.const 2199023255553)",
     );
     instance.call_init_detached();
@@ -552,12 +554,12 @@ fn dressing_calls(pos: petramond_math::math::IVec3, parts: u32, tint: [u8; 3]) -
         .to_owned();
     let pos = [pos.x, pos.y, pos.z];
     vec![
-        HostCall::SetModelParts {
+        HostCall::from(calls::SetModelParts {
             pos,
             parts,
             tint: Some(tint),
-        },
-        HostCall::SetBlockDraw {
+        }),
+        HostCall::from(calls::SetBlockDraw {
             pos,
             prims: vec![
                 mod_api::DrawPrim::Cuboid {
@@ -576,7 +578,7 @@ fn dressing_calls(pos: petramond_math::math::IVec3, parts: u32, tint: [u8; 3]) -
                     tint: [255, 255, 255],
                 },
             ],
-        },
+        }),
     ]
 }
 
@@ -681,12 +683,12 @@ fn a_foreign_mod_cannot_dress_someone_elses_machine() {
 /// multi-hundred-KiB payload must not render byte-by-byte into the log line.
 #[test]
 fn short_debug_bounds_large_payloads() {
-    let call = HostCall::ClientImageSet {
+    let call = HostCall::from(calls::ClientImageSet {
         key: "m:img".into(),
         width: 256,
         height: 256,
         rgba: vec![7; 256 * 256 * 4],
-    };
+    });
     let rendered = super::host::short_debug(&call, 160);
     assert!(rendered.starts_with("ClientImageSet"));
     assert!(rendered.ends_with('…') && rendered.len() <= 164);
@@ -711,13 +713,14 @@ fn a_projectile_hit_handler_rewrites_the_fate_through_the_abi() {
 
     let reply = GuestRet::Event {
         outcome: Outcome::Cancel,
-        payload: EventPayload::ProjectileHit {
+        payload: Some(EventPayload::ProjectileHit {
             entity: 9,
+            item: mod_api::ItemId(1),
             target: ProjectileTarget::Mob(7),
             pos: [0.0; 3],
             vel: [0.0; 3],
             fate: ProjectileFate::Consume,
-        },
+        }),
     };
     let mut sim = Sim::new();
     let mut host = ModHost::from_instances(vec![echoing_guest(
@@ -729,6 +732,7 @@ fn a_projectile_hit_handler_rewrites_the_fate_through_the_abi() {
 
     let mut ev = ProjectileHit {
         entity: 9,
+        item: petramond_world::item::ItemType::Dirt,
         owner: None,
         target: ImpactTarget::Mob(7),
         pos: WorldPos::ZERO,
@@ -775,16 +779,16 @@ fn gui_click_inventory_and_navigation_use_the_acting_session() {
     server.replace_mod_host_for_test(ModHost::from_instances(vec![calling_guest(
         "hostile",
         &[
-            HostCall::TakeItem {
+            HostCall::from(calls::TakeItem {
                 player: mod_api::PlayerId(player_id.0),
                 item: "petramond:coal".into(),
                 count: 2,
                 data: Some(Vec::new()),
-            },
-            HostCall::GuiOpen {
+            }),
+            HostCall::from(calls::GuiOpen {
                 kind_key: "hostile:second".into(),
                 at: Some(mod_api::ContainerAddress::Block(anchor.to_array())),
-            },
+            }),
         ],
     )]));
     server.sessions_mut()[s]

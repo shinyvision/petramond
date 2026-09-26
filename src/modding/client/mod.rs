@@ -12,7 +12,7 @@ pub(in crate::modding) mod scope;
 mod state;
 mod storage;
 
-pub(in crate::modding) use calls::{client_capability, handle_client_call};
+pub(in crate::modding) use calls::{handle_body_call, handle_client_call};
 pub use runtime::{
     bake_installed_custom_item_geometry, delete_local_world_storage, local_session_key,
     remote_session_key, ClientCanvasView, ClientModRuntime, ClientUiView,

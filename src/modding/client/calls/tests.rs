@@ -1,3 +1,4 @@
+use mod_api::calls;
 use mod_api::{HostCall, HostRet, RuntimeSide};
 
 use crate::modding::host::{handle_host_call, ModStoreData};
@@ -21,11 +22,11 @@ fn weather_era_client_calls_validate_and_forgive() {
     assert_eq!(
         handle_host_call(
             &mut data,
-            HostCall::ClientAmbientSet {
+            HostCall::from(calls::ClientAmbientSet {
                 key: "nope:rain".into(),
                 intensity: 1.0,
                 wind: [0.0, 0.0],
-            },
+            }),
         ),
         HostRet::Bool(false)
     );
@@ -33,7 +34,7 @@ fn weather_era_client_calls_validate_and_forgive() {
     assert_eq!(
         handle_host_call(
             &mut data,
-            HostCall::ClientAmbientSet {
+            HostCall::from(calls::ClientAmbientSet {
                 key: petramond_world::particle_emitters::defs()
                     .iter()
                     .find(|b| b.burst.is_some())
@@ -42,44 +43,44 @@ fn weather_era_client_calls_validate_and_forgive() {
                     .into(),
                 intensity: 1.0,
                 wind: [0.0, 0.0],
-            },
+            }),
         ),
         HostRet::Bool(false)
     );
     assert_eq!(
         handle_host_call(
             &mut data,
-            HostCall::ClientLoopSet {
+            HostCall::from(calls::ClientLoopSet {
                 key: "nope:loop".into(),
                 gain: 1.0,
-            },
+            }),
         ),
         HostRet::Bool(false)
     );
     // Non-finite / out-of-envelope values are hard errors.
     for bad in [
-        HostCall::ClientAmbientSet {
+        HostCall::from(calls::ClientAmbientSet {
             key: "m:x".into(),
             intensity: f32::NAN,
             wind: [0.0, 0.0],
-        },
-        HostCall::ClientAmbientSet {
+        }),
+        HostCall::from(calls::ClientAmbientSet {
             key: "m:x".into(),
             intensity: 1.0,
             wind: [65.0, 0.0],
-        },
-        HostCall::ClientLoopSet {
+        }),
+        HostCall::from(calls::ClientLoopSet {
             key: "m:x".into(),
             gain: f32::INFINITY,
-        },
-        HostCall::ClientMoodSet {
+        }),
+        HostCall::from(calls::ClientMoodSet {
             darken: f32::NAN,
             desaturate: 0.0,
-        },
+        }),
     ] {
         let ret = handle_host_call(&mut data, bad.clone());
         assert!(
-            matches!(ret, HostRet::Error(_)),
+            matches!(ret, HostRet::Err(_)),
             "malformed values must be a hard error: {bad:?} -> {ret:?}"
         );
     }
@@ -87,10 +88,10 @@ fn weather_era_client_calls_validate_and_forgive() {
     assert_eq!(
         handle_host_call(
             &mut data,
-            HostCall::ClientMoodSet {
+            HostCall::from(calls::ClientMoodSet {
                 darken: 9.0,
                 desaturate: -3.0,
-            },
+            }),
         ),
         HostRet::Bool(true)
     );
@@ -99,11 +100,11 @@ fn weather_era_client_calls_validate_and_forgive() {
     assert!(matches!(
         handle_host_call(
             &mut data,
-            HostCall::ClientEnvParams {
+            HostCall::from(calls::ClientEnvParams {
                 keys: (0..17).map(|i| format!("m:k{i}")).collect(),
-            },
+            }),
         ),
-        HostRet::Error(_)
+        HostRet::Err(_)
     ));
 }
 
@@ -113,12 +114,12 @@ fn weather_era_client_calls_validate_and_forgive() {
 fn weather_era_server_calls_stay_server_side() {
     let mut data = client_data("server-side");
     for call in [
-        HostCall::BiomeAt { pos: [0, 0] },
-        HostCall::SurfaceYAt { pos: [0, 0] },
-        HostCall::Players,
+        HostCall::from(calls::BiomeAt { pos: [0, 0] }),
+        HostCall::from(calls::SurfaceYAt { pos: [0, 0] }),
+        HostCall::from(calls::Players),
     ] {
         assert!(
-            matches!(handle_host_call(&mut data, call), HostRet::Error(_)),
+            matches!(handle_host_call(&mut data, call), HostRet::Err(_)),
             "sim queries must be rejected on client instances"
         );
     }
@@ -136,9 +137,9 @@ fn the_underground_biome_partition_answers_on_a_client_instance() {
     let positions = vec![[0, -40, 0], [400, -30, -400], [-90, -20, 610]];
     let ask = |data: &mut ModStoreData| match handle_host_call(
         data,
-        HostCall::UndergroundBiomeAt {
+        HostCall::from(calls::UndergroundBiomeAt {
             positions: positions.clone(),
-        },
+        }),
     ) {
         HostRet::UndergroundBiomes(v) => v,
         other => panic!("expected the biome ids, got {other:?}"),
@@ -152,11 +153,11 @@ fn the_underground_biome_partition_answers_on_a_client_instance() {
         matches!(
             handle_host_call(
                 &mut client,
-                HostCall::TerrainSolidAt {
+                HostCall::from(calls::TerrainSolidAt {
                     positions: positions.clone()
-                }
+                })
             ),
-            HostRet::Error(_)
+            HostRet::Err(_)
         ),
         "the carve query stays server-side"
     );
@@ -171,48 +172,48 @@ fn client_instances_are_capability_isolated_and_namespace_their_state() {
         Some(std::env::temp_dir().join("petramond-unused-client-mod-test")),
     );
     assert_eq!(
-        handle_host_call(&mut data, HostCall::RuntimeSide),
+        handle_host_call(&mut data, HostCall::from(calls::RuntimeSide)),
         HostRet::RuntimeSide(RuntimeSide::Client)
     );
     assert!(matches!(
         handle_host_call(
             &mut data,
-            HostCall::RegisterTickSystem {
+            HostCall::from(calls::RegisterTickSystem {
                 stage: mod_api::Stage::Mobs,
                 attach: mod_api::AttachSide::After,
                 priority: 0,
                 system_id: 1,
-            }
+            })
         ),
-        HostRet::Error(_)
+        HostRet::Err(_)
     ));
     assert!(data.pending.is_empty());
     assert!(matches!(
         handle_host_call(
             &mut data,
-            HostCall::ClientUiStateSet {
+            HostCall::from(calls::ClientUiStateSet {
                 key: "other:value".into(),
                 value: mod_api::GuiValue::I32(1),
-            }
+            })
         ),
-        HostRet::Error(_)
+        HostRet::Err(_)
     ));
     assert_eq!(
         handle_host_call(
             &mut data,
-            HostCall::ClientUiStateSet {
+            HostCall::from(calls::ClientUiStateSet {
                 key: "map:value".into(),
                 value: mod_api::GuiValue::I32(2),
-            }
+            })
         ),
         HostRet::Unit
     );
     assert_eq!(
         handle_host_call(
             &mut data,
-            HostCall::ClientUiStateGet {
+            HostCall::from(calls::ClientUiStateGet {
                 key: "map:value".into(),
-            }
+            })
         ),
         HostRet::GuiValue(Some(mod_api::GuiValue::I32(2)))
     );
@@ -220,12 +221,12 @@ fn client_instances_are_capability_isolated_and_namespace_their_state() {
     assert_eq!(
         handle_host_call(
             &mut data,
-            HostCall::ClientImageSet {
+            HostCall::from(calls::ClientImageSet {
                 key: "map:tile".into(),
                 width: 1,
                 height: 1,
                 rgba: vec![1, 2, 3, 255],
-            },
+            }),
         ),
         HostRet::Unit
     );
@@ -244,20 +245,20 @@ fn client_instances_are_capability_isolated_and_namespace_their_state() {
     assert_eq!(
         handle_host_call(
             &mut data,
-            HostCall::ClientCanvasSceneSet {
+            HostCall::from(calls::ClientCanvasSceneSet {
                 canvas_key: "map:canvas".into(),
                 elements: elements.clone(),
-            },
+            }),
         ),
         HostRet::Unit
     );
     assert_eq!(
         handle_host_call(
             &mut data,
-            HostCall::ClientCanvasViewSet {
+            HostCall::from(calls::ClientCanvasViewSet {
                 canvas_key: "map:canvas".into(),
                 offset: [12.0, -7.0],
-            },
+            }),
         ),
         HostRet::Unit
     );
@@ -279,12 +280,12 @@ fn client_image_blit_mutates_in_place_and_validates_bounds() {
     assert_eq!(
         handle_host_call(
             &mut data,
-            HostCall::ClientImageSet {
+            HostCall::from(calls::ClientImageSet {
                 key: "map:tile".into(),
                 width: 2,
                 height: 2,
                 rgba: vec![0; 16],
-            },
+            }),
         ),
         HostRet::Unit
     );
@@ -292,12 +293,12 @@ fn client_image_blit_mutates_in_place_and_validates_bounds() {
     assert_eq!(
         handle_host_call(
             &mut data,
-            HostCall::ClientImageBlit {
+            HostCall::from(calls::ClientImageBlit {
                 key: "map:tile".into(),
                 origin: [1, 1],
                 size: [1, 1],
                 rgba: vec![9, 8, 7, 255],
-            },
+            }),
         ),
         HostRet::Unit
     );
@@ -316,12 +317,12 @@ fn client_image_blit_mutates_in_place_and_validates_bounds() {
     for _ in 0..super::super::state::IMAGE_BLIT_WINDOW + 2 {
         handle_host_call(
             &mut data,
-            HostCall::ClientImageBlit {
+            HostCall::from(calls::ClientImageBlit {
                 key: "map:tile".into(),
                 origin: [0, 0],
                 size: [1, 1],
                 rgba: vec![1, 1, 1, 255],
-            },
+            }),
         );
     }
     let image = &data.client.as_ref().unwrap().images["map:tile"];
@@ -336,7 +337,7 @@ fn client_image_blit_mutates_in_place_and_validates_bounds() {
     assert_eq!(image.recent_blits.last().unwrap().0, image.revision);
     handle_host_call(
         &mut data,
-        HostCall::ClientImageDrawTexts {
+        HostCall::from(calls::ClientImageDrawTexts {
             key: "map:tile".into(),
             runs: vec![mod_api::ClientTextRun {
                 text: "x".into(),
@@ -344,7 +345,7 @@ fn client_image_blit_mutates_in_place_and_validates_bounds() {
                 scale: 1,
                 color: [255, 255, 255, 255],
             }],
-        },
+        }),
     );
     let image = &data.client.as_ref().unwrap().images["map:tile"];
     assert!(
@@ -354,37 +355,37 @@ fn client_image_blit_mutates_in_place_and_validates_bounds() {
 
     for bad in [
         // out of bounds
-        HostCall::ClientImageBlit {
+        HostCall::from(calls::ClientImageBlit {
             key: "map:tile".into(),
             origin: [2, 0],
             size: [1, 1],
             rgba: vec![0; 4],
-        },
+        }),
         // byte count mismatch
-        HostCall::ClientImageBlit {
+        HostCall::from(calls::ClientImageBlit {
             key: "map:tile".into(),
             origin: [0, 0],
             size: [1, 1],
             rgba: vec![0; 3],
-        },
+        }),
         // never published
-        HostCall::ClientImageBlit {
+        HostCall::from(calls::ClientImageBlit {
             key: "map:none".into(),
             origin: [0, 0],
             size: [1, 1],
             rgba: vec![0; 4],
-        },
+        }),
         // foreign namespace
-        HostCall::ClientImageBlit {
+        HostCall::from(calls::ClientImageBlit {
             key: "other:tile".into(),
             origin: [0, 0],
             size: [1, 1],
             rgba: vec![0; 4],
-        },
+        }),
     ] {
         assert!(matches!(
             handle_host_call(&mut data, bad),
-            HostRet::Error(_)
+            HostRet::Err(_)
         ));
     }
 }
@@ -402,7 +403,7 @@ fn client_surface_columns_gate_on_revision_and_pack_cells() {
     world.insert_section_for_test(sp, petramond_world::section::Section::new(0, 4, 0));
     assert!(world.set_block_world(3, 64, 5, petramond_world::block::Block::Stone));
 
-    let query = |revision| HostCall::ClientSurfaceColumns {
+    let query = |revision| HostCall::from(calls::ClientSurfaceColumns {
         queries: vec![
             mod_api::ClientSurfaceQuery {
                 coord: [0, 0],
@@ -413,7 +414,7 @@ fn client_surface_columns_gate_on_revision_and_pack_cells() {
                 revision: 0,
             },
         ],
-    };
+    });
     let HostRet::ClientSurfaceColumns(replies) =
         super::client_scope::enter(&world, || handle_host_call(&mut data, query(0)))
     else {
@@ -470,9 +471,9 @@ fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
     world.insert_section_for_test(sp, petramond_world::section::Section::new(0, 4, 0));
     assert!(world.set_block_world(3, 64, 5, petramond_world::block::Block::Stone));
 
-    let query = || HostCall::ClientBlocksAt {
+    let query = || HostCall::from(calls::ClientBlocksAt {
         positions: vec![[3, 64, 5], [3, 65, 5], [150, 64, 5]],
-    };
+    });
     let HostRet::Blocks(blocks) =
         super::client_scope::enter(&world, || handle_host_call(&mut data, query()))
     else {
@@ -507,9 +508,9 @@ fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
     assert_eq!(
         handle_host_call(
             &mut data,
-            HostCall::ResolveBlock {
+            HostCall::from(calls::ResolveBlock {
                 name: "petramond:stone".into()
-            }
+            })
         ),
         HostRet::Block(Some(mod_api::BlockId(
             petramond_world::block::Block::Stone.id()
@@ -517,9 +518,9 @@ fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
     );
     let HostRet::BlockList(leaves) = handle_host_call(
         &mut data,
-        HostCall::BlocksByTag {
+        HostCall::from(calls::BlocksByTag {
             tag: "petramond:leaves".into(),
-        },
+        }),
     ) else {
         panic!("block list expected");
     };
@@ -529,11 +530,11 @@ fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
     assert!(matches!(
         handle_host_call(
             &mut data,
-            HostCall::ClientBlocksAt {
+            HostCall::from(calls::ClientBlocksAt {
                 positions: vec![[0, 0, 0]; 513],
-            }
+            })
         ),
-        HostRet::Error(_)
+        HostRet::Err(_)
     ));
 }
 
@@ -561,11 +562,11 @@ fn a_client_poses_only_the_local_player_and_latches_a_hand_on_its_first_pose() {
     let pose = |data: &mut ModStoreData, player: u8, main, off| {
         handle_host_call(
             data,
-            HostCall::SetPlayerHeldPose {
+            HostCall::from(calls::SetPlayerHeldPose {
                 player: PlayerId(player),
                 main,
                 off,
-            },
+            }),
         )
     };
     let local = PlayerSnapshot {
@@ -596,7 +597,7 @@ fn a_client_poses_only_the_local_player_and_latches_a_hand_on_its_first_pose() {
         // Someone else's body is not this mirror's to pose.
         assert!(matches!(
             pose(&mut data, 4, Some(guard), None),
-            HostRet::Error(_)
+            HostRet::Err(_)
         ));
 
         // "Nothing in either hand" claims nothing: another pack's replicated
@@ -626,7 +627,7 @@ fn a_client_poses_only_the_local_player_and_latches_a_hand_on_its_first_pose() {
         nan.third_person.translation[2] = f32::NAN;
         assert!(matches!(
             pose(&mut data, 3, Some(nan), None),
-            HostRet::Error(_)
+            HostRet::Err(_)
         ));
     });
 }
@@ -652,10 +653,10 @@ fn bone_poses_resolve_to_rig_ids_and_latch_per_bone() {
     let set = |data: &mut ModStoreData, bones: Vec<BonePoseData>| {
         handle_host_call(
             data,
-            HostCall::SetPlayerBonePose {
+            HostCall::from(calls::SetPlayerBonePose {
                 player: PlayerId(3),
                 bones,
-            },
+            }),
         )
     };
     let local = PlayerSnapshot {
@@ -722,7 +723,7 @@ fn bone_poses_resolve_to_rig_ids_and_latch_per_bone() {
         // A NaN is refused whole, exactly as on the server.
         let mut nan = bend(mod_api::bone::MAIN_SHOULDER);
         nan.rotation[1] = f32::NAN;
-        assert!(matches!(set(&mut data, vec![nan]), HostRet::Error(_)));
+        assert!(matches!(set(&mut data, vec![nan]), HostRet::Err(_)));
     });
 }
 
@@ -737,14 +738,14 @@ fn client_player_inventory_is_local_only_and_needs_a_published_inventory() {
 
     let mut data = client_data("inventory-gate");
     let me = mod_api::PlayerId(7);
-    let query = |player| HostCall::PlayerInventory { player };
+    let query = |player| HostCall::from(calls::PlayerInventory { player });
     let actor = |id| mod_api::PlayerSnapshot {
         id: Some(id),
         ..blank_snapshot()
     };
 
     assert!(
-        matches!(handle_host_call(&mut data, query(me)), HostRet::Error(_)),
+        matches!(handle_host_call(&mut data, query(me)), HostRet::Err(_)),
         "no dispatch published an actor"
     );
     let mut inventory = Inventory::new();
@@ -753,14 +754,14 @@ fn client_player_inventory_is_local_only_and_needs_a_published_inventory() {
 
     scope::enter_actor(actor(me), || {
         assert!(
-            matches!(handle_host_call(&mut data, query(me)), HostRet::Error(_)),
+            matches!(handle_host_call(&mut data, query(me)), HostRet::Err(_)),
             "an actor without a published inventory is an error, not an empty read"
         );
         scope::enter_inventory(&inventory, || {
             assert!(
                 matches!(
                     handle_host_call(&mut data, query(mod_api::PlayerId(8))),
-                    HostRet::Error(_)
+                    HostRet::Err(_)
                 ),
                 "somebody else's inventory is not a client read"
             );
@@ -797,20 +798,20 @@ fn a_refused_animator_write_latches_no_key() {
     let set = |data: &mut ModStoreData, value: f32| {
         handle_host_call(
             data,
-            HostCall::SetPlayerAnimatorParams {
+            HostCall::from(calls::SetPlayerAnimatorParams {
                 player: PlayerId(3),
                 params: vec![AnimatorParam {
                     rig: mod_api::rig::PLAYER_BODY.into(),
                     param: param.clone(),
                     value: AnimatorValue::Number(value),
                 }],
-            },
+            }),
         )
     };
     let mut local = blank_snapshot();
     local.id = Some(PlayerId(3));
     crate::modding::client::scope::enter_actor(local, || {
-        assert!(matches!(set(&mut data, f32::NAN), HostRet::Error(_)));
+        assert!(matches!(set(&mut data, f32::NAN), HostRet::Err(_)));
         assert!(data
             .client
             .as_ref()

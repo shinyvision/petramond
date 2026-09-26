@@ -14,7 +14,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Condvar, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
-use mod_api::{HostCall, HostRet, MemoClaim, MEMO_MAX_KEY_BYTES, MEMO_MAX_VALUE_BYTES};
+use mod_api::{HostRet, MemoCall, MemoClaim, MEMO_MAX_KEY_BYTES, MEMO_MAX_VALUE_BYTES};
 
 use super::guards::batch_guard;
 use super::ModStoreData;
@@ -296,21 +296,21 @@ fn scoped_key(mod_id: &str, seed: u32, key: &[u8]) -> Box<[u8]> {
 
 fn key_guard(key: &[u8]) -> Option<HostRet> {
     (key.len() > MEMO_MAX_KEY_BYTES).then(|| {
-        HostRet::Error(format!(
+        HostRet::invalid(format!(
             "memo key is {} bytes; the limit is {MEMO_MAX_KEY_BYTES}",
             key.len()
         ))
     })
 }
 
-pub(super) fn handle_memo_call(data: &ModStoreData, call: HostCall) -> HostRet {
+pub(super) fn handle_memo_call(data: &ModStoreData, call: MemoCall) -> HostRet {
     let seed = data.world_seed();
     match call {
-        HostCall::MemoGet { key } => match key_guard(&key) {
+        MemoCall::MemoGet { key } => match key_guard(&key) {
             Some(err) => err,
             None => HostRet::Bytes(STORE.get(&scoped_key(&data.mod_id, seed, &key))),
         },
-        HostCall::MemoGetMany { keys } => {
+        MemoCall::MemoGetMany { keys } => {
             if let Some(err) = batch_guard("MemoGetMany key", keys.len()) {
                 return err;
             }
@@ -323,7 +323,7 @@ pub(super) fn handle_memo_call(data: &ModStoreData, call: HostCall) -> HostRet {
                     .collect(),
             )
         }
-        HostCall::MemoPut { key, value } => match key_guard(&key) {
+        MemoCall::MemoPut { key, value } => match key_guard(&key) {
             Some(err) => err,
             None if value.len() > MEMO_MAX_VALUE_BYTES => {
                 STORE.publish(&scoped_key(&data.mod_id, seed, &key));
@@ -336,13 +336,10 @@ pub(super) fn handle_memo_call(data: &ModStoreData, call: HostCall) -> HostRet {
                 HostRet::Bool(true)
             }
         },
-        HostCall::MemoClaim { key } => match key_guard(&key) {
+        MemoCall::MemoClaim { key } => match key_guard(&key) {
             Some(err) => err,
             None => HostRet::MemoClaim(STORE.claim(&scoped_key(&data.mod_id, seed, &key))),
         },
-        other => HostRet::Error(format!(
-            "non-memo call {other:?} mis-routed to handle_memo_call (host bug)"
-        )),
     }
 }
 
@@ -354,16 +351,16 @@ mod tests {
         let data = ModStoreData::new(mod_id, seed);
         handle_memo_call(
             &data,
-            HostCall::MemoPut {
+            HostCall::from(calls::MemoPut {
                 key: key.to_vec(),
                 value: value.to_vec(),
-            },
+            }),
         )
     }
 
     fn get(mod_id: &str, seed: u32, key: &[u8]) -> Option<Vec<u8>> {
         let data = ModStoreData::new(mod_id, seed);
-        match handle_memo_call(&data, HostCall::MemoGet { key: key.to_vec() }) {
+        match handle_memo_call(&data, HostCall::from(calls::MemoGet { key: key.to_vec() })) {
             HostRet::Bytes(v) => v,
             other => panic!("{other:?}"),
         }
@@ -374,9 +371,9 @@ mod tests {
         let data = ModStoreData::new("lease", 3);
         let claim = |data: &ModStoreData| match handle_memo_call(
             data,
-            HostCall::MemoClaim {
+            HostCall::from(calls::MemoClaim {
                 key: b"cell".to_vec(),
-            },
+            }),
         ) {
             HostRet::MemoClaim(c) => c,
             other => panic!("{other:?}"),
@@ -443,10 +440,10 @@ mod tests {
         assert_eq!(
             handle_memo_call(
                 &data,
-                HostCall::MemoPut {
+                HostCall::from(calls::MemoPut {
                     key: b"fact".to_vec(),
                     value: b"v".to_vec(),
-                },
+                }),
             ),
             HostRet::Bool(true)
         );
@@ -512,7 +509,7 @@ mod tests {
         // last pending claim recorded.
         let data = ModStoreData::new("wait", 11);
         let claim = |key: &[u8]| {
-            handle_memo_call(&data, HostCall::MemoClaim { key: key.to_vec() })
+            handle_memo_call(&data, HostCall::from(calls::MemoClaim { key: key.to_vec() }))
         };
         clear_pending_key();
         assert_eq!(claim(b"own"), HostRet::MemoClaim(MemoClaim::Lease));

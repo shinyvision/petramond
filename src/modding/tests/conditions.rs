@@ -1,3 +1,4 @@
+use mod_api::calls;
 use super::*;
 use crate::entity::fluid_fixture::{self, FLOOR_Y};
 use crate::events::{PostQueue, SessionPlayerRef, SimCtx};
@@ -43,12 +44,12 @@ fn a_guest_applies_and_cools_a_condition_on_the_addressed_player_and_mob() {
     let mut host = ModHost::from_instances(vec![calling_guest(
         "condition_test",
         &[EntityRef::Player(PlayerId(1)), EntityRef::Mob(mob)].map(|entity| {
-            HostCall::EntityConditionApply {
+            HostCall::from(calls::EntityConditionApply {
                 entity,
                 condition,
                 stage: strongest,
                 ticks: 80,
-            }
+            })
         }),
     )]);
     sim.init(&mut host);
@@ -66,11 +67,11 @@ fn a_guest_applies_and_cools_a_condition_on_the_addressed_player_and_mob() {
     let mut cool = ModHost::from_instances(vec![calling_guest(
         "cool_test",
         &[EntityRef::Mob(mob), EntityRef::Player(PlayerId(1))].map(|entity| {
-            HostCall::EntityConditionCool {
+            HostCall::from(calls::EntityConditionCool {
                 entity,
                 condition,
                 ticks: u32::MAX,
-            }
+            })
         }),
     )]);
     // A fresh system list runs only the cooling producer.
@@ -140,12 +141,12 @@ fn doused_grant_inner() {
         super::super::scope::enter(&mut ctx, || {
             reply = super::super::host::handle_host_call(
                 &mut store,
-                HostCall::EntityConditionApply {
+                HostCall::from(calls::EntityConditionApply {
                     entity: EntityRef::Mob(mob),
                     condition: ConditionId(hot.0),
                     stage: 0,
                     ticks: 100,
-                },
+                }),
             );
         });
         reply

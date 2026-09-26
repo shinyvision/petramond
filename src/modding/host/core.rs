@@ -7,7 +7,7 @@
 //! tick at all (worldgen workers, whose replies must be pure functions of
 //! their inputs; client instances gate it off in `client_capability`).
 
-use mod_api::{HostCall, HostRet};
+use mod_api::{CoreCall, ErrorCode, HostRet};
 
 use crate::modding::scope;
 
@@ -16,21 +16,21 @@ use super::{ModStoreData, Registration};
 
 /// Store-side core calls: logging, the tick counter, RNG streams, the
 /// `mod_init` registration window, and shader params.
-pub(super) fn handle_core_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
+pub(super) fn handle_core_call(data: &mut ModStoreData, call: CoreCall) -> HostRet {
     match call {
-        HostCall::Log { msg } => {
+        CoreCall::Log { msg } => {
             log::info!("[mod {}] {msg}", data.mod_id);
             HostRet::Unit
         }
-        HostCall::RuntimeSide => HostRet::RuntimeSide(data.side),
-        HostCall::CurrentTick => match scope::with_active_ref(|ctx| ctx.world.current_tick())
+        CoreCall::RuntimeSide => HostRet::RuntimeSide(data.side),
+        CoreCall::CurrentTick => match scope::with_active_ref(|ctx| ctx.world.current_tick())
             .or_else(crate::modding::ai::detached_tick)
         {
             Some(tick) => HostRet::U64(tick),
-            None => HostRet::Error("no simulation context is active".into()),
+            None => HostRet::error(ErrorCode::NoContext, "no simulation context is active".into()),
         },
-        HostCall::RngU64 { stream_key } => HostRet::U64(data.rng_next(&stream_key)),
-        HostCall::RegisterTickSystem {
+        CoreCall::RngU64 { stream_key } => HostRet::U64(data.rng_next(&stream_key)),
+        CoreCall::RegisterTickSystem {
             stage,
             attach,
             priority,
@@ -41,43 +41,56 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: HostCall) -> HostR
             priority,
             system_id,
         }),
-        HostCall::RegisterEventHandler {
+        CoreCall::RegisterEventHandler {
             event,
             priority,
             handler_id,
-        } => data.register(Registration::EventHandler {
-            event,
-            priority,
-            handler_id,
-        }),
-        HostCall::RegisterHostileSpawner {
+            filter,
+        } => {
+            if let Err(why) = filter.check(event) {
+                return data.refuse_registration(
+                    ErrorCode::InvalidArgument,
+                    format!("event handler {handler_id}: {why}"),
+                );
+            }
+            data.register(Registration::EventHandler {
+                event,
+                priority,
+                handler_id,
+                filter,
+            })
+        }
+        CoreCall::RegisterHostileSpawner {
             callback_id,
             priority,
         } => data.register(Registration::HostileSpawner {
             priority,
             callback_id,
         }),
-        HostCall::RegisterBlockBehavior { key, callback_id } => {
+        CoreCall::RegisterBlockBehavior { key, callback_id } => {
             // A behavior key routes hooks back to its owner, so it must carry
             // THIS mod's namespace (same ownership rule as catalog keys).
             if !key_owned_by_namespace(&data.mod_id, &key) {
-                return HostRet::Error(format!(
-                    "block behavior key '{key}' must be namespaced '{}:name'",
-                    data.mod_id
-                ));
+                return HostRet::error(
+                    ErrorCode::Forbidden,
+                    format!(
+                        "block behavior key '{key}' must be namespaced '{}:name'",
+                        data.mod_id
+                    ),
+                );
             }
             data.register(Registration::BlockBehavior { key, callback_id })
         }
-        HostCall::RegisterAiNode { key, callback_id } => {
+        CoreCall::RegisterAiNode { key, callback_id } => {
             if !key_owned_by_namespace(&data.mod_id, &key) {
-                return HostRet::Error(format!(
-                    "AI node key '{key}' must be namespaced '{}:name'",
-                    data.mod_id
-                ));
+                return HostRet::error(
+                    ErrorCode::Forbidden,
+                    format!("AI node key '{key}' must be namespaced '{}:name'", data.mod_id),
+                );
             }
             data.register(Registration::AiNode { key, callback_id })
         }
-        HostCall::ShaderSetParam { key, value } => match public_write_key_guard(&data.mod_id, &key)
+        CoreCall::ShaderSetParam { key, value } => match public_write_key_guard(&data.mod_id, &key)
         {
             Some(e) => e,
             None => sim_call(|ctx| ctx.world.set_shader_param(key, value)),
@@ -87,7 +100,7 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: HostCall) -> HostR
         // (it would run other mods' handlers inside this mod's host call), so
         // this rides the post queue like every other observational event and
         // dispatches at the next drain point in the same tick.
-        HostCall::EmitEvent { key, data: bytes } => {
+        CoreCall::EmitEvent { key, data: bytes } => {
             // Emitting under another mod's namespace would let a mod forge
             // events its owner is trusted for; the key is the only filter a
             // handler has. Same rule, same guard, as a KV write.
@@ -103,7 +116,7 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: HostCall) -> HostR
         // tick→presentation feed rather than the post queue: nothing on THIS
         // side handles it, so queueing a dispatch here would only make every
         // server handler filter it out again.
-        HostCall::EmitEventTo {
+        CoreCall::EmitEventTo {
             player,
             key,
             data: bytes,
@@ -132,9 +145,6 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: HostCall) -> HostR
                 HostRet::Bool(true)
             })
         }
-        other => HostRet::Error(format!(
-            "non-core call {other:?} mis-routed to handle_core_call (host bug)"
-        )),
     }
 }
 
@@ -145,21 +155,25 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: HostCall) -> HostR
 /// properties of the EVENT, not of which queue it happens to ride.
 fn event_key_guard(call: &str, mod_id: &str, key: &str, len: usize) -> Option<HostRet> {
     if !key_owned_by_namespace(mod_id, key) {
-        return Some(HostRet::Error(format!(
-            "{call} key '{key}' is not in mod '{mod_id}'s namespace"
-        )));
+        return Some(HostRet::error(
+            ErrorCode::Forbidden,
+            format!("{call} key '{key}' is not in mod '{mod_id}'s namespace"),
+        ));
     }
     (len > super::guards::EVENT_MAX_DATA_BYTES).then(|| {
-        HostRet::Error(format!(
-            "{call} payload is {len} bytes; the limit is {}",
-            super::guards::EVENT_MAX_DATA_BYTES
-        ))
+        HostRet::error(
+            ErrorCode::LimitExceeded,
+            format!(
+                "{call} payload is {len} bytes; the limit is {}",
+                super::guards::EVENT_MAX_DATA_BYTES
+            ),
+        )
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use mod_api::{HostCall, HostRet};
+    use mod_api::{calls, HostCall, HostRet};
 
     use crate::events::{PostQueue, RosterRefs, SimCtx};
 
@@ -174,19 +188,19 @@ mod tests {
         let mut data = ModStoreData::new("alpha", 1);
         assert!(
             matches!(
-                handle_host_call(&mut data, HostCall::CurrentTick),
-                HostRet::Error(_)
+                handle_host_call(&mut data, HostCall::from(calls::CurrentTick)),
+                HostRet::Err(_)
             ),
             "outside every scope there is no tick to report"
         );
         let ret = crate::modding::ai::with_detached_tick(7, || {
-            handle_host_call(&mut data, HostCall::CurrentTick)
+            handle_host_call(&mut data, HostCall::from(calls::CurrentTick))
         });
         assert_eq!(ret, HostRet::U64(7));
         assert!(
             matches!(
-                handle_host_call(&mut data, HostCall::CurrentTick),
-                HostRet::Error(_)
+                handle_host_call(&mut data, HostCall::from(calls::CurrentTick)),
+                HostRet::Err(_)
             ),
             "the stash is scoped to the dispatch"
         );
@@ -219,30 +233,30 @@ mod tests {
             assert_eq!(
                 handle_host_call(
                     &mut alpha,
-                    HostCall::ShaderSetParam {
+                    HostCall::from(calls::ShaderSetParam {
                         key: "alpha:sky".into(),
                         value: [0.25, 0.5, 0.75, 1.0],
-                    },
+                    }),
                 ),
                 HostRet::Unit
             );
             assert!(matches!(
                 handle_host_call(
                     &mut beta,
-                    HostCall::ShaderSetParam {
+                    HostCall::from(calls::ShaderSetParam {
                         key: "alpha:sky".into(),
                         value: [1.0; 4],
-                    },
+                    }),
                 ),
-                HostRet::Error(_)
+                HostRet::Err(_)
             ));
             assert_eq!(
                 handle_host_call(
                     &mut beta,
-                    HostCall::ShaderSetParam {
+                    HostCall::from(calls::ShaderSetParam {
                         key: "petramond:light".into(),
                         value: [0.8, 0.0, 0.0, 0.0],
-                    },
+                    }),
                 ),
                 HostRet::Unit
             );
@@ -259,12 +273,12 @@ mod tests {
         assert!(matches!(
             handle_host_call(
                 &mut alpha,
-                HostCall::ShaderSetParam {
+                HostCall::from(calls::ShaderSetParam {
                     key: "alpha:outside".into(),
                     value: [0.0; 4],
-                },
+                }),
             ),
-            HostRet::Error(_)
+            HostRet::Err(_)
         ));
     }
 }

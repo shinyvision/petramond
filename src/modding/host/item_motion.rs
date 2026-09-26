@@ -1,4 +1,4 @@
-use mod_api::{HostCall, HostRet};
+use mod_api::{HostRet, ItemMotionCall};
 
 use super::entities::item_entity_data;
 use super::guards::{batch_guard, finite3, sim_query, sim_read};
@@ -6,15 +6,15 @@ use super::guards::{batch_guard, finite3, sim_query, sim_read};
 #[cfg(test)]
 mod tests;
 
-pub(super) fn handle(call: HostCall) -> HostRet {
+pub(super) fn handle(call: ItemMotionCall) -> HostRet {
     match call {
-        HostCall::ItemEntitiesInRadius { pos, radius, limit } => {
+        ItemMotionCall::ItemEntitiesInRadius { pos, radius, limit } => {
             let pos = match super::guards::finite_pos(pos, "ItemEntitiesInRadius.pos") {
                 Ok(pos) => pos,
                 Err(error) => return error,
             };
             if !radius.is_finite() || !(0.0..=64.0).contains(&radius) {
-                return HostRet::Error("ItemEntitiesInRadius: radius must be in 0..=64".into());
+                return HostRet::invalid("ItemEntitiesInRadius: radius must be in 0..=64".into());
             }
             if let Some(error) = batch_guard("ItemEntitiesInRadius.limit", limit as usize) {
                 return error;
@@ -29,7 +29,7 @@ pub(super) fn handle(call: HostCall) -> HostRet {
                 )
             })
         }
-        HostCall::ItemImpulses { impulses } => {
+        ItemMotionCall::ItemImpulses { impulses } => {
             if let Some(error) = batch_guard("ItemImpulses", impulses.len()) {
                 return error;
             }
@@ -44,6 +44,5 @@ pub(super) fn handle(call: HostCall) -> HostRet {
                 }),
             }
         }
-        other => HostRet::Error(format!("item motion call misrouted: {other:?}")),
     }
 }

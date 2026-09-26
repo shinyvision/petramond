@@ -1,17 +1,17 @@
 //! Sound and burst calls: one-shots, handle-addressed spatial sounds, and
 //! particle bursts — all riding `TickEvents`; the sim never touches audio.
 
-use mod_api::{HostCall, HostRet};
+use mod_api::{HostRet, SoundCall};
 
 use super::guards::{sim_call, sim_query};
 
 /// Sound calls (one-shots plus the handle-based spatial commands; the sim
 /// never touches audio — everything rides `TickEvents` to the app layer).
-pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
+pub(super) fn handle_sound_call(mod_id: &str, call: SoundCall) -> HostRet {
     match call {
         // Not a sound, but the same shape: a fire-and-forget world-anchored
         // presentation one-shot riding the NON-lossy tick queue.
-        HostCall::EmitterBurst {
+        SoundCall::EmitterBurst {
             key,
             pos,
             intensity,
@@ -21,7 +21,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             Err(e) => e,
             Ok(pos) => sim_query(|ctx| {
                 if !intensity.is_finite() {
-                    return HostRet::Error("EmitterBurst: non-finite intensity".into());
+                    return HostRet::invalid("EmitterBurst: non-finite intensity".into());
                 }
                 let Some(bundle) = petramond_world::particle_emitters::by_key(&key) else {
                     log::warn!("[mod {mod_id}] EmitterBurst: unknown emitter '{key}'");
@@ -32,7 +32,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
                     return HostRet::Bool(false);
                 }
                 if direction.is_some_and(|d| d.iter().any(|v| !v.is_finite())) {
-                    return HostRet::Error("EmitterBurst: non-finite direction".into());
+                    return HostRet::invalid("EmitterBurst: non-finite direction".into());
                 }
                 use crate::events::tick::BurstTexture;
                 let texture = match texture {
@@ -68,7 +68,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(true)
             }),
         },
-        HostCall::EmitSound { key, pos } => sim_query(|ctx| {
+        SoundCall::EmitSound { key, pos } => sim_query(|ctx| {
             let Some(sound) = petramond_world::sound_registry::by_name(&key) else {
                 log::warn!("[mod {mod_id}] EmitSound: unknown sound '{key}'");
                 return HostRet::Bool(false);
@@ -81,7 +81,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             });
             HostRet::Bool(true)
         }),
-        HostCall::SoundPlayAt {
+        SoundCall::SoundPlayAt {
             key,
             pos,
             volume,
@@ -108,7 +108,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
                 });
             HostRet::U64(handle)
         }),
-        HostCall::SoundPlayOnMob {
+        SoundCall::SoundPlayOnMob {
             mob_id,
             key,
             volume,
@@ -148,7 +148,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             );
             HostRet::U64(handle)
         }),
-        HostCall::SoundSet {
+        SoundCall::SoundSet {
             handle,
             volume,
             pitch,
@@ -169,7 +169,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
                     pitch,
                 });
         }),
-        HostCall::SoundStop { handle } => sim_call(|ctx| {
+        SoundCall::SoundStop { handle } => sim_call(|ctx| {
             if handle != 0 {
                 ctx.feed
                     .world
@@ -177,9 +177,6 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
                     .push(crate::events::tick::SpatialSoundCommand::Stop { handle });
             }
         }),
-        other => HostRet::Error(format!(
-            "non-sound call {other:?} mis-routed to handle_sound_call (host bug)"
-        )),
     }
 }
 
@@ -193,7 +190,7 @@ fn spatial_sound_scalar_params_ok(volume: f32, pitch: f32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use mod_api::{HostCall, HostRet};
+    use mod_api::{calls, HostCall, HostRet};
 
     use crate::events::tick::TickEvents;
     use crate::events::{PostQueue, RosterRefs, SimCtx};
@@ -222,20 +219,20 @@ mod tests {
             assert_eq!(
                 handle_host_call(
                     &mut data,
-                    HostCall::EmitSound {
+                    HostCall::from(calls::EmitSound {
                         key: "petramond:item_pickup".into(),
                         pos: Some([1.0, 64.0, 1.0]),
-                    },
+                    }),
                 ),
                 HostRet::Bool(true)
             );
             assert_eq!(
                 handle_host_call(
                     &mut data,
-                    HostCall::EmitSound {
+                    HostCall::from(calls::EmitSound {
                         key: "no_such:sound".into(),
                         pos: None,
-                    },
+                    }),
                 ),
                 HostRet::Bool(false)
             );
@@ -272,41 +269,41 @@ mod tests {
             scope::enter(&mut ctx, || {
                 handles.0 = match handle_host_call(
                     &mut data,
-                    HostCall::SoundPlayAt {
+                    HostCall::from(calls::SoundPlayAt {
                         key: "petramond:item_pickup".into(),
                         pos: [1.0, 81.0, 1.0],
                         volume: 0.5,
                         pitch: 1.25,
-                    },
+                    }),
                 ) {
                     HostRet::U64(handle) => handle,
                     other => panic!("SoundPlayAt returned {other:?}"),
                 };
                 handles.1 = match handle_host_call(
                     &mut data,
-                    HostCall::SoundPlayOnMob {
+                    HostCall::from(calls::SoundPlayOnMob {
                         mob_id,
                         key: "petramond:item_pickup".into(),
                         volume: 0.75,
                         pitch: 0.9,
-                    },
+                    }),
                 ) {
                     HostRet::U64(handle) => handle,
                     other => panic!("SoundPlayOnMob returned {other:?}"),
                 };
                 assert_eq!(
-                    handle_host_call(&mut data, HostCall::SoundStop { handle: handles.0 }),
+                    handle_host_call(&mut data, HostCall::from(calls::SoundStop { handle: handles.0 })),
                     HostRet::Unit
                 );
                 assert_eq!(
                     handle_host_call(
                         &mut data,
-                        HostCall::SoundPlayAt {
+                        HostCall::from(calls::SoundPlayAt {
                             key: "no_such:sound".into(),
                             pos: [0.0, 0.0, 0.0],
                             volume: 1.0,
                             pitch: 1.0,
-                        },
+                        }),
                     ),
                     HostRet::U64(0),
                     "unknown sounds do not allocate handles"

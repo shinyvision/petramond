@@ -1,7 +1,7 @@
 //! Guards and lookups shared by every call handler: namespace/size write
 //! guards, the sim-scope gate, and registry validation helpers.
 
-use mod_api::{HostCall, HostRet};
+use mod_api::{ErrorCode, HostCall, HostRet};
 
 use crate::events::SimCtx;
 use crate::modding::scope;
@@ -11,8 +11,9 @@ use petramond_world::item::ItemType;
 
 /// Every bound this module enforces is declared in the ABI crate, because a
 /// mod has to obey them and can only do that by reading them — the SDK
-/// re-exports these same items. Violations are [`HostRet::Error`]: a mod bug,
-/// surfaced loudly by the SDK (panic → mod disabled).
+/// re-exports these same items. Violations are refused with
+/// [`ErrorCode::LimitExceeded`] — recoverable: the SDK's `try_` wrappers hand
+/// it back so a mod can split or shard instead of being disabled.
 ///
 /// Why these particular numbers. The watchdog deliberately charges GUEST
 /// compute only, so host-side per-element work is unmetered: without
@@ -33,8 +34,12 @@ pub(super) use mod_api::{
 /// `Some(err)` when a batched call's element count exceeds
 /// [`SIM_BATCH_MAX`]; `what` names the call and lane for the error line.
 pub(super) fn batch_guard(what: &str, len: usize) -> Option<HostRet> {
-    (len > SIM_BATCH_MAX)
-        .then(|| HostRet::Error(format!("{what} count {len} exceeds {SIM_BATCH_MAX}")))
+    (len > SIM_BATCH_MAX).then(|| {
+        HostRet::error(
+            ErrorCode::LimitExceeded,
+            format!("{what} count {len} exceeds {SIM_BATCH_MAX}"),
+        )
+    })
 }
 
 /// The mod-KV write guard: WRITES (set/delete) must use either the calling
@@ -43,15 +48,19 @@ pub(super) fn batch_guard(what: &str, len: usize) -> Option<HostRet> {
 /// `Some(err)` rejects the call.
 pub(super) fn kv_write_guard(mod_id: &str, key: &str, value_len: usize) -> Option<HostRet> {
     if key.len() > KV_MAX_KEY_BYTES {
-        return Some(HostRet::Error(format!(
-            "KV key is {} bytes; the limit is {KV_MAX_KEY_BYTES}",
-            key.len()
-        )));
+        return Some(HostRet::error(
+            ErrorCode::LimitExceeded,
+            format!(
+                "KV key is {} bytes; the limit is {KV_MAX_KEY_BYTES}",
+                key.len()
+            ),
+        ));
     }
     if value_len > KV_MAX_VALUE_BYTES {
-        return Some(HostRet::Error(format!(
-            "KV value is {value_len} bytes; the limit is {KV_MAX_VALUE_BYTES}"
-        )));
+        return Some(HostRet::error(
+            ErrorCode::LimitExceeded,
+            format!("KV value is {value_len} bytes; the limit is {KV_MAX_VALUE_BYTES}"),
+        ));
     }
     public_write_key_guard(mod_id, key)
 }
@@ -66,11 +75,14 @@ pub(super) fn public_write_key_guard(mod_id: &str, key: &str) -> Option<HostRet>
     let mod_owned = key_owned_by_namespace(mod_id, key);
     let engine_owned = key_owned_by_namespace(petramond_world::registry::ENGINE_NAMESPACE, key);
     if !(mod_owned || engine_owned) {
-        return Some(HostRet::Error(format!(
-            "mod writes must use this mod's own namespace ('{mod_id}:name') or an engine-owned \
-             '{engine}:name' key; got '{key}' (reads may cross namespaces)",
-            engine = petramond_world::registry::ENGINE_NAMESPACE
-        )));
+        return Some(HostRet::error(
+            ErrorCode::Forbidden,
+            format!(
+                "mod writes must use this mod's own namespace ('{mod_id}:name') or an \
+                 engine-owned '{engine}:name' key; got '{key}' (reads may cross namespaces)",
+                engine = petramond_world::registry::ENGINE_NAMESPACE
+            ),
+        ));
     }
     None
 }
@@ -84,17 +96,21 @@ pub(super) fn actor_for(
     twin: &str,
 ) -> Result<crate::player::PlayerId, HostRet> {
     ctx.actor.ok_or_else(|| {
-        HostRet::Error(format!(
-            "{call} addresses the acting player, and this dispatch (a tick system, block hook, \
-             spawn pick, mod_init or mob action) has none; name the player with {twin}"
-        ))
+        HostRet::error(
+            ErrorCode::NoActor,
+            format!(
+                "{call} addresses the acting player, and this dispatch (a tick system, block \
+                 hook, spawn pick, mod_init or mob action) has none; name the player with {twin}"
+            ),
+        )
     })
 }
 
 /// The reply every exclusive-access wrapper gives inside a read-only
 /// dispatch.
 fn read_only_refusal() -> HostRet {
-    HostRet::Error(
+    HostRet::error(
+        ErrorCode::ReadOnly,
         "this host call needs write access to the world, which a read-only dispatch \
          (e.g. a shape placement plan) does not grant"
             .into(),
@@ -103,90 +119,21 @@ fn read_only_refusal() -> HostRet {
 
 /// The reply when no guest dispatch published a simulation context.
 fn no_context() -> HostRet {
-    HostRet::Error("no simulation context is active".into())
+    HostRet::error(ErrorCode::NoContext, "no simulation context is active".into())
 }
 
 /// Whether `call` is legal inside a READ-ONLY dispatch (the shape
 /// placement-plan dispatch, whose ABI promises the guest cannot edit the
-/// world it validates against). The switchboard refuses everything else
-/// before routing, so this is the one place the read-only promise is
-/// written down — an allow-list, so a call added to the ABI stays refused
-/// until someone decides it is a pure read.
+/// world it validates against): exactly the calls whose declared
+/// [`Legality`](mod_api::Legality) does not mutate. The switchboard refuses
+/// everything else before routing.
 ///
 /// Behind it, a read-only scope lends the [`SimCtx`] SHARED only
-/// ([`scope::with_active_ref`]): every allowed call that reads the world
-/// goes through [`sim_read`], and the exclusive wrappers below refuse, so a
-/// call listed here by mistake still cannot mutate. When the ABI grows a
-/// per-call legality table, this function becomes a lookup into it.
+/// ([`scope::with_active_ref`]): every read goes through [`sim_read`], and the
+/// exclusive wrappers below refuse, so a call declared `Read` by mistake
+/// still cannot mutate.
 pub(in crate::modding) fn read_only_permits(call: &HostCall) -> bool {
-    matches!(
-        call,
-        // Store-local and scope-free.
-        HostCall::Log { .. }
-            | HostCall::RuntimeSide
-            | HostCall::CurrentTick
-            | HostCall::RngU64 { .. }
-            // World reads (through `sim_read`).
-            | HostCall::GetBlock { .. }
-            | HostCall::GetBlocks { .. }
-            | HostCall::BlockChangesSince { .. }
-            | HostCall::IsLoaded { .. }
-            | HostCall::LightAt { .. }
-            | HostCall::CollisionShapeAt { .. }
-            | HostCall::BiomeAt { .. }
-            | HostCall::SurfaceYAt { .. }
-            | HostCall::FindBlocks { .. }
-            | HostCall::BlockLocalToWorld { .. }
-            | HostCall::Raycast { .. }
-            | HostCall::ItemEntitiesInRadius { .. }
-            | HostCall::WorldKvGet { .. }
-            | HostCall::SectionKvGet { .. }
-            | HostCall::SectionKvFind { .. }
-            | HostCall::SectionKvGetMany { .. }
-            | HostCall::MobTagGet { .. }
-            | HostCall::MobTagsGet { .. }
-            | HostCall::MobsWithTag { .. }
-            | HostCall::BlockRecordsAt { .. }
-            | HostCall::BlockRecordStatuses { .. }
-            | HostCall::ActingPlayer
-            | HostCall::PlayerIdentity { .. }
-            // Catalog lookups: pure functions of the loaded registries.
-            | HostCall::BlockRecordPlans { .. }
-            | HostCall::StructureInfo { .. }
-            | HostCall::LootRoll { .. }
-            | HostCall::MobDataGet { .. }
-            | HostCall::MobsWithData { .. }
-            | HostCall::ResolveBlock { .. }
-            | HostCall::ResolveItem { .. }
-            | HostCall::ResolveMob { .. }
-            | HostCall::BlockNames { .. }
-            | HostCall::ItemNames { .. }
-            | HostCall::MobNames { .. }
-            | HostCall::ResolveCondition { .. }
-            | HostCall::ConditionNames { .. }
-            | HostCall::BlocksByTag { .. }
-            | HostCall::ItemsByTag { .. }
-            | HostCall::ItemInfo { .. }
-            | HostCall::ResolveShape { .. }
-            | HostCall::ItemDataGet { .. }
-            | HostCall::ItemsWithData { .. }
-            | HostCall::BlockDataGet { .. }
-            | HostCall::BlocksWithData { .. }
-            | HostCall::BlockInfo { .. }
-            | HostCall::BlockInfos { .. }
-            // Pure positional worldgen queries and memo reads.
-            | HostCall::ResolveUndergroundBiome { .. }
-            | HostCall::UndergroundBiomeAt { .. }
-            | HostCall::UndergroundBiomesInBox { .. }
-            | HostCall::TerrainBlocksAt { .. }
-            | HostCall::TerrainSectionAt { .. }
-            | HostCall::TerrainHeightsAt { .. }
-            | HostCall::TerrainSolidAt { .. }
-            | HostCall::TerrainSpaceAt { .. }
-            | HostCall::SurfaceBiomeAt { .. }
-            | HostCall::MemoGet { .. }
-            | HostCall::MemoGetMany { .. }
-    )
+    !call.legality().mutates()
 }
 
 /// Run a call that mutates the live simulation, or reject it when no guest
@@ -257,7 +204,7 @@ pub(super) fn checked_block(block: mod_api::BlockId) -> Result<Block, HostRet> {
     if (block.0 as usize) < Block::all().len() {
         Ok(Block(block.0))
     } else {
-        Err(HostRet::Error(format!(
+        Err(HostRet::invalid(format!(
             "unregistered block id {} (ids are session-scoped; resolve them from your own \
              catalog rows, never persist them)",
             block.0
@@ -271,7 +218,7 @@ pub(super) fn finite3(v: [f32; 3], what: &str) -> Result<Vec3, HostRet> {
     if v.iter().all(|c| c.is_finite()) {
         Ok(v.into())
     } else {
-        Err(HostRet::Error(format!("{what}: non-finite component")))
+        Err(HostRet::invalid(format!("{what}: non-finite component")))
     }
 }
 
@@ -286,7 +233,7 @@ pub(super) fn finite_pos(
             petramond_math::world_pos::WorldPos::from_array(v),
         ))
     } else {
-        Err(HostRet::Error(format!("{what}: non-finite component")))
+        Err(HostRet::invalid(format!("{what}: non-finite component")))
     }
 }
 
@@ -321,7 +268,7 @@ pub(in crate::modding) fn item_stack_data(
 
 /// An ABI instance-data list as an interned [`petramond_world::item::VariantId`].
 /// Empty = `NONE`. A duplicate key, bare key, or over-cap map is a HARD error
-/// (`Err(HostRet::Error)` — loud mod bug, same shape as the KV size caps):
+/// (`Err(HostRet::Err)` — loud mod bug, same shape as the KV size caps):
 /// silently degrading a write the mod asked for would fork its view of the
 /// stack from the engine's. A FULL variant table is NOT a mod bug — the map
 /// is well-formed, the process just ran out of ids — so it degrades to a
@@ -354,13 +301,13 @@ pub(super) fn abi_data_map(
     let mut map = variant::VariantMap::new();
     for (k, v) in data {
         if map.insert(k.clone(), v.clone()).is_some() {
-            return Err(mod_api::HostRet::Error(format!(
+            return Err(mod_api::HostRet::invalid(format!(
                 "{what}: duplicate instance-data key '{k}'"
             )));
         }
     }
     if !map.is_empty() && !variant::valid(&map) {
-        return Err(mod_api::HostRet::Error(format!(
+        return Err(mod_api::HostRet::invalid(format!(
             "{what}: invalid instance data (bare key or over-cap map/value)"
         )));
     }

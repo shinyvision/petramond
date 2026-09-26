@@ -56,7 +56,7 @@ pub struct StructureConnectorData {
 }
 
 /// Conservative WRITE bounds of a worldgen feature, declared with
-/// [`HostCall::RegisterWorldgenFeature`] and checked by the host per section
+/// [`WorldgenCall::RegisterWorldgenFeature`](crate::WorldgenCall::RegisterWorldgenFeature) and checked by the host per section
 /// BEFORE it snapshots blocks and encodes the guest call — a section the
 /// feature cannot write into costs the mod no dispatch at all.
 ///
@@ -65,7 +65,7 @@ pub struct StructureConnectorData {
 /// the band one block wider). Every predicate composes by AND; the
 /// [`ANY`](Self::ANY) filter admits every section.
 ///
-/// [`HostCall::RegisterWorldgenFeature`]: crate::HostCall::RegisterWorldgenFeature
+/// [`WorldgenCall::RegisterWorldgenFeature`]: crate::WorldgenCall::RegisterWorldgenFeature
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub struct GenFeatureFilter {
     /// Lowest world Y the feature writes (inclusive).

@@ -9,6 +9,25 @@
 //! a list longer than one value SHARDS across keys.
 
 use crate::__rt::host_fn;
+use crate::__rt::try_host_fn;
+
+try_host_fn! {
+    /// Write a world value, returning a size-limit refusal so callers can shard it.
+    pub fn try_world_kv_set(key: &str, value: Vec<u8>)
+        => WorldKvSet { key: key.into(), value }
+}
+
+try_host_fn! {
+    /// Write a cell value, returning a size-limit refusal so callers can shard it.
+    pub fn try_section_kv_set(pos: [i32; 3], key: &str, value: Vec<u8>) -> bool
+        => SectionKvSet { pos, key: key.into(), value } => Bool
+}
+
+try_host_fn! {
+    /// Write many cell values, returning a batch-size refusal so callers can split it.
+    pub fn try_section_kv_set_many(key: &str, writes: Vec<([i32; 3], Option<Vec<u8>>)>) -> Vec<bool>
+        => SectionKvSetMany { key: key.into(), writes } => Bools
+}
 
 host_fn! {
     /// Find data-bearing cells after the section's saved terrain is final.

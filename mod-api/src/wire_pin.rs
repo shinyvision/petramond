@@ -40,27 +40,28 @@ fn samples() -> Samples {
     let mut s = Samples(Vec::new());
 
     // --- HostCall: every variant, declaration order ------------------------
-    s.pin("HostCall::Log", &HostCall::Log { msg: "a".into() });
-    s.pin("HostCall::CurrentTick", &HostCall::CurrentTick);
-    s.pin("HostCall::RngU64", &HostCall::RngU64 { stream_key: "s".into() });
-    s.pin("HostCall::RegisterTickSystem", &HostCall::RegisterTickSystem {
+    s.pin("HostCall::Log", &HostCall::from(calls::Log { msg: "a".into() }));
+    s.pin("HostCall::CurrentTick", &HostCall::from(calls::CurrentTick));
+    s.pin("HostCall::RngU64", &HostCall::from(calls::RngU64 { stream_key: "s".into() }));
+    s.pin("HostCall::RegisterTickSystem", &HostCall::from(calls::RegisterTickSystem {
         stage: Stage::Mining, attach: AttachSide::Before, priority: -1, system_id: 1,
-    });
-    s.pin("HostCall::RegisterEventHandler", &HostCall::RegisterEventHandler {
+    }));
+    s.pin("HostCall::RegisterEventHandler", &HostCall::from(calls::RegisterEventHandler {
         event: EventKind::BlockPlacePre, priority: 1, handler_id: 2,
-    });
-    s.pin("HostCall::GetBlock", &HostCall::GetBlock { pos: [1, -2, 3] });
-    s.pin("HostCall::GetBlocks", &HostCall::GetBlocks { positions: vec![[0, 0, 0]] });
-    s.pin("HostCall::SetBlock", &HostCall::SetBlock { pos: [1, 2, 3], block: BlockId(4) });
-    s.pin("HostCall::SetBlocks", &HostCall::SetBlocks { blocks: vec![([1, 2, 3], BlockId(5))] });
-    s.pin("HostCall::ScheduleTick", &HostCall::ScheduleTick { pos: [1, 2, 3], delay: 7 });
-    s.pin("HostCall::IsLoaded", &HostCall::IsLoaded { pos: [1, 2, 3] });
-    s.pin("HostCall::LightAt", &HostCall::LightAt { pos: [1, 2, 3] });
-    s.pin("HostCall::SpawnMob", &HostCall::SpawnMob {
+        filter: EventFilter::default(),
+    }));
+    s.pin("HostCall::GetBlock", &HostCall::from(calls::GetBlock { pos: [1, -2, 3] }));
+    s.pin("HostCall::GetBlocks", &HostCall::from(calls::GetBlocks { positions: vec![[0, 0, 0]] }));
+    s.pin("HostCall::SetBlock", &HostCall::from(calls::SetBlock { pos: [1, 2, 3], block: BlockId(4) }));
+    s.pin("HostCall::SetBlocks", &HostCall::from(calls::SetBlocks { blocks: vec![([1, 2, 3], BlockId(5))] }));
+    s.pin("HostCall::ScheduleTick", &HostCall::from(calls::ScheduleTick { pos: [1, 2, 3], delay: 7 }));
+    s.pin("HostCall::IsLoaded", &HostCall::from(calls::IsLoaded { pos: [1, 2, 3] }));
+    s.pin("HostCall::LightAt", &HostCall::from(calls::LightAt { pos: [1, 2, 3] }));
+    s.pin("HostCall::SpawnMob", &HostCall::from(calls::SpawnMob {
         key: "m:k".into(), pos: [1.0, 2.0, 3.0], yaw: 0.5, checked: true,
-    });
-    s.pin("HostCall::MobsInRadius", &HostCall::MobsInRadius { pos: [1.0, 2.0, 3.0], radius: 4.0 });
-    s.pin("HostCall::DamageMob", &HostCall::DamageMob {
+    }));
+    s.pin("HostCall::MobsInRadius", &HostCall::from(calls::MobsInRadius { pos: [1.0, 2.0, 3.0], radius: 4.0 }));
+    s.pin("HostCall::DamageMob", &HostCall::from(calls::DamageMob {
         mob_id: 7, amount: 2.0, origin: Some([1.0, 2.0, 3.0]),
         feedback: Some(crate::events::MobDamageFeedback {
             components: vec![
@@ -69,263 +70,263 @@ fn samples() -> Samples {
             ],
         }),
         attacker: Some(EntityRef::Player(PlayerId(3))),
-    });
-    s.pin("HostCall::DespawnMob", &HostCall::DespawnMob { mob_id: 7 });
-    s.pin("HostCall::SpawnItem", &HostCall::SpawnItem {
+    }));
+    s.pin("HostCall::DespawnMob", &HostCall::from(calls::DespawnMob { mob_id: 7 }));
+    s.pin("HostCall::SpawnItem", &HostCall::from(calls::SpawnItem {
         item: "m:i".into(), count: 3, pos: [1.0, 2.0, 3.0],
         data: Vec::new(),
-    });
-    s.pin("HostCall::PlayerState", &HostCall::PlayerState);
-    s.pin("HostCall::DamagePlayer", &HostCall::DamagePlayer {
+    }));
+    s.pin("HostCall::PlayerState", &HostCall::from(calls::PlayerState));
+    s.pin("HostCall::DamagePlayer", &HostCall::from(calls::DamagePlayer {
         player: PlayerId(1), amount: 2, origin: Some([1.0, 2.0, 3.0]),
         attacker: Some(EntityRef::Mob(9)),
-    });
-    s.pin("HostCall::ApplyKnockback", &HostCall::ApplyKnockback { impulse: [1.0, 2.0, 3.0] });
-    s.pin("HostCall::GiveItem", &HostCall::GiveItem {
+    }));
+    s.pin("HostCall::ApplyKnockback", &HostCall::from(calls::ApplyKnockback { impulse: [1.0, 2.0, 3.0] }));
+    s.pin("HostCall::GiveItem", &HostCall::from(calls::GiveItem {
         item: "m:i".into(),
         count: 2,
         data: vec![("m:k".into(), vec![1, 2, 3])],
-    });
-    s.pin("HostCall::SetHealth", &HostCall::SetHealth { value: 20 });
-    s.pin("HostCall::Teleport", &HostCall::Teleport { pos: [1.0, 2.0, 3.0] });
-    s.pin("HostCall::EmitSound", &HostCall::EmitSound {
+    }));
+    s.pin("HostCall::SetHealth", &HostCall::from(calls::SetHealth { value: 20 }));
+    s.pin("HostCall::Teleport", &HostCall::from(calls::Teleport { pos: [1.0, 2.0, 3.0] }));
+    s.pin("HostCall::EmitSound", &HostCall::from(calls::EmitSound {
         key: "m:s".into(), pos: Some([1.0, 2.0, 3.0]),
-    });
-    s.pin("HostCall::WorldKvGet", &HostCall::WorldKvGet { key: "m:k".into() });
-    s.pin("HostCall::WorldKvSet", &HostCall::WorldKvSet { key: "m:k".into(), value: vec![1] });
-    s.pin("HostCall::WorldKvDelete", &HostCall::WorldKvDelete { key: "m:k".into() });
-    s.pin("HostCall::SectionKvGet", &HostCall::SectionKvGet { pos: [1, 2, 3], key: "m:k".into() });
-    s.pin("HostCall::SectionKvSet", &HostCall::SectionKvSet {
+    }));
+    s.pin("HostCall::WorldKvGet", &HostCall::from(calls::WorldKvGet { key: "m:k".into() }));
+    s.pin("HostCall::WorldKvSet", &HostCall::from(calls::WorldKvSet { key: "m:k".into(), value: vec![1] }));
+    s.pin("HostCall::WorldKvDelete", &HostCall::from(calls::WorldKvDelete { key: "m:k".into() }));
+    s.pin("HostCall::SectionKvGet", &HostCall::from(calls::SectionKvGet { pos: [1, 2, 3], key: "m:k".into() }));
+    s.pin("HostCall::SectionKvSet", &HostCall::from(calls::SectionKvSet {
         pos: [1, 2, 3], key: "m:k".into(), value: vec![2],
-    });
-    s.pin("HostCall::SectionKvDelete", &HostCall::SectionKvDelete {
+    }));
+    s.pin("HostCall::SectionKvDelete", &HostCall::from(calls::SectionKvDelete {
         pos: [1, 2, 3], key: "m:k".into(),
-    });
-    s.pin("HostCall::MobTagGet", &HostCall::MobTagGet { mob_id: 7, key: "m:k".into() });
-    s.pin("HostCall::MobTagSet", &HostCall::MobTagSet {
+    }));
+    s.pin("HostCall::MobTagGet", &HostCall::from(calls::MobTagGet { mob_id: 7, key: "m:k".into() }));
+    s.pin("HostCall::MobTagSet", &HostCall::from(calls::MobTagSet {
         mob_id: 7, key: "m:k".into(), value: MobTagValue::I64(-3),
-    });
-    s.pin("HostCall::MobTagDelete", &HostCall::MobTagDelete { mob_id: 7, key: "m:k".into() });
-    s.pin("HostCall::ResolveBlock", &HostCall::ResolveBlock { name: "m:b".into() });
-    s.pin("HostCall::RegisterWorldgenFeature", &HostCall::RegisterWorldgenFeature {
+    }));
+    s.pin("HostCall::MobTagDelete", &HostCall::from(calls::MobTagDelete { mob_id: 7, key: "m:k".into() }));
+    s.pin("HostCall::ResolveBlock", &HostCall::from(calls::ResolveBlock { name: "m:b".into() }));
+    s.pin("HostCall::RegisterWorldgenFeature", &HostCall::from(calls::RegisterWorldgenFeature {
         feature_id: 1, stage: WorldgenStage::Trees,
         filter: Default::default(),
-    });
-    s.pin("HostCall::RegisterStageReplacement", &HostCall::RegisterStageReplacement {
+    }));
+    s.pin("HostCall::RegisterStageReplacement", &HostCall::from(calls::RegisterStageReplacement {
         stage: WorldgenStage::Terrain, callback_id: 2,
-    });
-    s.pin("HostCall::RegisterGenerator", &HostCall::RegisterGenerator { callback_id: 3 });
-    s.pin("HostCall::GuiStateSet", &HostCall::GuiStateSet {
+    }));
+    s.pin("HostCall::RegisterGenerator", &HostCall::from(calls::RegisterGenerator { callback_id: 3 }));
+    s.pin("HostCall::GuiStateSet", &HostCall::from(calls::GuiStateSet {
         key: "k".into(), value: GuiValue::I32(1),
-    });
-    s.pin("HostCall::GuiStateGet", &HostCall::GuiStateGet { key: "k".into() });
-    s.pin("HostCall::GuiOpen", &HostCall::GuiOpen { kind_key: "m:g".into(), at: Some(ContainerAddress::Block([1, 2, 3])) });
-    s.pin("HostCall::GuiClose", &HostCall::GuiClose);
-    s.pin("HostCall::ChatSend", &HostCall::ChatSend {
+    }));
+    s.pin("HostCall::GuiStateGet", &HostCall::from(calls::GuiStateGet { key: "k".into() }));
+    s.pin("HostCall::GuiOpen", &HostCall::from(calls::GuiOpen { kind_key: "m:g".into(), at: Some(ContainerAddress::Block([1, 2, 3])) }));
+    s.pin("HostCall::GuiClose", &HostCall::from(calls::GuiClose));
+    s.pin("HostCall::ChatSend", &HostCall::from(calls::ChatSend {
         text: "t".into(), targets: Some(vec![PlayerId(1)]),
-    });
-    s.pin("HostCall::SoundPlayAt", &HostCall::SoundPlayAt {
+    }));
+    s.pin("HostCall::SoundPlayAt", &HostCall::from(calls::SoundPlayAt {
         key: "m:s".into(), pos: [1.0, 2.0, 3.0], volume: 1.0, pitch: 1.0,
-    });
-    s.pin("HostCall::SoundPlayOnMob", &HostCall::SoundPlayOnMob {
+    }));
+    s.pin("HostCall::SoundPlayOnMob", &HostCall::from(calls::SoundPlayOnMob {
         mob_id: 1, key: "m:s".into(), volume: 1.0, pitch: 1.0,
-    });
-    s.pin("HostCall::SoundStop", &HostCall::SoundStop { handle: 1 });
-    s.pin("HostCall::ShaderSetParam", &HostCall::ShaderSetParam {
+    }));
+    s.pin("HostCall::SoundStop", &HostCall::from(calls::SoundStop { handle: 1 }));
+    s.pin("HostCall::ShaderSetParam", &HostCall::from(calls::ShaderSetParam {
         key: "m:p".into(), value: [0.0, 0.25, 0.5, 1.0],
-    });
-    s.pin("HostCall::RegisterHostileSpawner", &HostCall::RegisterHostileSpawner {
+    }));
+    s.pin("HostCall::RegisterHostileSpawner", &HostCall::from(calls::RegisterHostileSpawner {
         callback_id: 1, priority: 2,
-    });
-    s.pin("HostCall::RegisterBlockBehavior", &HostCall::RegisterBlockBehavior {
+    }));
+    s.pin("HostCall::RegisterBlockBehavior", &HostCall::from(calls::RegisterBlockBehavior {
         key: "m:b".into(), callback_id: 1,
-    });
-    s.pin("HostCall::RegisterAiNode", &HostCall::RegisterAiNode {
+    }));
+    s.pin("HostCall::RegisterAiNode", &HostCall::from(calls::RegisterAiNode {
         key: "m:n".into(), callback_id: 2,
-    });
-    s.pin("HostCall::ContainerGet", &HostCall::ContainerGet { at: ContainerAddress::Block([1, 2, 3]) });
-    s.pin("HostCall::ContainerSet", &HostCall::ContainerSet {
+    }));
+    s.pin("HostCall::ContainerGet", &HostCall::from(calls::ContainerGet { at: ContainerAddress::Block([1, 2, 3]) }));
+    s.pin("HostCall::ContainerSet", &HostCall::from(calls::ContainerSet {
         at: ContainerAddress::Mob(9),
         slots: vec![(0, Some(ItemStackData { item: "m:i".into(), count: 1, data: Vec::new() })), (1, None)],
-    });
-    s.pin("HostCall::ItemInfo", &HostCall::ItemInfo {
+    }));
+    s.pin("HostCall::ItemInfo", &HostCall::from(calls::ItemInfo {
         item: "m:i".into(), data: vec![("m:k".into(), vec![7])],
-    });
-    s.pin("HostCall::RecipeResult", &HostCall::RecipeResult {
+    }));
+    s.pin("HostCall::RecipeResult", &HostCall::from(calls::RecipeResult {
         class: "m:c".into(), item: "m:i".into(),
-    });
-    s.pin("HostCall::EffectApply", &HostCall::EffectApply { key: "m:e".into(), ticks: 5 });
-    s.pin("HostCall::EffectsActive", &HostCall::EffectsActive);
-    s.pin("HostCall::SwapBlock", &HostCall::SwapBlock {
+    }));
+    s.pin("HostCall::EffectApply", &HostCall::from(calls::EffectApply { key: "m:e".into(), ticks: 5 }));
+    s.pin("HostCall::EffectsActive", &HostCall::from(calls::EffectsActive));
+    s.pin("HostCall::SwapBlock", &HostCall::from(calls::SwapBlock {
         pos: [1, 2, 3], block: BlockId(6),
-    });
-    s.pin("HostCall::ContainerGetMany", &HostCall::ContainerGetMany {
+    }));
+    s.pin("HostCall::ContainerGetMany", &HostCall::from(calls::ContainerGetMany {
         addresses: vec![ContainerAddress::Block([1, 2, 3]), ContainerAddress::Mob(4)],
-    });
-    s.pin("HostCall::MobEmitterSet", &HostCall::MobEmitterSet {
+    }));
+    s.pin("HostCall::MobEmitterSet", &HostCall::from(calls::MobEmitterSet {
         mob_id: 7, key: "m:e".into(), active: true,
-    });
-    s.pin("HostCall::EmitterBurst", &HostCall::EmitterBurst {
+    }));
+    s.pin("HostCall::EmitterBurst", &HostCall::from(calls::EmitterBurst {
         key: "m:e".into(), pos: [1.0, 2.0, 3.0], intensity: 2.0,
         direction: Some([0.0, 1.0, 0.0]),
         texture: Some(ParticleTexture::Tile {
             tile: "m:t".into(), slice: [0.0, 0.25, 0.5, 1.0], tint: [1, 2, 3],
         }),
-    });
+    }));
     s.pin("ParticleTexture::Block", &ParticleTexture::Block { block: BlockId(4), tint: Some([1, 2, 3]) });
-    s.pin("HostCall::RuntimeSide", &HostCall::RuntimeSide);
-    s.pin("HostCall::ClientRegisterOverlay", &HostCall::ClientRegisterOverlay {
+    s.pin("HostCall::RuntimeSide", &HostCall::from(calls::RuntimeSide));
+    s.pin("HostCall::ClientRegisterOverlay", &HostCall::from(calls::ClientRegisterOverlay {
         image_key: "m:i".into(), anchor: ClientOverlayAnchor::TopLeft,
         margin: [1, 2], display_size: [3, 4],
-    });
-    s.pin("HostCall::ClientRegisterKey", &HostCall::ClientRegisterKey {
+    }));
+    s.pin("HostCall::ClientRegisterKey", &HostCall::from(calls::ClientRegisterKey {
         id: "open_map".into(), label: "Open World Map".into(),
         key: "key_m".into(), action_id: 1,
-    });
-    s.pin("HostCall::ClientSurfaceColumns", &HostCall::ClientSurfaceColumns {
+    }));
+    s.pin("HostCall::ClientSurfaceColumns", &HostCall::from(calls::ClientSurfaceColumns {
         queries: vec![ClientSurfaceQuery { coord: [1, -2], revision: 3 }],
-    });
-    s.pin("HostCall::ClientUiStateSet", &HostCall::ClientUiStateSet {
+    }));
+    s.pin("HostCall::ClientUiStateSet", &HostCall::from(calls::ClientUiStateSet {
         key: "m:k".into(), value: GuiValue::Str("v".into()),
-    });
-    s.pin("HostCall::ClientUiStateGet", &HostCall::ClientUiStateGet { key: "m:k".into() });
-    s.pin("HostCall::ClientImageSet", &HostCall::ClientImageSet {
+    }));
+    s.pin("HostCall::ClientUiStateGet", &HostCall::from(calls::ClientUiStateGet { key: "m:k".into() }));
+    s.pin("HostCall::ClientImageSet", &HostCall::from(calls::ClientImageSet {
         key: "m:i".into(), width: 1, height: 1, rgba: vec![1, 2, 3, 4],
-    });
-    s.pin("HostCall::ClientTextMeasure", &HostCall::ClientTextMeasure {
+    }));
+    s.pin("HostCall::ClientTextMeasure", &HostCall::from(calls::ClientTextMeasure {
         text: "t".into(), scale: 2,
-    });
-    s.pin("HostCall::ClientImageDrawTexts", &HostCall::ClientImageDrawTexts {
+    }));
+    s.pin("HostCall::ClientImageDrawTexts", &HostCall::from(calls::ClientImageDrawTexts {
         key: "m:i".into(),
         runs: vec![ClientTextRun { text: "t".into(), position: [1, 2], scale: 1, color: [1, 2, 3, 4] }],
-    });
-    s.pin("HostCall::ClientGuiOpen", &HostCall::ClientGuiOpen { kind_key: "m:g".into() });
-    s.pin("HostCall::ClientGuiClose", &HostCall::ClientGuiClose);
-    s.pin("HostCall::ClientCanvasOpen", &HostCall::ClientCanvasOpen {
+    }));
+    s.pin("HostCall::ClientGuiOpen", &HostCall::from(calls::ClientGuiOpen { kind_key: "m:g".into() }));
+    s.pin("HostCall::ClientGuiClose", &HostCall::from(calls::ClientGuiClose));
+    s.pin("HostCall::ClientCanvasOpen", &HostCall::from(calls::ClientCanvasOpen {
         canvas_key: "m:c".into(), size: [1, 2],
-    });
-    s.pin("HostCall::ClientCanvasClose", &HostCall::ClientCanvasClose);
-    s.pin("HostCall::ClientCanvasSceneSet", &HostCall::ClientCanvasSceneSet {
+    }));
+    s.pin("HostCall::ClientCanvasClose", &HostCall::from(calls::ClientCanvasClose));
+    s.pin("HostCall::ClientCanvasSceneSet", &HostCall::from(calls::ClientCanvasSceneSet {
         canvas_key: "m:c".into(),
         elements: vec![
             ClientCanvasElement::Image { image_key: "m:i".into(), rect: [1.0, 2.0, 3.0, 4.0] },
             ClientCanvasElement::Sprite { image_key: "m:i".into(), center: [1.0, 2.0] },
         ],
-    });
-    s.pin("HostCall::ClientCanvasViewSet", &HostCall::ClientCanvasViewSet {
+    }));
+    s.pin("HostCall::ClientCanvasViewSet", &HostCall::from(calls::ClientCanvasViewSet {
         canvas_key: "m:c".into(), offset: [1.0, 2.0],
-    });
-    s.pin("HostCall::ClientStorageGetMany", &HostCall::ClientStorageGetMany {
+    }));
+    s.pin("HostCall::ClientStorageGetMany", &HostCall::from(calls::ClientStorageGetMany {
         keys: vec!["m:k".into()],
-    });
-    s.pin("HostCall::ClientStorageSetMany", &HostCall::ClientStorageSetMany {
+    }));
+    s.pin("HostCall::ClientStorageSetMany", &HostCall::from(calls::ClientStorageSetMany {
         entries: vec![("m:k".into(), ByteBuf::from(vec![1]))],
-    });
-    s.pin("HostCall::ResolveItem", &HostCall::ResolveItem { name: "m:i".into() });
-    s.pin("HostCall::ClientImageBlit", &HostCall::ClientImageBlit {
+    }));
+    s.pin("HostCall::ResolveItem", &HostCall::from(calls::ResolveItem { name: "m:i".into() }));
+    s.pin("HostCall::ClientImageBlit", &HostCall::from(calls::ClientImageBlit {
         key: "m:i".into(), origin: [1, 2], size: [1, 1], rgba: vec![1, 2, 3, 4],
-    });
-    s.pin("HostCall::ClientStorageReadBegin", &HostCall::ClientStorageReadBegin {
+    }));
+    s.pin("HostCall::ClientStorageReadBegin", &HostCall::from(calls::ClientStorageReadBegin {
         keys: vec!["m:k".into()],
-    });
-    s.pin("HostCall::ClientStorageReadPoll", &HostCall::ClientStorageReadPoll { ticket: 7 });
-    s.pin("HostCall::ConsumeHeld", &HostCall::ConsumeHeld { item: ItemId(3), count: 1 });
-    s.pin("HostCall::ReplaceHeldOne", &HostCall::ReplaceHeldOne { item: ItemId(3), replacement: "m:i".into() });
-    s.pin("HostCall::MobMount", &HostCall::MobMount {
+    }));
+    s.pin("HostCall::ClientStorageReadPoll", &HostCall::from(calls::ClientStorageReadPoll { ticket: 7 }));
+    s.pin("HostCall::ConsumeHeld", &HostCall::from(calls::ConsumeHeld { item: ItemId(3), count: 1 }));
+    s.pin("HostCall::ReplaceHeldOne", &HostCall::from(calls::ReplaceHeldOne { item: ItemId(3), replacement: "m:i".into() }));
+    s.pin("HostCall::MobMount", &HostCall::from(calls::MobMount {
         mob_id: 7, player_id: PlayerId(1), seat: 0,
-    });
-    s.pin("HostCall::MobDismount", &HostCall::MobDismount { player_id: PlayerId(1) });
-    s.pin("HostCall::MobRiders", &HostCall::MobRiders { mob_id: 7 });
-    s.pin("HostCall::MobDrive", &HostCall::MobDrive {
+    }));
+    s.pin("HostCall::MobDismount", &HostCall::from(calls::MobDismount { player_id: PlayerId(1) }));
+    s.pin("HostCall::MobRiders", &HostCall::from(calls::MobRiders { mob_id: 7 }));
+    s.pin("HostCall::MobDrive", &HostCall::from(calls::MobDrive {
         mob_id: 7, horizontal: Some([1.0, 2.0]), vertical: Some(4.5), yaw: Some(0.5), while_walking: true,
         gait: false,
-    });
-    s.pin("HostCall::MobAnimSet", &HostCall::MobAnimSet {
+    }));
+    s.pin("HostCall::MobAnimSet", &HostCall::from(calls::MobAnimSet {
         mob_id: 7, anim: "row".into(), active: true,
-    });
-    s.pin("HostCall::MobAnimRate", &HostCall::MobAnimRate {
+    }));
+    s.pin("HostCall::MobAnimRate", &HostCall::from(calls::MobAnimRate {
         mob_id: 7, anim: "row".into(), rate: -1.0,
-    });
-    s.pin("HostCall::MobAnimSeek", &HostCall::MobAnimSeek {
+    }));
+    s.pin("HostCall::MobAnimSeek", &HostCall::from(calls::MobAnimSeek {
         mob_id: 7, anim: "row".into(), phase: 1.5, rate: 0.75,
-    });
-    s.pin("HostCall::PlayerInput", &HostCall::PlayerInput { player_id: PlayerId(1) });
-    s.pin("HostCall::MobAnimState", &HostCall::MobAnimState {
+    }));
+    s.pin("HostCall::PlayerInput", &HostCall::from(calls::PlayerInput { player_id: PlayerId(1) }));
+    s.pin("HostCall::MobAnimState", &HostCall::from(calls::MobAnimState {
         mob_id: 7, anim: "row".into(),
-    });
-    s.pin("HostCall::BiomeAt", &HostCall::BiomeAt { pos: [1, -2] });
-    s.pin("HostCall::SurfaceYAt", &HostCall::SurfaceYAt { pos: [1, -2] });
-    s.pin("HostCall::Players", &HostCall::Players);
-    s.pin("HostCall::ClientEnvParams", &HostCall::ClientEnvParams {
+    }));
+    s.pin("HostCall::BiomeAt", &HostCall::from(calls::BiomeAt { pos: [1, -2] }));
+    s.pin("HostCall::SurfaceYAt", &HostCall::from(calls::SurfaceYAt { pos: [1, -2] }));
+    s.pin("HostCall::Players", &HostCall::from(calls::Players));
+    s.pin("HostCall::ClientEnvParams", &HostCall::from(calls::ClientEnvParams {
         keys: vec!["m:k".into()],
-    });
-    s.pin("HostCall::ClientBiomeAt", &HostCall::ClientBiomeAt { pos: [1, -2] });
-    s.pin("HostCall::ClientAmbientSet", &HostCall::ClientAmbientSet {
+    }));
+    s.pin("HostCall::ClientBiomeAt", &HostCall::from(calls::ClientBiomeAt { pos: [1, -2] }));
+    s.pin("HostCall::ClientAmbientSet", &HostCall::from(calls::ClientAmbientSet {
         key: "m:rain".into(), intensity: 0.5, wind: [1.0, -2.0],
-    });
-    s.pin("HostCall::ClientLoopSet", &HostCall::ClientLoopSet {
+    }));
+    s.pin("HostCall::ClientLoopSet", &HostCall::from(calls::ClientLoopSet {
         key: "m:loop".into(), gain: 0.5,
-    });
-    s.pin("HostCall::ClientMoodSet", &HostCall::ClientMoodSet {
+    }));
+    s.pin("HostCall::ClientMoodSet", &HostCall::from(calls::ClientMoodSet {
         darken: 0.25, desaturate: 0.5,
-    });
-    s.pin("HostCall::ClientBlocksAt", &HostCall::ClientBlocksAt {
+    }));
+    s.pin("HostCall::ClientBlocksAt", &HostCall::from(calls::ClientBlocksAt {
         positions: vec![[1, -2, 3]],
-    });
-    s.pin("HostCall::BlocksByTag", &HostCall::BlocksByTag { tag: "m:t".into() });
-    s.pin("HostCall::ItemsByTag", &HostCall::ItemsByTag { tag: "m:t".into() });
-    s.pin("HostCall::BlockNames", &HostCall::BlockNames { blocks: vec![BlockId(1), BlockId(9)] });
-    s.pin("HostCall::ItemNames", &HostCall::ItemNames { items: vec![ItemId(1), ItemId(9)] });
-    s.pin("HostCall::ResolveMob", &HostCall::ResolveMob { key: "m:k".into() });
-    s.pin("HostCall::MobNames", &HostCall::MobNames { mobs: vec![MobId(1), MobId(9)] });
-    s.pin("HostCall::CollisionShapeAt", &HostCall::CollisionShapeAt { pos: [1, 2, 3] });
-    s.pin("HostCall::MobTagsGet", &HostCall::MobTagsGet { mob_id: 7 });
-    s.pin("HostCall::MobsWithTag", &HostCall::MobsWithTag {
+    }));
+    s.pin("HostCall::BlocksByTag", &HostCall::from(calls::BlocksByTag { tag: "m:t".into() }));
+    s.pin("HostCall::ItemsByTag", &HostCall::from(calls::ItemsByTag { tag: "m:t".into() }));
+    s.pin("HostCall::BlockNames", &HostCall::from(calls::BlockNames { blocks: vec![BlockId(1), BlockId(9)] }));
+    s.pin("HostCall::ItemNames", &HostCall::from(calls::ItemNames { items: vec![ItemId(1), ItemId(9)] }));
+    s.pin("HostCall::ResolveMob", &HostCall::from(calls::ResolveMob { key: "m:k".into() }));
+    s.pin("HostCall::MobNames", &HostCall::from(calls::MobNames { mobs: vec![MobId(1), MobId(9)] }));
+    s.pin("HostCall::CollisionShapeAt", &HostCall::from(calls::CollisionShapeAt { pos: [1, 2, 3] }));
+    s.pin("HostCall::MobTagsGet", &HostCall::from(calls::MobTagsGet { mob_id: 7 }));
+    s.pin("HostCall::MobsWithTag", &HostCall::from(calls::MobsWithTag {
         key: "m:k".into(), value: Some(MobTagValue::I64(-3)),
-    });
-    s.pin("HostCall::FindBlocks", &HostCall::FindBlocks {
+    }));
+    s.pin("HostCall::FindBlocks", &HostCall::from(calls::FindBlocks {
         min: [-1, 2, -3], max: [4, 5, 6], blocks: vec![BlockId(1), BlockId(9)],
-    });
-    s.pin("HostCall::MobInfo", &HostCall::MobInfo { mob_id: 7 });
-    s.pin("HostCall::MobCanReach", &HostCall::MobCanReach { mob_id: 7, cell: [1, -2, 3] });
-    s.pin("HostCall::ResolveShape", &HostCall::ResolveShape { key: "m:s".into() });
-    s.pin("HostCall::PlayerPoseSet", &HostCall::PlayerPoseSet {
+    }));
+    s.pin("HostCall::MobInfo", &HostCall::from(calls::MobInfo { mob_id: 7 }));
+    s.pin("HostCall::MobCanReach", &HostCall::from(calls::MobCanReach { mob_id: 7, cell: [1, -2, 3] }));
+    s.pin("HostCall::ResolveShape", &HostCall::from(calls::ResolveShape { key: "m:s".into() }));
+    s.pin("HostCall::PlayerPoseSet", &HostCall::from(calls::PlayerPoseSet {
         player_id: PlayerId(1), anchor: [1.5, 2.0, -3.5], yaw: 0.5, pose: pose::SITTING,
-    });
-    s.pin("HostCall::BlockModelGroup", &HostCall::BlockModelGroup { pos: [1, 2, 3] });
-    s.pin("HostCall::ClientCellKvAt", &HostCall::ClientCellKvAt {
+    }));
+    s.pin("HostCall::BlockModelGroup", &HostCall::from(calls::BlockModelGroup { pos: [1, 2, 3] }));
+    s.pin("HostCall::ClientCellKvAt", &HostCall::from(calls::ClientCellKvAt {
         key: "m:k".into(), cells: vec![[1, -2, 3]],
-    });
-    s.pin("HostCall::ItemDataGet", &HostCall::ItemDataGet { item: ItemId(3), key: "m:k".into() });
-    s.pin("HostCall::ItemsWithData", &HostCall::ItemsWithData { key: "m:k".into() });
-    s.pin("HostCall::BlockDataGet", &HostCall::BlockDataGet { block: BlockId(4), key: "m:k".into() });
-    s.pin("HostCall::BlocksWithData", &HostCall::BlocksWithData { key: "m:k".into() });
-    s.pin("HostCall::ResolveUndergroundBiome", &HostCall::ResolveUndergroundBiome { key: "m:u".into() });
-    s.pin("HostCall::UndergroundBiomeAt", &HostCall::UndergroundBiomeAt {
+    }));
+    s.pin("HostCall::ItemDataGet", &HostCall::from(calls::ItemDataGet { item: ItemId(3), key: "m:k".into() }));
+    s.pin("HostCall::ItemsWithData", &HostCall::from(calls::ItemsWithData { key: "m:k".into() }));
+    s.pin("HostCall::BlockDataGet", &HostCall::from(calls::BlockDataGet { block: BlockId(4), key: "m:k".into() }));
+    s.pin("HostCall::BlocksWithData", &HostCall::from(calls::BlocksWithData { key: "m:k".into() }));
+    s.pin("HostCall::ResolveUndergroundBiome", &HostCall::from(calls::ResolveUndergroundBiome { key: "m:u".into() }));
+    s.pin("HostCall::UndergroundBiomeAt", &HostCall::from(calls::UndergroundBiomeAt {
         positions: vec![[1, -2, 3]],
-    });
-    s.pin("HostCall::TerrainSolidAt", &HostCall::TerrainSolidAt {
+    }));
+    s.pin("HostCall::TerrainSolidAt", &HostCall::from(calls::TerrainSolidAt {
         positions: vec![[1, -2, 3]],
-    });
-    s.pin("HostCall::UndergroundBiomesInBox", &HostCall::UndergroundBiomesInBox {
+    }));
+    s.pin("HostCall::UndergroundBiomesInBox", &HostCall::from(calls::UndergroundBiomesInBox {
         lo: [1, -2, 3], hi: [4, 5, -6],
-    });
-    s.pin("HostCall::UnlockRecipe", &HostCall::UnlockRecipe {
+    }));
+    s.pin("HostCall::UnlockRecipe", &HostCall::from(calls::UnlockRecipe {
         player: PlayerId(1), recipe: "m:r".into(),
-    });
-    s.pin("HostCall::RecipeUnlocked", &HostCall::RecipeUnlocked {
+    }));
+    s.pin("HostCall::RecipeUnlocked", &HostCall::from(calls::RecipeUnlocked {
         player: PlayerId(1), recipe: "m:r".into(),
-    });
-    s.pin("HostCall::EmitEvent", &HostCall::EmitEvent {
+    }));
+    s.pin("HostCall::EmitEvent", &HostCall::from(calls::EmitEvent {
         key: "m:e".into(), data: vec![1, 2],
-    });
-    s.pin("HostCall::SurfaceBiomeAt", &HostCall::SurfaceBiomeAt {
+    }));
+    s.pin("HostCall::SurfaceBiomeAt", &HostCall::from(calls::SurfaceBiomeAt {
         columns: vec![[1, -2]],
-    });
-    s.pin("HostCall::SetModelParts", &HostCall::SetModelParts {
+    }));
+    s.pin("HostCall::SetModelParts", &HostCall::from(calls::SetModelParts {
         pos: [1, 2, 3], parts: 5, tint: Some([9, 8, 7]),
-    });
-    s.pin("HostCall::SetBlockDraw", &HostCall::SetBlockDraw {
+    }));
+    s.pin("HostCall::SetBlockDraw", &HostCall::from(calls::SetBlockDraw {
         pos: [1, 2, 3],
         prims: vec![
             crate::DrawPrim::Cuboid {
@@ -337,119 +338,119 @@ fn samples() -> Samples {
                 item: "m:i".into(), tint: [1, 2, 3],
             },
         ],
-    });
-    s.pin("HostCall::BlockLocalToWorld", &HostCall::BlockLocalToWorld {
+    }));
+    s.pin("HostCall::BlockLocalToWorld", &HostCall::from(calls::BlockLocalToWorld {
         pos: [1, 2, 3], points: vec![[0.25, 0.5, 0.75]],
-    });
-    s.pin("HostCall::SetBlockDraws", &HostCall::SetBlockDraws {
+    }));
+    s.pin("HostCall::SetBlockDraws", &HostCall::from(calls::SetBlockDraws {
         sets: vec![([1, 2, 3], vec![crate::DrawPrim::Cuboid {
             min: [0.0, 0.25, 0.0], max: [1.0, 0.5, 1.0],
             tile: "stone".into(), tint: [9, 8, 7], emissive: true,
         }])],
-    });
-    s.pin("HostCall::SetModelPartsMany", &HostCall::SetModelPartsMany {
+    }));
+    s.pin("HostCall::SetModelPartsMany", &HostCall::from(calls::SetModelPartsMany {
         sets: vec![([1, 2, 3], 5, Some([9, 8, 7]))],
-    });
-    s.pin("HostCall::SectionKvGetMany", &HostCall::SectionKvGetMany {
+    }));
+    s.pin("HostCall::SectionKvGetMany", &HostCall::from(calls::SectionKvGetMany {
         key: "m:k".into(), positions: vec![[1, 2, 3]],
-    });
-    s.pin("HostCall::SectionKvSetMany", &HostCall::SectionKvSetMany {
+    }));
+    s.pin("HostCall::SectionKvSetMany", &HostCall::from(calls::SectionKvSetMany {
         key: "m:k".into(), writes: vec![([1, 2, 3], Some(vec![7])), ([4, 5, 6], None)],
-    });
-    s.pin("HostCall::GuiViewers", &HostCall::GuiViewers);
-    s.pin("HostCall::GuiStateSetFor", &HostCall::GuiStateSetFor {
+    }));
+    s.pin("HostCall::GuiViewers", &HostCall::from(calls::GuiViewers));
+    s.pin("HostCall::GuiStateSetFor", &HostCall::from(calls::GuiStateSetFor {
         player_id: PlayerId(2), key: "k".into(), value: GuiValue::F32(0.5),
-    });
-    s.pin("HostCall::BlockInfo", &HostCall::BlockInfo { block: BlockId(300) });
-    s.pin("HostCall::PlayerHeld", &HostCall::PlayerHeld { player: PlayerId(2) });
+    }));
+    s.pin("HostCall::BlockInfo", &HostCall::from(calls::BlockInfo { block: BlockId(300) }));
+    s.pin("HostCall::PlayerHeld", &HostCall::from(calls::PlayerHeld { player: PlayerId(2) }));
     s.pin(
         "HostCall::GiveItemTo",
-        &HostCall::GiveItemTo {
+        &HostCall::from(calls::GiveItemTo {
             player: PlayerId(2),
             item: "i".into(),
             count: 3,
             data: vec![("k".into(), vec![7])],
-        },
+        }),
     );
     s.pin(
         "HostCall::SetPlayerHeldData",
-        &HostCall::SetPlayerHeldData {
+        &HostCall::from(calls::SetPlayerHeldData {
             player: PlayerId(2),
             expect_item: "i".into(),
             expect_data: vec![("k".into(), vec![6])],
             data: vec![("k".into(), vec![7])],
-        },
+        }),
     );
-    s.pin("HostCall::SiteOpen", &HostCall::SiteOpen { key: "m:k".into(), cell: [1, -2, 3] });
-    s.pin("HostCall::SetPlayerAttribute", &HostCall::SetPlayerAttribute {
+    s.pin("HostCall::SiteOpen", &HostCall::from(calls::SiteOpen { key: "m:k".into(), cell: [1, -2, 3] }));
+    s.pin("HostCall::SetPlayerAttribute", &HostCall::from(calls::SetPlayerAttribute {
         player: PlayerId(3), attribute: PlayerAttribute::AttackCooldown, scale: 1.5,
-    });
-    s.pin("HostCall::SetPlayerBonePose", &HostCall::SetPlayerBonePose {
+    }));
+    s.pin("HostCall::SetPlayerBonePose", &HostCall::from(calls::SetPlayerBonePose {
         player: PlayerId(5),
         bones: vec![crate::BonePoseData {
             bone: "left_shoulder".into(), rotation: [-22.0, 0.0, 0.0], translation: [0.0, 1.0, -2.0],
             mode: crate::BonePoseMode::Replace,
         }],
-    });
-    s.pin("HostCall::SetPlayerHeldPose", &HostCall::SetPlayerHeldPose {
+    }));
+    s.pin("HostCall::SetPlayerHeldPose", &HostCall::from(calls::SetPlayerHeldPose {
         player: PlayerId(4),
         main: Some(crate::HeldPose {
             first_person: crate::HeldPoseData { rotation: [0.0, 1.5, 0.0], translation: [0.1, -0.2, -0.3] },
             third_person: crate::HeldPoseData { rotation: [0.5; 3], translation: [0.4; 3] },
         }),
         off: None,
-    });
-    s.pin("HostCall::EmitEventTo", &HostCall::EmitEventTo {
+    }));
+    s.pin("HostCall::EmitEventTo", &HostCall::from(calls::EmitEventTo {
         player: PlayerId(6), key: "m:e".into(), data: vec![1, 2],
-    });
-    s.pin("HostCall::SetPlayerDeniedActions", &HostCall::SetPlayerDeniedActions {
+    }));
+    s.pin("HostCall::SetPlayerDeniedActions", &HostCall::from(calls::SetPlayerDeniedActions {
         player: PlayerId(7), actions: vec![BodyAction::Attack, BodyAction::Mine],
-    });
-    s.pin("HostCall::HoldUse", &HostCall::HoldUse { player: PlayerId(8) });
-    s.pin("HostCall::Raycast", &HostCall::Raycast {
+    }));
+    s.pin("HostCall::HoldUse", &HostCall::from(calls::HoldUse { player: PlayerId(8) }));
+    s.pin("HostCall::Raycast", &HostCall::from(calls::Raycast {
         from: [1.0, 2.0, 3.0], dir: [0.0, -1.0, 0.0], max: 8.0, filter: RayFilter::Collidable,
-    });
-    s.pin("HostCall::LaunchItem", &HostCall::LaunchItem {
+    }));
+    s.pin("HostCall::LaunchItem", &HostCall::from(calls::LaunchItem {
         item: "m:i".into(), pos: [1.0, 2.0, 3.0], vel: [0.0, 4.0, 0.0],
         owner: Some(EntityRef::Player(PlayerId(1))), data: vec![],
-    });
-    s.pin("HostCall::ItemEntity", &HostCall::ItemEntity { entity: 9 });
-    s.pin("HostCall::TakeItem", &HostCall::TakeItem {
+    }));
+    s.pin("HostCall::ItemEntity", &HostCall::from(calls::ItemEntity { entity: 9 }));
+    s.pin("HostCall::TakeItem", &HostCall::from(calls::TakeItem {
         player: PlayerId(2), item: "m:i".into(), count: 3, data: Some(vec![("m:k".into(), vec![7])]),
-    });
-    s.pin("HostCall::SetPlayerHeldDisplay", &HostCall::SetPlayerHeldDisplay {
+    }));
+    s.pin("HostCall::SetPlayerHeldDisplay", &HostCall::from(calls::SetPlayerHeldDisplay {
         player: PlayerId(3), main: Some("m:i".into()), off: None,
-    });
-    s.pin("HostCall::PlayerInventory", &HostCall::PlayerInventory { player: PlayerId(3) });
-    s.pin("HostCall::MobKinematic", &HostCall::MobKinematic {
+    }));
+    s.pin("HostCall::PlayerInventory", &HostCall::from(calls::PlayerInventory { player: PlayerId(3) }));
+    s.pin("HostCall::MobKinematic", &HostCall::from(calls::MobKinematic {
         mob_id: 7, pos: [1.0, 2.0, 3.0], yaw: 0.5, pitch: -0.25, roll: 0.125,
-    });
-    s.pin("HostCall::SoundSet", &HostCall::SoundSet { handle: 1, volume: 0.5, pitch: 1.0 });
+    }));
+    s.pin("HostCall::SoundSet", &HostCall::from(calls::SoundSet { handle: 1, volume: 0.5, pitch: 1.0 }));
 
-    s.pin("HostCall::ContainerInsert", &HostCall::ContainerInsert { at: ContainerAddress::Block([1, 2, 3]), stack: ItemStackData {item: "m:i".into(), count: 2, data: Vec::new()} });
-    s.pin("HostCall::ContainerTake", &HostCall::ContainerTake { at: ContainerAddress::Mob(5), slot: 4, count: 2 });
+    s.pin("HostCall::ContainerInsert", &HostCall::from(calls::ContainerInsert { at: ContainerAddress::Block([1, 2, 3]), stack: ItemStackData {item: "m:i".into(), count: 2, data: Vec::new()} }));
+    s.pin("HostCall::ContainerTake", &HostCall::from(calls::ContainerTake { at: ContainerAddress::Mob(5), slot: 4, count: 2 }));
 
-    s.pin("HostCall::ItemEntitiesInRadius", &HostCall::ItemEntitiesInRadius { pos: [1.0, 2.0, 3.0], radius: 4.0, limit: 8 });
-    s.pin("HostCall::ItemImpulses", &HostCall::ItemImpulses { impulses: vec![(9, [1.0, 0.0, -1.0])] });
-    s.pin("HostCall::SectionKvFind", &HostCall::SectionKvFind { section: [-1, -2, 3], key: "fixture:marker".into() });
-    s.pin("HostCall::StructureInfo", &HostCall::StructureInfo { key: "fixture:room".into() });
-    s.pin("HostCall::LootRoll", &HostCall::LootRoll { key: "fixture:loot".into(), seed: 7 });
-    s.pin("HostCall::MobDataGet", &HostCall::MobDataGet { mob: MobId(4), key: "m:k".into() });
-    s.pin("HostCall::MobsWithData", &HostCall::MobsWithData { key: "m:k".into() });
-    s.pin("HostCall::TerrainSpaceAt", &HostCall::TerrainSpaceAt { positions: vec![[1, -2, 3]] });
-    s.pin("HostCall::MemoGet", &HostCall::MemoGet { key: b"k".to_vec() });
-    s.pin("HostCall::MemoGetMany", &HostCall::MemoGetMany { keys: vec![b"k".to_vec()] });
-    s.pin("HostCall::MemoPut", &HostCall::MemoPut { key: b"k".to_vec(), value: b"v".to_vec() });
-    s.pin("HostCall::MemoClaim", &HostCall::MemoClaim { key: b"k".to_vec() });
+    s.pin("HostCall::ItemEntitiesInRadius", &HostCall::from(calls::ItemEntitiesInRadius { pos: [1.0, 2.0, 3.0], radius: 4.0, limit: 8 }));
+    s.pin("HostCall::ItemImpulses", &HostCall::from(calls::ItemImpulses { impulses: vec![(9, [1.0, 0.0, -1.0])] }));
+    s.pin("HostCall::SectionKvFind", &HostCall::from(calls::SectionKvFind { section: [-1, -2, 3], key: "fixture:marker".into() }));
+    s.pin("HostCall::StructureInfo", &HostCall::from(calls::StructureInfo { key: "fixture:room".into() }));
+    s.pin("HostCall::LootRoll", &HostCall::from(calls::LootRoll { key: "fixture:loot".into(), seed: 7 }));
+    s.pin("HostCall::MobDataGet", &HostCall::from(calls::MobDataGet { mob: MobId(4), key: "m:k".into() }));
+    s.pin("HostCall::MobsWithData", &HostCall::from(calls::MobsWithData { key: "m:k".into() }));
+    s.pin("HostCall::TerrainSpaceAt", &HostCall::from(calls::TerrainSpaceAt { positions: vec![[1, -2, 3]] }));
+    s.pin("HostCall::MemoGet", &HostCall::from(calls::MemoGet { key: b"k".to_vec() }));
+    s.pin("HostCall::MemoGetMany", &HostCall::from(calls::MemoGetMany { keys: vec![b"k".to_vec()] }));
+    s.pin("HostCall::MemoPut", &HostCall::from(calls::MemoPut { key: b"k".to_vec(), value: b"v".to_vec() }));
+    s.pin("HostCall::MemoClaim", &HostCall::from(calls::MemoClaim { key: b"k".to_vec() }));
 
-    s.pin("HostCall::TerrainBlocksAt", &HostCall::TerrainBlocksAt { positions: vec![[1, -2, 3]] });
-    s.pin("HostCall::TerrainHeightsAt", &HostCall::TerrainHeightsAt { columns: vec![[1, -2]] });
-    s.pin("HostCall::TerrainSectionAt", &HostCall::TerrainSectionAt { section: [1, -2, 3] });
+    s.pin("HostCall::TerrainBlocksAt", &HostCall::from(calls::TerrainBlocksAt { positions: vec![[1, -2, 3]] }));
+    s.pin("HostCall::TerrainHeightsAt", &HostCall::from(calls::TerrainHeightsAt { columns: vec![[1, -2]] }));
+    s.pin("HostCall::TerrainSectionAt", &HostCall::from(calls::TerrainSectionAt { section: [1, -2, 3] }));
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
     s.pin("HostRet::U64", &HostRet::U64(1));
-    s.pin("HostRet::Error", &HostRet::Error("e".into()));
+    s.pin("HostRet::Err", &HostRet::invalid("e".into()));
     s.pin("HostRet::Bool", &HostRet::Bool(true));
     s.pin("HostRet::Block", &HostRet::Block(Some(BlockId(1))));
     s.pin("HostRet::Blocks", &HostRet::Blocks(vec![None, Some(BlockId(2))]));
@@ -684,7 +685,7 @@ fn samples() -> Samples {
     // --- GuestRet: every variant, declaration order --------------------------
     s.pin("GuestRet::Unit", &GuestRet::Unit);
     s.pin("GuestRet::Event", &GuestRet::Event {
-        outcome: Outcome::Cancel, payload: EventPayload::ItemUsed { player: PlayerId(1), item: ItemId(1), kind: ItemUseEvent::Handler },
+        outcome: Outcome::Cancel, payload: None,
     });
     s.pin("GuestRet::GenOutput", &GuestRet::GenOutput(vec![([1, 2, 3], BlockId(4))].into()));
     s.pin("GuestRet::GenBlocks", &GuestRet::GenBlocks(vec![1, 2]));
@@ -754,7 +755,7 @@ fn samples() -> Samples {
         block: None, face: None, mob: Some(7), target: Some(PlayerId(2)), player: PlayerId(0),
     });
     s.pin("EventPayload::ProjectileHit", &EventPayload::ProjectileHit {
-        entity: 9, target: ProjectileTarget::Mob(7),
+        entity: 9, item: ItemId(1), target: ProjectileTarget::Mob(7),
         pos: [1.0, 2.0, 3.0], vel: [0.0, 0.0, -4.0], fate: ProjectileFate::Drop,
     });
     s.pin("EventPayload::CellsEditPre", &EventPayload::CellsEditPre {
@@ -938,26 +939,26 @@ fn samples() -> Samples {
     ]);
     s.pin("LightAperture::*", &vec![LightAperture::Opaque, LightAperture::Open]);
 
-    s.pin("HostCall::ResolveCondition", &HostCall::ResolveCondition { key: "m:c".into() });
-    s.pin("HostCall::ConditionNames", &HostCall::ConditionNames { conditions: vec![ConditionId(1)] });
-    s.pin("HostCall::EntityConditionApply", &HostCall::EntityConditionApply { entity: EntityRef::Mob(7), condition: ConditionId(0), stage: 1, ticks: 120 });
-    s.pin("HostCall::EntityConditionCool", &HostCall::EntityConditionCool { entity: EntityRef::Player(PlayerId(1)), condition: ConditionId(0), ticks: 3 });
+    s.pin("HostCall::ResolveCondition", &HostCall::from(calls::ResolveCondition { key: "m:c".into() }));
+    s.pin("HostCall::ConditionNames", &HostCall::from(calls::ConditionNames { conditions: vec![ConditionId(1)] }));
+    s.pin("HostCall::EntityConditionApply", &HostCall::from(calls::EntityConditionApply { entity: EntityRef::Mob(7), condition: ConditionId(0), stage: 1, ticks: 120 }));
+    s.pin("HostCall::EntityConditionCool", &HostCall::from(calls::EntityConditionCool { entity: EntityRef::Player(PlayerId(1)), condition: ConditionId(0), ticks: 3 }));
     s.pin("HostRet::Condition", &HostRet::Condition(Some(ConditionInfoData { id: ConditionId(0), key: "m:c".into(), stages: vec!["a".into()] })));
-    s.pin("HostCall::BlockInfos", &HostCall::BlockInfos { blocks: vec![BlockId(1), BlockId(9)] });
+    s.pin("HostCall::BlockInfos", &HostCall::from(calls::BlockInfos { blocks: vec![BlockId(1), BlockId(9)] }));
     s.pin("HostRet::BlockInfos", &HostRet::BlockInfos(vec![None]));
-    s.pin("HostCall::SetPlayerAnimatorParams", &HostCall::SetPlayerAnimatorParams {
+    s.pin("HostCall::SetPlayerAnimatorParams", &HostCall::from(calls::SetPlayerAnimatorParams {
         player: PlayerId(2),
         params: vec![crate::AnimatorParam { rig: "r".into(), param: "p".into(), value: crate::AnimatorValue::Name("n".into()) }],
-    });
-    s.pin("HostCall::SetPlayerAnimatorPlays", &HostCall::SetPlayerAnimatorPlays {
+    }));
+    s.pin("HostCall::SetPlayerAnimatorPlays", &HostCall::from(calls::SetPlayerAnimatorPlays {
         player: PlayerId(2),
         plays: vec![
             crate::AnimatorPlay { rig: "r".into(), slot: "s".into(), clip: "c".into(), clock: crate::AnimatorClock::Scrub(0.5), mirror: true, priority: 1 },
             crate::AnimatorPlay { rig: "r".into(), slot: "t".into(), clip: "c".into(), clock: crate::AnimatorClock::Run { rate: 1.5, looping: true }, mirror: false, priority: 0 },
         ],
-    });
-    s.pin("HostCall::FirePlayerAnimatorEvent", &HostCall::FirePlayerAnimatorEvent { player: PlayerId(2), rig: "r".into(), event: "e".into() });
-    s.pin("HostCall::AnimationClip", &HostCall::AnimationClip { rig: "r".into(), clip: "b".into() });
+    }));
+    s.pin("HostCall::FirePlayerAnimatorEvent", &HostCall::from(calls::FirePlayerAnimatorEvent { player: PlayerId(2), rig: "r".into(), event: "e".into() }));
+    s.pin("HostCall::AnimationClip", &HostCall::from(calls::AnimationClip { rig: "r".into(), clip: "b".into() }));
     s.pin("HostRet::AnimationClip", &HostRet::AnimationClip(Some(crate::AnimationClipInfo {
         length: 0.5, looping: false, markers: vec![("impact".into(), 0.25)],
     })));
@@ -965,35 +966,35 @@ fn samples() -> Samples {
         block: "m:b".into(), state: vec![1, 0, 0], refs: vec![(1, "m:c".into())],
         data: vec![("m:k".into(), vec![7])],
     };
-    s.pin("HostCall::ContainerTransfer", &HostCall::ContainerTransfer {
+    s.pin("HostCall::ContainerTransfer", &HostCall::from(calls::ContainerTransfer {
         from: ContainerAddress::Block([1, 2, 3]), slot: 2, to: ContainerAddress::Mob(7), count: 5,
-    });
-    s.pin("HostCall::BlockRecordsAt", &HostCall::BlockRecordsAt { positions: vec![[1, 2, 3]] });
-    s.pin("HostCall::BlockRecordPlans", &HostCall::BlockRecordPlans { records: vec![record.clone()] });
-    s.pin("HostCall::BlockRecordStatuses", &HostCall::BlockRecordStatuses { cells: vec![([1, 2, 3], record.clone())] });
-    s.pin("HostCall::ActorDig", &HostCall::ActorDig {
+    }));
+    s.pin("HostCall::BlockRecordsAt", &HostCall::from(calls::BlockRecordsAt { positions: vec![[1, 2, 3]] }));
+    s.pin("HostCall::BlockRecordPlans", &HostCall::from(calls::BlockRecordPlans { records: vec![record.clone()] }));
+    s.pin("HostCall::BlockRecordStatuses", &HostCall::from(calls::BlockRecordStatuses { cells: vec![([1, 2, 3], record.clone())] }));
+    s.pin("HostCall::ActorDig", &HostCall::from(calls::ActorDig {
         actor: EntityRef::Mob(7), pos: [1, 2, 3], tool_slot: Some(4), collect: true,
-    });
-    s.pin("HostCall::ActorPlace", &HostCall::ActorPlace {
+    }));
+    s.pin("HostCall::ActorPlace", &HostCall::from(calls::ActorPlace {
         actor: EntityRef::Mob(7), pos: [1, 2, 3], record: record.clone(), pay: true,
-    });
-    s.pin("HostCall::PathProbe", &HostCall::PathProbe {
+    }));
+    s.pin("HostCall::PathProbe", &HostCall::from(calls::PathProbe {
         key: "m:g".into(), from: [1, 2, 3], to: [4, 5, 6], blocked: vec![[2, 2, 3]], max_nodes: 900,
-    });
-    s.pin("HostCall::Footholds", &HostCall::Footholds { key: "m:g".into(), cells: vec![[1, 2, 3]] });
-    s.pin("HostCall::MobHeldDisplay", &HostCall::MobHeldDisplay {
+    }));
+    s.pin("HostCall::Footholds", &HostCall::from(calls::Footholds { key: "m:g".into(), cells: vec![[1, 2, 3]] }));
+    s.pin("HostCall::MobHeldDisplay", &HostCall::from(calls::MobHeldDisplay {
         mob_id: 7, main: Some("m:i".into()), off: None,
-    });
-    s.pin("HostCall::SchematicInfo", &HostCall::SchematicInfo { asset: [3; 32] });
-    s.pin("HostCall::SchematicCells", &HostCall::SchematicCells { asset: [3; 32], section: 2, turns: 1 });
-    s.pin("HostCall::SchematicChoose", &HostCall::SchematicChoose { player: PlayerId(2), tag: "m:t".into() });
-    s.pin("HostCall::SchematicPosition", &HostCall::SchematicPosition {
+    }));
+    s.pin("HostCall::SchematicInfo", &HostCall::from(calls::SchematicInfo { asset: [3; 32] }));
+    s.pin("HostCall::SchematicCells", &HostCall::from(calls::SchematicCells { asset: [3; 32], section: 2, turns: 1 }));
+    s.pin("HostCall::SchematicChoose", &HostCall::from(calls::SchematicChoose { player: PlayerId(2), tag: "m:t".into() }));
+    s.pin("HostCall::SchematicPosition", &HostCall::from(calls::SchematicPosition {
         player: PlayerId(2), tag: "m:t".into(), asset: [3; 32], origin: Some([1, 2, 3]), turns: 2,
-    });
-    s.pin("HostCall::SchematicGhostSet", &HostCall::SchematicGhostSet {
+    }));
+    s.pin("HostCall::SchematicGhostSet", &HostCall::from(calls::SchematicGhostSet {
         key: "m:g".into(),
         ghost: Some(crate::SchematicGhostData { asset: [3; 32], origin: [1, 2, 3], turns: 1, viewers: vec![PlayerId(2)], yields_to_positioning: true }),
-    });
+    }));
     s.pin("HostRet::BlockRecords", &HostRet::BlockRecords(vec![Some(record.clone()), None]));
     s.pin("HostRet::RecordPlans", &HostRet::RecordPlans(vec![
         crate::RecordPlan::Air,
@@ -1021,35 +1022,35 @@ fn samples() -> Samples {
     s.pin("HostRet::SchematicCells", &HostRet::SchematicCells(Some(crate::SchematicCellsData {
         cells: vec![([1, 2, 3], 0)], palette: vec![record.clone()],
     })));
-    s.pin("HostCall::PlayerIdentity", &HostCall::PlayerIdentity { player: PlayerId(2) });
+    s.pin("HostCall::PlayerIdentity", &HostCall::from(calls::PlayerIdentity { player: PlayerId(2) }));
     s.pin("HostRet::Identity", &HostRet::Identity(Some(crate::PlayerIdentityData {
         name: "p".into(), operator: true,
     })));
-    s.pin("HostCall::ActorPlaceCheck", &HostCall::ActorPlaceCheck {
+    s.pin("HostCall::ActorPlaceCheck", &HostCall::from(calls::ActorPlaceCheck {
         actor: EntityRef::Mob(7), from: [1.5, 2.0, 3.5], pos: [1, 2, 3], record: record.clone(), pay: true,
-    });
-    s.pin("HostCall::WalkRegion", &HostCall::WalkRegion {
+    }));
+    s.pin("HostCall::WalkRegion", &HostCall::from(calls::WalkRegion {
         key: "m:g".into(), from: [1, 2, 3], min: [0, 0, 0], max: [4, 5, 6], blocked: vec![[2, 2, 2]], toward: true, max_nodes: 500,
-    });
+    }));
     s.pin("HostRet::Flood", &HostRet::Flood(crate::Flood::Reached(vec![([1, 2, 3], 4)])));
-    s.pin("HostCall::ActorInteract", &HostCall::ActorInteract { actor: EntityRef::Mob(7), pos: [1, 2, 3] });
-    s.pin("HostCall::ActorAims", &HostCall::ActorAims {
+    s.pin("HostCall::ActorInteract", &HostCall::from(calls::ActorInteract { actor: EntityRef::Mob(7), pos: [1, 2, 3] }));
+    s.pin("HostCall::ActorAims", &HostCall::from(calls::ActorAims {
         actor: EntityRef::Mob(7), from: vec![[1.5, 2.0, 3.5]], pos: [1, 2, 3], record: None,
-    });
-    s.pin("HostCall::SetMobDraw", &HostCall::SetMobDraw {
+    }));
+    s.pin("HostCall::SetMobDraw", &HostCall::from(calls::SetMobDraw {
         mob_id: 7, frame: crate::DrawFrame::World,
         prims: vec![crate::DrawPrim::Sprite {
             at: [0.0, 2.0, 0.0], scale: 0.5, yaw: 1.5, pitch: 0.25, spin: 2.0,
             bob: [0.125, 4.0], faces_viewer: true,
             tile: "m:t".into(), tint: [1, 2, 3], emissive: true,
         }],
-    });
+    }));
     s.pin("HostRet::Aims", &HostRet::Aims(vec![Ok([1.5, 2.0, 3.5]), Err(crate::ActionRefusal::NotAimed)]));
-    s.pin("HostCall::BlockChangesSince", &HostCall::BlockChangesSince { since: Some(7) });
+    s.pin("HostCall::BlockChangesSince", &HostCall::from(calls::BlockChangesSince { since: Some(7) }));
     s.pin("HostRet::BlockChanges", &HostRet::BlockChanges(crate::BlockChanges { next: 9, lost: true, cells: vec![[1, 2, 3]] }));
-    s.pin("HostCall::ContainerHold", &HostCall::ContainerHold {
+    s.pin("HostCall::ContainerHold", &HostCall::from(calls::ContainerHold {
         at: crate::ContainerAddress::Block([1, 2, 3]), actor: EntityRef::Mob(7), open: true,
-    });
+    }));
     s.pin("EventPayload::ActorActed", &EventPayload::ActorActed {
         actor: EntityRef::Mob(7), pos: [1, 2, 3], action: crate::ActorAction::Place,
         refusal: Some(crate::ActionRefusal::MissingItems),
@@ -1061,23 +1062,36 @@ fn samples() -> Samples {
         player: PlayerId(2), tag: "m:t".into(), asset: [3; 32], origin: [1, 2, 3], turns: 1,
     });
     s.pin("HostRet::Unsupported", &HostRet::Unsupported);
-    s.pin("HostCall::ActingPlayer", &HostCall::ActingPlayer);
-    s.pin("HostCall::PlayerStateOf", &HostCall::PlayerStateOf { player: PlayerId(2) });
-    s.pin("HostCall::ApplyKnockbackTo", &HostCall::ApplyKnockbackTo { player: PlayerId(2), impulse: [1.0, 2.0, 3.0] });
-    s.pin("HostCall::SetHealthOf", &HostCall::SetHealthOf { player: PlayerId(2), value: 20 });
-    s.pin("HostCall::TeleportPlayer", &HostCall::TeleportPlayer { player: PlayerId(2), pos: [1.0, 2.0, 3.0] });
-    s.pin("HostCall::EffectApplyTo", &HostCall::EffectApplyTo { player: PlayerId(2), key: "m:e".into(), ticks: 40 });
-    s.pin("HostCall::EffectsActiveOf", &HostCall::EffectsActiveOf { player: PlayerId(2) });
-    s.pin("HostCall::ConsumeHeldBy", &HostCall::ConsumeHeldBy { player: PlayerId(2), item: ItemId(5), count: 3 });
-    s.pin("HostCall::ReplaceHeldOneBy", &HostCall::ReplaceHeldOneBy { player: PlayerId(2), item: ItemId(5), replacement: "m:i".into() });
-    s.pin("HostCall::GuiStateGetFor", &HostCall::GuiStateGetFor { player_id: PlayerId(2), key: "k".into() });
-    s.pin("HostCall::GuiOpenFor", &HostCall::GuiOpenFor {
+    s.pin("HostCall::ActingPlayer", &HostCall::from(calls::ActingPlayer));
+    s.pin("HostCall::PlayerStateOf", &HostCall::from(calls::PlayerStateOf { player: PlayerId(2) }));
+    s.pin("HostCall::ApplyKnockbackTo", &HostCall::from(calls::ApplyKnockbackTo { player: PlayerId(2), impulse: [1.0, 2.0, 3.0] }));
+    s.pin("HostCall::SetHealthOf", &HostCall::from(calls::SetHealthOf { player: PlayerId(2), value: 20 }));
+    s.pin("HostCall::TeleportPlayer", &HostCall::from(calls::TeleportPlayer { player: PlayerId(2), pos: [1.0, 2.0, 3.0] }));
+    s.pin("HostCall::EffectApplyTo", &HostCall::from(calls::EffectApplyTo { player: PlayerId(2), key: "m:e".into(), ticks: 40 }));
+    s.pin("HostCall::EffectsActiveOf", &HostCall::from(calls::EffectsActiveOf { player: PlayerId(2) }));
+    s.pin("HostCall::ConsumeHeldBy", &HostCall::from(calls::ConsumeHeldBy { player: PlayerId(2), item: ItemId(5), count: 3 }));
+    s.pin("HostCall::ReplaceHeldOneBy", &HostCall::from(calls::ReplaceHeldOneBy { player: PlayerId(2), item: ItemId(5), replacement: "m:i".into() }));
+    s.pin("HostCall::GuiStateGetFor", &HostCall::from(calls::GuiStateGetFor { player_id: PlayerId(2), key: "k".into() }));
+    s.pin("HostCall::GuiOpenFor", &HostCall::from(calls::GuiOpenFor {
         player_id: PlayerId(2), kind_key: "m:g".into(), at: Some(crate::ContainerAddress::Block([1, 2, 3])),
-    });
-    s.pin("HostCall::GuiCloseFor", &HostCall::GuiCloseFor { player_id: PlayerId(2) });
+    }));
+    s.pin("HostCall::GuiCloseFor", &HostCall::from(calls::GuiCloseFor { player_id: PlayerId(2) }));
     s.pin("HostRet::ActingPlayer", &HostRet::ActingPlayer(Some(PlayerId(2))));
     s.pin("HostRet::PlayerOf", &HostRet::PlayerOf(None));
     s.pin("HostRet::EffectsOf", &HostRet::EffectsOf(Some(vec![EffectStateData { key: "m:e".into(), remaining: 40 }])));
+    s.pin("HostCall::LightAtMany", &HostCall::from(calls::LightAtMany { positions: vec![[1, 2, 3]] }));
+    s.pin("HostCall::MobTagsGetMany", &HostCall::from(calls::MobTagsGetMany { mob_ids: vec![7] }));
+    s.pin("HostCall::MobTagsWrite", &HostCall::from(calls::MobTagsWrite { writes: vec![MobTagOp::Delete { mob_id: 7, key: "m:k".into() }] }));
+    s.pin("HostCall::MobDriveMany", &HostCall::from(calls::MobDriveMany { drives: vec![MobDriveData::horizontal(7, [1.0, 2.0], None)] }));
+    s.pin("HostCall::MobKinematicMany", &HostCall::from(calls::MobKinematicMany { poses: vec![MobKinematicData { mob_id: 7, pos: [1.0, 2.0, 3.0], yaw: 0.0, pitch: 0.0, roll: 0.0 }] }));
+    s.pin("HostCall::MobAnimMany", &HostCall::from(calls::MobAnimMany { ops: vec![MobAnimOp::Set { mob_id: 7, anim: "a".into(), active: true }] }));
+    s.pin("HostCall::MobRidersMany", &HostCall::from(calls::MobRidersMany { mob_ids: vec![7] }));
+    s.pin("HostCall::PlayerInputs", &HostCall::from(calls::PlayerInputs { player_ids: vec![PlayerId(2)] }));
+    s.pin("HostCall::EntityConditionsMany", &HostCall::from(calls::EntityConditionsMany { ops: vec![ConditionOp::Cool { entity: EntityRef::Mob(7), condition: ConditionId(1), ticks: 2 }] }));
+    s.pin("HostRet::Lights", &HostRet::Lights(vec![None]));
+    s.pin("HostRet::MobTagsMany", &HostRet::MobTagsMany(vec![None]));
+    s.pin("HostRet::PlayerInputs", &HostRet::PlayerInputs(vec![None]));
+    s.pin("HostRet::RidersMany", &HostRet::RidersMany(vec![None]));
 
     s
 }

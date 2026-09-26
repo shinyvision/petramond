@@ -3,7 +3,7 @@
 //! model-group swap.
 
 use petramond_world::world::raycast;
-use mod_api::{HostCall, HostRet};
+use mod_api::{BlockCall, HostRet};
 
 use petramond_math::math::IVec3;
 
@@ -79,19 +79,19 @@ fn draw_prim_finite(prim: &mod_api::DrawPrim) -> bool {
 pub(super) fn check_draw_set(what: &str, prims: &[mod_api::DrawPrim]) -> Option<HostRet> {
     const MAX: usize = mod_api::DRAW_PRIMS_MAX;
     if prims.len() > MAX {
-        return Some(HostRet::Error(format!(
+        return Some(HostRet::invalid(format!(
             "{what}: {} prims; the cap is {MAX}",
             prims.len()
         )));
     }
     let bad = prims.iter().position(|p| !draw_prim_finite(p))?;
-    Some(HostRet::Error(format!(
+    Some(HostRet::invalid(format!(
         "{what}: prim {bad} has a non-finite component"
     )))
 }
 
 /// Block calls (all sim-scoped, delegating to World).
-pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
+pub(super) fn handle_block_call(mod_id: &str, call: BlockCall) -> HostRet {
     match call {
         // The batched presentation writes. They exist because a mod's tick
         // cost must not scale with how many machines the player has built:
@@ -105,7 +105,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
         // broken this tick is the normal way to lose a race, and taking the
         // pack down for it would make the batched form unusable.
         // Pinned by `a_batched_draw_answers_per_entry_where_the_single_call_errors`.
-        HostCall::SetBlockDraws { sets } => {
+        BlockCall::SetBlockDraws { sets } => {
             if let Some(err) = batch_guard("SetBlockDraws set", sets.len()) {
                 return err;
             }
@@ -129,7 +129,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 )
             })
         }
-        HostCall::SetModelPartsMany { sets } => {
+        BlockCall::SetModelPartsMany { sets } => {
             if let Some(err) = batch_guard("SetModelPartsMany set", sets.len()) {
                 return err;
             }
@@ -145,7 +145,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 )
             })
         }
-        HostCall::SetBlockDraw { pos, prims } => {
+        BlockCall::SetBlockDraw { pos, prims } => {
             if let Some(err) = check_draw_set("SetBlockDraw", &prims) {
                 return err;
             }
@@ -165,7 +165,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 },
             )
         }
-        HostCall::SetModelParts { pos, parts, tint } => {
+        BlockCall::SetModelParts { pos, parts, tint } => {
             let mod_id = mod_id.to_owned();
             sim_query(
                 move |ctx| match owned_block_at(ctx, &mod_id, pos, "SetModelParts") {
@@ -179,7 +179,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
         // A READ of the same space `SetBlockDraw` writes in, so it needs no
         // ownership check: knowing where another mod's spout points is no more
         // than `GetBlock` already tells you.
-        HostCall::BlockLocalToWorld { pos, points } => {
+        BlockCall::BlockLocalToWorld { pos, points } => {
             if let Some(err) = batch_guard("BlockLocalToWorld point", points.len()) {
                 return err;
             }
@@ -204,7 +204,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 ))
             })
         }
-        HostCall::SwapBlock { pos, block } => match checked_block(block) {
+        BlockCall::SwapBlock { pos, block } => match checked_block(block) {
             Err(e) => e,
             Ok(b) => {
                 // BOTH sides must be the caller's own: this is a placed thing
@@ -216,7 +216,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                     .name(b.id())
                     .unwrap_or("?");
                 if !key_owned_by_namespace(mod_id, new_name) {
-                    return HostRet::Error(format!(
+                    return HostRet::invalid(format!(
                         "SwapBlock: block '{new_name}' is not owned by mod '{mod_id}'"
                     ));
                 }
@@ -232,14 +232,14 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
         // Biomes are column-level data fixed at generation (saved overlays
         // never change them), so a loaded-column read cannot lie: no
         // stream-final gate needed.
-        HostCall::BiomeAt { pos } => {
+        BlockCall::BiomeAt { pos } => {
             sim_read(move |ctx| HostRet::MaybeByte(ctx.world.data().biome_at_world(pos[0], pos[1])))
         }
         // The SURFACE can lie mid-stream (the generated base shows where a
         // saved overlay is about to land), so the found footing must be
         // stream-final like every block read — else a mod builds on terrain
         // the player's save is about to replace.
-        HostCall::SurfaceYAt { pos } => sim_read(move |ctx| {
+        BlockCall::SurfaceYAt { pos } => sim_read(move |ctx| {
             let y = ctx
                 .world
                 .data().surface_collision_y(pos[0], pos[1])
@@ -249,7 +249,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
         // Mod reads report None ("unloaded") while a section's streamed
         // content is not final — a half-streamed read would show the
         // generated base where the player's saved record is about to land.
-        HostCall::GetBlock { pos } => sim_read(|ctx| {
+        BlockCall::GetBlock { pos } => sim_read(|ctx| {
             let p = IVec3::from(pos);
             HostRet::Block(
                 ctx.world
@@ -257,7 +257,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                     .map(|b| mod_api::BlockId(b.id())),
             )
         }),
-        HostCall::GetBlocks { positions } => {
+        BlockCall::GetBlocks { positions } => {
             if let Some(err) = batch_guard("GetBlocks position", positions.len()) {
                 return err;
             }
@@ -275,7 +275,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 )
             })
         }
-        HostCall::BlockChangesSince { since } => sim_read(|ctx| {
+        BlockCall::BlockChangesSince { since } => sim_read(|ctx| {
             let (next, cells, lost) = match since {
                 Some(seq) => ctx.world.changes_since(seq),
                 None => (ctx.world.changes_since(u64::MAX).0, Vec::new(), false),
@@ -286,7 +286,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 cells: cells.iter().map(|c| c.to_array()).collect(),
             })
         }),
-        HostCall::Raycast {
+        BlockCall::Raycast {
             from,
             dir,
             max,
@@ -298,11 +298,11 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
             };
             let dir = match finite3(dir, "Raycast.dir") {
                 Ok(v) if v.length_squared() > f32::EPSILON => v.normalize(),
-                Ok(_) => return HostRet::Error("Raycast: zero direction".into()),
+                Ok(_) => return HostRet::invalid("Raycast: zero direction".into()),
                 Err(e) => return e,
             };
             if !max.is_finite() || max <= 0.0 || max > mod_api::RAYCAST_MAX_DISTANCE {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "Raycast: max must be finite and in (0, {}]",
                     mod_api::RAYCAST_MAX_DISTANCE
                 ));
@@ -323,12 +323,12 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 )
             })
         }
-        HostCall::FindBlocks { min, max, blocks } => {
+        BlockCall::FindBlocks { min, max, blocks } => {
             if let Some(err) = batch_guard("FindBlocks block", blocks.len()) {
                 return err;
             }
             if min.iter().zip(&max).any(|(lo, hi)| lo > hi) {
-                return HostRet::Error(format!("FindBlocks: inverted box {min:?}..{max:?}"));
+                return HostRet::invalid(format!("FindBlocks: inverted box {min:?}..{max:?}"));
             }
             let volume = min
                 .iter()
@@ -336,7 +336,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 .map(|(lo, hi)| (hi - lo) as i64 + 1)
                 .product::<i64>();
             if volume > super::guards::FIND_BLOCKS_VOLUME_MAX {
-                return HostRet::Error(format!(
+                return HostRet::invalid(format!(
                     "FindBlocks: box volume {volume} exceeds {}",
                     super::guards::FIND_BLOCKS_VOLUME_MAX
                 ));
@@ -373,14 +373,14 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::FoundBlocks(Some(found))
             })
         }
-        HostCall::SetBlock { pos, block } => match checked_block(block) {
+        BlockCall::SetBlock { pos, block } => match checked_block(block) {
             Err(e) => e,
             Ok(b) => sim_query(|ctx| {
                 let p = IVec3::from(pos);
                 HostRet::Bool(ctx.world.set_block_world(p.x, p.y, p.z, b))
             }),
         },
-        HostCall::SetBlocks { blocks } => {
+        BlockCall::SetBlocks { blocks } => {
             if let Some(err) = batch_guard("SetBlocks write", blocks.len()) {
                 return err;
             }
@@ -388,7 +388,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 let mut set = 0u64;
                 for &(pos, block) in &blocks {
                     let Ok(b) = checked_block(block) else {
-                        return HostRet::Error(format!(
+                        return HostRet::invalid(format!(
                             "SetBlocks: unregistered block id {}",
                             block.0
                         ));
@@ -401,10 +401,10 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::U64(set)
             })
         }
-        HostCall::ScheduleTick { pos, delay } => {
+        BlockCall::ScheduleTick { pos, delay } => {
             sim_call(|ctx| ctx.world.schedule_tick(pos.into(), delay))
         }
-        HostCall::IsLoaded { pos } => sim_read(|ctx| {
+        BlockCall::IsLoaded { pos } => sim_read(|ctx| {
             let p = IVec3::from(pos);
             HostRet::Bool(ctx.world.section_stream_final_at(p.x, p.y, p.z))
         }),
@@ -413,7 +413,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
         // sections (the mesh-border fallback), which for a MOD read is a
         // fabricated value light-driven policy would act on — gate on
         // stream finality and answer `None` instead.
-        HostCall::LightAt { pos } => sim_read(|ctx| {
+        BlockCall::LightAt { pos } => sim_read(|ctx| {
             let p = IVec3::from(pos);
             HostRet::Light(ctx.world.block_if_stream_final(p.x, p.y, p.z).map(|_| {
                 mod_api::LightData {
@@ -424,7 +424,21 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 }
             }))
         }),
-        HostCall::CollisionShapeAt { pos } => sim_read(|ctx| {
+        BlockCall::LightAtMany { positions } => {
+            if let Some(err) = batch_guard("LightAtMany position", positions.len()) {
+                return err;
+            }
+            sim_read(|ctx| HostRet::Lights(positions.into_iter().map(|pos| {
+                let p = IVec3::from(pos);
+                ctx.world.block_if_stream_final(p.x, p.y, p.z).map(|_| mod_api::LightData {
+                    combined: ctx.world.data().combined_light6_at_world(p.x, p.y, p.z),
+                    sky: ctx.world.data().skylight6_at_world(p.x, p.y, p.z),
+                    block: ctx.world.data().blocklight6_at_world(p.x, p.y, p.z),
+                    block_rgb: ctx.world.data().blocklight6_rgb_at_world(p.x, p.y, p.z),
+                })
+            }).collect()))
+        }
+        BlockCall::CollisionShapeAt { pos } => sim_read(|ctx| {
             let p = IVec3::from(pos);
             HostRet::CollisionShape(ctx.world.block_if_stream_final(p.x, p.y, p.z).map(|_| {
                 match ctx.world.data().collision_shape_class(p.x, p.y, p.z) {
@@ -434,15 +448,12 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 }
             }))
         }),
-        other => HostRet::Error(format!(
-            "non-block call {other:?} mis-routed to handle_block_call (host bug)"
-        )),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use mod_api::{CollisionShape, HostCall, HostRet};
+    use mod_api::{calls, CollisionShape, HostCall, HostRet};
 
     use crate::events::tick::TickEvents;
     use crate::events::{PostQueue, RosterRefs, SimCtx};
@@ -480,39 +491,39 @@ mod tests {
         for (name, call) in [
             (
                 "GetBlocks",
-                HostCall::GetBlocks {
+                HostCall::from(calls::GetBlocks {
                     positions: vec![[0, 0, 0]; SIM_BATCH_MAX + 1],
-                },
+                }),
             ),
             (
                 "SetBlocks",
-                HostCall::SetBlocks {
+                HostCall::from(calls::SetBlocks {
                     blocks: vec![([0, 0, 0], mod_api::BlockId(0)); SIM_BATCH_MAX + 1],
-                },
+                }),
             ),
             (
                 "ContainerGetMany",
-                HostCall::ContainerGetMany {
+                HostCall::from(calls::ContainerGetMany {
                     addresses: vec![[0, 0, 0].into(); SIM_BATCH_MAX + 1],
-                },
+                }),
             ),
             (
                 "ContainerSet",
-                HostCall::ContainerSet {
+                HostCall::from(calls::ContainerSet {
                     at: [0, 0, 0].into(),
                     slots: vec![(0, None); SIM_BATCH_MAX + 1],
-                },
+                }),
             ),
             (
                 "ItemNames",
-                HostCall::ItemNames {
+                HostCall::from(calls::ItemNames {
                     items: vec![mod_api::ItemId(0); SIM_BATCH_MAX + 1],
-                },
+                }),
             ),
         ] {
             match handle_host_call(&mut store, call) {
-                HostRet::Error(e) => assert!(
-                    e.contains("exceeds"),
+                HostRet::Err(e) => assert!(
+                    e.detail.contains("exceeds"),
                     "{name}: expected the cap error, got '{e}'"
                 ),
                 other => panic!("{name}: over-cap batch answered {other:?}"),
@@ -521,9 +532,9 @@ mod tests {
         // An at-cap batch is served (registry lane needs no sim scope).
         let got = handle_host_call(
             &mut store,
-            HostCall::ItemNames {
+            HostCall::from(calls::ItemNames {
                 items: vec![mod_api::ItemId(0); SIM_BATCH_MAX],
-            },
+            }),
         );
         assert!(matches!(got, HostRet::Names(v) if v.len() == SIM_BATCH_MAX));
         let mut world = ServerWorld::new(1, 4);
@@ -532,9 +543,9 @@ mod tests {
         with_world_ctx(&mut world, || {
             let got = handle_host_call(
                 &mut store,
-                HostCall::GetBlocks {
+                HostCall::from(calls::GetBlocks {
                     positions: vec![[8, 64, 8]; SIM_BATCH_MAX],
-                },
+                }),
             );
             assert!(matches!(got, HostRet::Blocks(v) if v.len() == SIM_BATCH_MAX));
         });
@@ -558,12 +569,12 @@ mod tests {
         let cast = |store: &mut ModStoreData, max: f32, filter: mod_api::RayFilter| {
             handle_host_call(
                 store,
-                HostCall::Raycast {
+                HostCall::from(calls::Raycast {
                     from: [1.5, 64.2, 8.5],
                     dir: [2.0, 0.0, 0.0],
                     max,
                     filter,
-                },
+                }),
             )
         };
         with_world_ctx(&mut world, || {
@@ -595,19 +606,19 @@ mod tests {
             );
             assert!(matches!(
                 cast(&mut store, 0.0, mod_api::RayFilter::Collidable),
-                HostRet::Error(_)
+                HostRet::Err(_)
             ));
             assert!(matches!(
                 handle_host_call(
                     &mut store,
-                    HostCall::Raycast {
+                    HostCall::from(calls::Raycast {
                         from: [1.5, 64.2, 8.5],
                         dir: [0.0, 0.0, 0.0],
                         max: 4.0,
                         filter: mod_api::RayFilter::Selectable,
-                    },
+                    }),
                 ),
-                HostRet::Error(_)
+                HostRet::Err(_)
             ));
         });
     }
@@ -622,16 +633,16 @@ mod tests {
         world.clear_world();
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
         with_world_ctx(&mut world, || {
-            let loaded = handle_host_call(&mut store, HostCall::LightAt { pos: [8, 64, 8] });
+            let loaded = handle_host_call(&mut store, HostCall::from(calls::LightAt { pos: [8, 64, 8] }));
             assert!(
                 matches!(loaded, HostRet::Light(Some(_))),
                 "loaded cell must answer light, got {loaded:?}"
             );
             let unloaded = handle_host_call(
                 &mut store,
-                HostCall::LightAt {
+                HostCall::from(calls::LightAt {
                     pos: [512, 64, 512],
-                },
+                }),
             );
             assert_eq!(unloaded, HostRet::Light(None));
         });
@@ -650,7 +661,7 @@ mod tests {
         assert!(world.set_block_world(8, 65, 8, Block::Water));
         with_world_ctx(&mut world, || {
             let mut shape =
-                |pos| match handle_host_call(&mut store, HostCall::CollisionShapeAt { pos }) {
+                |pos| match handle_host_call(&mut store, HostCall::from(calls::CollisionShapeAt { pos })) {
                     HostRet::CollisionShape(s) => s,
                     other => panic!("expected a shape reply, got {other:?}"),
                 };
@@ -671,25 +682,25 @@ mod tests {
         let mut store = ModStoreData::new("alpha", 1);
         let volume_capped = handle_host_call(
             &mut store,
-            HostCall::FindBlocks {
+            HostCall::from(calls::FindBlocks {
                 min: [0, 0, 0],
                 max: [32, 31, 31],
                 blocks: vec![],
-            },
+            }),
         );
         match volume_capped {
-            HostRet::Error(e) => assert!(e.contains("volume"), "got '{e}'"),
+            HostRet::Err(e) => assert!(e.detail.contains("volume"), "got '{e}'"),
             other => panic!("over-volume box answered {other:?}"),
         }
         let inverted = handle_host_call(
             &mut store,
-            HostCall::FindBlocks {
+            HostCall::from(calls::FindBlocks {
                 min: [0, 5, 0],
                 max: [1, 4, 1],
                 blocks: vec![],
-            },
+            }),
         );
-        assert!(matches!(inverted, HostRet::Error(_)), "inverted box");
+        assert!(matches!(inverted, HostRet::Err(_)), "inverted box");
 
         let mut world = ServerWorld::new(1, 4);
         world.clear_world();
@@ -701,7 +712,7 @@ mod tests {
             let stone = vec![mod_api::BlockId(Block::Stone.id())];
             let find = |store: &mut ModStoreData, min, max, blocks| match handle_host_call(
                 store,
-                HostCall::FindBlocks { min, max, blocks },
+                HostCall::from(calls::FindBlocks { min, max, blocks }),
             ) {
                 HostRet::FoundBlocks(f) => f,
                 other => panic!("expected FoundBlocks, got {other:?}"),
@@ -738,12 +749,12 @@ mod tests {
         // malformed submission cannot depend on where the caller was.
         match handle_host_call(
             &mut store,
-            HostCall::SetBlockDraw {
+            HostCall::from(calls::SetBlockDraw {
                 pos: [0, 0, 0],
                 prims: vec![nan],
-            },
+            }),
         ) {
-            HostRet::Error(e) => assert!(e.contains("non-finite"), "got '{e}'"),
+            HostRet::Err(e) => assert!(e.detail.contains("non-finite"), "got '{e}'"),
             other => panic!("a NaN corner answered {other:?}"),
         }
     }
@@ -767,19 +778,19 @@ mod tests {
         with_world_ctx(&mut world, || {
             match handle_host_call(
                 &mut store,
-                HostCall::SetBlockDraw {
+                HostCall::from(calls::SetBlockDraw {
                     pos: foreign,
                     prims: Vec::new(),
-                },
+                }),
             ) {
                 HostRet::Bool(false) => {}
                 other => panic!("a foreign block answered {other:?}"),
             }
             match handle_host_call(
                 &mut store,
-                HostCall::SetBlockDraws {
+                HostCall::from(calls::SetBlockDraws {
                     sets: vec![(foreign, Vec::new())],
-                },
+                }),
             ) {
                 HostRet::Bools(v) => assert_eq!(v, vec![false], "per entry, and the call survives"),
                 other => panic!("the batched form answered {other:?}"),
@@ -797,28 +808,28 @@ mod tests {
     fn block_presentation_calls_route_to_the_block_handler() {
         let mut store = ModStoreData::new("alpha", 1);
         for call in [
-            HostCall::SetBlockDraw {
+            HostCall::from(calls::SetBlockDraw {
                 pos: [0, 0, 0],
                 prims: Vec::new(),
-            },
-            HostCall::SetModelParts {
+            }),
+            HostCall::from(calls::SetModelParts {
                 pos: [0, 0, 0],
                 parts: 0,
                 tint: None,
-            },
-            HostCall::SwapBlock {
+            }),
+            HostCall::from(calls::SwapBlock {
                 pos: [0, 0, 0],
                 block: mod_api::BlockId(1),
-            },
-            HostCall::BlockLocalToWorld {
+            }),
+            HostCall::from(calls::BlockLocalToWorld {
                 pos: [0, 0, 0],
                 points: Vec::new(),
-            },
+            }),
         ] {
             let name = format!("{call:?}");
             let ret = handle_host_call(&mut store, call);
             assert!(
-                !matches!(&ret, HostRet::Error(e) if e.contains("mis-routed")),
+                !matches!(&ret, HostRet::Err(e) if e.detail.contains("mis-routed")),
                 "{name} did not reach the block handler: {ret:?}"
             );
         }
@@ -858,10 +869,10 @@ mod tests {
             with_world_ctx(&mut world, || {
                 let got = match handle_host_call(
                     &mut store,
-                    HostCall::BlockLocalToWorld {
+                    HostCall::from(calls::BlockLocalToWorld {
                         pos: [base.x, base.y, base.z],
                         points: vec![local],
-                    },
+                    }),
                 ) {
                     HostRet::Points(Some(p)) => p[0],
                     other => panic!("{facing:?}: {other:?}"),
@@ -896,10 +907,10 @@ mod tests {
             assert_eq!(
                 handle_host_call(
                     &mut store,
-                    HostCall::BlockLocalToWorld {
+                    HostCall::from(calls::BlockLocalToWorld {
                         pos: [512, 64, 512],
                         points: vec![[0.5, 0.5, 0.5]],
-                    },
+                    }),
                 ),
                 HostRet::Points(None)
             );

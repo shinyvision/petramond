@@ -1,3 +1,4 @@
+use mod_api::calls;
 use mod_api::{HostCall, HostRet};
 
 use crate::events::tick::TickEvents;
@@ -15,11 +16,11 @@ fn sparse_find_is_sorted_and_never_fabricates_unloaded_cells() {
             assert_eq!(
                 handle_host_call(
                     &mut data,
-                    HostCall::SectionKvSet {
+                    HostCall::from(calls::SectionKvSet {
                         pos,
                         key: "fixture:marker".into(),
                         value: vec![1],
-                    }
+                    })
                 ),
                 HostRet::Bool(true)
             );
@@ -27,20 +28,20 @@ fn sparse_find_is_sorted_and_never_fabricates_unloaded_cells() {
         assert_eq!(
             handle_host_call(
                 &mut data,
-                HostCall::SectionKvFind {
+                HostCall::from(calls::SectionKvFind {
                     section: [0, 4, 0],
                     key: "fixture:marker".into(),
-                }
+                })
             ),
             HostRet::FoundBlocks(Some(vec![[2, 64, 1], [1, 64, 2], [3, 65, 1]]))
         );
         assert_eq!(
             handle_host_call(
                 &mut data,
-                HostCall::SectionKvFind {
+                HostCall::from(calls::SectionKvFind {
                     section: [-2, -3, 4],
                     key: "fixture:marker".into(),
-                }
+                })
             ),
             HostRet::FoundBlocks(None)
         );
@@ -51,10 +52,10 @@ fn sparse_find_is_sorted_and_never_fabricates_unloaded_cells() {
         assert_eq!(
             handle_host_call(
                 &mut data,
-                HostCall::SectionKvFind {
+                HostCall::from(calls::SectionKvFind {
                     section: [0, 4, 0],
                     key: "fixture:marker".into(),
-                }
+                })
             ),
             HostRet::FoundBlocks(None),
             "generated markers stay hidden until saved terrain is final"
@@ -101,10 +102,10 @@ fn kv_writes_enforce_own_namespace_and_reads_cross() {
         assert_eq!(
             handle_host_call(
                 &mut alpha,
-                HostCall::WorldKvSet {
+                HostCall::from(calls::WorldKvSet {
                     key: "alpha:x".into(),
                     value: vec![7],
-                },
+                }),
             ),
             HostRet::Unit
         );
@@ -112,10 +113,10 @@ fn kv_writes_enforce_own_namespace_and_reads_cross() {
         assert_eq!(
             handle_host_call(
                 &mut beta,
-                HostCall::WorldKvSet {
+                HostCall::from(calls::WorldKvSet {
                     key: "petramond:time".into(),
                     value: vec![1],
-                },
+                }),
             ),
             HostRet::Unit
         );
@@ -123,12 +124,12 @@ fn kv_writes_enforce_own_namespace_and_reads_cross() {
         assert!(matches!(
             handle_host_call(
                 &mut beta,
-                HostCall::WorldKvSet {
+                HostCall::from(calls::WorldKvSet {
                     key: "alpha:x".into(),
                     value: vec![9],
-                },
+                }),
             ),
-            HostRet::Error(_)
+            HostRet::Err(_)
         ));
         // ...and so are bare / degenerate keys.
         for bad in ["x", "alpha:", "petramond:", "alphax:y", "beta"] {
@@ -136,12 +137,12 @@ fn kv_writes_enforce_own_namespace_and_reads_cross() {
                 matches!(
                     handle_host_call(
                         &mut beta,
-                        HostCall::WorldKvSet {
+                        HostCall::from(calls::WorldKvSet {
                             key: bad.into(),
                             value: vec![1],
-                        },
+                        }),
                     ),
-                    HostRet::Error(_)
+                    HostRet::Err(_)
                 ),
                 "write with key '{bad}' must be rejected"
             );
@@ -150,18 +151,18 @@ fn kv_writes_enforce_own_namespace_and_reads_cross() {
         assert_eq!(
             handle_host_call(
                 &mut beta,
-                HostCall::WorldKvGet {
+                HostCall::from(calls::WorldKvGet {
                     key: "alpha:x".into(),
-                },
+                }),
             ),
             HostRet::Bytes(Some(vec![7]))
         );
         assert_eq!(
             handle_host_call(
                 &mut alpha,
-                HostCall::WorldKvGet {
+                HostCall::from(calls::WorldKvGet {
                     key: "petramond:time".into(),
-                },
+                }),
             ),
             HostRet::Bytes(Some(vec![1]))
         );
@@ -169,18 +170,18 @@ fn kv_writes_enforce_own_namespace_and_reads_cross() {
         assert!(matches!(
             handle_host_call(
                 &mut beta,
-                HostCall::WorldKvDelete {
+                HostCall::from(calls::WorldKvDelete {
                     key: "alpha:x".into(),
-                },
+                }),
             ),
-            HostRet::Error(_)
+            HostRet::Err(_)
         ));
         assert_eq!(
             handle_host_call(
                 &mut alpha,
-                HostCall::WorldKvDelete {
+                HostCall::from(calls::WorldKvDelete {
                     key: "alpha:x".into(),
-                },
+                }),
             ),
             HostRet::Bool(true)
         );
@@ -188,23 +189,23 @@ fn kv_writes_enforce_own_namespace_and_reads_cross() {
         assert!(matches!(
             handle_host_call(
                 &mut alpha,
-                HostCall::WorldKvSet {
+                HostCall::from(calls::WorldKvSet {
                     key: "alpha:big".into(),
                     value: vec![0; KV_MAX_VALUE_BYTES + 1],
-                },
+                }),
             ),
-            HostRet::Error(_)
+            HostRet::Err(_)
         ));
     });
     // Outside any dispatch scope, sim-touching KV calls are rejected.
     assert!(matches!(
         handle_host_call(
             &mut alpha,
-            HostCall::WorldKvGet {
+            HostCall::from(calls::WorldKvGet {
                 key: "alpha:x".into(),
-            },
+            }),
         ),
-        HostRet::Error(_)
+        HostRet::Err(_)
     ));
 }
 
@@ -222,11 +223,11 @@ fn section_kv_caps_distinct_keys_per_cell() {
         let set = |m: &mut ModStoreData, key: String| {
             handle_host_call(
                 m,
-                HostCall::SectionKvSet {
+                HostCall::from(calls::SectionKvSet {
                     pos,
                     key,
                     value: vec![1],
-                },
+                }),
             )
         };
         for i in 0..CELL_KV_MAX_KEYS {
@@ -239,7 +240,7 @@ fn section_kv_caps_distinct_keys_per_cell() {
         assert!(
             matches!(
                 set(&mut alpha, "alpha:one_too_many".into()),
-                HostRet::Error(_)
+                HostRet::Err(_)
             ),
             "a new key beyond the cap is rejected"
         );
@@ -251,10 +252,10 @@ fn section_kv_caps_distinct_keys_per_cell() {
         assert_eq!(
             handle_host_call(
                 &mut alpha,
-                HostCall::SectionKvDelete {
+                HostCall::from(calls::SectionKvDelete {
                     pos,
                     key: "alpha:k1".into(),
-                },
+                }),
             ),
             HostRet::Bool(true)
         );
