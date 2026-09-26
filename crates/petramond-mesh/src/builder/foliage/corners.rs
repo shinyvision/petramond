@@ -27,8 +27,8 @@ impl CrownCorners {
         if crate::face::Face::ALL
             .into_iter()
             .filter(|face| {
-                let (x, y, z) = face.dir();
-                block(wx + x, wy + y, wz + z) == Block::Air
+                let d = face.dir();
+                block(wx + d.x, wy + d.y, wz + d.z) == Block::Air
             })
             .count()
             < 2

@@ -11,7 +11,8 @@
 //! predicate, not a copy of this module.
 
 use crate::block::{Aabb, Block, BlockShapeKind, BlockTag, ConnectionRule, FullFace};
-use crate::mathh::{IVec3, Vec3, MAX_SELECTION_BOXES};
+use crate::mathh::{IVec3, Vec3};
+use crate::selection::MAX_SELECTION_BOXES;
 
 /// A connection shape's REFINED 4-bit mask as cell state — written by the
 /// fence/pane families' refine, decoded wherever the resolved arms are read.

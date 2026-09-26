@@ -5,10 +5,10 @@ use crate::vertex::pack_vertex;
 #[test]
 fn sprays_stay_in_the_air_neighbor_and_cull_margin() {
     for face in Face::ALL {
-        let (dx, dy, _) = face.dir();
-        let normal_axis = if dx != 0 {
+        let d = face.dir();
+        let normal_axis = if d.x != 0 {
             0
-        } else if dy != 0 {
+        } else if d.y != 0 {
             1
         } else {
             2

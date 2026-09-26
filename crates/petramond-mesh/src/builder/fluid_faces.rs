@@ -11,7 +11,7 @@ use petramond_world::fluid::medium::medium_index;
 use petramond_world::light::{BlockLight6, LightRgb};
 use petramond_world::tile::TileTint;
 
-use super::super::face::{quad_for, Face, FACES};
+use super::super::face::{quad_for, Face, FaceShading, FACES};
 use super::super::face_emit::push_cube_face_with_cell_uvs;
 use super::super::fluid::{side_vs_fluid, FluidSurface, SideVsFluid};
 use super::super::tint;
@@ -64,10 +64,7 @@ pub(super) fn emit_fluid_cell(
     // bulk of every fluid cell, so one test beats six culled faces.
     if resident
         && full
-        && FACES.iter().all(|f| {
-            let (dx, dy, dz) = f.dir();
-            nb.fluid_fills(pos + IVec3::new(dx, dy, dz), fluid)
-        })
+        && FACES.iter().all(|f| nb.fluid_fills(pos + f.dir(), fluid))
     {
         return;
     }
@@ -108,8 +105,7 @@ pub(super) fn emit_fluid_cell(
     let base = (pos - anchor).as_vec3();
 
     for face in FACES {
-        let (dx, dy, dz) = face.dir();
-        let front = pos + IVec3::new(dx, dy, dz);
+        let front = pos + face.dir();
         let is_top = matches!(face, Face::PosY);
         let is_side = matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ);
         // A covered top still draws when it cannot meet the cover's underside:

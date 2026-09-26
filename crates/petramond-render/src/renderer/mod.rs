@@ -1,7 +1,7 @@
 use super::gpu_timer;
 use crate::camera::{Camera, Containment, Frustum, ViewVolume};
 use petramond::world::TerrainRenderHandoff;
-use petramond_math::math::SelectionShape;
+use petramond_world::selection::SelectionShape;
 use petramond_world::chunk::ChunkPos;
 
 use std::collections::HashMap;

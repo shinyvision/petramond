@@ -22,6 +22,7 @@ use super::lighting::{self, DynLight, LightEnv};
 use crate::atlas::tile_uv;
 use glam::{Mat4, Vec3};
 use petramond_math::face::Face;
+use petramond_mesh::face::FaceShading;
 use petramond_mesh::SHADES;
 use petramond_world::bbmodel::face_corners;
 use petramond_world::block_model::{self, BlockModelKind};

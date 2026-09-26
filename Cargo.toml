@@ -98,6 +98,7 @@ wasmtime = { version = "46", default-features = false, features = ["cranelift", 
 
 [dev-dependencies]
 petramond-world = { path = "crates/petramond-world", features = ["test-support"] }
+petramond-util = { path = "crates/petramond-util", features = ["test-support"] }
 # Tests hand-build hostile guest modules from WAT text (trap/registration-window
 # contracts); the shipped binary never parses wat.
 wasmtime = { version = "46", default-features = false, features = ["cranelift", "runtime", "wat"] }

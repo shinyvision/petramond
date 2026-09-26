@@ -9,7 +9,7 @@ use glam::{Mat4, Vec3};
 use crate::bbmodel::{euler_quat, face_corners};
 use crate::block::Aabb;
 use crate::facing::Facing;
-use crate::shade::{ContactShadowVertex, SHADES};
+use crate::shade::{ContactShadowVertex, FaceShading};
 use petramond_math::face::Face;
 
 use super::ao::{bake_contact_field, bake_face_ao, CONTACT_GRID};

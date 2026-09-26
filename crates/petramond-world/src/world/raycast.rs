@@ -10,10 +10,11 @@
 
 use crate::block::{Block, MeshEmitter, PlantPlanes};
 use crate::item::UseRay;
+use crate::selection::{SelectionBoxes, SelectionShape, MAX_SELECTION_BOXES};
 use crate::tile_alpha::{tile_alpha_bounds, TileAlphaBounds};
 use crate::torch::{TorchPlacement, POLE_HALF, POLE_HEIGHT};
 use crate::world::WorldData;
-use petramond_math::math::{IVec3, SelectionBoxes, SelectionShape, Vec3};
+use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 
 /// Max block-interaction distance, measured from the eye.
@@ -95,9 +96,11 @@ pub fn with_dist(eye: WorldPos, dir: Vec3, world: &WorldData) -> Option<(Raycast
     // to the block-only DDA core. Override the default full-cube outline here.
     let hit_block = Block::from_id(world.chunk_block(hit.block.x, hit.block.y, hit.block.z));
     if is_pole(hit_block) {
-        hit.outline = SelectionShape::Torch {
+        hit.outline = SelectionShape::Posed {
             origin: hit.block,
             transform: world.torch_placement(hit.block).model_transform(),
+            min: Vec3::new(-POLE_HALF, 0.0, -POLE_HALF),
+            max: Vec3::new(POLE_HALF, POLE_HEIGHT, POLE_HALF),
         };
     } else if hit_block.model_kind().is_some() {
         // A bbmodel block outlines its WHOLE-MODEL bounding box (baked from geometry),
@@ -131,7 +134,7 @@ pub fn with_dist(eye: WorldPos, dir: Vec3, world: &WorldData) -> Option<(Raycast
             // Nothing resolved (an unbaked custom-shape cell, a connection row
             // missing its params): keep the row's default outline rather
             // than drawing an empty wireframe.
-        } else if boxes.len() <= petramond_math::math::MAX_SELECTION_BOXES {
+        } else if boxes.len() <= MAX_SELECTION_BOXES {
             let (boxes, len) = crate::connect::local_boxes(boxes);
             hit.outline = SelectionShape::Boxes {
                 origin: hit.block,

@@ -1,6 +1,6 @@
-//! The four-way horizontal facing shared by every oriented block-entity and
-//! block state: chest/furnace fronts, doors, stairs, slab uprights, model
-//! blocks. A neutral leaf module — nothing block-specific belongs here.
+//! The four-way horizontal facing: a unit direction on the XZ plane, stored
+//! as one wire/save byte. A neutral leaf module — whatever gets oriented by
+//! it is defined above this crate.
 
 use crate::math::{IVec3, Vec3};
 use crate::wire_enum::wire_enum;

@@ -38,6 +38,7 @@ pub mod selection;
 mod selection_highlight;
 pub(crate) mod skinned;
 pub mod shader_pack;
+pub mod texture_mips;
 pub mod ui;
 pub mod uniforms;
 

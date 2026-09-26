@@ -424,7 +424,7 @@ impl Game {
             block,
             normal,
             spot: petramond_math::math::Vec3::splat(0.5),
-            outline: petramond_math::math::SelectionShape::full_block(block),
+            outline: petramond_world::selection::SelectionShape::full_block(block),
         });
         // The full click composition (mod interact predictors first), so
         // tests exercise the same walk production clicks run.
@@ -451,7 +451,7 @@ impl Game {
             block,
             normal,
             spot: petramond_math::math::Vec3::splat(0.5),
-            outline: petramond_math::math::SelectionShape::full_block(block),
+            outline: petramond_world::selection::SelectionShape::full_block(block),
         });
         let mut input = crate::game::tick::GameInput::default();
         input.movement.sneak = sneak;

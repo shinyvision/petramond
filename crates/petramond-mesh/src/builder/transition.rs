@@ -87,8 +87,7 @@ impl Context<'_> {
         {
             return None;
         }
-        let (nx, ny, nz) = face.dir();
-        let normal = IVec3::new(nx, ny, nz);
+        let normal = face.dir();
         for m in memberships {
             let set = &self.rules.sets[m.set as usize];
             let locals = blocks.map(|b| self.rules.local(m.set, b));

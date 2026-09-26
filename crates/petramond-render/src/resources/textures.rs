@@ -2,7 +2,7 @@
 //! and depth targets.
 
 use crate::atlas::decode_atlas_mips;
-use petramond_util::texture_mips::build_cutout_mips;
+use crate::texture_mips::build_cutout_mips;
 
 /// Upload a standalone GUI PNG (e.g. the HUD heart atlas) as its own
 /// texture + nearest sampler (sRGB, like the gui atlas), or `None` when the

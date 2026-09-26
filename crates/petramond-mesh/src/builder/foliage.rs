@@ -1,6 +1,6 @@
 use glam::Vec3;
 
-use crate::face::Face;
+use crate::face::{Face, FaceShading};
 use crate::vertex::{push_back_face, Vertex, CORNER_SHIFT};
 
 mod corners;
@@ -60,9 +60,8 @@ pub(super) fn emit_spray(vertices: &mut Vec<Vertex>, source: u32, face: Face, se
         .map(|v| Vec3::from_array(v.pos))
         .sum::<Vec3>()
         * 0.25;
-    let (dx, dy, dz) = face.dir();
-    let normal = Vec3::new(dx as f32, dy as f32, dz as f32);
-    let axis = if dy != 0 { Vec3::X } else { Vec3::Y };
+    let normal = face.dir().as_vec3();
+    let axis = if face.dir().y != 0 { Vec3::X } else { Vec3::Y };
     let across = normal.cross(axis);
     let angle = ((seed >> 8) & 7) as f32 * std::f32::consts::FRAC_PI_4;
     let tangent = axis * angle.cos() + across * angle.sin();

@@ -26,15 +26,11 @@ pub(super) fn bake_cell_template(
     let part_of =
         |ci: u32| -> Option<usize> { parts.iter().position(|p| *p == cubes[ci as usize].name) };
     let world_face = |face: Face| -> Face {
-        let (dx, dy, dz) = face.dir();
-        let w = base_xform.transform_vector3(Vec3::new(dx as f32, dy as f32, dz as f32));
+        let w = base_xform.transform_vector3(face.dir().as_vec3());
         Face::ALL
             .into_iter()
             .max_by(|&a, &b| {
-                let d = |f: Face| {
-                    let (x, y, z) = f.dir();
-                    w.dot(Vec3::new(x as f32, y as f32, z as f32))
-                };
+                let d = |f: Face| w.dot(f.dir().as_vec3());
                 d(a).total_cmp(&d(b))
             })
             .expect("Face::ALL is non-empty")
@@ -91,7 +87,7 @@ pub(super) fn bake_cell_template(
                         cube.to,
                         bias,
                         cube.faces[slot].expect("filtered above"),
-                        SHADES[face.shade_idx() as usize],
+                        face.shade(),
                         face_ao[ci as usize][slot],
                         tinted,
                         double_sided,

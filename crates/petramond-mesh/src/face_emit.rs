@@ -7,7 +7,7 @@ use petramond_world::block_state::SlabState;
 use petramond_world::light::BlockLight6;
 use petramond_world::tile::Tile;
 
-use super::face::{should_flip, Face};
+use super::face::{should_flip, Face, FaceShading};
 use super::vertex::{
     pack_cell_uv, pack_normal_code, pack_overlay, pack_uv_turn, pack_uv_turn2, pack_vertex, Vertex,
     UV_MODE_CELL_LOCAL, UV_MODE_SHIFT,
@@ -104,8 +104,7 @@ pub(super) fn slab_corner_open(
     // cell is offset there (a/b != 0), else the half on the corner's side.
     let hu = ((su > 0) != (a != 0)) as usize;
     let hv = ((sv > 0) != (b != 0)) as usize;
-    let (ux, uy, uz) = face.ao_u();
-    let (vx, vy, vz) = face.ao_v();
+    let (u, v) = (face.ao_u(), face.ao_v());
     let pick = |uc: i32, vc: i32| -> usize {
         if uc != 0 {
             hu
@@ -115,7 +114,7 @@ pub(super) fn slab_corner_open(
             front_half
         }
     };
-    !petramond_world::slab::half_cell_occupied(state, pick(ux, vx), pick(uy, vy), pick(uz, vz))
+    !petramond_world::slab::half_cell_occupied(state, pick(u.x, v.x), pick(u.y, v.y), pick(u.z, v.z))
 }
 
 #[allow(clippy::too_many_arguments)]

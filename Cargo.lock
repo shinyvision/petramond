@@ -2485,7 +2485,6 @@ dependencies = [
  "petramond-mesh",
  "petramond-text",
  "petramond-ui",
- "petramond-util",
  "petramond-world",
  "pollster",
  "rustc-hash 2.1.3",

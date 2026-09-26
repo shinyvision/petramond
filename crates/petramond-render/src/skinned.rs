@@ -24,6 +24,7 @@ use glam::{Mat4, Vec3};
 use super::lighting::{mul3, DynLight};
 use super::mob_model::hurt_tint;
 use petramond_math::face::Face;
+use petramond_mesh::face::FaceShading;
 use petramond_mesh::SHADES;
 use petramond_world::bbmodel::{euler_quat, face_corners, Model};
 

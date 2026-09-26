@@ -1,6 +1,7 @@
 use petramond_world::block_state::LogAxis;
 
 pub use petramond_math::face::Face;
+pub use petramond_world::shade::FaceShading;
 
 /// Explicit tile-local UV for the bark side of a horizontal log. The texture's
 /// vertical axis follows the log axis, matching the default vertical-log mapping

@@ -13,7 +13,7 @@ use petramond_world::light::BlockLight6;
 use petramond_world::tile::Tile;
 
 use super::super::boxset::cell_wears_snow;
-use super::super::face::{quad_for, Face, FACES};
+use super::super::face::{quad_for, Face, FaceShading, FACES};
 use super::super::face_emit::push_cube_face_with_cell_uvs;
 use super::super::greedy::FlatFace;
 use super::super::vertex::{transition::Transition, BlockLightVertexExt, UV_MODE_NONE};
@@ -99,8 +99,7 @@ impl SectionMesher<'_> {
     ) {
         let cube = self.cube_cell(cell, whole_stack);
         for face in FACES {
-            let (dx, dy, dz) = face.dir();
-            let front = cell.world + IVec3::new(dx, dy, dz);
+            let front = cell.world + face.dir();
             let front_block = self.nb.block(front);
             let visible = match masks {
                 Some(masks) => mask_has(masks, face, cell.idx),

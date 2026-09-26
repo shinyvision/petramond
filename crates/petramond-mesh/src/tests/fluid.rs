@@ -318,6 +318,7 @@ fn shows_flow_strip(v: &Vertex) -> bool {
 }
 
 pub(super) fn face_of(v: &Vertex) -> crate::face::Face {
+    use crate::face::FaceShading;
     use crate::vertex::{NORMAL_CODE_MASK, NORMAL_CODE_SHIFT};
     let code = (v.packed2 >> NORMAL_CODE_SHIFT) & NORMAL_CODE_MASK;
     crate::face::Face::ALL
@@ -481,9 +482,9 @@ fn fluid_body_emits_only_outward_boundary_walls() {
                 matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ),
                 "{fluid:?}: a {face:?} face on a body resting on rock"
             );
-            let (dx, _, dz) = face.dir();
+            let d = face.dir();
             // The wall lies on the body's outer plane on its declared side.
-            let (axis, plane) = if dx != 0 { (0, dx) } else { (2, dz) };
+            let (axis, plane) = if d.x != 0 { (0, d.x) } else { (2, d.z) };
             let want = if plane > 0 { HI } else { LO } as f32;
             assert!(
                 quad.iter().all(|v| (v.pos[axis] - want).abs() < 1e-4),

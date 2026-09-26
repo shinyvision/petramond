@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use petramond_world::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME};
 
 use super::builder::face_axes;
-use super::face::{Face, FACES};
+use super::face::{Face, FaceShading, FACES};
 use petramond_world::light::BlockLight6;
 
 use super::vertex::{

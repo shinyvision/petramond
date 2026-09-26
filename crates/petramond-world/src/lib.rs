@@ -15,7 +15,6 @@
 // Foundation aliases so module-internal `crate::mathh`-style paths resolve
 // unchanged after extraction from the monolith.
 pub use petramond_math::{face, facing, math as mathh, wire_enum};
-pub use petramond_util::{memory, paths, test_time, texture_mips};
 
 pub mod ai_vocab;
 pub mod animated_model;
@@ -58,6 +57,7 @@ pub mod pane;
 pub mod particle_emitters;
 pub mod registry;
 pub mod section;
+pub mod selection;
 pub mod shade;
 pub mod shape_mesh;
 pub mod slab;

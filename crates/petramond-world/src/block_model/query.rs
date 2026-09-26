@@ -219,8 +219,7 @@ where
             // side, which the model pass never draws (the far side of a cube
             // seen through the near face's cutout, or every face from inside
             // the cube) — so it must not pick either.
-            let (nx, ny, nz) = face.dir();
-            if dl.dot(Vec3::new(nx as f32, ny as f32, nz as f32)) > 0.0 {
+            if dl.dot(face.dir().as_vec3()) > 0.0 {
                 continue;
             }
             let Some((t, hit)) = ray_box_face_hit(ol, dl, mn, mx, face) else {

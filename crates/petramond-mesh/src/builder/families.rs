@@ -40,10 +40,7 @@ fn emit_cell_boxes(
     boxes: &[ShapeBox],
     scratch: &mut BoxSetScratch,
 ) {
-    let across = |face: Face| {
-        let (dx, dy, dz) = face.dir();
-        pos + IVec3::new(dx, dy, dz)
-    };
+    let across = |face: Face| pos + face.dir();
     emit_box_set(
         vbuf,
         pos.x,
@@ -266,10 +263,7 @@ impl SectionMesher<'_> {
             // Cullface gate: the WORLD neighbour in the segment's direction
             // suppresses it when opaque (reads stay inside the ±1 mesh pad; an
             // unloaded neighbour reads as air and keeps the face).
-            |f: Face| {
-                let (dx, dy, dz) = f.dir();
-                nb.block(IVec3::new(wx + dx, wy + dy, wz + dz)).is_opaque()
-            },
+            |f: Face| nb.block(IVec3::new(wx, wy, wz) + f.dir()).is_opaque(),
         );
         // Contact shadow: only a BOTTOM footprint cell stamps, each single-cell
         // piece (its own floor + its owned spill onto the dilation ring) gated

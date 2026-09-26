@@ -55,10 +55,8 @@ pub(crate) fn corner_cast_probes(
     plane: f32,
 ) -> [([f32; 3], [f32; 3]); 4] {
     use super::super::boxset::{PROBE_LIFT, PROBE_REACH};
-    let (dx, dy, dz) = face.dir();
-    let d = [dx, dy, dz];
-    let (ux, uy, uz) = face.ao_u();
-    let u = [ux, uy, uz];
+    let d = face.dir().to_array();
+    let u = face.ao_u().to_array();
 
     // The corner's position in the front cell: on the face plane, at the
     // corner the (su, sv) signs pick.
@@ -118,15 +116,14 @@ pub(crate) fn corner_cast_probes(
 /// minimum corner: the front voxel's boundary toward the cell it fronts.
 #[inline]
 pub(crate) fn boundary_plane(face: Face) -> f32 {
-    let (dx, dy, dz) = face.dir();
-    (dx + dy + dz < 0) as u32 as f32
+    (face.dir().element_sum() < 0) as u32 as f32
 }
 
-/// The flat-array step of one pad cell along `(dx, dy, dz)`.
+/// The flat-array step of one pad cell along `d`.
 #[inline]
-fn pad_stride(dx: i32, dy: i32, dz: i32) -> isize {
+fn pad_stride(d: IVec3) -> isize {
     let pad = SECTION_PAD as isize;
-    dx as isize + dz as isize * pad + dy as isize * pad * pad
+    d.x as isize + d.z as isize * pad + d.y as isize * pad * pad
 }
 
 /// One face's per-corner AO + smooth light (skylight + coloured block light),
@@ -168,9 +165,7 @@ pub(super) fn face_lighting(
     let fi = nb
         .pad_index(front)
         .expect("a lit face's front voxel lies inside the mesh pad");
-    let (ux, uy, uz) = face.ao_u();
-    let (vx, vy, vz) = face.ao_v();
-    let (ustride, vstride) = (pad_stride(ux, uy, uz), pad_stride(vx, vy, vz));
+    let (ustride, vstride) = (pad_stride(face.ao_u()), pad_stride(face.ao_v()));
     let f_l = u32::from(pad.skylight[fi]);
     let f_bl = pad.blocklight[fi];
 
@@ -180,13 +175,10 @@ pub(super) fn face_lighting(
     // (front-half 0 for positive faces, 1 for negative); an interior plane at
     // 0.5 flips them, so a neighbouring bottom slab's open-top light DOES feed
     // the slab-top plane beside it.
-    let front_half = {
-        let (dx, dy, dz) = face.dir();
-        if dx + dy + dz > 0 {
-            (plane >= 0.25) as usize
-        } else {
-            (plane > 0.75) as usize
-        }
+    let front_half = if face.dir().element_sum() > 0 {
+        (plane >= 0.25) as usize
+    } else {
+        (plane > 0.75) as usize
     };
 
     // Whether the FRONT cell itself holds sub-cell matter: its interior

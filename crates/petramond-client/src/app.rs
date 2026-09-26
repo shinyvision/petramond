@@ -13,6 +13,7 @@ mod crafting_browser;
 mod creative;
 mod gui_router;
 mod gui_value;
+mod heap_reclaim;
 mod hotbar_notice;
 mod hud_fx;
 mod input;
@@ -91,8 +92,8 @@ pub struct App {
     /// heart wiggle, and the local rigs' graph events awaiting the next draw.
     hud_fx: hud_fx::HudFx,
     /// Returns the allocator's free pages to the OS once terrain settles (see
-    /// [`petramond_util::memory`]).
-    heap_reclaim: petramond_util::memory::IdleHeapReclaim,
+    /// [`heap_reclaim`]).
+    heap_reclaim: heap_reclaim::IdleHeapReclaim,
     /// The title flow's state: world list and selection, the open page's
     /// session, the connect session, the last disconnect reason.
     shell: shell_state::ShellState,

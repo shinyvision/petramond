@@ -4,7 +4,7 @@
 //! and target/held-item state. It intentionally does not contain renderer DTOs
 //! or terrain upload handles.
 
-use petramond_math::math::SelectionShape;
+use petramond_world::selection::SelectionShape;
 use petramond_render::camera::Camera;
 use petramond_render::BoneOffset;
 use petramond_world::block::Block;

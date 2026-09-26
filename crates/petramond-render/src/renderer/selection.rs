@@ -227,7 +227,7 @@ impl Renderer {
 
 fn box_edges(out: &mut Vec<[f32; 3]>, lo: glam::Vec3, hi: glam::Vec3) {
     let vertices = crate::selection::outline_vertices(
-        petramond_math::math::SelectionShape::Box {
+        petramond_world::selection::SelectionShape::Box {
             origin: IVec3::ZERO,
             min: lo,
             max: hi,

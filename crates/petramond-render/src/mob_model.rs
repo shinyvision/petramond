@@ -26,6 +26,7 @@ use super::lighting::{fold_tint_self_lit, mul3, DynLight, LightEnv};
 use super::skinned::{bone_slots, SkinBatch, SkinLook, SkinMesh, PART_COAT};
 use super::MobRenderInstance;
 use petramond_math::face::Face;
+use petramond_mesh::face::FaceShading;
 use petramond_mesh::SHADES;
 use petramond_world::bbmodel::{clips, euler_quat, face_corners, Animation, Model};
 

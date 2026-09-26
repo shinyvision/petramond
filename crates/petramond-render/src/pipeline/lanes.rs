@@ -3,6 +3,7 @@
 //! definitions, so the two cannot drift.
 
 use petramond_math::face::Face;
+use petramond_mesh::face::FaceShading;
 use std::fmt::Write;
 
 pub(super) fn declarations() -> String {

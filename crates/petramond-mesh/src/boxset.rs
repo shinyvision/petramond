@@ -53,7 +53,7 @@ use crate::vertex::BlockLightVertexExt;
 use petramond_world::block::Block;
 
 use super::builder::{boundary_plane, face_axes, CornerLight};
-use super::face::{quad_ao, should_flip, Face, FACES};
+use super::face::{quad_ao, should_flip, Face, FaceShading, FACES};
 use super::plane::{cell_uv, face_fraction, PlaneLight};
 use super::vertex::{pack_cell_uv, pack_normal_code, pack_vertex, Vertex, UV_MODE_CELL_LOCAL};
 use super::UV_MODE_SHIFT;
@@ -273,12 +273,8 @@ pub(super) fn emit_box_set(
             }
 
             if !scratch.planes.iter().any(|(pd, _)| (pd - d).abs() <= T) {
-                let (dx, dy, dz) = face.dir();
-                let (fx, fy, fz) = if flush {
-                    (wx + dx, wy + dy, wz + dz)
-                } else {
-                    (wx, wy, wz)
-                };
+                let cell = glam::IVec3::new(wx, wy, wz);
+                let front = if flush { cell + face.dir() } else { cell };
                 // The gather's probe pockets sit ON the face plane, measured
                 // from the front cell — the voxel boundary when flush, the
                 // box's own plane height when interior (a slab top's pockets
@@ -286,7 +282,7 @@ pub(super) fn emit_box_set(
                 let plane = if flush { boundary_plane(face) } else { d };
                 let (ao, sky, block) = face_light(
                     face,
-                    glam::IVec3::new(fx, fy, fz),
+                    front,
                     plane,
                     // The closed-underside rule (stairs, slabs): a NegY
                     // plane must not smooth sky from cells beside a dark
@@ -422,8 +418,7 @@ fn emit_posed_face(
     }
     let local = face.quad_box(b.aabb.min, b.aabb.max);
     let posed: [[f32; 3]; 4] = local.map(|p| pose.apply(glam::Vec3::from(p)).to_array());
-    let (dx, dy, dz) = face.dir();
-    let lit = dominant_face(pose.rotate(glam::Vec3::new(dx as f32, dy as f32, dz as f32)));
+    let lit = dominant_face(pose.rotate(face.dir().as_vec3()));
     let (laxis, _, _) = face_axes(lit);
     let centre = posed
         .iter()

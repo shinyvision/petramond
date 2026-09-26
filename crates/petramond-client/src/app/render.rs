@@ -303,8 +303,10 @@ impl App {
             terrain.is_streaming()
         };
         renderer.render();
-        self.heap_reclaim
-            .frame(terrain_busy || renderer.terrain_uploads_pending());
+        self.heap_reclaim.frame(
+            terrain_busy || renderer.terrain_uploads_pending(),
+            std::time::Instant::now(),
+        );
         true
     }
 }

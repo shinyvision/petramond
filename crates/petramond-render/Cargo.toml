@@ -12,7 +12,6 @@ petramond-world = { path = "../petramond-world" }
 petramond-anim = { path = "../petramond-anim" }
 mod-api = { path = "../../mod-api" }
 petramond-mesh = { path = "../petramond-mesh" }
-petramond-util = { path = "../petramond-util" }
 petramond-ui = { path = "../../petramond-ui" }
 petramond-text = { path = "../../petramond-text" }
 wgpu = "27"
