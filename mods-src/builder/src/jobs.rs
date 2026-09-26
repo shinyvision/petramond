@@ -13,7 +13,7 @@ mod holds;
 
 use std::collections::BTreeMap;
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use crate::caches::Caches;
 use crate::content::Content;
@@ -242,7 +242,7 @@ impl Builder {
 
     /// The job and everything the worker may touch while it has it. `home`
     /// is the project's, where the caller already knows it.
-    fn at_work<'a>(
+    pub(crate) fn at_work<'a>(
         &'a mut self,
         id: ProjectId,
         home: Option<[i32; 3]>,
@@ -300,3 +300,6 @@ impl Builder {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

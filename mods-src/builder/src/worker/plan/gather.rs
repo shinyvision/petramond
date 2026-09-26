@@ -1,7 +1,7 @@
 //! Gathering the open work a plan weighs: what can be done with what is
 //! carried, within the layers being worked.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::glazing::{only_glazing_left, ways_through};
 use super::sealing::{only_cutting_work_left, swings_open};

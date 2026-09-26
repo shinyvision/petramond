@@ -8,7 +8,7 @@
 //! up. A golem that finds no way out, or makes no headway along one, sinks into
 //! the ground and rises again at home, carrying what it carried.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::ground::{ground, search, Move, Way};
 use super::plan::walk_to;

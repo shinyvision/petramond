@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::trip::{at_container, go_to_container, hands_in_everything, short_of_bill};
 use super::wants::{dig_room, digs_ahead, keeps, needed_at, tool_kind, wanted};

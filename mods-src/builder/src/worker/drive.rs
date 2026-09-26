@@ -1,6 +1,6 @@
 //! Running the step the golem is in, and deciding the next.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::tuning::body::{COURSE_SETTLE_TICKS, STANCE_OFF_CENTRE};
 use super::tuning::every::UNWEDGE_EVERY;

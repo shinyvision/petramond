@@ -1,6 +1,7 @@
 //! The pack's registry names, resolved once per session.
 
-use mod_sdk::*;
+use crate::host::logged;
+use crate::host::prelude::*;
 
 pub const TABLE_KIND: &str = "builder:schematic_table";
 pub const MATERIALS_KIND: &str = "builder:materials";
@@ -34,11 +35,11 @@ pub struct Content {
 impl Content {
     pub fn resolve() -> Option<Self> {
         Some(Self {
-            table: resolve_block_logged(TABLE_KIND)?,
+            table: logged("block", TABLE_KIND, resolve_block(TABLE_KIND))?,
             scaffolding: ScaffoldKind::resolve(),
-            golem: resolve_mob_logged(GOLEM)?,
-            blueprint: resolve_item_logged(BLUEPRINT)?,
-            raw_copper: resolve_item_logged(RAW_COPPER),
+            golem: logged("mob", GOLEM, resolve_mob(GOLEM))?,
+            blueprint: logged("item", BLUEPRINT, resolve_item(BLUEPRINT))?,
+            raw_copper: logged("item", RAW_COPPER, resolve_item(RAW_COPPER)),
         })
     }
 }
@@ -99,3 +100,6 @@ impl Content {
         self.scaffolding.iter().find(|k| k.block == block)
     }
 }
+
+#[cfg(test)]
+mod tests;

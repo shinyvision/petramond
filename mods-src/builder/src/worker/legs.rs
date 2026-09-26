@@ -1,6 +1,6 @@
 //! Moving the body within its cell: every nudge goes through here.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::Body;
 use crate::geometry::feet_of;

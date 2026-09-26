@@ -3,7 +3,7 @@
 //! found sealed in already has a built neighbour taken back down to open a
 //! way in; that neighbour is laid again once the work behind it stands.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::tuning::reach::POCKET_REGION;
 use super::{open_block, Ctx};

@@ -1,7 +1,7 @@
 //! The table panel: every key its document binds, and what they say for the
 //! project the table speaks for.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use crate::jobs::Builder;
 use crate::project::{Hold, Phase, Project};

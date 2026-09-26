@@ -1,7 +1,7 @@
 //! Looking after the golem itself: its health, its blueprint, and what
 //! counts as open room for it.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::{Body, Ctx, FULL_HEALTH_TAG, HEALTH_TAG};
 use crate::project::{Hold, Project, Projects};

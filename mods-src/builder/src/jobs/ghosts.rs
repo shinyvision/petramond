@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use crate::content::Content;
 use crate::fx::HashSet;
@@ -108,7 +108,7 @@ fn planned(
     let in_hand = in_hand.get_or_insert_with(|| {
         players()
             .into_iter()
-            .filter_map(|row| projects.bound(&player_held(row.id)?))
+            .filter_map(|(player, _)| projects.bound(&player_held(player)?))
             .collect()
     });
     Some(in_hand.contains(&project.id))

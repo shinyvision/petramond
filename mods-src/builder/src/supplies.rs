@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::rc::Rc;
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use crate::fx::{HashMap, HashSet};
 use crate::geometry::FACES;
@@ -234,3 +234,6 @@ pub fn worst(short: &[(ItemKey, u32)], caches: &mut crate::caches::Caches) -> Op
         more: short.len() > 1,
     })
 }
+
+#[cfg(test)]
+mod tests;

@@ -1,7 +1,7 @@
 //! The blueprint in a table's slot: shown lying on the table's top, bound to
 //! its project, and labelled with what it builds.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use crate::content::{INFO_DATA, PROJECT_DATA};
 use crate::jobs::Builder;

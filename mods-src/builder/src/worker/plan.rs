@@ -6,7 +6,7 @@
 //! A plan is a list of stages tried in order; the first with an answer ends
 //! the tick's planning.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::body::Body;
 use super::step::{Step, Task, Then};
@@ -246,3 +246,6 @@ pub fn task_cells(job: &Job, task: Task) -> Vec<[i32; 3]> {
 pub(super) fn defer_task(ctx: &Ctx, job: &mut Job, task: Task, ticks: u64) {
     job.crew.deferrals.defer(task, ctx.now + ticks);
 }
+
+#[cfg(test)]
+mod tests;

@@ -12,7 +12,7 @@
 pub mod note;
 mod store;
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 use serde::{Deserialize, Serialize};
 
 pub use note::Note;

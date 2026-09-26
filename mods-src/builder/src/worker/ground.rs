@@ -7,7 +7,7 @@ use crate::fx::{HashMap, HashSet};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::tuning::price::{
     DESIGN_MOVES, DOOR_MOVES, FRUITLESS, HAND_SECONDS, HURT_MOVES, LEVEL_MOVES, MOVE_TICKS,

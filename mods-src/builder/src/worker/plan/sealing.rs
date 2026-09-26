@@ -1,6 +1,6 @@
 //! Work that would wall the golem in, or wall ground off, waits its turn.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::places;
 use crate::geometry::{offset, SIDES};

@@ -1,6 +1,6 @@
 //! Trips to the table's chests: when one is worth making, and the walk there.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::wants::{digs_ahead, keeps, tool_kind, wanted};
 use crate::content::BLUEPRINT;

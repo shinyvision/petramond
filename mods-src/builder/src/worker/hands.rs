@@ -3,7 +3,7 @@
 //! hand, the arm moving, the world asked); callers decide what and when and
 //! never reach past this module to the engine's actor calls.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::{cargo, sight, Body, Ctx};
 use crate::jobs::Job;

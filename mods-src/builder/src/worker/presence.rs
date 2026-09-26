@@ -1,6 +1,6 @@
 //! How the golem shows what it is doing: where it looks and what it holds.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::{act, trouble, EYE_HEIGHT, FACE_TAG, GOAL_TAG, HOLD_TAG, LOOK_TAG, TRACE};
 use crate::geometry::encode_cell;
@@ -10,14 +10,8 @@ pub(super) fn eye_of(player: PlayerId) -> Option<[f64; 3]> {
     const PLAYER_EYE: f64 = 1.62;
     players()
         .into_iter()
-        .find(|row| row.id == player)
-        .map(|row| {
-            [
-                row.state.pos[0],
-                row.state.pos[1] + PLAYER_EYE,
-                row.state.pos[2],
-            ]
-        })
+        .find(|(id, _)| *id == player)
+        .map(|(_, feet)| [feet[0], feet[1] + PLAYER_EYE, feet[2]])
 }
 
 /// What the golem shows of itself, as last written to its tags: only changes

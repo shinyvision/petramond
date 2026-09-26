@@ -1,6 +1,6 @@
 //! Going up a pillar a level at a time, and coming down it again.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::Pillar;
 use crate::geometry::offset;

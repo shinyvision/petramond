@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use crate::fx::HashMap;
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use crate::design::{paged, Design, Plan};
 
@@ -302,3 +302,6 @@ fn enqueue(queue: &mut VecDeque<usize>, queued: &mut [bool], unit: usize) {
         queue.push_back(unit);
     }
 }
+
+#[cfg(test)]
+mod tests;

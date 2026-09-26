@@ -2,7 +2,7 @@
 //! no calls — it turns the goal, hold, facing and gaze the job leaves in the
 //! golem's tags into this tick's decision.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use crate::geometry::{decode_cell, decode_point};
 use crate::worker::{EYE_HEIGHT as EYE, FACE_TAG, GOAL_TAG, HOLD_TAG, LOOK_TAG, PROJECT_TAG};
@@ -61,3 +61,6 @@ fn gaze(ctx: &AiNodeCtx, point: [f64; 3]) -> [f32; 2] {
     let pitch = (to[1].atan2(horizontal.max(1e-3)) as f32).clamp(-NECK_PITCH, NECK_PITCH);
     [yaw, pitch]
 }
+
+#[cfg(test)]
+mod tests;

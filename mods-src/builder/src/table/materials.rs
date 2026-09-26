@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use crate::jobs::Builder;
 use crate::table::{project_at, Tone};

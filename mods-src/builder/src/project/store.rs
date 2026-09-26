@@ -1,7 +1,7 @@
 //! The session's view of the project records: read once, written only when
 //! an edit changed them, and the index of the live ones.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use crate::content::PROJECT_DATA;
 use crate::fx::HashMap;

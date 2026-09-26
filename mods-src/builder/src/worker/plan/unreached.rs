@@ -1,7 +1,7 @@
 //! Work nothing reaches: what is cleared away around it, and cutting a way
 //! toward it.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::{defer_task, Flow, Round};
 use crate::geometry::{manhattan, offset};

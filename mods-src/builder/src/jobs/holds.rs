@@ -2,7 +2,7 @@
 //! a dead golem, a table that is gone, and the holds that lift themselves
 //! once the chests allow.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use crate::jobs::{Builder, Refusal, TABLE_CHECK};
 use crate::project::{Brief, Hold, Note, Phase, ProjectId};

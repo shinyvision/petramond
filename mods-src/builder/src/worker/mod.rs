@@ -46,7 +46,7 @@ mod waiting;
 mod walk;
 mod wayin;
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use crate::caches::Caches;
 use crate::content::Content;
@@ -183,3 +183,6 @@ pub fn tick(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job) {
     let trouble = trouble::of(&project, &job.crew, ctx.now);
     trouble::show(ctx, &mut job.crew, &body, trouble);
 }
+
+#[cfg(test)]
+mod tests;

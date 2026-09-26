@@ -2,7 +2,7 @@
 //! pillar's course or reached from a scaffold walkway laid from here, before
 //! the golem digs down to walk round and climb again.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::bridge::{self, Bridge};
 use super::plan::{self, walk_to};

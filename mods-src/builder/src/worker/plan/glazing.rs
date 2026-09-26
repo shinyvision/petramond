@@ -1,6 +1,6 @@
 //! Windows are glazed last: an open panel is a way through until then.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use crate::fx::HashSet;
 use crate::geometry::{offset, SIDES};

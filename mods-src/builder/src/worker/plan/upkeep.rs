@@ -1,7 +1,7 @@
 //! Before any work is weighed: the records, home and the golem itself are
 //! put in order, and a golem with no way home gets out first.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::{Flow, Mode, Round};
 use crate::geometry::offset;

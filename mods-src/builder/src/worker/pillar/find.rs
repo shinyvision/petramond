@@ -1,7 +1,7 @@
 //! Choosing where a pillar goes: the perch that lays the most for the
 //! least walking and climbing.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::Pillar;
 use crate::content::GOLEM;

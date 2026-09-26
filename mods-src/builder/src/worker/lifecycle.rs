@@ -2,7 +2,7 @@
 //! beside the table and sinks back into it, the body authored along the way
 //! so it passes through the terrain without changing it.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::presence::Presentation;
 use super::tuning::body::{BURROW_DEPTH, BURROW_TICKS, EMERGE_TICKS, TRAVEL_DEPTH, TRAVEL_STEP};

@@ -3,7 +3,7 @@
 //! a dig or a door answers to a look at the block itself. So a place to
 //! stand is one with such a look, and every action waits for the head.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::tuning::patience::GAZE_TRIES;
 use super::{Body, Ctx, Task};

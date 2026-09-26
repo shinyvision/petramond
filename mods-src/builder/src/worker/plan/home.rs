@@ -1,6 +1,6 @@
 //! The way home once the work is done.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::{walk_to, walk_via, Flow, Mode, Round};
 use crate::geometry::offset;

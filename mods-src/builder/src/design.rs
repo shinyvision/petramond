@@ -8,7 +8,7 @@
 
 use crate::fx::{HashMap, HashSet};
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 pub use mod_sdk::paged;
 

@@ -13,7 +13,7 @@ mod blueprint;
 mod materials;
 mod panel;
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use crate::content::{MATERIALS_KIND, TABLE_KIND};
 use crate::fx::HashMap;

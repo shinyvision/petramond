@@ -1,7 +1,7 @@
 //! Where the golem can stand to reach cells: footholds within its reach, the
 //! nearest few it can actually walk to.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::route::{self, Hubs};
 use super::tuning::reach::{FOOTHOLDS, NEAR_WORK, STANCE_ROUTES};

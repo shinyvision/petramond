@@ -1,6 +1,6 @@
 //! A pillar whose top walks on along a roof course to work no perch sees.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::find::column_base;
 use super::Pillar;

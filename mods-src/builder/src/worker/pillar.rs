@@ -14,7 +14,7 @@ pub use find::find;
 pub(super) use find::lays;
 pub use onward::find_onward;
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::tuning::reach::MAX_HEIGHT;
 use super::{open_block, Body, Ctx};

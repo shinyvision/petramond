@@ -1,6 +1,6 @@
 //! The golem's body as a tick reads it, and where it stands.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::Ctx;
 use crate::content::GOLEM;

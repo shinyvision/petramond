@@ -1,6 +1,6 @@
 //! Planning from the top of a pillar, a roof course or a walkway.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::here::{behind, clear_of_body, sees_from_here};
 use super::sealing::{as_walls, cutting};

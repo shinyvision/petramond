@@ -12,7 +12,7 @@ pub use wants::{tool_slot, tools_waiting};
 
 use std::collections::BTreeMap;
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use crate::survey::{key_of, ItemKey};
 

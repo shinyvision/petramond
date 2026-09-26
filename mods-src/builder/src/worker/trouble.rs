@@ -3,7 +3,7 @@
 //! finding another way (it nearly always does), a warning sign when only the
 //! player can help — and the reason, in words.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::tuning::{
     mark::{MARK_BOB, MARK_CLEAR, MARK_SIZE, MARK_STEP},

@@ -26,15 +26,18 @@ mod design;
 mod fx;
 mod geometry;
 mod golem;
+mod host;
 mod jobs;
 mod node;
 mod project;
 mod supplies;
 mod survey;
 mod table;
+#[cfg(test)]
+mod testing;
 mod worker;
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use jobs::Builder;
 

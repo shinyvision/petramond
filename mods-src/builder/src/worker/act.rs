@@ -1,7 +1,7 @@
 //! Doing one task from where the golem stands: a paid placement, a dig on
 //! consecutive ticks, and what each refusal means for the plan.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::tuning::hands::{AIM_SETTLE_TICKS, AIM_TICKS, TURN_PER_TICK};
 use super::{hands, sight, Body, Ctx, Step, Task};

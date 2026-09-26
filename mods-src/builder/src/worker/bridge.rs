@@ -6,7 +6,7 @@
 //! gives it a face and it stays in sight; walking back, each support is dug as
 //! soon as it is stepped off, while still in sight.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use super::hands;
 use super::tuning::patience::{WALKWAY_PATIENCE, WALKWAY_STEP_UNTAKEN, WALKWAY_SUPPORT_UNLANDED};

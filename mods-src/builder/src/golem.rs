@@ -1,7 +1,7 @@
 //! The golem's own panel: what it carries and what it has to say, opened by
 //! using the golem. A golem with its panel open stands still.
 
-use mod_sdk::*;
+use crate::host::prelude::*;
 
 use crate::content::GOLEM_KIND;
 use crate::jobs::Builder;
