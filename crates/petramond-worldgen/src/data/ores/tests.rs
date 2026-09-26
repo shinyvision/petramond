@@ -134,3 +134,24 @@ fn malformed_rows_are_refused() {
         assert!(parse_layers(&[&base, &row(bad)]).is_err(), "accepted {bad}");
     }
 }
+
+/// A row without a pinned salt derives one from its namespaced name, so a
+/// pack author never picks an integer; a salt two rows share is refused.
+#[test]
+fn salts_derive_from_names_and_never_repeat() {
+    let pack = r#"{"ores": [{"ore": "mymod:tin", "block": "petramond:gold_ore",
+        "count": 2, "shape": {"blob": {"size": 9}}, "y": [0, 10]}]}"#;
+    let table = parse_layers(&[&base(), pack]).expect("an unsalted row loads");
+    let tin = table.veins.last().expect("pack row");
+    assert_eq!(tin.salt, crate::salts::named("ore", "mymod:tin"));
+
+    let clash = r#"{"ores": [{"ore": "mymod:tin", "block": "petramond:gold_ore",
+        "salt": 10551312, "count": 2, "shape": {"blob": {"size": 9}}, "y": [0, 10]}]}"#;
+    let err = parse_layers(&[&base(), clash])
+        .err()
+        .expect("a row reusing coal's salt is refused");
+    assert!(
+        err.contains("petramond:coal_ore") && err.contains("mymod:tin"),
+        "{err}"
+    );
+}

@@ -14,13 +14,17 @@
 //! `blob` of `~size` cells or a `grid3` single-layer 3×3 patch of
 //! `1..=max_ore` cells. `depth_ramp` accepts each rolled vein with a chance
 //! of `depth_ramp · t²`, `t` rising from 0 at the band top to 1 at its floor.
-//! Vein positions derive from the row's `salt`, never its index.
+//! Vein positions derive from the row's salt, never its index: the hash of
+//! its namespaced name ([`crate::salts::named`]) unless the row pins a
+//! `salt` — as the shipped rows do, frozen from before names were the
+//! source. No two rows may share a salt.
 //!
 //! Engine rows own the low ids in the frozen placement order below; a pack
 //! OVERRIDES an engine row to retune it or ADDS a vein under its own
 //! namespaced key, placed after the engine rows in load order — so pack ores
 //! only claim host cells the engine veins left, and never move them.
 
+use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use petramond_world::block::Block;
@@ -114,7 +118,8 @@ pub struct OreTable {
 struct RawOre {
     ore: String,
     block: Block,
-    salt: u64,
+    #[serde(default)]
+    salt: Option<u64>,
     count: i32,
     shape: VeinShape,
     y: (i32, i32),
@@ -169,8 +174,10 @@ impl RawOre {
             return Err("hosts: a vein needs at least one block to overwrite".into());
         }
         Ok(OreVein {
+            salt: self
+                .salt
+                .unwrap_or_else(|| crate::salts::named("ore", &self.ore)),
             block: self.block,
-            salt: self.salt,
             count: self.count,
             shape: self.shape,
             y_min,
@@ -200,6 +207,9 @@ impl OreTable {
 }
 
 fn parse_layers(texts: &[&str]) -> Result<OreTable, String> {
+    // Salt → the row that claimed it: two rows sharing one would place their
+    // veins at the same origins.
+    let mut owners: HashMap<u64, String> = HashMap::new();
     let catalog = petramond_world::registry::load_catalog(
         texts,
         |text| serde_json::from_str::<RawFile>(text).map(|f| f.ores),
@@ -208,7 +218,15 @@ fn parse_layers(texts: &[&str]) -> Result<OreTable, String> {
         "ore vein",
         |r, _, _| {
             let name = r.ore.clone();
-            r.resolve().map_err(|e| format!("ore vein '{name}': {e}"))
+            let vein = r.resolve().map_err(|e| format!("ore vein '{name}': {e}"))?;
+            if let Some(first) = owners.insert(vein.salt, name.clone()) {
+                return Err(format!(
+                    "ore veins '{first}' and '{name}' share salt {:#x}; their veins would \
+                     land together",
+                    vein.salt
+                ));
+            }
+            Ok(vein)
         },
     )?;
     Ok(OreTable::new(catalog.rows()))

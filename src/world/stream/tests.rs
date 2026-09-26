@@ -505,11 +505,10 @@ fn horizontal_move_requests_sections_for_newly_wanted_loaded_columns() {
     );
 }
 
-/// The whole cubic pipeline in one go (worldgen-tests only — it runs the real gen +
-/// save threads): a column streams in and meshes, a block edited into the open air
-/// above the surface materializes its section, and after a flush + evict + reload the
-/// edit comes back via the disk overlay. Generate → mesh → edit → save → reload.
-#[cfg(feature = "worldgen-tests")]
+/// The whole cubic pipeline in one go, on the real gen + save threads: a column
+/// streams in and meshes, a block edited into the open air above the surface
+/// materializes its section, and after a flush + evict + reload the edit comes
+/// back via the disk overlay. Generate → mesh → edit → save → reload.
 #[test]
 fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
     use std::time::Instant;
@@ -606,7 +605,6 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
 /// explored section AND the column-gen cache on flush; a reload of the same
 /// area installs everything from disk — every stream event is `Loaded`,
 /// none `Generated` — with content identical to the first visit.
-#[cfg(feature = "worldgen-tests")]
 #[test]
 fn explored_terrain_reloads_from_disk_without_generating() {
     let dir =
@@ -739,7 +737,6 @@ fn explored_terrain_reloads_from_disk_without_generating() {
 /// y=0 (the cave space); descending streams those deep sections in. Proves the
 /// vertical window genuinely bounds generation in 3D rather than batching whole
 /// 256-tall columns.
-#[cfg(feature = "worldgen-tests")]
 #[test]
 fn vertical_window_generates_near_the_player_not_the_whole_column() {
     use std::time::Instant;
@@ -784,7 +781,6 @@ fn vertical_window_generates_near_the_player_not_the_whole_column() {
     );
 }
 
-#[cfg(all(test, feature = "worldgen-tests"))]
 mod sea_ice_streaming {
     use super::*;
     use petramond_world::block::Block;

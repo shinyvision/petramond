@@ -96,8 +96,10 @@ pub use build::Built;
 pub use codec::memo_key;
 pub use site::{cells_overlapping, cells_overlapping_box, Cell, Trace};
 
-/// Frozen positional-RNG salt, append-only in practice like `cavern.rs`'s.
-const SALT_CASCADE: u64 = 0x0E58_1000_0000_0006;
+/// Positional-RNG salt of the cascade site roll, named rather than numbered:
+/// it once copied the next literal of `cavern.rs`'s run and shared its
+/// SALT_PATCH stream.
+const SALT_CASCADE: u64 = mod_sdk::GenRng::salt("exploration:cascade");
 
 /// A candidate's whole footprint — pools, dams, probe shell — is confined to
 /// its own lattice cell, horizontally and vertically. That confinement is a

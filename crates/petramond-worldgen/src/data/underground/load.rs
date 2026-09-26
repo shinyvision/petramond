@@ -282,7 +282,7 @@ fn convert_faces(
             floor_under,
             floor_submerged,
             submerged_in: Box::leak(submerged_in.into_boxed_slice()),
-            salt: fnv64(b"lining:").wrapping_mul(FNV_PRIME) ^ fnv64(name.as_bytes()),
+            salt: crate::salts::lining(name),
         }),
         names,
     ))
@@ -369,12 +369,6 @@ fn compile(catalog: Catalog<UndergroundBiomeDef>, fluids: fluids::Rows) -> Under
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 
 const FNV_PRIME: u64 = 0x1_0000_0000_01b3;
-
-pub(super) fn fnv64(bytes: &[u8]) -> u64 {
-    bytes
-        .iter()
-        .fold(FNV_OFFSET, |h, b| (h ^ *b as u64).wrapping_mul(FNV_PRIME))
-}
 
 /// FNV-1a over the compiled table's canonical form. Identity for the column-gen
 /// cache: two runs whose tables hash alike generate identical columns.

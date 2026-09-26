@@ -19,12 +19,8 @@ use petramond_world::chunk::{SEA_LEVEL, SECTION_SIZE, WORLD_MAX_Y, WORLD_MIN_Y};
 use petramond_world::section::Section;
 
 use super::super::rng::{patch_field, FeatureRng};
+use crate::salts;
 
-const VEG_SALT: u64 = 0x0000_5EED_1EAF_0001;
-/// Salt for the flower-patch SPECIES field (which one flower a patch is made of).
-const PATCH_TYPE_SALT: u64 = 0x0000_F10E_7376_0001;
-/// Salt for the flower-patch PRESENCE field (where flower patches occur at all).
-const PATCH_PRESENCE_SALT: u64 = 0x0000_B10C_7376_0001;
 /// Flower-patch lattice period in blocks: one species field cell per this many
 /// blocks, so a run of a single flower species reads as a small cluster.
 const PATCH_PERIOD: f32 = 13.0;
@@ -35,8 +31,8 @@ const PATCH_PERIOD: f32 = 13.0;
 /// spawn. Deliberately sparse — you should have to look.
 const PEBBLE_DENSITY: f32 = 0.008;
 /// Hemp grows in small STANDS: an anchor column plus a short random walk out
-/// of it, the farming pack's wild-crop patch shape (`WildCropSpec`) lifted into
-/// core. Salt frozen — worldgen determinism depends on the literal.
+/// of it (the [`salts::HEMP_ANCHOR`] stream), the farming pack's wild-crop
+/// patch shape (`WildCropSpec`) lifted into core.
 ///
 /// THIS IS NOT A `patch_field` BLOB, and the reason is the whole point. A
 /// smoothed field couples a patch's SIZE to its SPACING: both scale with the
@@ -44,9 +40,9 @@ const PEBBLE_DENSITY: f32 = 0.008;
 /// `littercensus` clump sizes: period 8 gave a mean of 4 but merged into runs
 /// of 13+ wherever grassland was continuous, and period 32 gave two stands per
 /// 400 chunks of 12 and 23 stalks. An anchor plus a bounded walk separates the
-/// two knobs — [`HEMP_STAND_STEPS`] is the size, the biome's anchor chance is
-/// the frequency — and the size can never run away, because the walk stops.
-const HEMP_ANCHOR_SALT: u64 = 0x0000_4E4D_7038_0001;
+/// two knobs — this is the size, the biome's anchor chance is the frequency —
+/// and the size can never run away, because the walk stops.
+///
 /// Stalks per stand, inclusive: the walk's step count. Some steps revisit a
 /// cell and some land on ground that refuses, so the stand is at most this.
 const HEMP_STAND_STEPS: (i32, i32) = (2, 6);
@@ -138,7 +134,7 @@ pub fn place_vegetation_section(
                 },
                 spec(biome).surface,
             );
-            let mut rng = FeatureRng::positional(seed, VEG_SALT, wx, 0, wz);
+            let mut rng = FeatureRng::positional(seed, salts::VEGETATION, wx, 0, wz);
             if let Some(p) = pick_plant(biome, surf_block, seed, wx, wz, &mut rng) {
                 section.set_block_raw(lx, ly, lz, p.id());
             } else if spec(biome).snow_cover.covers(anchor) && surf_block.is_solid() {
@@ -199,9 +195,9 @@ fn pick_plant(
 
     let palette = vegetation.flower_palette;
     if !palette.is_empty() {
-        let presence = patch_field(seed, PATCH_PRESENCE_SALT, wx, wz, PATCH_PERIOD);
+        let presence = patch_field(seed, salts::FLOWER_PATCH_PRESENCE, wx, wz, PATCH_PERIOD);
         if presence > 1.0 - vegetation.flower_coverage && rng.chance(vegetation.flower_density) {
-            let kind = patch_field(seed, PATCH_TYPE_SALT, wx, wz, PATCH_PERIOD);
+            let kind = patch_field(seed, salts::FLOWER_PATCH_TYPE, wx, wz, PATCH_PERIOD);
             let idx = ((kind * palette.len() as f32) as usize).min(palette.len() - 1);
             return Some(palette[idx]);
         }
@@ -296,7 +292,7 @@ fn in_hemp_stand(seed: u32, anchor_chance: f32, wx: i32, wz: i32) -> bool {
     }
     for az in candidates(wz) {
         for ax in candidates(wx) {
-            let mut rng = FeatureRng::positional(seed, HEMP_ANCHOR_SALT, ax, 0, az);
+            let mut rng = FeatureRng::positional(seed, salts::HEMP_ANCHOR, ax, 0, az);
             if !rng.chance(anchor_chance) {
                 continue;
             }
@@ -380,7 +376,7 @@ mod tests {
         let mut hemp = 0;
         for wz in 0..SIDE {
             for wx in 0..SIDE {
-                let mut rng = FeatureRng::positional(SEED, VEG_SALT, wx, 0, wz);
+                let mut rng = FeatureRng::positional(SEED, salts::VEGETATION, wx, 0, wz);
                 match pick_litter(Biome::SNOWY_TAIGA, Block::Grass, SEED, wx, wz, &mut rng) {
                     Some(Block::Hemp) => hemp += 1,
                     Some(_) => pebbles += 1,

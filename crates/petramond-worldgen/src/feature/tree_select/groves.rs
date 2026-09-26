@@ -3,12 +3,8 @@
 
 use crate::biome::trees::GroveLattice;
 use crate::rng::FeatureRng;
+use crate::salts;
 
-/// Salt xor for the detail lattice, so it never mirrors the broad one.
-const DETAIL_SALT: u64 = 0xD37A_11ED_670E_0001;
-/// Salt xor for the per-site claim draw: territories must not consume the
-/// density, spacing or geometry streams.
-const CHOICE_SALT: u64 = 0x0000_7A3E_670E_C401;
 /// The detail lattice repeats this many times per broad period.
 const DETAIL_PERIODS_PER_BROAD: i32 = 3;
 
@@ -87,7 +83,8 @@ impl GroveField {
     /// Whether `lattice`'s territory claims the site at `(wx, wz)`.
     pub(super) fn claims(&mut self, lattice: &GroveLattice, wx: i32, wz: i32) -> bool {
         let chance = self.chance(lattice, wx, wz);
-        FeatureRng::positional(self.seed, lattice.salt ^ CHOICE_SALT, wx, 0, wz).chance(chance)
+        FeatureRng::positional(self.seed, lattice.salt ^ salts::GROVE_CHOICE_XOR, wx, 0, wz)
+            .chance(chance)
     }
 
     /// The claim probability at a site: the blended field mapped through the
@@ -95,7 +92,7 @@ impl GroveField {
     pub(super) fn chance(&mut self, lattice: &GroveLattice, wx: i32, wz: i32) -> f32 {
         let broad = self.sample(lattice.salt, lattice.period, wx, wz);
         let detail = self.sample(
-            lattice.salt ^ DETAIL_SALT,
+            lattice.salt ^ salts::GROVE_DETAIL_XOR,
             lattice.period / DETAIL_PERIODS_PER_BROAD,
             wx,
             wz,

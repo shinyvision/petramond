@@ -260,7 +260,7 @@ fn os_random_u64() -> u64 {
         .finish()
 }
 
-#[cfg(all(test, feature = "worldgen-tests"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

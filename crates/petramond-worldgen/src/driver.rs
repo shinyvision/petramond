@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use mod_api::WorldgenStage;
 
+use crate::colgen::{ColumnCore, MESH_BIOME_RADIUS, MESH_BIOME_SIDE};
 use crate::hooks::{FeatureOutcome, GenHookDispatch, GenInputs};
 use petramond_world::chunk::{
     idx, Chunk, SectionPos, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL, SECTION_SIZE,
@@ -50,29 +51,9 @@ pub struct ChunkGenerator {
 pub struct ColumnGen {
     pub cx: i32,
     pub cz: i32,
-    /// Biome id per `(x,z)` in the column's 16×16, indexed `z*16 + x`.
-    biome: Box<[u8]>,
-    /// The 20x20 tint halo for this column (two cells beyond each X/Z edge).
-    /// Captured from the column-generation region so mesh submission never runs
-    /// analytical biome generation on the owning thread.
-    mesh_biome: Arc<[u8]>,
-    /// Density top-solid surface (world Y, or `-1` for a floorless column) per
-    /// `(x,z)`, indexed `z*16 + x`.
-    surf: Box<[i32]>,
-    /// Post-cave bare top non-air surface for the column's local `(x,z)`, before
-    /// vegetation/trees. This is lower than `surf` only at cave entrances.
-    top_surf: Box<[i32]>,
-    surf_min: i32,
-    surf_max: i32,
-    /// Surface min/max across the whole candidate window (chunk + spacing margin), so
-    /// tree gating accounts for anchors at margin origins and content reaching in from
-    /// neighbours, not just this 16×16.
-    cand_surf_min: i32,
-    cand_surf_max: i32,
-    /// Highest world Y that can hold any generated block in this column — the candidate
-    /// window's tallest surface plus the maximum tree reach. Sections whose floor is
-    /// above this are provably all-air sky, so the streamer skips generating them.
-    content_top: i32,
+    /// The resident 2D data (biomes, tint halo, surfaces, range scalars) —
+    /// exactly what the column-gen cache persists.
+    core: ColumnCore,
     /// Tree-placement windows (candidate region + redwood-support halo), consumed
     /// ONLY by tree-band section jobs. `None` once the streamer swaps in a
     /// [`slimmed`](Self::slimmed) clone after the column's gen burst — they are
@@ -100,11 +81,12 @@ pub struct FeatureWindows {
 impl ColumnGen {
     /// Resident heap bytes of this column's gen data, for the memory census.
     pub fn memory_bytes(&self) -> u64 {
+        let core = &self.core;
         let base = std::mem::size_of::<Self>()
-            + self.biome.len()
-            + self.mesh_biome.len()
-            + self.surf.len() * 4
-            + self.top_surf.len() * 4;
+            + core.biome.len()
+            + core.mesh_biome.len()
+            + core.surf.len() * 4
+            + core.top_surf.len() * 4;
         let windows = self.feature_windows.as_ref().map_or(0, |w| {
             std::mem::size_of::<FeatureWindows>()
                 + w.plan.get().map_or(0, FeaturePlan::memory_bytes)
@@ -127,42 +109,42 @@ impl ColumnGen {
     /// Biome id at column-local `(x,z)`.
     #[inline]
     pub fn biome_at(&self, x: usize, z: usize) -> u8 {
-        self.biome[z * SECTION_SIZE + x]
+        self.core.biome[z * SECTION_SIZE + x]
     }
     #[inline]
     pub fn mesh_biome(&self) -> Arc<[u8]> {
-        self.mesh_biome.clone()
+        self.core.mesh_biome.clone()
     }
     #[inline]
     pub fn mesh_biome_slice(&self) -> &[u8] {
-        &self.mesh_biome
+        &self.core.mesh_biome
     }
     /// Density top-solid surface (world Y, or `-1`) at column-local `(x,z)`.
     #[inline]
     pub fn surface_y(&self, x: usize, z: usize) -> i32 {
-        self.surf[z * SECTION_SIZE + x]
+        self.core.surf[z * SECTION_SIZE + x]
     }
     /// Generated column heightmap before vegetation/trees: waterline for submerged
     /// columns, otherwise the post-cave top surface so skylight can enter mouths.
     #[inline]
     pub fn heightmap_surface_y(&self, x: usize, z: usize) -> i32 {
         let i = z * SECTION_SIZE + x;
-        if self.surf[i] < SEA_LEVEL {
+        if self.core.surf[i] < SEA_LEVEL {
             SEA_LEVEL
         } else {
-            self.top_surf[i]
+            self.core.top_surf[i]
         }
     }
     /// Lowest / highest density surface across the column (for vertical-window sizing).
     #[inline]
     pub fn surf_range(&self) -> (i32, i32) {
-        (self.surf_min, self.surf_max)
+        (self.core.surf_min, self.core.surf_max)
     }
     /// Highest world Y any generated block in this column can occupy (surface + tree
     /// reach). Sections whose floor exceeds this are all-air sky.
     #[inline]
     pub fn content_top(&self) -> i32 {
-        self.content_top
+        self.core.content_top
     }
 
     /// Whether the tree-placement windows are still resident (see `feature_windows`).
@@ -178,36 +160,20 @@ impl ColumnGen {
         ColumnGen {
             cx: self.cx,
             cz: self.cz,
-            biome: self.biome.clone(),
-            mesh_biome: self.mesh_biome.clone(),
-            surf: self.surf.clone(),
-            top_surf: self.top_surf.clone(),
-            surf_min: self.surf_min,
-            surf_max: self.surf_max,
-            cand_surf_min: self.cand_surf_min,
-            cand_surf_max: self.cand_surf_max,
-            content_top: self.content_top,
+            core: self.core.clone(),
             feature_windows: None,
         }
     }
 
     /// This column's resident data as a column-gen cache record ("Optimize
-    /// explored terrain"). The record IS the slimmed column: a load through
-    /// [`from_cache_record`](Self::from_cache_record) reproduces exactly what
-    /// [`slimmed`](Self::slimmed) retains.
+    /// explored terrain"). The record IS the slimmed column's core: a load
+    /// through [`from_cache_record`](Self::from_cache_record) reproduces
+    /// exactly what [`slimmed`](Self::slimmed) retains.
     pub fn cache_record(&self, seed: u32) -> crate::colgen::ColumnGenRecord {
         crate::colgen::ColumnGenRecord {
             pos: petramond_world::chunk::ChunkPos::new(self.cx, self.cz),
             seed,
-            biome: self.biome.clone(),
-            mesh_biome: self.mesh_biome.clone(),
-            surf: self.surf.clone(),
-            top_surf: self.top_surf.clone(),
-            surf_min: self.surf_min,
-            surf_max: self.surf_max,
-            cand_surf_min: self.cand_surf_min,
-            cand_surf_max: self.cand_surf_max,
-            content_top: self.content_top,
+            core: self.core.clone(),
         }
     }
 
@@ -218,15 +184,7 @@ impl ColumnGen {
         ColumnGen {
             cx: rec.pos.cx,
             cz: rec.pos.cz,
-            biome: rec.biome,
-            mesh_biome: rec.mesh_biome,
-            surf: rec.surf,
-            top_surf: rec.top_surf,
-            surf_min: rec.surf_min,
-            surf_max: rec.surf_max,
-            cand_surf_min: rec.cand_surf_min,
-            cand_surf_max: rec.cand_surf_max,
-            content_top: rec.content_top,
+            core: rec.core,
             feature_windows: None,
         }
     }
@@ -239,18 +197,19 @@ impl ColumnGen {
         if !SectionPos::cy_in_range(cy) {
             return SectionSummary::Unknown;
         }
+        let core = &self.core;
         let y0 = cy * SECTION_SIZE as i32;
         let y1 = y0 + SECTION_SIZE as i32 - 1;
-        if y0 > self.content_top {
+        if y0 > core.content_top {
             return SectionSummary::Empty;
         }
-        if CaveField::section_may_carve(cy, self.surf_min, self.surf_max) {
+        if CaveField::section_may_carve(cy, core.surf_min, core.surf_max) {
             return SectionSummary::Mixed;
         }
-        if y1 <= self.surf_min {
+        if y1 <= core.surf_min {
             return SectionSummary::FullOpaque;
         }
-        if y0 > self.surf_max && y1 <= SEA_LEVEL {
+        if y0 > core.surf_max && y1 <= SEA_LEVEL {
             return SectionSummary::FullWater;
         }
         SectionSummary::Mixed
@@ -375,7 +334,7 @@ impl ChunkGenerator {
 
     /// The pure engine pipeline over an explicit cave field — how a test
     /// generates from synthetic cave rows.
-    #[cfg(all(test, feature = "worldgen-tests"))]
+    #[cfg(test)]
     pub(crate) fn with_caves(seed: u32, caves: CaveField) -> Self {
         Self {
             seed,
@@ -447,8 +406,7 @@ impl ChunkGenerator {
             ch,
         );
 
-        const MESH_BIOME_RADIUS: i32 = 2;
-        const MESH_BIOME_SIDE: usize = SECTION_SIZE + MESH_BIOME_RADIUS as usize * 2;
+        let radius = MESH_BIOME_RADIUS as i32;
         let mut biome = vec![0u8; SECTION_SIZE * SECTION_SIZE].into_boxed_slice();
         let mut mesh_biome = vec![0u8; MESH_BIOME_SIDE * MESH_BIOME_SIDE].into_boxed_slice();
         let mut surf = vec![0i32; SECTION_SIZE * SECTION_SIZE].into_boxed_slice();
@@ -469,10 +427,7 @@ impl ChunkGenerator {
         }
         for z in 0..MESH_BIOME_SIDE {
             for x in 0..MESH_BIOME_SIDE {
-                let (_, b) = candidates.at(
-                    ox - MESH_BIOME_RADIUS + x as i32,
-                    oz - MESH_BIOME_RADIUS + z as i32,
-                );
+                let (_, b) = candidates.at(ox - radius + x as i32, oz - radius + z as i32);
                 mesh_biome[z * MESH_BIOME_SIDE + x] = b.id();
             }
         }
@@ -505,8 +460,7 @@ impl ChunkGenerator {
                 if let Some(map) = hooks.replace_climate(&inputs) {
                     biome.copy_from_slice(&map);
                     for z in 0..SECTION_SIZE {
-                        let dst = (z + MESH_BIOME_RADIUS as usize) * MESH_BIOME_SIDE
-                            + MESH_BIOME_RADIUS as usize;
+                        let dst = (z + MESH_BIOME_RADIUS) * MESH_BIOME_SIDE + MESH_BIOME_RADIUS;
                         let src = z * SECTION_SIZE;
                         mesh_biome[dst..dst + SECTION_SIZE]
                             .copy_from_slice(&biome[src..src + SECTION_SIZE]);
@@ -518,15 +472,17 @@ impl ChunkGenerator {
         ColumnGen {
             cx,
             cz,
-            biome,
-            mesh_biome: Arc::from(mesh_biome),
-            surf,
-            top_surf,
-            surf_min,
-            surf_max,
-            cand_surf_min,
-            cand_surf_max,
-            content_top: cand_surf_max + MAX_TREE_REACH_ABOVE,
+            core: ColumnCore {
+                biome,
+                mesh_biome: Arc::from(mesh_biome),
+                surf,
+                top_surf,
+                surf_min,
+                surf_max,
+                cand_surf_min,
+                cand_surf_max,
+                content_top: cand_surf_max + MAX_TREE_REACH_ABOVE,
+            },
             feature_windows: Some(windows),
         }
     }
@@ -688,7 +644,7 @@ impl ChunkGenerator {
             // Underground scatter: needs stone in the section AND overlap with the ore band.
             WorldgenStage::Underground => {
                 if !self.run_stage_replacement(stage, sp, section, col)? {
-                    let has_stone = sec_lo <= col.surf_max;
+                    let has_stone = sec_lo <= col.core.surf_max;
                     let (scatter_lo, scatter_hi) = scatter::y_span();
                     if has_stone && ranges_overlap(sec_lo, sec_hi, scatter_lo, scatter_hi) {
                         scatter::place_underground_section(section, self.seed);
@@ -699,14 +655,14 @@ impl ChunkGenerator {
             // if some land column's surface (≥ sea level) sits within reach of the section.
             WorldgenStage::Vegetation => {
                 if !self.run_stage_replacement(stage, sp, section, col)?
-                    && col.surf_max >= SEA_LEVEL
-                    && ranges_overlap(sec_lo, sec_hi, SEA_LEVEL + 1, col.surf_max + 1)
+                    && col.core.surf_max >= SEA_LEVEL
+                    && ranges_overlap(sec_lo, sec_hi, SEA_LEVEL + 1, col.core.surf_max + 1)
                 {
                     vegetation::place_vegetation_section(
                         section,
-                        &col.biome,
-                        &col.surf,
-                        &col.top_surf,
+                        &col.core.biome,
+                        &col.core.surf,
+                        &col.core.top_surf,
                         self.seed,
                     );
                 }
@@ -742,8 +698,8 @@ impl ChunkGenerator {
                 .is_some_and(|h| h.replaces(WorldgenStage::Climate)) =>
             {
                 self.surface_density
-                    .fill_section(section, &col.biome, &col.surf);
-                self.caves.carve_section(section, &col.surf);
+                    .fill_section(section, &col.core.biome, &col.core.surf);
+                self.caves.carve_section(section, &col.core.surf);
                 true
             }
             None => {
@@ -767,8 +723,8 @@ impl ChunkGenerator {
     fn place_trees(&self, sp: SectionPos, section: &mut Section, col: &ColumnGen) {
         let sec_lo = sp.cy * SECTION_SIZE as i32;
         let sec_hi = sec_lo + SECTION_SIZE as i32 - 1;
-        let anchor_lo = col.cand_surf_min.max(SEA_LEVEL + 1);
-        let anchor_hi = col.cand_surf_max.min(TREELINE);
+        let anchor_lo = col.core.cand_surf_min.max(SEA_LEVEL + 1);
+        let anchor_hi = col.core.cand_surf_max.min(TREELINE);
         if anchor_lo > anchor_hi
             || !ranges_overlap(sec_lo, sec_hi, anchor_lo, anchor_hi + MAX_TREE_REACH_ABOVE)
         {
@@ -805,8 +761,8 @@ impl ChunkGenerator {
             seed: self.seed,
             section_pos: [sp.cx, sp.cy, sp.cz],
             blocks: None,
-            surface_heights: &col.top_surf,
-            biomes: &col.biome,
+            surface_heights: &col.core.top_surf,
+            biomes: &col.core.biome,
         })
     }
 
@@ -831,8 +787,8 @@ impl ChunkGenerator {
                 seed: self.seed,
                 section_pos: [sp.cx, sp.cy, sp.cz],
                 blocks: Some(section.blocks()),
-                surface_heights: &col.top_surf,
-                biomes: &col.biome,
+                surface_heights: &col.core.top_surf,
+                biomes: &col.core.biome,
             },
         );
         match outcome {
@@ -870,8 +826,8 @@ impl ChunkGenerator {
                     seed: self.seed,
                     section_pos: [sp.cx, sp.cy, sp.cz],
                     blocks: Some(section.blocks()),
-                    surface_heights: &col.top_surf,
-                    biomes: &col.biome,
+                    surface_heights: &col.core.top_surf,
+                    biomes: &col.core.biome,
                 },
             );
             match outcome {

@@ -105,14 +105,6 @@ fn biome_named(key: &str) -> Result<Biome, String> {
         .ok_or_else(|| format!("unknown biome '{key}'"))
 }
 
-/// FNV-1a over the field name: a stable, platform-independent positional salt
-/// that two rows share by naming the same field.
-fn field_salt(field: &str) -> u64 {
-    field.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
-        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
-}
-
 impl RawRule {
     fn resolve(self, index: usize) -> Result<SelectionRule, String> {
         let context = |e: String| format!("rules[{index}]: {e}");
@@ -124,7 +116,7 @@ impl RawRule {
                 transition,
                 chance,
             } => Territory::Grove(GroveLattice {
-                salt: field_salt(&field),
+                salt: crate::salts::grove_field(&field),
                 period,
                 detail_weight,
                 transition,

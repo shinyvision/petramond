@@ -356,14 +356,29 @@ pub fn splitmix64_mix(mut z: u64) -> u64 {
 /// same xorshift64 stepper), so mod features get engine-grade order
 /// independence by default. Derive every independent stream from
 /// `(world seed, your own salt, world coords)`; NEVER carry RNG state between
-/// dispatches. Pick a salt unique to your mod/feature (any constant — hash
-/// your feature name) so your stream is decorrelated from the engine's and
-/// from other mods'.
+/// dispatches. Derive each stream's salt from its own namespaced name with
+/// [`GenRng::salt`] so it is decorrelated from the engine's, from other
+/// mods', and from your other streams.
 pub struct GenRng {
     state: u64,
 }
 
 impl GenRng {
+    /// A salt derived from a namespaced stream name (`"mymod:feature"`): FNV-1a
+    /// 64 over its bytes, usable in a `const`. Naming streams instead of
+    /// numbering them means two streams collide only by sharing a name —
+    /// never by one feature copying the next free literal of another's run.
+    pub const fn salt(name: &str) -> u64 {
+        let bytes = name.as_bytes();
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut i = 0;
+        while i < bytes.len() {
+            h = (h ^ bytes[i] as u64).wrapping_mul(0x0000_0100_0000_01b3);
+            i += 1;
+        }
+        h
+    }
+
     /// Seed from `(seed, salt, world coords)` — a pure function of the inputs,
     /// bit-identical across platforms.
     pub fn positional(seed: u32, salt: u64, wx: i32, wy: i32, wz: i32) -> Self {
@@ -431,5 +446,15 @@ mod tests {
         );
         let mut zero = GenRng::positional(0, 0, 0, 0, 0);
         assert_eq!(zero.next_u64(), 0x37c5_9ca7_bf06_be52);
+    }
+
+    /// Named salts are FNV-1a 64 (frozen: mod worldgen depends on the bits)
+    /// and evaluate in a `const`.
+    #[test]
+    fn named_salts_are_fnv1a() {
+        const EMPTY: u64 = GenRng::salt("");
+        assert_eq!(EMPTY, 0xcbf2_9ce4_8422_2325);
+        assert_eq!(GenRng::salt("a"), 0xaf63_dc4c_8601_ec8c);
+        assert_ne!(GenRng::salt("mymod:a"), GenRng::salt("mymod:b"));
     }
 }

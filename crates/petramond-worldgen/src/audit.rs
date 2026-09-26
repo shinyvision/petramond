@@ -616,7 +616,7 @@ fn is_mountain_like(biome: Biome) -> bool {
 // current generator for the default seed 0x1234_5678 (see commit baseline).
 // These pin the `mc-worldgen-jaggedness` family of invariants.
 // ---------------------------------------------------------------------------
-#[cfg(all(test, feature = "worldgen-tests"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -648,6 +648,7 @@ mod tests {
     /// floating voxels (a solid with no solid anywhere below it in the column).
     /// The genmap `audit` mode pins this at 0.
     #[test]
+    #[ignore = "slow sweep; `make test-worldgen` runs it"]
     fn audit_has_zero_per_column_floating_debris() {
         let a = audit(SEED);
         assert_eq!(
@@ -663,6 +664,7 @@ mod tests {
     /// True 3-D detached-debris census stays within the documented tiny bound.
     /// The invariant is "near-zero debris"; assert it stays well under 100 ppm.
     #[test]
+    #[ignore = "slow sweep; `make test-worldgen` runs it"]
     fn flood_audit_detached_debris_within_bound() {
         let f = flood_audit(SEED);
         assert!(f.solids > 0);
@@ -681,6 +683,7 @@ mod tests {
     /// waterline), so this guards only against a catastrophic regression where
     /// terrain sinks or flattens wholesale — not a tight flooded-share pin.
     #[test]
+    #[ignore = "slow sweep; `make test-worldgen` runs it"]
     fn relief_audit_has_real_relief_and_mostly_dry_land() {
         let r = relief_audit(SEED);
         assert_eq!(r.window_blocks, 384);
@@ -705,6 +708,7 @@ mod tests {
     /// Jaggedness invariant: mountains are walkable ranges, not a field of
     /// 1-wide pillars.
     #[test]
+    #[ignore = "slow sweep; `make test-worldgen` runs it"]
     fn roughness_mountains_are_walkable_not_pillars() {
         let s = roughness(SEED).expect("window has mountain columns");
         assert!(s.mountain_cols > 0);

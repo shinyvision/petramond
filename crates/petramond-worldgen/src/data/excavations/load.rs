@@ -89,7 +89,7 @@ pub(super) fn parse_layers(
             };
             Ok(Excavation {
                 name,
-                salt: hash(name.as_bytes()),
+                salt: crate::salts::excavation(name),
                 placement,
                 shape,
                 connections: r.connections,

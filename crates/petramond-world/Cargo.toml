@@ -21,6 +21,4 @@ bytemuck = { version = "1.21", features = ["derive"] }
 
 [features]
 test-support = []
-# Mirrors the engine crate: slow worldgen-adjacent tests are opt-in.
-worldgen-tests = []
 

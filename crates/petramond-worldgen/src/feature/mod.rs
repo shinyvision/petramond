@@ -25,7 +25,7 @@ pub(crate) use plan::FeaturePlan;
 /// The tree origin loop over one column's footprint, for planning.
 pub(crate) use tree_select::place_feature_origins as place_trees;
 
-#[cfg(all(test, feature = "worldgen-tests"))]
+#[cfg(test)]
 mod tests;
 
 pub(crate) use self::field::{cached_tile_raw, RegionTile, TileKey};

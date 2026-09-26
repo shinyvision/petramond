@@ -10,8 +10,6 @@ use petramond_world::block::Block;
 use petramond_world::chunk::Chunk;
 use petramond_world::mathh::IVec3;
 
-const FEATURE_PREVIEW_SALT: u64 = 0x0000_FE47_0000_0001;
-
 pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
     crate::generate_chunk(seed, cx, cz)
 }
@@ -116,7 +114,7 @@ pub fn preview_feature(name: &str, seed: u32) -> Option<FeaturePreview> {
     let cf = configured_feature(name)?;
     let mut sink = PreviewSink::default();
     let mut ctx = FeatureCtx::new(&mut sink);
-    let mut rng = FeatureRng::positional(seed, FEATURE_PREVIEW_SALT, 0, 0, 0);
+    let mut rng = FeatureRng::positional(seed, crate::salts::FEATURE_PREVIEW, 0, 0, 0);
     // Preview renders the pure shape: every cell is canopy-open.
     cf.feature
         .generate(&mut ctx, &mut |_| true, IVec3::new(0, 0, 0), &mut rng);

@@ -15,6 +15,7 @@
 #   make profile         -- run repeatable join + map perf harnesses in scratch data
 #   make smoke           -- exercise threaded, TCP, UI-connect, and headless lifecycles
 #   make test            -- the full debug-safe suite (TEST_GROUPS="core client" for a subset)
+#   make test-worldgen   -- every worldgen test, the slow ignored sweeps included
 #   make check           -- fmt-check, clippy, source-audit, test: what CI gates on
 #   make genparity       -- assert worldgen output matches its checked-in hash
 #
@@ -50,7 +51,7 @@ TEST_GROUPS ?=
 # Cargo profile for the wasm guests `make mods` / `make mod` build.
 MOD_PROFILE ?= wasm-dev
 
-.PHONY: run run-native run-release run-server dev build build-native clean sweep gui-builder gui-builder-dev mods mod test fmt fmt-check clippy source-audit validate-assets genparity profile smoke check
+.PHONY: run run-native run-release run-server dev build build-native clean sweep gui-builder gui-builder-dev mods mod test test-worldgen fmt fmt-check clippy source-audit validate-assets genparity profile smoke check
 
 # `run` uses the `playtest` profile: release opt-level but incremental with
 # parallel codegen units and no LTO, so the edit→playtest loop rebuilds in
@@ -115,6 +116,11 @@ mod:
 # assertions and overflow checks enabled. It never reads a developer's mods/.
 test:
 	CARGO_CMD="$(CARGO)" bash scripts/with-test-mods.sh bash scripts/test-all.sh $(TEST_GROUPS)
+
+# Every worldgen test, the slow `#[ignore]`d genmap sweeps included. A plain
+# `cargo test -p petramond-worldgen` runs everything but those sweeps.
+test-worldgen:
+	CARGO_CMD="$(CARGO)" bash scripts/test-all.sh worldgen
 
 fmt:
 	$(CARGO) fmt --all

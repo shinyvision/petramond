@@ -47,7 +47,6 @@ const BEACH_SCAN_STEP: i32 = 8;
 /// bathymetry contour.
 const SEA_ICE_MIN_DEPTH: i32 = 2;
 const SEA_ICE_MAX_DEPTH: i32 = 6;
-const SEA_ICE_EDGE_SALT: u64 = 0x0000_5EA1_CE00_0001;
 const SEA_ICE_EDGE_PERIOD: f32 = 24.0;
 
 #[derive(Clone, Debug)]
@@ -218,7 +217,7 @@ impl SurfaceDensitySystem {
         if temperature >= crate::data::climate_table::table().frozen_temperature_max {
             return Block::Water;
         }
-        let field = patch_field(self.seed, SEA_ICE_EDGE_SALT, wx, wz, SEA_ICE_EDGE_PERIOD);
+        let field = patch_field(self.seed, crate::salts::SEA_ICE_EDGE, wx, wz, SEA_ICE_EDGE_PERIOD);
         let threshold =
             SEA_ICE_MIN_DEPTH + (field * (SEA_ICE_MAX_DEPTH - SEA_ICE_MIN_DEPTH + 1) as f32) as i32;
         if depth <= threshold {

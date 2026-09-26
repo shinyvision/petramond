@@ -37,11 +37,6 @@ crate-type = ["rlib"]
 
 [features]
 default = []
-# Worldgen tests are slow (heavy noise/terrain generation) and worldgen is stable,
-# so they are opt-in: run them with `cargo test --features worldgen-tests`. Plain
-# `cargo test` skips them — the worldgen test modules are gated
-# `#[cfg(all(test, feature = "worldgen-tests"))]`.
-worldgen-tests = ["petramond-worldgen/worldgen-tests"]
 # Exposes the in-process test harness (inline pools, world fixtures, the
 # WAT-built unit guest — hence wasmtime/wat) to dependent crates' test suites.
 test-support = ["wasmtime/wat", "petramond-world/test-support"]

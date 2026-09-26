@@ -168,7 +168,7 @@ pub fn combined_hash() -> u64 {
     combined.0
 }
 
-#[cfg(all(test, feature = "worldgen-tests"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

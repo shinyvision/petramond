@@ -24,14 +24,14 @@ struct Profile {
 
 const PROFILES: [Profile; 2] = [
     Profile {
-        salt: 0xB40A,
+        salt: crate::salts::CAVE_WALK_BRANCHING,
         chance: 0.8,
         vertical: 0.8,
         branches: true,
         floor: -0.75,
     },
     Profile {
-        salt: 0xB40B,
+        salt: crate::salts::CAVE_WALK_STEEP,
         chance: 0.12,
         vertical: 3.0,
         branches: false,

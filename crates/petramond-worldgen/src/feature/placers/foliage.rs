@@ -367,7 +367,7 @@ impl FoliagePlacer for FlatSparseFoliage {
     }
 }
 
-#[cfg(all(test, feature = "worldgen-tests"))]
+#[cfg(test)]
 mod spruce_tests {
     use super::*;
     use crate::rng::FeatureRng;

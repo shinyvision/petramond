@@ -32,6 +32,7 @@ pub mod parity;
 pub mod preview;
 pub mod region;
 pub mod rng;
+pub(crate) mod salts;
 mod section_memo;
 pub mod spawn;
 mod surface;
@@ -341,7 +342,7 @@ fn clamp_query(p: [i32; 3]) -> [i32; 3] {
     ]
 }
 
-#[cfg(all(test, feature = "worldgen-tests"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use petramond_world::block::Block;
@@ -552,6 +553,7 @@ mod tests {
     /// debug, silent wrap in release). After generation the count must equal a
     /// from-scratch tally of the section's random-tickable blocks.
     #[test]
+    #[ignore = "slow sweep; `make test-worldgen` runs it"]
     fn per_section_generation_keeps_random_tick_count_exact() {
         use petramond_world::block::Block;
         use petramond_world::chunk::{SectionPos, CHUNK_SY, SECTION_SIZE};
@@ -613,6 +615,8 @@ mod tests {
     }
 
     #[test]
+
+    #[ignore = "slow sweep; `make test-worldgen` runs it"]
     fn generated_underwater_terrain_has_no_grass_blocks() {
         for &seed in &[0x1234_5678u32, 1, 0xDEAD_BEEF, 7] {
             for cz in -3..=3 {

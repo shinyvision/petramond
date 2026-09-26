@@ -7,7 +7,7 @@
 # Groups (together they cover every test exactly once):
 #   core        the root workspace minus the client-side crates and worldgen
 #   client      petramond-client, petramond-render, petramond-audio
-#   worldgen    petramond-worldgen with its opt-in slow `worldgen-tests`
+#   worldgen    petramond-worldgen, its slow `#[ignore]`d sweeps included
 #   mods        the mods-src wasm workspace (natively) and mod-sdk
 #   gui-builder the standalone GUI builder
 # `workspace` is core + client in one cargo invocation (one feature
@@ -25,8 +25,9 @@ test_fast() {
     "${cargo_cmd[@]}" test --profile fasttest "$@"
 }
 
-# Worldgen runs only in its own group, with the feature on: the feature is a
-# superset of its plain tests, so the workspace groups leave it out.
+# Worldgen runs only in its own group, which also runs its `#[ignore]`d slow
+# sweeps (a runtime flag, so nothing recompiles), so the workspace groups
+# leave it out.
 client_packages=(-p petramond-client -p petramond-render -p petramond-audio)
 client_excludes=(--exclude petramond-client --exclude petramond-render --exclude petramond-audio)
 
@@ -42,7 +43,7 @@ run_group() {
             test_fast "${client_packages[@]}" --all-targets
             ;;
         worldgen)
-            test_fast -p petramond-worldgen --features worldgen-tests --all-targets
+            test_fast -p petramond-worldgen --all-targets -- --include-ignored
             ;;
         mods)
             test_fast --manifest-path mods-src/Cargo.toml --target-dir target --workspace --all-targets

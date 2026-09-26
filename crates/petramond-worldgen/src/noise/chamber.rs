@@ -354,7 +354,7 @@ fn gather_row(
                 };
                 let mut rng = FeatureRng::positional(
                     seed,
-                    excavation.salt ^ 0x5041_5353_4147_4500,
+                    excavation.salt ^ crate::salts::EXCAVATION_PASSAGE_XOR,
                     cx,
                     axis,
                     cz,

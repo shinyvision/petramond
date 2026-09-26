@@ -5,12 +5,6 @@ edition = "2021"
 license = "MIT"
 description = "Deterministic worldgen pipeline: climate, terrain density, caves, features — plus the mod-gen hook seam and the column-gen cache records."
 
-[features]
-# Worldgen tests are slow (heavy noise/terrain generation) and worldgen is
-# stable, so they are opt-in; the root crate forwards its `worldgen-tests`
-# feature here.
-worldgen-tests = []
-
 [dependencies]
 petramond-math = { path = "../petramond-math" }
 petramond-util = { path = "../petramond-util" }

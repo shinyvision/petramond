@@ -15,16 +15,11 @@ use super::tree::{redwood_base_trunk_contains, REDWOOD_BASE_SUPPORT_REACH};
 use super::SectionSink;
 use super::{FeatureCtx, FeatureField, TREELINE};
 
+use crate::salts;
+
 mod groves;
 use groves::{GroveField, Window};
 
-/// Salt distinguishing the tree-feature positional RNG stream from other users.
-const FEATURE_SALT: u64 = 0x0000_7A3E_0AC0_FFEE;
-/// Separate stream used only to break ties between nearby tree candidates.
-const TREE_PRIORITY_SALT: u64 = 0x0000_7A3E_51AC_1EAF;
-/// Own stream for the fallen-branch scatter, so branch placement does not move
-/// when a tree's geometry draws change (and vice versa).
-const BRANCH_SALT: u64 = 0x0000_7A3E_B4A0_C401;
 /// How far from the trunk a branch may have fallen. Well inside
 /// `MAX_TREE_SPACING_RADIUS`, which bounds the surface reads this scatter is
 /// allowed to make (see the note on the anchoring gate below).
@@ -45,7 +40,7 @@ pub(super) struct TreeCandidate {
 
 #[inline]
 fn tree_priority(seed: u32, wx: i32, wz: i32) -> u64 {
-    FeatureRng::positional(seed, TREE_PRIORITY_SALT, wx, 0, wz).next_u64()
+    FeatureRng::positional(seed, salts::TREE_PRIORITY, wx, 0, wz).next_u64()
 }
 
 #[inline]
@@ -164,7 +159,7 @@ impl TreeCandidates {
         if peak_density <= 0.0 {
             return None;
         }
-        let mut rng = FeatureRng::positional(seed, FEATURE_SALT, wx, 0, wz);
+        let mut rng = FeatureRng::positional(seed, salts::TREE_FEATURE, wx, 0, wz);
         let density_roll = rng.next_f32();
         if density_roll >= peak_density {
             return None;
@@ -371,7 +366,7 @@ pub(crate) fn place_feature_origins(
 
             // Recreate the accepted origin's stream and consume the already-proven
             // density roll so variant and geometry draws stay on the tree stream.
-            let mut rng = FeatureRng::positional(seed, FEATURE_SALT, wx, 0, wz);
+            let mut rng = FeatureRng::positional(seed, salts::TREE_FEATURE, wx, 0, wz);
             let density_hit = rng.chance(candidate.density);
             debug_assert!(density_hit);
             let cf = candidates
@@ -432,7 +427,7 @@ fn scatter_fallen_branches(
     wx: i32,
     wz: i32,
 ) {
-    let mut rng = FeatureRng::positional(seed, BRANCH_SALT, wx, 0, wz);
+    let mut rng = FeatureRng::positional(seed, salts::TREE_BRANCH, wx, 0, wz);
     let count = rng.next_i32(BRANCH_PER_TREE.0, BRANCH_PER_TREE.1);
     for _ in 0..count {
         let dx = rng.next_i32(-BRANCH_REACH, BRANCH_REACH);

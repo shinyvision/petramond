@@ -26,19 +26,34 @@ use crate::feature::tree::{BlockyOakFeature, CanopyTreeFeature, RedwoodFeature, 
 use crate::feature::{ConfiguredFeature, Feature};
 use petramond_world::block::Block;
 
-/// Engine feature names in frozen id order (the completeness oracle
-/// `features.json` is validated against).
-const ENGINE_FEATURE_NAMES: &[&str] = &[
-    "petramond:oak_young",
-    "petramond:oak_small",
-    "petramond:oak_swamp",
-    "petramond:oak_big",
-    "petramond:redwood",
-    "petramond:spruce",
-    "petramond:birch",
-    "petramond:jungle",
-    "petramond:acacia",
-];
+/// Declares the engine features ONCE: their names in frozen id order (the
+/// completeness oracle `features.json` is validated against) and a typed
+/// accessor per feature that resolves by that same name, so an accessor can
+/// neither drift from its row nor be missing for one.
+macro_rules! engine_features {
+    ($($accessor:ident => $name:literal),+ $(,)?) => {
+        const ENGINE_FEATURE_NAMES: &[&str] = &[$($name),+];
+
+        $(
+            #[doc = concat!("The `", $name, "` feature row.")]
+            pub fn $accessor() -> &'static ConfiguredFeature {
+                engine($name)
+            }
+        )+
+    };
+}
+
+engine_features! {
+    oak_young => "petramond:oak_young",
+    oak_small => "petramond:oak_small",
+    oak_swamp => "petramond:oak_swamp",
+    oak_big => "petramond:oak_big",
+    redwood => "petramond:redwood",
+    spruce => "petramond:spruce",
+    birch => "petramond:birch",
+    jungle => "petramond:jungle",
+    acacia => "petramond:acacia",
+}
 
 // Shared trunk placers (zero-sized strategies the JSON names; height is
 // per-tree config).
@@ -226,40 +241,37 @@ pub fn by_name(name: &str) -> Option<&'static ConfiguredFeature> {
     c.id(name).map(|id| &c.rows()[id as usize].configured)
 }
 
-/// The engine feature at its frozen id (`ENGINE_FEATURE_NAMES` order).
-fn engine(id: usize) -> &'static ConfiguredFeature {
-    &catalog().rows()[id].configured
-}
-
-pub fn oak_young() -> &'static ConfiguredFeature {
-    engine(0)
-}
-pub fn oak_small() -> &'static ConfiguredFeature {
-    engine(1)
-}
-pub fn oak_swamp() -> &'static ConfiguredFeature {
-    engine(2)
-}
-pub fn oak_big() -> &'static ConfiguredFeature {
-    engine(3)
-}
-pub fn redwood() -> &'static ConfiguredFeature {
-    engine(4)
-}
-pub fn spruce() -> &'static ConfiguredFeature {
-    engine(5)
-}
-pub fn birch() -> &'static ConfiguredFeature {
-    engine(6)
-}
-
-pub fn acacia() -> &'static ConfiguredFeature {
-    engine(8)
+/// An engine feature by its key. Every engine name is a completeness
+/// requirement of the catalog load, so the row always exists.
+fn engine(name: &str) -> &'static ConfiguredFeature {
+    by_name(name).unwrap_or_else(|| panic!("engine feature {name} is not loaded"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each generated accessor returns the row registered under its own
+    /// name — including features no engine code places directly.
+    #[test]
+    fn accessors_resolve_their_own_rows() {
+        let accessors: [(&str, fn() -> &'static ConfiguredFeature); 9] = [
+            ("petramond:oak_young", oak_young),
+            ("petramond:oak_small", oak_small),
+            ("petramond:oak_swamp", oak_swamp),
+            ("petramond:oak_big", oak_big),
+            ("petramond:redwood", redwood),
+            ("petramond:spruce", spruce),
+            ("petramond:birch", birch),
+            ("petramond:jungle", jungle),
+            ("petramond:acacia", acacia),
+        ];
+        assert_eq!(accessors.len(), ENGINE_FEATURE_NAMES.len());
+        for (name, accessor) in accessors {
+            let row = by_name(name).expect("engine row loaded");
+            assert!(std::ptr::eq(accessor(), row), "{name} accessor");
+        }
+    }
 
     /// The shipped `features.json` resolves every engine row against the real
     /// block registry, and pack rows register after the engine range.

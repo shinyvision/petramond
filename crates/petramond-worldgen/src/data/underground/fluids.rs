@@ -155,7 +155,7 @@ fn leak(name: String) -> &'static str {
 }
 
 fn salt_for(kind: &str, name: &str, salt: Option<u64>) -> u64 {
-    salt.unwrap_or_else(|| super::load::fnv64(format!("{kind}:{name}").as_bytes()))
+    salt.unwrap_or_else(|| crate::salts::named(kind, name))
 }
 
 fn fluid_id(fluid: Block, what: &str) -> Result<u16, String> {
