@@ -37,6 +37,14 @@ pub const HYSTERESIS_BLOCKS: f64 = 16.0;
 /// the per-connection view request is clamped to.
 pub const MIN_VIEW_CHUNKS: i32 = 4;
 
+/// How far a recipient's view reaches, in blocks: its requested view distance
+/// clamped to what the server streams at all (`server_cap`, chunks) and to
+/// the [`MIN_VIEW_CHUNKS`] floor.
+pub(super) fn view_blocks(requested_chunks: i32, server_cap: i32) -> f64 {
+    let cap = server_cap.max(MIN_VIEW_CHUNKS);
+    f64::from(requested_chunks.min(cap).max(MIN_VIEW_CHUNKS)) * 16.0
+}
+
 /// Chunk-column edge length in blocks: the index's bucket size.
 const BUCKET_BLOCKS: f64 = 16.0;
 
@@ -203,18 +211,20 @@ impl<K: Copy + Eq + Hash + Ord> InterestSet<K> {
         sel
     }
 
-    #[cfg(test)]
+    /// Whether this set tracks `key` as of its latest refresh.
     pub(super) fn contains(&self, key: K) -> bool {
         self.tracked.contains(&key)
     }
 }
 
-/// One connection's entity interest across the replicated lanes.
+/// One connection's entity interest across the replicated lanes, plus the
+/// looping sounds it currently hears (see `super::event_scope`).
 #[derive(Default)]
 pub struct EntityInterest {
     pub(super) mobs: InterestSet<u64>,
     pub(super) items: InterestSet<u64>,
     pub(super) players: InterestSet<PlayerId>,
+    pub(super) loops: FxHashSet<u64>,
 }
 
 #[cfg(test)]

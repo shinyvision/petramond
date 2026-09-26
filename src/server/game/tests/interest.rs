@@ -3,7 +3,7 @@
 
 use crate::events::tick::TickEvents;
 use crate::mob::Mob;
-use crate::net::protocol::TickUpdate;
+use crate::net::protocol::{ItemLane, MobLane, PlayerLane, SleepTally};
 use crate::player::PlayerId;
 use crate::server::game::ServerGame;
 use petramond_math::world_pos::WorldPos;
@@ -19,20 +19,37 @@ fn two_sessions(far: f64) -> (ServerGame, usize) {
     (server, remote)
 }
 
+/// One recipient's entity sections for a window (an absent section is an
+/// empty lane).
+struct Batch {
+    mobs: MobLane,
+    items: ItemLane,
+    players: PlayerLane,
+    sleep_tally: SleepTally,
+}
+
 /// One window's batches, indexed like `sessions`.
-fn window(server: &mut ServerGame) -> Vec<TickUpdate> {
+fn window(server: &mut ServerGame) -> Vec<Batch> {
     let events = TickEvents::default();
     let shared = server.shared_tick_rows(&events);
     (0..server.sessions.len())
-        .map(|s| server.build_tick_update(s, &events, &[], &[], &[], &[], &shared))
+        .map(|s| {
+            let update = server.build_tick_update(s, &events, &shared);
+            Batch {
+                mobs: update.mobs().cloned().unwrap_or_default(),
+                items: update.items().cloned().unwrap_or_default(),
+                players: update.players().cloned().unwrap_or_default(),
+                sleep_tally: *update.sleep_tally().expect("the headcount rides every batch"),
+            }
+        })
         .collect()
 }
 
-fn mob_ids(update: &TickUpdate) -> Vec<u64> {
+fn mob_ids(update: &Batch) -> Vec<u64> {
     update.mobs.iter().map(|row| row.id).collect()
 }
 
-fn player_ids(update: &TickUpdate) -> Vec<PlayerId> {
+fn player_ids(update: &Batch) -> Vec<PlayerId> {
     update.players.iter().map(|row| row.id).collect()
 }
 

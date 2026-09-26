@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::player::PlayerId;
 use petramond_math::math::{IVec3, Tilt};
 
-use super::{ActionOutcome, ItemSlotWire, MenuSyncMsg, Transform};
+use super::{ItemSlotWire, Transform};
 
 // Per-tick world deltas are world-owned (see `world::replication`).
 pub use crate::world::replication::{BlockDelta, BlockDrawDelta, CellKvDelta};
@@ -477,66 +477,6 @@ impl SelfEvents {
         self.animator_events.extend(other.animator_events);
         self.client_events.extend(other.client_events);
     }
-}
-
-/// One executed server tick's replication to one client. At most one per pump
-/// (states as of the latest executed tick); the client applies it atomically
-/// and interpolates between consecutive updates.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct TickUpdate {
-    pub tick: u64,
-    pub clock: u64,
-    pub block_deltas: Vec<BlockDelta>,
-    /// This window's per-cell mod KV changes (loaded sections only), applied
-    /// after `block_deltas`.
-    pub cell_kv_deltas: Vec<CellKvDelta>,
-    /// This window's changed mod draw sets (see [`BlockDrawDelta`]).
-    pub block_draws: Vec<BlockDrawDelta>,
-    /// The mobs in the recipient's interest: spawns, despawns and updates
-    /// against what it already tracks (see [`EntityLane`]).
-    ///
-    /// The three entity lanes select rows out of tables the server builds
-    /// once per tick window, so an entity tracked by many recipients costs
-    /// one row plus a refcount bump per batch in process; on the wire each
-    /// connection encodes only its own selection.
-    pub mobs: super::MobLane,
-    /// The dropped items in the recipient's interest.
-    pub items: super::ItemLane,
-    /// The players in the recipient's interest — always including the
-    /// recipient itself (the client reads its own mount from that row).
-    pub players: super::PlayerLane,
-    /// This window's one-shot player animation events of the players in
-    /// the recipient's interest, in emission order.
-    pub player_actions: std::sync::Arc<[(PlayerId, PlayerActionKind)]>,
-    /// How many connected players are asleep, out of how many — every
-    /// session, tracked or not (the sleep overlay's "x/y players sleeping").
-    pub sleep_tally: SleepTally,
-    /// The recipient's own player state (per-recipient; in-process there is
-    /// one recipient — session 0).
-    pub self_state: Option<SelfState>,
-    /// Every chest with at least one open screen (any player), FULL state per
-    /// batch — the `chest_viewers` key set, tiny. Drives every client's lid
-    /// animation.
-    pub open_chests: Vec<IVec3>,
-    /// The server `WorldEnvironment`'s FULL named-shader-param map, present
-    /// only when any value changed since the last shipped copy (`None` =
-    /// unchanged, keep). Names are strings (engine `petramond:*` keys + mod
-    /// namespaces) — no registry ids ride here. The client applies it into
-    /// its REPLICA world's environment, which the renderer reads.
-    pub env: Option<Vec<(String, [f32; 4])>>,
-    /// This tick window's world-anchored events, in emission order.
-    pub events: Vec<WorldEventMsg>,
-    /// The recipient's own per-tick one-shots.
-    pub self_events: SelfEvents,
-    /// Answers to this recipient's `ClientRequestId`s (menu clicks, breaks,
-    /// drops, …), in emission order.
-    pub action_outcomes: Vec<ActionOutcome>,
-    pub creative: Vec<crate::schematic::CreativeReply>,
-    /// Schematic choices, positionings, archive streams and ghosts for this
-    /// recipient.
-    pub schematics: Vec<crate::schematic::share::SchematicNotice>,
-    /// The recipient's menu-session view when it changed (`None` = unchanged).
-    pub menu_sync: Option<MenuSyncMsg>,
 }
 
 /// The server-wide sleep headcount a [`TickUpdate`] carries: player rows only

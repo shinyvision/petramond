@@ -90,8 +90,23 @@ impl<R> RowSet<R> {
 
 impl<R: Clone> RowSet<R> {
     /// Keep the rows `keep` accepts, letting it rewrite each in place — the
-    /// transport's id remap. Detaches from the shared table.
-    pub fn retain_mut(&mut self, keep: impl FnMut(&mut R) -> bool) {
+    /// transport's id remap. A decoded set (sole owner of its table, picking
+    /// every row in order) is rewritten where it lies and loses rejected rows
+    /// from its picks alone; a shared selection detaches from its table.
+    pub fn retain_mut(&mut self, mut keep: impl FnMut(&mut R) -> bool) {
+        let whole = self.picks.len() == self.table.len()
+            && self.picks.iter().enumerate().all(|(i, &p)| p as usize == i);
+        if whole {
+            if let Some(rows) = Arc::get_mut(&mut self.table) {
+                let kept: Vec<bool> = rows.iter_mut().map(&mut keep).collect();
+                if kept.iter().any(|&k| !k) {
+                    self.picks = (0..kept.len() as u32)
+                        .filter(|&i| kept[i as usize])
+                        .collect();
+                }
+                return;
+            }
+        }
         let mut rows: Vec<R> = self.iter().cloned().collect();
         rows.retain_mut(keep);
         *self = rows.into();

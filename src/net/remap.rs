@@ -1,28 +1,101 @@
 //! Registry id remapping at the TCP transport boundary.
 //!
-//! Dynamic block/item/mob/sound/effect ids are assigned per PROCESS at load,
-//! so a client's ids need not match the server's (the client may have more
-//! mods installed than the server enables). At join the server sends its name
-//! tables in server-id order ([`NameTables`]); the client builds dense
+//! Dynamic block/item/mob/sound/effect/biome ids are assigned per PROCESS at
+//! load, so a client's ids need not match the server's (the client may have
+//! more mods installed than the server enables). At join the server sends its
+//! name tables in server-id order ([`NameTables`]); the client builds dense
 //! server-id→client-id LUTs here and rewrites every inbound message right
 //! after decode (and outbound before encode) on the transport threads.
 //! Everything above the transport speaks client-local ids; the LOCAL
 //! connection is identity and skips this module entirely.
 //!
+//! The rewrite is DERIVED FROM THE TYPES: every wire type implements
+//! [`Remap`], and every struct impl destructures its value EXHAUSTIVELY (no
+//! `..`), naming each id-bearing field's rewrite and binding each id-free
+//! field to `_` with the reason. A field added to any wire type therefore
+//! fails compilation in its `Remap` impl until its id story is decided — a
+//! new id can never ship raw to a client whose registries differ. The impls
+//! live in [`wire`].
+//!
 //! A server name unknown to the client can only be a server-side DISABLED
 //! mod's registered residue (the handshake guarantees enabled mods are
-//! installed): blocks map to air, items/mobs/sounds/effects to MISSING (the
-//! consumer skips), each with one warning — the palette's unknown-name
-//! semantics, never a rejection.
+//! installed): blocks map to air, biomes to the unregistered-id fallback,
+//! items/mobs/sounds/effects to MISSING (the consumer skips), each with one
+//! warning — the palette's unknown-name semantics, never a rejection.
 
-use super::protocol::{ClientToServer, NameTables, SectionBlocks, ServerToClient};
+use super::protocol::{ClientToServer, NameTables, ServerToClient};
 use crate::player::animator::AnimatorNames;
 use crate::player::RigId;
+
+mod wire;
+
+#[cfg(test)]
+mod tests;
 
 /// LUT entry for "the client doesn't know this name". Registry ids are `u16`
 /// and the tables are dense, so a sentinel VALUE would collide with a real id;
 /// entries are `Option`-shaped instead, which niche-packs to the same size.
 pub const MISSING: Option<u16> = None;
+
+/// A wire value whose registry ids the transport rewrites into this process's
+/// ids. `false` = the value names something this client lacks and its
+/// container drops it (skip semantics: an unknown mob row, effect, or sound
+/// event); a value that can always stand (a player row whose held item is
+/// unknown reads as an empty hand) degrades in place and returns `true`.
+pub trait Remap {
+    fn remap(&mut self, map: &IdRemap) -> bool;
+}
+
+impl<T: Remap> Remap for Vec<T> {
+    fn remap(&mut self, map: &IdRemap) -> bool {
+        self.retain_mut(|v| v.remap(map));
+        true
+    }
+}
+
+/// An optional value the client cannot name reads as absent (an unknown
+/// inventory item is an empty slot).
+impl<T: Remap> Remap for Option<T> {
+    fn remap(&mut self, map: &IdRemap) -> bool {
+        if self.as_mut().is_some_and(|v| !v.remap(map)) {
+            *self = None;
+        }
+        true
+    }
+}
+
+impl<T: Remap + ?Sized> Remap for Box<T> {
+    fn remap(&mut self, map: &IdRemap) -> bool {
+        (**self).remap(map)
+    }
+}
+
+/// A shared run of rows. The batch arrives decoded, so this process is the
+/// sole owner and the run is rewritten in place; only a run that loses rows
+/// (or one still shared, which the transport never hands over) is rebuilt.
+impl<T: Remap + Clone> Remap for std::sync::Arc<[T]> {
+    fn remap(&mut self, map: &IdRemap) -> bool {
+        let keep: Vec<bool> = match std::sync::Arc::get_mut(self) {
+            Some(rows) => rows.iter_mut().map(|row| row.remap(map)).collect(),
+            None => {
+                let mut rows = self.to_vec();
+                rows.retain_mut(|row| row.remap(map));
+                *self = rows.into();
+                return true;
+            }
+        };
+        if keep.iter().all(|&k| k) {
+            return true;
+        }
+        *self = self
+            .iter()
+            .zip(keep)
+            .filter(|(_, k)| *k)
+            .map(|(row, _)| row.clone())
+            .collect();
+        true
+    }
+}
 
 /// One rig graph's vocabulary tables, server id → this process's id.
 #[derive(Debug, Default)]
@@ -51,7 +124,7 @@ impl AnimatorLut {
     fn is_identity(&self) -> bool {
         [&self.clips, &self.params, &self.slots, &self.events]
             .into_iter()
-            .all(|t| t.iter().enumerate().all(|(i, &v)| v == Some(i as u16)))
+            .all(|t| is_identity_lut(t))
     }
 }
 
@@ -60,7 +133,15 @@ impl AnimatorLut {
 pub struct IdRemap {
     /// Blocks: unknown maps to air (0) — a cell must still hold SOMETHING.
     blocks: Vec<u16>,
+    /// Surface biomes (index = server biome id; id 0 is unassigned and maps
+    /// to itself): unknown maps to the unregistered-id fallback, exactly what
+    /// `Biome::from_id` reads an unregistered id as — a column must still
+    /// hold something.
+    biomes: Vec<u8>,
     items: Vec<Option<u16>>,
+    /// The inverse of `items` (index = THIS process's item id), for the few
+    /// client→server messages that name an item.
+    items_to_server: Vec<Option<u16>>,
     mobs: Vec<Option<u16>>,
     sounds: Vec<Option<u16>>,
     effects: Vec<Option<u16>>,
@@ -91,6 +172,9 @@ impl IdRemap {
                 }
             })
             .collect();
+        let biomes = Self::biome_lut(&tables.biomes, |key| {
+            petramond_world::biome::Biome::from_name(key).map(|b| b.id())
+        });
         let items = build_lut(&tables.items, "item", |n| names.items.id(n));
         // The mob wire vocabulary is `MobDef::key` (not the registry name), so
         // the mob name table can't answer it; a one-shot hash join keeps this
@@ -113,19 +197,10 @@ impl IdRemap {
         let conditions = build_lut(&tables.conditions, "condition", |n| {
             petramond_world::condition::by_name(n).map(|c| c.0 as u16)
         });
-
         let animators = Self::animator_luts(&tables.animators, &AnimatorNames::all());
-
-        let identity = blocks.iter().enumerate().all(|(i, &v)| i == v as usize)
-            && [&items, &mobs, &sounds, &effects, &emitters, &conditions]
-                .into_iter()
-                .all(|t| t.iter().enumerate().all(|(i, &v)| v == Some(i as u16)))
-            && animators.iter().enumerate().all(|(i, a)| {
-                a.as_ref()
-                    .is_some_and(|(rig, lut)| rig.index() == i && lut.is_identity())
-            });
-        IdRemap {
+        Self::assemble(RemapTables {
             blocks,
+            biomes,
             items,
             mobs,
             sounds,
@@ -133,8 +208,71 @@ impl IdRemap {
             emitters,
             conditions,
             animators,
+        })
+    }
+
+    /// Finish a remap from its forward tables: derive the inverse item table
+    /// and the identity fast-path flag.
+    fn assemble(t: RemapTables) -> IdRemap {
+        let mut items_to_server: Vec<Option<u16>> = Vec::new();
+        for (server, local) in t.items.iter().enumerate() {
+            if let Some(local) = *local {
+                let at = usize::from(local);
+                if items_to_server.len() <= at {
+                    items_to_server.resize(at + 1, MISSING);
+                }
+                items_to_server[at] = Some(server as u16);
+            }
+        }
+        let identity = t.blocks.iter().enumerate().all(|(i, &v)| i == v as usize)
+            && t.biomes.iter().enumerate().all(|(i, &v)| i == v as usize)
+            && [
+                &t.items,
+                &t.mobs,
+                &t.sounds,
+                &t.effects,
+                &t.emitters,
+                &t.conditions,
+            ]
+            .into_iter()
+            .all(|table| is_identity_lut(table))
+            && t.animators.iter().enumerate().all(|(i, a)| {
+                a.as_ref()
+                    .is_some_and(|(rig, lut)| rig.index() == i && lut.is_identity())
+            });
+        IdRemap {
+            blocks: t.blocks,
+            biomes: t.biomes,
+            items: t.items,
+            items_to_server,
+            mobs: t.mobs,
+            sounds: t.sounds,
+            effects: t.effects,
+            emitters: t.emitters,
+            conditions: t.conditions,
+            animators: t.animators,
             identity,
         }
+    }
+
+    /// The biome table: server id → this process's id by registry KEY. Id 0
+    /// is unassigned on both sides; an unknown key maps to the id every
+    /// unregistered biome reads as.
+    fn biome_lut(server: &[String], resolve: impl Fn(&str) -> Option<u8>) -> Vec<u8> {
+        let fallback = petramond_world::biome::Biome::from_id(0).id();
+        server
+            .iter()
+            .enumerate()
+            .map(|(id, key)| {
+                if id == 0 {
+                    return 0;
+                }
+                resolve(key).unwrap_or_else(|| {
+                    log::warn!("remap: unknown server biome '{key}' maps to the fallback biome");
+                    fallback
+                })
+            })
+            .collect()
     }
 
     /// The per-rig tables: each server rig joined BY NAME to this process's
@@ -172,9 +310,25 @@ impl IdRemap {
             .unwrap_or(petramond_world::block::Block::Air.0)
     }
 
+    /// A server biome id as this process's; past the table reads as the
+    /// unregistered-id fallback, like an unknown key.
+    #[inline]
+    pub fn biome(&self, server_id: u8) -> u8 {
+        self.biomes
+            .get(usize::from(server_id))
+            .copied()
+            .unwrap_or_else(|| petramond_world::biome::Biome::from_id(0).id())
+    }
+
     #[inline]
     pub fn item(&self, server_id: u16) -> Option<u16> {
         lookup(&self.items, server_id as usize)
+    }
+
+    /// This process's item id as the SERVER's (client→server direction).
+    #[inline]
+    pub fn item_to_server(&self, local_id: u16) -> Option<u16> {
+        lookup(&self.items_to_server, local_id as usize)
     }
 
     #[inline]
@@ -202,6 +356,23 @@ impl IdRemap {
         lookup(&self.conditions, server_id as usize).map(|id| id as u8)
     }
 
+    /// Rewrite one id in place through `lookup`; `false` = unknown (the
+    /// caller drops what carries it).
+    fn rewrite<T: Copy>(slot: &mut T, lookup: impl FnOnce(T) -> Option<T>) -> bool {
+        match lookup(*slot) {
+            Some(local) => {
+                *slot = local;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// An optional item id: an unknown one reads as absent (an empty hand).
+    fn optional_item(&self, slot: &mut Option<u16>) {
+        *slot = slot.and_then(|id| self.item(id));
+    }
+
     /// This process's rig and tables for a server rig id; `None` for a rig
     /// this process lacks.
     fn animator(&self, rig: RigId) -> Option<(RigId, &AnimatorLut)> {
@@ -218,344 +389,50 @@ impl IdRemap {
         Some((rig, lookup(&lut.events, event as usize)?))
     }
 
-    /// Rewrite a body's animator claims; an entry naming a rig, param, slot
-    /// or clip this process lacks drops alone (skip semantics), the rest
-    /// stand.
-    fn remap_animator(&self, claims: &mut crate::player::AnimatorClaims) {
-        claims.params.retain_mut(|p| {
-            let Some((rig, lut)) = self.animator(p.rig) else {
-                return false;
-            };
-            match lookup(&lut.params, p.param as usize) {
-                Some(local) => {
-                    p.rig = rig;
-                    p.param = local;
-                    true
-                }
-                None => false,
-            }
-        });
-        claims.plays.retain_mut(|p| {
-            let Some((rig, lut)) = self.animator(p.rig) else {
-                return false;
-            };
-            match (
-                lookup(&lut.slots, p.slot as usize),
-                lookup(&lut.clips, p.clip as usize),
-            ) {
-                (Some(slot), Some(clip)) => {
-                    p.rig = rig;
-                    p.slot = slot;
-                    p.clip = clip;
-                    true
-                }
-                _ => false,
-            }
-        });
-    }
-
-    fn remap_conditions(&self, conditions: &mut Vec<(u8, u8)>) {
-        conditions.retain_mut(|(id, _)| match self.condition(*id) {
-            Some(local) => {
-                *id = local;
+    /// Rewrite one fired graph event in place; `false` = unknown here.
+    fn remap_animator_event(&self, rig: &mut RigId, event: &mut u16) -> bool {
+        match self.animator_event(*rig, *event) {
+            Some((local_rig, local)) => {
+                *rig = local_rig;
+                *event = local;
                 true
             }
             None => false,
-        });
+        }
     }
 
     /// Rewrite a freshly-decoded server message to client-local ids, in place.
-    /// EXHAUSTIVE over the enum: a new variant fails compilation here until
-    /// its id story is decided (a `=> {}` arm is that decision, made visibly).
     pub fn remap_to_client(&self, msg: &mut ServerToClient) {
         if self.identity {
             return;
         }
-        match msg {
-            ServerToClient::SectionData(p) => {
-                remap_block_cube(&mut p.blocks, |id| self.block(id));
-                p.metrics = petramond_world::section::Section::metrics_from_blocks(&p.blocks.0);
-                // A cell state's id-masked bytes are raw BLOCK IDS (a slab's
-                // two layers) — rewrite them like the block buffer. GENERIC:
-                // the state declares its own id bytes, so a new stateful kind
-                // needs no arm here.
-                for (_, state) in &mut p.states.cell_states {
-                    state.remap_ids(|id| self.block(id));
-                }
-            }
-            ServerToClient::Tick(t) => {
-                for d in &mut t.block_deltas {
-                    d.block_id = self.block(d.block_id);
-                    if let Some(state) = &mut d.state {
-                        state.remap_ids(|id| self.block(id));
-                    }
-                }
-                // Unknown mob/item rows are DROPPED (skip semantics — a
-                // disabled server-side mod's residue), like every non-block
-                // unknown.
-                t.mobs.retain_rows_mut(|m| match self.mob(m.kind_id) {
-                    Some(id) => {
-                        m.kind_id = id;
-                        self.remap_conditions(&mut m.conditions);
-                        // Emitter bundle ids remap per entry; an unknown one
-                        // (server-side disabled mod's residue) drops alone —
-                        // the mob itself still renders.
-                        m.emitters.retain_mut(|e| match self.emitter(*e) {
-                            Some(local) => {
-                                *e = local;
-                                true
-                            }
-                            None => false,
-                        });
-                        // An unknown held item draws an empty hand.
-                        for held in &mut m.held {
-                            *held = held.and_then(|item| self.item(item));
-                        }
-                        true
-                    }
-                    None => false,
-                });
-                t.items.retain_rows_mut(|i| match self.item(i.item_id) {
-                    Some(id) => {
-                        i.item_id = id;
-                        true
-                    }
-                    None => false,
-                });
-                // Player rows: the held item carries a registry id (an
-                // unknown one reads as an empty hand — skip semantics, the
-                // body itself always renders) and the animator claims carry
-                // graph ids. Of the `player_actions` kinds only the fired
-                // graph event carries one; `env` entries are param NAME
-                // strings + floats.
-                t.players.retain_rows_mut(|p| {
-                    self.remap_conditions(&mut p.conditions);
-                    p.held_item = p.held_item.and_then(|id| self.item(id));
-                    p.off_hand_item = p.off_hand_item.and_then(|id| self.item(id));
-                    for shown in &mut p.held_display {
-                        *shown = shown.and_then(|id| self.item(id));
-                    }
-                    self.remap_animator(&mut p.animator);
-                    true
-                });
-                t.player_actions = retain_shared(&t.player_actions, |(_, kind)| match kind {
-                    super::protocol::PlayerActionKind::Animator { rig, event } => {
-                        match self.animator_event(*rig, *event) {
-                            Some((local_rig, local)) => {
-                                *rig = local_rig;
-                                *event = local;
-                                true
-                            }
-                            None => false,
-                        }
-                    }
-                    _ => true,
-                });
-                if let Some(s) = &mut t.self_state {
-                    self.remap_conditions(&mut s.conditions);
-                    self.remap_animator(&mut s.animator);
-                    for shown in &mut s.held_display {
-                        *shown = shown.and_then(|id| self.item(id));
-                    }
-                    s.effects.retain_mut(|(id, _)| match self.effect(*id) {
-                        Some(local) => {
-                            *id = local;
-                            true
-                        }
-                        None => false,
-                    });
-                    if let Some(slots) = &mut s.inventory {
-                        for slot in slots {
-                            remap_slot(self, slot);
-                        }
-                    }
-                }
-                // World events: block ids map to air (a cell-shaped fact);
-                // unknown mob/sound events are DROPPED (skip semantics).
-                // Of `self_events` only the echoed graph events carry ids (a
-                // mod cue's key is the emitting pack's own namespaced string
-                // and its payload is bytes only that pack reads).
-                t.events.retain_mut(|ev| self.remap_world_event(ev));
-                t.self_events.animator_events.retain_mut(|(rig, event)| {
-                    match self.animator_event(*rig, *event) {
-                        Some((local_rig, local)) => {
-                            *rig = local_rig;
-                            *event = local;
-                            true
-                        }
-                        None => false,
-                    }
-                });
-                if let Some(sync) = &mut t.menu_sync {
-                    self.remap_menu_sync(sync);
-                }
-            }
-            ServerToClient::JoinAccept(j) => {
-                for slot in &mut j.self_restore.inventory {
-                    if let Some(s) = slot {
-                        match self.item(s.item_id) {
-                            Some(id) => s.item_id = id,
-                            None => *slot = None, // unknown item: slot reads empty
-                        }
-                    }
-                }
-                // Effects and crafting recipes travel by name; tables ARE
-                // the vocabulary. Nothing else in JoinData carries ids.
-            }
-            // Name-addressed or id-free messages:
-            ServerToClient::HelloAck { .. }
-            | ServerToClient::HelloReject { .. }
-            | ServerToClient::ModList { .. }
-            | ServerToClient::JoinReject { .. }
-            | ServerToClient::ColumnData(_)
-            | ServerToClient::LightData(_)
-            | ServerToClient::SectionUnload { .. }
-            | ServerToClient::ColumnUnload { .. }
-            | ServerToClient::SectionCached { .. }
-            | ServerToClient::PlayerJoined { .. }
-            | ServerToClient::PlayerLeft { .. }
-            | ServerToClient::ChatLine(_)
-            | ServerToClient::RecipesUnlocked { .. }
-            | ServerToClient::StreamBatchStart
-            | ServerToClient::StreamBatchEnd { .. }
-            | ServerToClient::ServerClosing
-            | ServerToClient::KeepAlive
-            | ServerToClient::Disconnect { .. } => {}
-        }
+        msg.remap(self);
     }
 
-    /// Rewrite one world event's ids in place; `false` = drop the event (an
-    /// unknown mob/sound — a disabled server-side mod's residue).
-    fn remap_world_event(&self, ev: &mut super::protocol::WorldEventMsg) -> bool {
-        use super::protocol::{SpatialSoundMsg, WorldEventMsg};
-        match ev {
-            WorldEventMsg::BlockBroken { block_id, .. }
-            | WorldEventMsg::BlockPlaced { block_id, .. } => {
-                *block_id = self.block(*block_id);
-                true
-            }
-            WorldEventMsg::PanelToggled { .. }
-            | WorldEventMsg::ChestOpened { .. }
-            | WorldEventMsg::ChestClosed { .. }
-            | WorldEventMsg::ItemPickedUp { .. } => true,
-            WorldEventMsg::MobSound { kind_id, .. } => match self.mob(*kind_id) {
-                Some(id) => {
-                    *kind_id = id;
-                    true
-                }
-                None => false,
-            },
-            WorldEventMsg::Sound { sound_id, .. } => match self.sound(*sound_id) {
-                Some(id) => {
-                    *sound_id = id;
-                    true
-                }
-                None => false,
-            },
-            WorldEventMsg::EmitterBurst {
-                emitter_id,
-                texture,
-                ..
-            } => {
-                if let Some(super::protocol::BurstTextureMsg::Block { block_id, .. }) = texture {
-                    *block_id = self.block(*block_id);
-                }
-                match self.emitter(*emitter_id) {
-                    Some(id) => {
-                        *emitter_id = id;
-                        true
-                    }
-                    None => false,
-                }
-            }
-            WorldEventMsg::SpatialSound(cmd) => match cmd {
-                SpatialSoundMsg::PlayAt { sound_id, .. }
-                | SpatialSoundMsg::PlayOnMob { sound_id, .. } => match self.sound(*sound_id) {
-                    Some(id) => {
-                        *sound_id = id;
-                        true
-                    }
-                    None => false,
-                },
-                // Stops carry no registry id and must reach the client so a
-                // dropped-play's handle stays inert (stop of an unknown
-                // handle is already a no-op).
-                SpatialSoundMsg::Set { .. } | SpatialSoundMsg::Stop { .. } => true,
-            },
-        }
-    }
-
-    /// Rewrite a menu sync's item ids through the item LUT (unknown items
-    /// read as empty slots / dropped workbench rows, the inventory policy).
-    fn remap_menu_sync(&self, sync: &mut super::protocol::MenuSyncMsg) {
-        use super::protocol::MenuTargetWire;
-        match &mut sync.target {
-            MenuTargetWire::None => {}
-            MenuTargetWire::Crafting { output } => {
-                remap_slot(self, output);
-            }
-            MenuTargetWire::Container { slots, .. } => {
-                if let Some(slots) = slots {
-                    for slot in slots {
-                        remap_slot(self, slot);
-                    }
-                }
-                // `gui_state` entries are mod-local strings — no registry ids.
-            }
-        }
-    }
-
-    /// Rewrite an outbound client message to server-local ids. No current
-    /// client message carries registry ids; the exhaustive match makes a
-    /// future one impossible to forget.
+    /// Rewrite an outbound client message to server-local ids.
     pub fn remap_to_server(&self, msg: &mut ClientToServer) {
         if self.identity {
             return;
         }
-        match msg {
-            // Menu slot actions carry indices + widget-name strings and
-            // CraftRecipe carries a stable recipe name; none needs an id
-            // remap.
-            ClientToServer::Hello { .. }
-            | ClientToServer::ModQuery
-            | ClientToServer::Join { .. }
-            | ClientToServer::SetViewDistance { .. }
-            | ClientToServer::SetCraftFilter { .. }
-            | ClientToServer::PlayerUpdate(_)
-            | ClientToServer::Action(_)
-            | ClientToServer::CreativeCursor { .. }
-            | ClientToServer::MenuClick { .. }
-            | ClientToServer::MenuDrag { .. }
-            | ClientToServer::MenuDrop { .. }
-            | ClientToServer::MenuSwapOffHand { .. }
-            | ClientToServer::CraftRecipe { .. }
-            | ClientToServer::ChatSend { .. }
-            | ClientToServer::StreamBatchAck { .. }
-            | ClientToServer::TerrainBacklog { .. }
-            | ClientToServer::SectionCacheMiss { .. }
-            | ClientToServer::Pause(_)
-            | ClientToServer::KeepAlive
-            | ClientToServer::Disconnect => {}
-        }
+        wire::remap_to_server(self, msg);
     }
+}
+
+/// The forward tables an [`IdRemap`] is assembled from.
+struct RemapTables {
+    blocks: Vec<u16>,
+    biomes: Vec<u8>,
+    items: Vec<Option<u16>>,
+    mobs: Vec<Option<u16>>,
+    sounds: Vec<Option<u16>>,
+    effects: Vec<Option<u16>>,
+    emitters: Vec<Option<u16>>,
+    conditions: Vec<Option<u16>>,
+    animators: Vec<Option<(RigId, AnimatorLut)>>,
 }
 
 /// THIS process's registry names, in id order — what a server sends as its
 /// wire vocabulary at join.
-/// Rewrite-and-filter a shared row set. The batch's rows arrive from the
-/// server as one `Arc` shared by every recipient; a REMOTE recipient may then
-/// have to rewrite ids into its own registry and drop rows it cannot name, and
-/// this decoded batch is the sole owner, so it rebuilds the run in place of
-/// the one it was handed.
-fn retain_shared<T: Clone>(
-    rows: &std::sync::Arc<[T]>,
-    mut keep: impl FnMut(&mut T) -> bool,
-) -> std::sync::Arc<[T]> {
-    let mut out: Vec<T> = rows.to_vec();
-    out.retain_mut(&mut keep);
-    out.into()
-}
-
 pub fn local_name_tables() -> NameTables {
     let names = petramond_world::registry::names();
     NameTables {
@@ -567,6 +444,10 @@ pub fn local_name_tables() -> NameTables {
                     .expect("dense table")
                     .to_string()
             })
+            .collect(),
+        // Index = biome id; id 0 is unassigned (an empty key).
+        biomes: std::iter::once(String::new())
+            .chain(petramond_world::biome::Biome::all().map(|b| b.key().to_string()))
             .collect(),
         items: (0..names.items.len())
             .map(|i| names.items.name(i as u16).expect("dense table").to_string())
@@ -611,494 +492,14 @@ fn build_lut(
         .collect()
 }
 
+fn is_identity_lut(table: &[Option<u16>]) -> bool {
+    table
+        .iter()
+        .enumerate()
+        .all(|(i, &v)| v == Some(i as u16))
+}
+
 #[inline]
 fn lookup(table: &[Option<u16>], server_id: usize) -> Option<u16> {
     table.get(server_id).copied().flatten()
-}
-
-/// Rewrite one item slot through the item LUT; unknown items read empty.
-fn remap_slot(map: &IdRemap, slot: &mut Option<super::protocol::ItemSlotWire>) {
-    if let Some(w) = slot {
-        match map.item(w.item_id) {
-            Some(id) => w.item_id = id,
-            None => *slot = None,
-        }
-    }
-}
-
-/// Rewrite a section's block cube in place. Decoded buffers are uniquely
-/// owned, so this is a plain walk; a shared buffer (unexpected here) falls
-/// back to copy-on-write.
-fn remap_block_cube(cube: &mut SectionBlocks, f: impl Fn(u16) -> u16) {
-    let buf = std::sync::Arc::make_mut(&mut cube.0);
-    for b in buf.iter_mut() {
-        *b = f(*b);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use petramond_math::math::IVec3;
-    use petramond_math::world_pos::WorldPos;
-
-    /// A two-layer slab state: a meta byte plus two two-byte BLOCK IDS — the
-    /// only engine shape carrying id-masked bytes, and therefore the guard
-    /// that the id boundary rewrites a WHOLE id, not its low byte.
-    fn slab_state(a: u16, b: u16) -> petramond_world::block::ShapeState {
-        let [a_lo, a_hi] = petramond_world::block::ShapeState::id_bytes(a);
-        let [b_lo, b_hi] = petramond_world::block::ShapeState::id_bytes(b);
-        petramond_world::block::ShapeState::with_ids(&[0b0111, a_lo, a_hi, b_lo, b_hi], 0b0_1010)
-    }
-
-    /// A "server" whose tables exactly match this process: identity.
-    #[test]
-    fn matching_registries_build_an_identity_remap() {
-        let map = IdRemap::build(&local_name_tables());
-        assert!(map.is_identity());
-        assert_eq!(map.block(7), 7);
-    }
-
-    /// A server table naming something this client doesn't know (a disabled
-    /// server-side mod's residue) degrades to air/skip with no rejection.
-    #[test]
-    fn unknown_server_names_map_to_air_or_missing() {
-        let mut tables = local_name_tables();
-        tables.blocks.push("ghost_mod:block".to_string());
-        tables.items.push("ghost_mod:item".to_string());
-        let unknown_block = (tables.blocks.len() - 1) as u16;
-        let unknown_item = (tables.items.len() - 1) as u16;
-
-        let map = IdRemap::build(&tables);
-        assert!(!map.is_identity());
-        assert_eq!(
-            map.block(unknown_block),
-            petramond_world::block::Block::Air.0
-        );
-        assert_eq!(map.item(unknown_item), None);
-        // Known ids still map through unchanged.
-        assert_eq!(map.block(3), 3);
-        assert_eq!(map.item(3), Some(3));
-    }
-
-    /// A permuted server table (same content, shifted ids — the realistic
-    /// "client has extra mods" case in miniature) remaps buffers and deltas.
-    #[test]
-    fn shifted_server_ids_rewrite_sections_and_deltas() {
-        let local = local_name_tables();
-        // Server table = local names rotated by one: server id N = local id N+1.
-        let mut tables = local.clone();
-        tables.blocks.rotate_left(1);
-        let map = IdRemap::build(&tables);
-        assert!(!map.is_identity());
-
-        let n = local.blocks.len() as u16;
-        let mut msg = ServerToClient::Tick(Box::new(crate::net::protocol::TickUpdate {
-            tick: 1,
-            clock: 0,
-            block_deltas: vec![
-                crate::net::protocol::BlockDelta {
-                    pos: IVec3::new(0, 64, 0),
-                    block_id: 0, // server 0 = local 1 after the rotation
-                    fluid: None,
-                    state: None,
-                    cell_kv: vec![],
-                },
-                // The slab record's layer bytes are raw BLOCK IDS and must
-                // rewrite like the id fields around them.
-                crate::net::protocol::BlockDelta {
-                    pos: IVec3::new(1, 64, 0),
-                    block_id: 2,
-                    fluid: None,
-                    state: Some(slab_state(2, 3)),
-                    cell_kv: vec![],
-                },
-            ],
-            ..Default::default()
-        }));
-        map.remap_to_client(&mut msg);
-        let ServerToClient::Tick(t) = &msg else {
-            unreachable!()
-        };
-        assert_eq!(t.block_deltas[0].block_id, 1 % n);
-        assert_eq!(
-            t.block_deltas[1].state,
-            Some(slab_state(3 % n, 4 % n)),
-            "id-masked state bytes rewrite through the block LUT"
-        );
-
-        let mut msg = ServerToClient::SectionData(Box::new(crate::net::protocol::SectionPayload {
-            pos: petramond_world::chunk::SectionPos {
-                cx: 0,
-                cy: 0,
-                cz: 0,
-            },
-            blocks: SectionBlocks(std::sync::Arc::from(vec![0u16, 1, 2].into_boxed_slice())),
-            metrics: Default::default(),
-            fluid: None,
-            skylight: None,
-            blocklight: None,
-            states: crate::net::protocol::SectionStatesPayload {
-                cell_states: vec![(9, slab_state(2, 3))],
-                ..Default::default()
-            },
-        }));
-        map.remap_to_client(&mut msg);
-        let ServerToClient::SectionData(p) = &msg else {
-            unreachable!()
-        };
-        assert_eq!(&p.blocks.0[..], &[1 % n, 2 % n, 3 % n]);
-        assert_eq!(
-            p.states.cell_states,
-            vec![(9, slab_state(3 % n, 4 % n))],
-            "SectionStatesPayload id-masked state bytes rewrite through the block LUT"
-        );
-    }
-
-    /// The transport rewrites ids at the boundary, and ids no longer fit a
-    /// byte. Built directly (a synthetic server with more content than this
-    /// client), the LUTs must carry whole ids through the block cube and
-    /// through a cell state's id-masked bytes — a truncation here would swap
-    /// one pack's block for another's at every join.
-    #[test]
-    fn the_boundary_rewrites_whole_two_byte_ids() {
-        let mut blocks = vec![0u16; 1200];
-        for (server, slot) in blocks.iter_mut().enumerate() {
-            *slot = (server as u16).wrapping_add(500);
-        }
-        let map = IdRemap {
-            blocks,
-            items: (0..1200u16).map(|i| Some(i + 700)).collect(),
-            mobs: [].into(),
-            sounds: Vec::new(),
-            effects: Vec::new(),
-            emitters: Vec::new(),
-            conditions: Vec::new(),
-            animators: Default::default(),
-            identity: false,
-        };
-        assert_eq!(map.block(0), 500);
-        assert_eq!(map.block(300), 800);
-        assert_eq!(map.item(300), Some(1000));
-        assert_eq!(
-            map.block(5000),
-            petramond_world::block::Block::Air.0,
-            "past the table"
-        );
-
-        let mut cube = SectionBlocks(std::sync::Arc::from(
-            vec![0u16, 255, 256, 700].into_boxed_slice(),
-        ));
-        remap_block_cube(&mut cube, |id| map.block(id));
-        assert_eq!(&cube.0[..], &[500, 755, 756, 1200]);
-
-        let mut state = slab_state(300, 400);
-        state.remap_ids(|id| map.block(id));
-        assert_eq!((state.id_at(1), state.id_at(3)), (800, 900));
-    }
-
-    /// Crafting output moved inside the menu target, so both crafting
-    /// contexts must still cross the same item-id boundary as every other
-    /// live slot. Unknown joined content degrades to an empty output.
-    #[test]
-    fn crafting_target_outputs_remap_and_skip_unknown_items() {
-        use crate::net::protocol::{ItemSlotWire, MenuSyncMsg, MenuTargetWire};
-
-        let local = local_name_tables();
-        let mut tables = local.clone();
-        tables.items.rotate_left(1);
-        tables.items.push("ghost_mod:result".to_string());
-        let unknown = (tables.items.len() - 1) as u16;
-        let map = IdRemap::build(&tables);
-
-        let mut known = MenuSyncMsg {
-            target: MenuTargetWire::Crafting {
-                output: Some(ItemSlotWire {
-                    item_id: 0,
-                    count: 4,
-                    data: None,
-                }),
-            },
-        };
-        map.remap_menu_sync(&mut known);
-        let MenuTargetWire::Crafting { output } = known.target else {
-            unreachable!()
-        };
-        assert_eq!(output.map(|slot| slot.item_id), Some(1));
-
-        let mut missing = MenuSyncMsg {
-            target: MenuTargetWire::Crafting {
-                output: Some(ItemSlotWire {
-                    item_id: unknown,
-                    count: 1,
-                    data: None,
-                }),
-            },
-        };
-        map.remap_menu_sync(&mut missing);
-        let MenuTargetWire::Crafting { output } = missing.target else {
-            unreachable!()
-        };
-        assert_eq!(output, None);
-    }
-
-    /// Entity/self batches: known ids map through the mob/item/effect LUTs;
-    /// unknown rows are DROPPED (skip semantics), and an unknown inventory
-    /// item reads as an empty slot.
-    #[test]
-    fn tick_entity_batches_remap_known_ids_and_drop_unknown_rows() {
-        use crate::net::protocol::{ItemSlotWire, ItemStateRow, MobStateRow, SelfState};
-        let mut tables = local_name_tables();
-        tables.mobs.push("ghost_mod:beast".to_string());
-        tables.items.push("ghost_mod:trinket".to_string());
-        tables.effects.push("ghost_mod:curse".to_string());
-        let unknown_mob = (tables.mobs.len() - 1) as u8;
-        let unknown_item = (tables.items.len() - 1) as u16;
-        let unknown_effect = (tables.effects.len() - 1) as u8;
-        let map = IdRemap::build(&tables);
-
-        let mob_row = |kind_id: u8| MobStateRow {
-            id: kind_id as u64,
-            kind_id,
-            pos: WorldPos::ZERO,
-            yaw: 0.0,
-            tilt: petramond_math::math::Tilt::LEVEL,
-            anim_time: 0.0,
-            moving: false,
-            idle_anim: None,
-            head_yaw: 0.0,
-            head_pitch: 0.0,
-            hurt_timer: 0.0,
-            dead: false,
-            shorn: false,
-            emitters: Vec::new(),
-            conditions: Vec::new(),
-            anims: Vec::new(),
-            ragdoll: None,
-            dig: None,
-            held: [None; 2],
-            draw: Default::default(),
-        };
-        let item_row = |item_id: u16| ItemStateRow {
-            id: item_id as u64,
-            item_id,
-            count: 1,
-            data: None,
-            pos: WorldPos::ZERO,
-            spin: 0.0,
-            flight: None,
-        };
-        let player_row = |held_item: Option<u16>| crate::net::protocol::PlayerStateRow {
-            conditions: Vec::new(),
-            id: crate::player::PlayerId(1),
-            transform: crate::net::protocol::Transform {
-                pos: WorldPos::ZERO,
-                vel: petramond_math::math::Vec3::ZERO,
-                yaw: 0.0,
-                pitch: 0.0,
-            },
-            on_ground: true,
-            sneaking: false,
-            sleeping: false,
-            sleep_yaw: None,
-            alive: true,
-            visible: true,
-            held_item,
-            held_data: None,
-            // The off-hand rides the same item remap as the held item; reuse
-            // the closure's id so both lanes are exercised together.
-            off_hand_item: held_item,
-            off_hand_data: None,
-            mining: None,
-            eating: false,
-            eating_off_hand: false,
-            held_pose_main: None,
-            held_pose_off: None,
-            held_display: [None; 2],
-            bone_poses: Vec::new(),
-            animator: Default::default(),
-            hurt_recent: false,
-            snap: false,
-            mount: None,
-        };
-        let mut msg = ServerToClient::Tick(Box::new(crate::net::protocol::TickUpdate {
-            mobs: vec![mob_row(0), mob_row(unknown_mob)].into(),
-            items: vec![item_row(2), item_row(unknown_item)].into(),
-            players: vec![player_row(Some(2)), player_row(Some(unknown_item))].into(),
-            self_state: Some(SelfState {
-                conditions: Vec::new(),
-                health: 20,
-                mode: 0,
-                denied_actions: Default::default(),
-                effects: vec![(0, 100), (unknown_effect, 50)],
-                inventory_revision: 1,
-                inventory: Some(vec![
-                    Some(ItemSlotWire {
-                        item_id: 2,
-                        count: 4,
-                        data: None,
-                    }),
-                    Some(ItemSlotWire {
-                        item_id: unknown_item,
-                        count: 1,
-                        data: None,
-                    }),
-                ]),
-                eating: None,
-                eating_off_hand: false,
-                move_scale: 1.0,
-                held_pose_main: None,
-                held_pose_off: None,
-                held_display: [Some(2), Some(unknown_item)],
-                bone_poses: Vec::new(),
-                animator: Default::default(),
-                sleeping: None,
-                sleep_bed: None,
-                transform: None,
-            }),
-            ..Default::default()
-        }));
-        map.remap_to_client(&mut msg);
-        let ServerToClient::Tick(t) = &msg else {
-            unreachable!()
-        };
-        assert_eq!(t.mobs.len(), 1, "the unknown mob row is dropped");
-        assert_eq!(t.mobs.iter().next().unwrap().kind_id, 0);
-        assert_eq!(t.items.len(), 1, "the unknown item row is dropped");
-        assert_eq!(t.items.iter().next().unwrap().item_id, 2);
-        let players: Vec<_> = t.players.iter().collect();
-        assert_eq!(players.len(), 2, "player rows are never dropped");
-        assert_eq!(players[0].held_item, Some(2));
-        assert_eq!(
-            players[1].held_item, None,
-            "an unknown held item reads as an empty hand"
-        );
-        let s = t.self_state.as_ref().expect("self state kept");
-        assert_eq!(
-            s.held_display,
-            [Some(2), None],
-            "the self row's display items remap like the player rows'"
-        );
-        assert_eq!(s.effects, vec![(0, 100)], "the unknown effect is dropped");
-        let slots = s.inventory.as_ref().expect("inventory kept");
-        assert_eq!(slots[0].as_ref().map(|w| w.item_id), Some(2));
-        assert_eq!(slots[1], None, "an unknown inventory item reads empty");
-    }
-
-    /// Animator ids on the wire are rig, graph and library INDICES, which
-    /// differ between peers with different packs: they must remap by NAME
-    /// through the join's per-rig animator tables — the rig itself by its
-    /// name, so a peer whose registry lists rigs in another order (or lacks
-    /// one) still lands each row on the right rig — and an entry naming
-    /// something this client lacks must drop alone, leaving the rest of the
-    /// body's claims intact.
-    #[test]
-    fn animator_claims_remap_by_name_and_unknown_entries_drop_alone() {
-        use crate::player::{
-            AnimatorClaims, AnimatorClock, AnimatorParam, AnimatorPlay, AnimatorValue,
-        };
-        let names =
-            |rig: &str, clips: &[&str], params: &[&str], slots: &[&str], events: &[&str]| {
-                let list = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-                AnimatorNames {
-                    rig: rig.to_string(),
-                    clips: list(clips),
-                    params: list(params),
-                    slots: list(slots),
-                    events: list(events),
-                }
-            };
-        // This process: the body at rig 0, the viewmodel at rig 1.
-        let local = [
-            names(
-                "body",
-                &["idle", "swing", "guard"],
-                &["held", "claim"],
-                &["main", "off"],
-                &["swing", "hurt"],
-            ),
-            names(
-                "view",
-                &["fp_idle", "fp_swing"],
-                &["held"],
-                &["main"],
-                &["swing"],
-            ),
-        ];
-        // The server: the viewmodel first, its clips in another order, a
-        // spear pack's extra slot on the body, and a rig this client lacks.
-        let server = [
-            names(
-                "view",
-                &["fp_swing", "fp_idle"],
-                &["held"],
-                &["main"],
-                &["swing"],
-            ),
-            names(
-                "body",
-                &["guard", "swing", "idle"],
-                &["claim", "held"],
-                &["main", "lunge", "off"],
-                &["hurt", "swing"],
-            ),
-            names("cart", &["roll"], &[], &["seat"], &["bump"]),
-        ];
-        let luts = IdRemap::animator_luts(&server, &local);
-        assert_eq!(luts.len(), 3);
-        assert_eq!(
-            luts[0].as_ref().map(|(rig, _)| *rig),
-            Some(RigId(1)),
-            "rigs join by name"
-        );
-        assert_eq!(luts[1].as_ref().map(|(rig, _)| *rig), Some(RigId(0)));
-        assert!(luts[2].is_none(), "an unknown rig maps to nothing");
-        let map = IdRemap {
-            blocks: Vec::new(),
-            items: [].into(),
-            mobs: [].into(),
-            sounds: Vec::new(),
-            effects: Vec::new(),
-            emitters: Vec::new(),
-            conditions: Vec::new(),
-            animators: luts,
-            identity: false,
-        };
-
-        let play = |rig: u16, slot: u16, clip: u16| AnimatorPlay {
-            rig: RigId(rig),
-            slot,
-            clip,
-            clock: AnimatorClock::Scrub(0.5),
-            mirror: false,
-            priority: 0,
-        };
-        let param = |rig: u16, param: u16| AnimatorParam {
-            rig: RigId(rig),
-            param,
-            value: AnimatorValue::Number(1.0),
-        };
-        let mut claims = AnimatorClaims {
-            params: vec![param(1, 0), param(2, 0)],
-            plays: vec![play(1, 2, 0), play(1, 1, 1), play(0, 0, 0), play(2, 0, 0)],
-        };
-        map.remap_animator(&mut claims);
-        assert_eq!(
-            claims.params,
-            [param(0, 1)],
-            "the body's `claim` param by name; the cart's dropped"
-        );
-        assert_eq!(
-            claims.plays,
-            [play(0, 1, 2), play(1, 0, 1)],
-            "server body `off`/`guard` → local body; `lunge` and the cart drop alone; view `main`/`fp_swing` by name"
-        );
-        assert_eq!(
-            map.animator_event(RigId(1), 1),
-            Some((RigId(0), 0)),
-            "`swing` on the body"
-        );
-        assert_eq!(map.animator_event(RigId(0), 0), Some((RigId(1), 0)));
-        assert_eq!(map.animator_event(RigId(2), 0), None);
-    }
 }

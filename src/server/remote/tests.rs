@@ -340,7 +340,10 @@ fn full_lan_join_place_pause_gate_and_leave() {
         .expect("pad is inside the section grid");
     let mut lit_sections = 0usize;
     let mut pad_streamed = false;
-    let own_pos = drain_until(&mut remote, remain(), |msg| {
+    // The visitor's own row spawns in its first batch and afterwards rides
+    // only when it changed (per-connection deltas), so remember the sighting.
+    let mut own_row = false;
+    drain_until(&mut remote, remain(), |msg| {
         match msg {
             ServerToClient::SectionData(p) => {
                 if p.skylight.is_some() {
@@ -350,18 +353,17 @@ fn full_lan_join_place_pause_gate_and_leave() {
                     pad_streamed = true;
                 }
             }
-            ServerToClient::Tick(update) if pad_streamed && lit_sections > 0 => {
-                if let Some(row) = update.players.iter().find(|r| r.id == PlayerId(1)) {
-                    return Some(row.transform.pos);
-                }
+            ServerToClient::Tick(update) => {
+                own_row |= update
+                    .players()
+                    .is_some_and(|lane| lane.iter().any(|r| r.id == PlayerId(1)));
             }
             _ => {}
         }
-        None
+        (pad_streamed && lit_sections > 0 && own_row).then_some(())
     })
     .expect("pad section streams with lit terrain and a visitor row");
     assert!(lit_sections > 0, "baked light rides TCP section payloads");
-    let _ = own_pos;
     let target = place_target;
     let placed_at = IVec3::new(target.x, target.y + 1, target.z);
 
@@ -407,13 +409,12 @@ fn full_lan_join_place_pause_gate_and_leave() {
             return None;
         };
         if update
-            .block_deltas
-            .iter()
-            .any(|d| d.pos == placed_at && d.block_id == Block::Dirt.0)
+            .block_deltas()
+            .is_some_and(|deltas| deltas.iter().any(|d| d.pos == placed_at && d.block_id == Block::Dirt.0))
         {
             return Some(());
         }
-        let self_state = update.self_state.as_ref()?;
+        let self_state = update.self_state()?;
         let inv = self_state.inventory.as_ref()?;
         match inv.first() {
             Some(Some(slot)) if slot.item_id == ItemType::Dirt.0 && slot.count == 63 => Some(()),

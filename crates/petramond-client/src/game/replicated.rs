@@ -28,7 +28,7 @@ use petramond_world::gui_state::ContainerView;
 use petramond::net::protocol::{
     EntityLane, EntityRow, ItemLane, ItemSlotWire, ItemStateRow, MenuSyncMsg, MenuTargetWire,
     MobLane, MobStateRow, PlayerActionKind, PlayerLane, PlayerMount, SelfState, SpatialSoundMsg,
-    TickUpdate, WorldEventMsg,
+    TickSection, TickUpdate, WorldEventMsg,
 };
 use petramond::player::PlayerId;
 use petramond::player::{Player, PlayerMode};
@@ -866,28 +866,80 @@ impl Game {
     /// immediately, entity rows enter the interpolation FIFO, and this
     /// window's events translate to LOCAL types and buffer for `GameEvents`.
     pub fn apply_tick_update(&mut self, update: Box<TickUpdate>) {
-        let update = *update;
-        self.receive_creative_replies(update.creative);
-        self.receive_schematic_notices(update.schematics);
-        self.entities.set_tick(update.tick);
-        // The batch's written cells, collected before the deltas are consumed
-        // (the rollback and place-ghost checks below both key on them).
-        let delta_cells: rustc_hash::FxHashSet<IVec3> =
-            update.block_deltas.iter().map(|d| d.pos).collect();
-        self.note_ghost_changes(delta_cells.iter().copied());
-        for delta in update.block_deltas {
-            self.replica.apply_remote_delta(delta);
-        }
-        // AFTER the block deltas for the same reason as the KV below: a block
-        // write drops the cell's draw set on both sides, so a same-batch
-        // write-block-then-draw sequence has to land in that order.
-        for d in update.block_draws {
-            self.replica.apply_remote_block_draw(d.pos, d.prims);
-        }
-        // AFTER the block deltas: a block write wipes the cell's KV on both
-        // sides, so a same-batch write-block-then-KV sequence lands in order.
-        for kv in update.cell_kv_deltas {
-            self.replica.apply_remote_cell_kv(kv);
+        let TickUpdate {
+            tick,
+            clock: _,
+            sections,
+        } = *update;
+        self.entities.set_tick(tick);
+        // Sections apply in list order (the server's canonical order). The
+        // independent ones take effect as they come; the entity lanes and the
+        // prediction-coupled authority (outcomes, self state, menu sync, and
+        // the events their reconcile suppresses) are gathered for the phases
+        // below, which must see the whole batch.
+        let mut rows = StagedRows {
+            mobs: MobLane::default(),
+            items: ItemLane::default(),
+            players: PlayerLane::default(),
+            actions: Vec::new().into(),
+            resync: false,
+        };
+        let mut sleep_tally = None;
+        let mut delta_cells = rustc_hash::FxHashSet::<IVec3>::default();
+        let mut outcomes = Vec::new();
+        let mut self_state = None;
+        let mut menu_sync = None;
+        let mut open_chests = Vec::new();
+        let mut world_events = Vec::new();
+        for section in sections {
+            match section {
+                TickSection::Creative(replies) => self.receive_creative_replies(replies),
+                TickSection::Schematics(notices) => self.receive_schematic_notices(notices),
+                TickSection::BlockDeltas(deltas) => {
+                    // The batch's written cells, collected before the deltas
+                    // are consumed (the rollback and place-ghost checks both
+                    // key on them).
+                    delta_cells.extend(deltas.iter().map(|d| d.pos));
+                    self.note_ghost_changes(deltas.iter().map(|d| d.pos));
+                    for delta in deltas {
+                        self.replica.apply_remote_delta(delta);
+                    }
+                }
+                // After the block deltas (section order): a block write drops
+                // the cell's draw set and wipes its KV on both sides, so a
+                // same-batch write-then-draw/KV sequence lands in order.
+                TickSection::BlockDraws(draws) => {
+                    for d in draws {
+                        self.replica.apply_remote_block_draw(d.pos, d.prims);
+                    }
+                }
+                TickSection::CellKvDeltas(kv) => {
+                    for kv in kv {
+                        self.replica.apply_remote_cell_kv(kv);
+                    }
+                }
+                TickSection::Mobs(lane) => rows.mobs = lane,
+                TickSection::Items(lane) => rows.items = lane,
+                TickSection::Players(lane) => rows.players = lane,
+                TickSection::PlayerActions(actions) => rows.actions = actions,
+                TickSection::SleepTally(tally) => sleep_tally = Some(tally),
+                TickSection::ActionOutcomes(list) => outcomes = list,
+                TickSection::SelfState(state) => self_state = Some(state),
+                TickSection::MenuSync(sync) => menu_sync = Some(sync),
+                // Shader-param environment (day/night sky, mod visuals):
+                // applied into the REPLICA world's `WorldEnvironment` — the
+                // map the renderer reads. Only changed params ride.
+                TickSection::Env(env) => {
+                    for (key, value) in env {
+                        self.replica.set_shader_param(key, value);
+                    }
+                }
+                TickSection::OpenChests(chests) => open_chests = chests,
+                TickSection::Events(events) => world_events = events,
+                TickSection::SelfEvents(events) => {
+                    self.pending_events.self_events.merge_from(events);
+                }
+            }
         }
         // Entity ROWS are STAGED, not applied: the committed prev→curr pair
         // under the render must never shift mid-segment (see `ReplicaClock`).
@@ -897,15 +949,26 @@ impl Game {
         // self state, events, menu — applies immediately: it is either an
         // authoritative correction or one-shot presentation, not interpolated
         // motion.
-        let staged = StagedRows {
-            mobs: update.mobs,
-            items: update.items,
-            players: update.players,
-            actions: update.player_actions,
-            resync: false,
-        };
-        let committed = self.entities.receive(update.sleep_tally, staged);
+        let sleep_tally = sleep_tally.unwrap_or_else(|| self.entities.sleep_tally());
+        let committed = self.entities.receive(sleep_tally, rows);
         self.after_commit(committed);
+        // An absent lid section means no chest is open.
+        self.set_open_chests(open_chests.into_iter().collect());
+        self.apply_authority(&outcomes, self_state, menu_sync, &delta_cells, world_events);
+    }
+
+    /// The prediction-coupled half of a batch: adopt the authoritative self
+    /// state and menu view, reconcile the prediction ledger against the
+    /// batch's outcomes (rolling back what the server denied), then buffer
+    /// the world events with this client's own presented cells suppressed.
+    fn apply_authority(
+        &mut self,
+        outcomes: &[petramond::net::protocol::ActionOutcome],
+        self_state: Option<SelfState>,
+        menu_sync: Option<MenuSyncMsg>,
+        delta_cells: &rustc_hash::FxHashSet<IVec3>,
+        world_events: Vec<WorldEventMsg>,
+    ) {
         // A batch's inventory / menu snapshot reflects the server state as of
         // the requests it ANSWERS. A snapshot-bearing prediction of the same
         // store that stays pending past this batch postdates that snapshot —
@@ -913,19 +976,14 @@ impl Game {
         // (the rapid-click flicker). Skip adoption then: every predicted menu
         // request forces the authoritative pair into its own outcome batch,
         // so the store reconciles the moment the pending queue drains.
-        let stale_inventory = self
-            .prediction
-            .awaits_inventory_authority(&update.action_outcomes);
-        let stale_menu = self
-            .prediction
-            .awaits_menu_authority(&update.action_outcomes);
+        let stale_inventory = self.prediction.awaits_inventory_authority(outcomes);
+        let stale_menu = self.prediction.awaits_menu_authority(outcomes);
         let adopted_inventory = !stale_inventory
-            && update
-                .self_state
+            && self_state
                 .as_ref()
                 .is_some_and(|s| s.inventory.is_some());
-        let adopted_menu = !stale_menu && update.menu_sync.is_some();
-        if let Some(state) = &update.self_state {
+        let adopted_menu = !stale_menu && menu_sync.is_some();
+        if let Some(state) = &self_state {
             self.self_view.apply(state, !stale_inventory);
             if self.player.mode() != self.self_view.mode {
                 self.player.set_mode(self.self_view.mode);
@@ -967,7 +1025,7 @@ impl Game {
         // oldest-first, each capturing the state BEFORE its own prediction —
         // so a newer snapshot still embeds an older denied mutation. Applied
         // newest-first so the OLDEST snapshot wins.
-        let rollbacks = self.prediction.reconcile(&update.action_outcomes);
+        let rollbacks = self.prediction.reconcile(outcomes);
         for snap in rollbacks.into_iter().rev() {
             match snap {
                 crate::game::prediction::PredictionSnapshot::None => {}
@@ -1014,29 +1072,16 @@ impl Game {
                 }
             }
         }
-        // Shader-param environment (day/night sky, mod visuals): applied into
-        // the REPLICA world's `WorldEnvironment` — the map the renderer reads
-        // (`Game::environment` snapshots `replica.data().environment()` per frame).
-        // `None` = unchanged since the last batch.
-        if let Some(env) = update.env {
-            for (key, value) in env {
-                self.replica.set_shader_param(key, value);
-            }
-        }
-        self.set_open_chests(update.open_chests.into_iter().collect());
-        if let Some(sync) = update.menu_sync {
+        if let Some(sync) = menu_sync {
             if stale_menu {
                 self.menu_view.adopt_gui_state(sync);
             } else {
                 self.menu_view.apply(sync);
             }
         }
-        for msg in update.events {
+        for msg in world_events {
             self.buffer_world_event(msg, &suppress);
         }
-        self.pending_events
-            .self_events
-            .merge_from(update.self_events);
     }
 
     /// Translate one wire world event to local types into the frame buffer.

@@ -24,6 +24,7 @@ use petramond_world::crafting::Recipes;
 
 mod clock;
 mod entity_rows;
+mod event_scope;
 mod fixed_tick;
 mod interest;
 mod isolation;
@@ -72,9 +73,13 @@ pub struct SharedTickRows {
     recipients: Vec<entity_rows::RecipientEntities>,
     sleep_tally: SleepTally,
     open_chests: Vec<IVec3>,
-    /// The full shader-param map when anything changed since the last window
-    /// (`None` = unchanged) — see [`crate::net::protocol::TickUpdate::env`].
+    /// The shader params that changed since the last window (`None` =
+    /// unchanged) — see [`crate::net::protocol::TickSection::Env`].
     pub env: Option<Vec<(String, [f32; 4])>>,
+    /// The window's drained world feeds: events, cell deltas and live loops,
+    /// scoped per recipient when its batch is cut. Empty for a batch built
+    /// outside a tick window.
+    feeds: replication::WindowFeeds,
 }
 
 /// The authoritative server: a thin coordinator over owned subsystems. Each

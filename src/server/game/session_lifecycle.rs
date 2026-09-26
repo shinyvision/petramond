@@ -44,8 +44,6 @@ impl ServerGame {
             radius,
         ));
         self.unlock_all_recipes_for_test(s);
-        self.broadcast
-            .replay_spatial_loops(&mut self.sessions[s]);
         s
     }
 

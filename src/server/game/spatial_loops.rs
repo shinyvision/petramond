@@ -1,15 +1,15 @@
 //! The server's memory of every spatial LOOP still playing: a looping row
 //! (`sounds.json` `loop: true`) started by `SoundPlayAt`/`SoundPlayOnMob`
 //! plays until its `SoundStop`, so unlike a one-shot it has STATE a session
-//! joining mid-play would otherwise never hear. This table replays that
-//! state to a newcomer and ends a mob-pinned loop with its mob, so a mod
-//! owns "start, retune, stop" and nothing else.
+//! joining mid-play (or walking into earshot) would otherwise never hear.
+//! This table is what `super::event_scope` starts and stops per recipient by
+//! earshot, and it ends a mob-pinned loop with its mob, so a mod owns "start,
+//! retune, stop" and nothing else.
 
 use std::collections::BTreeMap;
 
 use crate::mob::Mobs;
 use crate::net::protocol::{SpatialSoundMsg, WorldEventMsg};
-use crate::server::player::ConnectedPlayer;
 
 use super::replication::Broadcast;
 
@@ -105,18 +105,6 @@ impl Broadcast {
             },
         );
     }
-
-    /// Queue every live loop for `sess`'s next tick batch — the join
-    /// catch-up. A mob-pinned loop's client resolves the emitter from the
-    /// mob rows in the same batch, so the stale `last_pos` only matters if
-    /// the mob is already gone.
-    pub fn replay_spatial_loops(&self, sess: &mut ConnectedPlayer) {
-        let replay = self
-            .spatial_loops()
-            .values()
-            .map(|cmd| WorldEventMsg::SpatialSound(*cmd));
-        sess.replication.pending_world_events.extend(replay);
-    }
 }
 
 #[cfg(test)]
@@ -189,28 +177,28 @@ mod tests {
         );
     }
 
-    /// A session joining while a loop plays hears it: the replay leads its
-    /// first tick batch, and no other session is told twice.
+    /// A session joining while a loop plays within its earshot hears it: the
+    /// restart leads its first tick batch, and ships only once.
     #[test]
-    fn a_joining_session_is_caught_up_on_the_live_loops() {
+    fn a_joining_session_is_caught_up_on_the_loops_in_earshot() {
         let mut server = crate::server::session_build::build_server_inline("", 1, 2);
+        let joiner = crate::server::session_build::spawn_player(server.world.data().seed);
         let restart = SpatialSoundMsg::PlayAt {
             handle: 7,
             sound_id: 0,
-            pos: WorldPos::new(1.0, 64.0, 1.0),
+            pos: joiner.pos,
             volume: 0.3,
             pitch: 1.0,
         };
-        server.broadcast.spatial_loops_mut().insert(7, restart);
-        let joiner = crate::server::session_build::spawn_player(server.world.data().seed);
         let s = server.add_session_for_test(joiner);
         let joiner_id = server.sessions[s].id;
+        server.broadcast.spatial_loops_mut().insert(7, restart);
 
         let out = server.pump(0.06, &mut Vec::new());
         let spatial_events = |msgs: &[ServerToClient]| -> Vec<SpatialSoundMsg> {
             msgs.iter()
                 .filter_map(|m| match m {
-                    ServerToClient::Tick(update) => Some(update.events.iter()),
+                    ServerToClient::Tick(update) => update.events(),
                     _ => None,
                 })
                 .flatten()
@@ -230,10 +218,6 @@ mod tests {
             spatial_events(joiner_msgs).first(),
             Some(&restart),
             "the joiner's first batch leads with the live loop"
-        );
-        assert!(
-            spatial_events(&out.msgs).is_empty(),
-            "the host session is not told again"
         );
         let again = server.pump(0.06, &mut Vec::new());
         let joiner_again = again

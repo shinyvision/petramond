@@ -3,7 +3,7 @@ use crate::player;
 use crate::player::PlayerId;
 use crate::server::player::PendingMenuAction;
 
-use super::{wire_world_events, PumpOutput, ServerGame};
+use super::{PumpOutput, ServerGame};
 
 impl ServerGame {
     /// [`pump_tagged`](Self::pump_tagged) for a local-only server — the
@@ -123,30 +123,16 @@ impl ServerGame {
         self.pump_streaming(dt, &mut per_session, &queue_room);
         if ticks_ran > 0 {
             // Shared batch parts built ONCE per tick window: the drained
-            // world-event queue (plus any leave-path events banked between
-            // ticks), the coalesced delta log, and the entity/chest rows.
-            let mut world_events = self.broadcast.take_wire_events();
-            world_events.extend(wire_world_events(&mut events.world));
-            self.broadcast
-                .track_spatial_loops(self.world.mobs(), &mut world_events);
-            let deltas = self.world.take_block_deltas();
-            let kv_deltas = self.world.take_cell_kv_deltas();
-            let draw_deltas = self.world.take_block_draw_deltas();
-            let shared = self.shared_tick_rows(&events);
+            // world feeds (events, coalesced deltas, live loops) and the
+            // entity/chest rows; each recipient's batch is cut from them.
+            let feeds = self.take_window_feeds(&mut events);
+            let shared = self.shared_tick_rows(&events).with_feeds(feeds);
             for (s, out) in per_session.iter_mut().enumerate() {
                 if self.sessions.is_faulted(s) {
                     continue;
                 }
                 let update = self.isolated(s, "replication", |server| {
-                    server.build_tick_update(
-                        s,
-                        &events,
-                        &world_events,
-                        &deltas,
-                        &kv_deltas,
-                        &draw_deltas,
-                        &shared,
-                    )
+                    server.build_tick_update(s, &events, &shared)
                 });
                 if let Some(update) = update {
                     out.push(ServerToClient::Tick(Box::new(update)));

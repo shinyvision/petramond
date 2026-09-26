@@ -1,10 +1,16 @@
+use std::sync::Arc;
+
 use crate::events::tick::{TickEvents, WorldEvents};
 use crate::net::protocol::{
-    BlockDelta, ClientEventMsg, ItemSlotWire, OpenScreen, SelfEvents, SelfState, SelfTransform,
-    SleepTally, SpatialSoundMsg, TickUpdate, Transform, WorldEventMsg,
+    BlockDelta, BlockDrawDelta, CellKvDelta, ClientEventMsg, ItemSlotWire, OpenScreen,
+    SelfEvents, SelfState, SelfTransform, SleepTally, SpatialSoundMsg, TickUpdate, Transform,
+    WorldEventMsg,
 };
+use crate::world::environment::ShaderParamMap;
 use petramond_world::inventory::Hand;
 
+use super::event_scope::{self, LiveLoop, Reach, Viewer};
+use super::interest::view_blocks;
 use super::spatial_loops::LiveSpatialLoops;
 use super::{ServerGame, SharedTickRows};
 
@@ -18,13 +24,13 @@ pub struct Broadcast {
     /// next executed tick's batch so no observer misses them.
     pending_wire_events: Vec<WorldEventMsg>,
     /// Every spatial LOOP still playing (a `loop` row started and not yet
-    /// stopped), by handle — replayed to a joining session, ended with its
-    /// mob. See [`super::spatial_loops`].
+    /// stopped), by handle — delivered per recipient by earshot, ended with
+    /// its mob. See [`super::spatial_loops`] and [`super::event_scope`].
     live_spatial_loops: LiveSpatialLoops,
-    /// The `WorldEnvironment` shader-param map the last `TickUpdate.env`
-    /// shipped (value-compared per tick window; the map is tiny). `None` =
-    /// nothing shipped yet, so the next window carries the full set.
-    last_shipped_env: Option<std::sync::Arc<crate::world::environment::ShaderParamMap>>,
+    /// The `WorldEnvironment` shader-param map the last batch's env section
+    /// was cut against (value-compared per tick window; the map is tiny).
+    /// `None` = nothing shipped yet, so the next window carries the full set.
+    last_shipped_env: Option<Arc<ShaderParamMap>>,
 }
 
 impl Broadcast {
@@ -47,22 +53,23 @@ impl Broadcast {
         self.last_shipped_env = None;
     }
 
-    /// The full shader-param map when `params` differs from what the last
-    /// batch shipped (then remembered as shipped), else `None`.
-    pub fn env_update(
-        &mut self,
-        params: std::sync::Arc<crate::world::environment::ShaderParamMap>,
-    ) -> Option<Vec<(String, [f32; 4])>> {
-        if self
-            .last_shipped_env
-            .as_ref()
-            .is_some_and(|last| **last == *params)
-        {
-            return None;
-        }
-        let rows = params.iter().map(|(k, v)| (k.clone(), *v)).collect();
+    /// The params of `params` whose values differ from what the last batch
+    /// shipped (every param after a reseed), then remembered as shipped;
+    /// `None` when nothing changed. Params are only ever added or retuned on
+    /// the client, never withdrawn, so the changed entries are the whole
+    /// difference — day/night retunes a couple of keys a window, not the map.
+    pub fn env_update(&mut self, params: Arc<ShaderParamMap>) -> Option<Vec<(String, [f32; 4])>> {
+        let changed: Vec<(String, [f32; 4])> = match &self.last_shipped_env {
+            Some(last) if Arc::ptr_eq(last, &params) || **last == *params => return None,
+            Some(last) => params
+                .iter()
+                .filter(|(k, v)| last.get(*k) != Some(*v))
+                .map(|(k, v)| (k.clone(), *v))
+                .collect(),
+            None => params.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+        };
         self.last_shipped_env = Some(params);
-        Some(rows)
+        (!changed.is_empty()).then_some(changed)
     }
 
     pub fn spatial_loops(&self) -> &LiveSpatialLoops {
@@ -74,12 +81,61 @@ impl Broadcast {
     }
 }
 
+/// One tick window's drained world feeds, scoped per recipient when its batch
+/// is cut: the world-anchored events (each with its [`Reach`]), the coalesced
+/// cell/KV/draw deltas, and the live loops placed for this window.
+#[derive(Default)]
+pub struct WindowFeeds {
+    events: Vec<WorldEventMsg>,
+    /// `events[i]`'s reach.
+    reaches: Vec<Reach>,
+    deltas: Vec<BlockDelta>,
+    kv_deltas: Vec<CellKvDelta>,
+    draw_deltas: Vec<BlockDrawDelta>,
+    loops: Vec<LiveLoop>,
+}
+
+impl SharedTickRows {
+    /// These rows with the window's drained feeds attached.
+    pub(super) fn with_feeds(mut self, feeds: WindowFeeds) -> Self {
+        self.feeds = feeds;
+        self
+    }
+}
+
 impl ServerGame {
+    /// Drain one executed tick window's world feeds: the world-event queues
+    /// (after any leave-path events banked between ticks), the spatial-loop
+    /// bookkeeping over them, and the coalesced delta logs.
+    pub(super) fn take_window_feeds(&mut self, events: &mut TickEvents) -> WindowFeeds {
+        let mut world_events = self.broadcast.take_wire_events();
+        world_events.extend(wire_world_events(&mut events.world));
+        self.broadcast
+            .track_spatial_loops(self.world.mobs(), &mut world_events);
+        let mobs = self.world.mobs().instances();
+        let loops = event_scope::live_loops(self.broadcast.spatial_loops(), |id| {
+            mobs.iter()
+                .find(|m| m.id() == id && !m.is_dead())
+                .map(|m| m.pos)
+        });
+        let reaches = world_events.iter().map(event_scope::reach).collect();
+        WindowFeeds {
+            events: world_events,
+            reaches,
+            deltas: self.world.take_block_deltas(),
+            kv_deltas: self.world.take_cell_kv_deltas(),
+            draw_deltas: self.world.take_block_draw_deltas(),
+            loops,
+        }
+    }
+
     /// The per-tick batch parts, built once per window: the parts every
     /// recipient shares, and each recipient's entity lanes — which advance
     /// every session's interest set, so every session must be sent this
     /// window's batch. Entity rows are built once and shared across the
-    /// lanes that select them (`SectionBytes` never rides here).
+    /// lanes that select them. The window's world feeds attach through
+    /// [`SharedTickRows::with_feeds`]; without them the batch carries no
+    /// world events or deltas.
     pub fn shared_tick_rows(&mut self, events: &TickEvents) -> SharedTickRows {
         let recipients = self.entity_lanes(events);
         let sleep_tally = SleepTally {
@@ -89,10 +145,6 @@ impl ServerGame {
         // Full open-chest state per batch (tiny), sorted so the wire batch is
         // deterministic.
         let open_chests = self.containers.open_chests();
-        // Environment shader params: value-compare against the last-shipped
-        // copy and ship the changed FULL set (the map is ~a dozen entries;
-        // day/night rewrites its params most ticks, so this rides most
-        // windows). `None` = unchanged, the client keeps what it has.
         let env = self
             .broadcast
             .env_update(self.world.data().environment().shader_params().clone());
@@ -103,42 +155,43 @@ impl ServerGame {
             sleep_tally,
             open_chests,
             env,
+            feeds: WindowFeeds::default(),
         }
     }
 
-    /// Build one recipient's replication batch: its entity lanes (the mobs,
-    /// dropped items and players in its interest as of the latest tick), the
-    /// window's coalesced block deltas restricted to the recipient's sent
-    /// sections, the window's world events + session
-    /// `s`'s one-shots, its menu sync (when changed), and its own state.
-    #[allow(clippy::too_many_arguments)]
+    /// Build one recipient's replication batch as its sections, in the
+    /// canonical apply order (see `net::protocol::tick`): its read-model
+    /// replies, the window's cell deltas restricted to the sections it holds,
+    /// its entity lanes, the outcomes and authoritative state they answer
+    /// for, the shared environment/lid state, the world events it can
+    /// perceive, and its own one-shots. Empty sections are left out.
     pub fn build_tick_update(
         &mut self,
         s: usize,
         events: &TickEvents,
-        world_events: &[WorldEventMsg],
-        deltas: &[BlockDelta],
-        kv_deltas: &[crate::net::protocol::CellKvDelta],
-        draw_deltas: &[crate::net::protocol::BlockDrawDelta],
         shared: &SharedTickRows,
     ) -> TickUpdate {
         let entities = &shared.recipients[s];
-        // Per-recipient delta filter: only sections this client holds.
-        let mut block_deltas: Vec<BlockDelta> = deltas
+        let feeds = &shared.feeds;
+        let terrain = &self.sessions[s].transport.terrain;
+        // Per-recipient delta filter: only sections this client holds. Cell
+        // KV and draw sets ride the same filter.
+        let mut block_deltas: Vec<BlockDelta> = feeds
+            .deltas
             .iter()
-            .filter(|d| self.sessions[s].transport.terrain.covers(d.pos))
+            .filter(|d| terrain.covers(d.pos))
             .cloned()
             .collect();
-        // Cell KV deltas ride the same recipient filter as block deltas.
-        let cell_kv_deltas: Vec<crate::net::protocol::CellKvDelta> = kv_deltas
+        let cell_kv_deltas: Vec<CellKvDelta> = feeds
+            .kv_deltas
             .iter()
-            .filter(|d| self.sessions[s].transport.terrain.covers(d.pos))
+            .filter(|d| terrain.covers(d.pos))
             .cloned()
             .collect();
-        // Mod draw sets ride the same recipient filter.
-        let block_draws: Vec<crate::net::protocol::BlockDrawDelta> = draw_deltas
+        let block_draws: Vec<BlockDrawDelta> = feeds
+            .draw_deltas
             .iter()
-            .filter(|d| self.sessions[s].transport.terrain.covers(d.pos))
+            .filter(|d| terrain.covers(d.pos))
             .cloned()
             .collect();
         // Corrective cell sync: the CURRENT state of cells a use click
@@ -146,66 +199,105 @@ impl ServerGame {
         // replica lied (ghost block, stale cell) reconciles. A shared delta
         // for the same cell already carries the truth.
         for pos in std::mem::take(&mut self.sessions[s].replication.pending_corrective_cells) {
-            if !self.sessions[s].transport.terrain.covers(pos) || block_deltas.iter().any(|d| d.pos == pos) {
+            if !self.sessions[s].transport.terrain.covers(pos)
+                || block_deltas.iter().any(|d| d.pos == pos)
+            {
                 continue;
             }
             if let Some(d) = self.world.block_delta_at(pos) {
                 block_deltas.push(d);
             }
         }
-        let action_outcomes = std::mem::take(&mut self.sessions[s].replication.pending_action_outcomes);
-        // Echo rule: the initiator already presented their own place/break
-        // locally — strip matching world events from THEIR batch only.
-        // Observers still receive the shared list unchanged.
+        let world_events = self.scoped_world_events(s, feeds);
+
+        let mut update = TickUpdate::new(shared.tick, shared.clock);
+        update.push_list(self.sessions[s].sim.creative.take_replies());
+        update.push_list(self.sessions[s].sim.schematic.take_notices());
+        update.push_list(block_deltas);
+        update.push_list(block_draws);
+        update.push_list(cell_kv_deltas);
+        // Refcount bumps plus index lists, not deep copies: see
+        // `TickSection::Mobs`.
+        if !entities.mobs.is_empty() {
+            update.push(entities.mobs.clone());
+        }
+        if !entities.items.is_empty() {
+            update.push(entities.items.clone());
+        }
+        if !entities.players.is_empty() {
+            update.push(entities.players.clone());
+        }
+        if !entities.player_actions.is_empty() {
+            update.push(Arc::clone(&entities.player_actions));
+        }
+        update.push(shared.sleep_tally);
+        update.push_list(std::mem::take(
+            &mut self.sessions[s].replication.pending_action_outcomes,
+        ));
+        update.push(self.build_self_state(s));
+        if let Some(sync) = self.build_menu_sync(s) {
+            update.push(sync);
+        }
+        if let Some(env) = &shared.env {
+            update.push(env.clone());
+        }
+        update.push_list(shared.open_chests.clone());
+        update.push_list(world_events);
+        let self_events = self.build_self_events(s, events);
+        if self_events != SelfEvents::default() {
+            update.push(self_events);
+        }
+        update
+    }
+
+    /// The window's world events session `s` can perceive (see
+    /// [`event_scope`]), led by the loops that just came within its earshot
+    /// and trailed by stops for the ones that left it. Echo rule: the
+    /// initiator already presented its own place/break locally, so matching
+    /// events are stripped from ITS list only.
+    fn scoped_world_events(&mut self, s: usize, feeds: &WindowFeeds) -> Vec<WorldEventMsg> {
+        let view_cap = self.world.data().render_dist;
+        let sess = &mut self.sessions[s];
         let presented_places: rustc_hash::FxHashSet<_> =
-            std::mem::take(&mut self.sessions[s].replication.presented_places)
+            std::mem::take(&mut sess.replication.presented_places)
                 .into_iter()
                 .collect();
         let presented_breaks: rustc_hash::FxHashSet<_> =
-            std::mem::take(&mut self.sessions[s].replication.presented_breaks)
+            std::mem::take(&mut sess.replication.presented_breaks)
                 .into_iter()
                 .collect();
-        // The recipient's own catch-up events lead, so a replayed loop's
-        // start precedes any retune or stop the shared window carries.
-        let mut events_for_recipient: Vec<WorldEventMsg> =
-            std::mem::take(&mut self.sessions[s].replication.pending_world_events);
-        if presented_places.is_empty() && presented_breaks.is_empty() {
-            events_for_recipient.extend_from_slice(world_events);
-        } else {
-            events_for_recipient.extend(
-                world_events
-                    .iter()
-                    .filter(|ev| match ev {
-                        WorldEventMsg::BlockPlaced { pos, .. } => !presented_places.contains(pos),
-                        WorldEventMsg::BlockBroken { pos, .. } => !presented_breaks.contains(pos),
-                        _ => true,
-                    })
-                    .cloned(),
-            );
-        }
-        TickUpdate {
-            block_draws,
-            tick: shared.tick,
-            clock: shared.clock,
-            block_deltas,
-            cell_kv_deltas,
-            // Refcount bumps plus index lists, not deep copies: see
-            // `TickUpdate::mobs`.
-            mobs: entities.mobs.clone(),
-            items: entities.items.clone(),
-            players: entities.players.clone(),
-            player_actions: std::sync::Arc::clone(&entities.player_actions),
-            sleep_tally: shared.sleep_tally,
-            self_state: Some(self.build_self_state(s)),
-            open_chests: shared.open_chests.clone(),
-            env: shared.env.clone(),
-            events: events_for_recipient,
-            self_events: self.build_self_events(s, events),
-            action_outcomes,
-            creative: self.sessions[s].sim.creative.take_replies(),
-            schematics: self.sessions[s].sim.schematic.take_notices(),
-            menu_sync: self.build_menu_sync(s),
-        }
+        let pos = sess.player.pos;
+        let t = &mut sess.transport;
+        let view = view_blocks(t.view_radius, view_cap);
+        let holds_cell = |p| t.terrain.covers(p);
+        let viewer = Viewer {
+            pos,
+            view_blocks: view,
+            holds_cell: &holds_cell,
+        };
+        let (mut out, stops) =
+            event_scope::sync_loops(&viewer, &mut t.interest.loops, &feeds.loops);
+        out.extend(
+            feeds
+                .events
+                .iter()
+                .zip(&feeds.reaches)
+                .filter(|&(ev, &reach)| {
+                    viewer.perceives(reach)
+                        && match ev {
+                            WorldEventMsg::BlockPlaced { pos, .. } => {
+                                !presented_places.contains(pos)
+                            }
+                            WorldEventMsg::BlockBroken { pos, .. } => {
+                                !presented_breaks.contains(pos)
+                            }
+                            _ => true,
+                        }
+                })
+                .map(|(ev, _)| ev.clone()),
+        );
+        out.extend(stops);
+        out
     }
 
     /// Session `s`'s per-tick one-shots: the lossy `PlayerTickEvents` slice
@@ -586,6 +678,24 @@ mod tests {
             broadcast.env_update(params),
             Some(vec![("petramond:sky".to_owned(), [1.0, 0.5, 0.25, 1.0])]),
             "a newcomer's window carries the full map"
+        );
+    }
+
+    /// Once shipped, a window carries only the params whose values moved.
+    #[test]
+    fn env_ships_only_the_changed_params() {
+        let mut broadcast = Broadcast::default();
+        let map = |time: f32| {
+            std::sync::Arc::new(crate::world::environment::ShaderParamMap::from([
+                ("petramond:sky".to_owned(), [1.0, 0.5, 0.25, 1.0]),
+                ("petramond:time".to_owned(), [time, 0.0, 0.0, 0.0]),
+            ]))
+        };
+        assert_eq!(broadcast.env_update(map(0.1)).map(|rows| rows.len()), Some(2));
+        assert_eq!(
+            broadcast.env_update(map(0.2)),
+            Some(vec![("petramond:time".to_owned(), [0.2, 0.0, 0.0, 0.0])]),
+            "the static sky param does not ride again"
         );
     }
 }

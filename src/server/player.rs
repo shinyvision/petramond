@@ -178,10 +178,6 @@ pub struct SessionReplication {
     pub presented_breaks: Vec<IVec3>,
     /// Outcomes queued this tick window for the next `TickUpdate`.
     pub pending_action_outcomes: Vec<crate::net::protocol::ActionOutcome>,
-    /// World events addressed to THIS recipient only, shipped ahead of the
-    /// shared list in its next tick batch — the join catch-up for stateful
-    /// world presentation (the spatial loops still playing).
-    pub pending_world_events: Vec<crate::net::protocol::WorldEventMsg>,
     /// Hand-swing one-shots latched by this tick's action stages (attack,
     /// break, place, throw) via [`ConnectedPlayer::latch_swing`], published
     /// on the next roster and cleared — the swing facts behind the mod ABI's
@@ -310,7 +306,6 @@ impl ConnectedPlayer {
                 presented_places: Vec::new(),
                 presented_breaks: Vec::new(),
                 pending_action_outcomes: Vec::new(),
-                pending_world_events: Vec::new(),
                 swing_events: Default::default(),
                 request_open_gui: None,
                 request_close_gui: false,

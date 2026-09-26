@@ -24,9 +24,10 @@ mod join;
 mod menu;
 mod state;
 mod terrain;
+mod tick;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub use actions::*;
 pub use chat::*;
@@ -35,6 +36,7 @@ pub use join::*;
 pub use menu::*;
 pub use state::*;
 pub use terrain::*;
+pub use tick::*;
 
 /// The kinematic transform every player-shaped wire row carries: feet
 /// position, velocity, and look angles. Embedded, not flattened — postcard

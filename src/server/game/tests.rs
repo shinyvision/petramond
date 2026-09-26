@@ -194,9 +194,10 @@ fn a_mod_cue_reaches_only_the_session_it_names_and_never_coalesces() {
     let shared = server.shared_tick_rows(&events);
     let batch = |server: &mut crate::server::game::ServerGame, s| {
         server
-            .build_tick_update(s, &events, &[], &[], &[], &[], &shared)
-            .self_events
-            .client_events
+            .build_tick_update(s, &events, &shared)
+            .self_events()
+            .map(|e| e.client_events.clone())
+            .unwrap_or_default()
     };
     assert!(
         batch(&mut server, 0).is_empty(),

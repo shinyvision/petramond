@@ -78,7 +78,8 @@ pub mod remap;
 //     over the connection's interest set instead of the whole population,
 //     `player_actions` only for tracked players, and a `SleepTally` for the
 //     server-wide sleep headcount the player rows no longer imply.
-pub const PROTOCOL_VERSION: u16 = 51;
+// 52: join name tables include biome keys; tick batches are typed sections.
+pub const PROTOCOL_VERSION: u16 = 52;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

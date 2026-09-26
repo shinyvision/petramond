@@ -35,6 +35,10 @@ pub enum JoinRejectReason {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NameTables {
     pub blocks: Vec<String>,
+    /// Surface biome registry keys, indexed by biome id (id 0 is unassigned:
+    /// an empty key). Pack biomes register after the engine's in pack load
+    /// order, so column biome bytes remap by key like every other id.
+    pub biomes: Vec<String>,
     pub items: Vec<String>,
     pub mobs: Vec<String>,
     pub sounds: Vec<String>,

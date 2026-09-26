@@ -42,7 +42,7 @@ fn unpredicted_placement_keeps_the_initiators_world_event() {
         })
         .expect("local session batch");
     assert!(
-        initiator.events.iter().any(|e| matches!(
+        initiator.events().into_iter().flatten().any(|e| matches!(
             e,
             WorldEventMsg::BlockPlaced { pos, .. } if *pos == placed_at
         )),
@@ -89,7 +89,7 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
         })
         .expect("local session batch");
     assert!(
-        initiator.events.iter().all(|e| !matches!(
+        initiator.events().into_iter().flatten().all(|e| !matches!(
             e,
             WorldEventMsg::BlockPlaced { pos, .. } if *pos == placed_at
         )),
@@ -109,7 +109,7 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
         })
         .expect("observer batch");
     assert!(
-        observer_batch.events.iter().any(|e| matches!(
+        observer_batch.events().into_iter().flatten().any(|e| matches!(
             e,
             WorldEventMsg::BlockPlaced { pos, block_id }
                 if *pos == placed_at && *block_id == Block::Dirt.0
@@ -137,7 +137,7 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
             _ => None,
         });
         if let Some(u) = local {
-            if u.events.iter().any(|e| {
+            if u.events().into_iter().flatten().any(|e| {
                 matches!(
                     e,
                     WorldEventMsg::BlockBroken { pos, .. } if *pos == placed_at
@@ -162,7 +162,7 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
                         })
                     });
                 if let Some(u) = obs {
-                    observer_heard = u.events.iter().any(|e| {
+                    observer_heard = u.events().into_iter().flatten().any(|e| {
                         matches!(
                             e,
                             WorldEventMsg::BlockBroken { pos, block_id, .. }

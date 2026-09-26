@@ -207,7 +207,7 @@ fn self_state_ships_the_inventory_only_when_the_revision_moved() {
     let mut game = game_on_empty_chunk();
 
     let up1 = pump_one_tick(&mut game);
-    let s1 = up1.self_state.as_ref().expect("self state every batch");
+    let s1 = up1.self_state().expect("self state every batch");
     assert!(
         s1.inventory.is_some(),
         "the first update after join always carries the inventory"
@@ -219,7 +219,7 @@ fn self_state_ships_the_inventory_only_when_the_revision_moved() {
     );
 
     let up2 = pump_one_tick(&mut game);
-    let s2 = up2.self_state.as_ref().expect("self state every batch");
+    let s2 = up2.self_state().expect("self state every batch");
     assert!(
         s2.inventory.is_none(),
         "an unchanged revision ships no inventory body"
@@ -230,7 +230,7 @@ fn self_state_ships_the_inventory_only_when_the_revision_moved() {
         .inventory
         .add(ItemStack::new(ItemType::Stone, 5));
     let up3 = pump_one_tick(&mut game);
-    let s3 = up3.self_state.as_ref().expect("self state every batch");
+    let s3 = up3.self_state().expect("self state every batch");
     let slots = s3
         .inventory
         .as_ref()
@@ -307,17 +307,19 @@ fn a_remote_sessions_chest_open_reaches_the_local_batch_exactly_once() {
 
     let update = pump_one_tick(&mut game);
     assert!(
-        update.open_chests.contains(&pos),
+        update.open_chests().is_some_and(|l| l.contains(&pos)),
         "the other player's open lifts the replicated lid set"
     );
     let opened: Vec<_> = update
-        .events
-        .iter()
+        .events()
+        .into_iter()
+        .flatten()
         .filter(|e| matches!(e, WorldEventMsg::ChestOpened { pos: p } if *p == pos))
         .collect();
     assert_eq!(opened.len(), 1, "exactly one ChestOpened event broadcast");
     assert_eq!(
-        update.self_events.open_screen, None,
+        update.self_events().and_then(|e| e.open_screen.clone()),
+        None,
         "the non-opening recipient gets no open-screen one-shot"
     );
 }
@@ -340,19 +342,20 @@ fn menu_sync_ships_on_change_only() {
 
     let up1 = pump_one_tick(&mut game);
     let sync = up1
-        .menu_sync
+        .menu_sync()
+        .cloned()
         .expect("the first batch ships the initial view");
     assert_eq!(sync.target, MenuTargetWire::None);
     let up2 = pump_one_tick(&mut game);
     assert!(
-        up2.menu_sync.is_none(),
+        up2.menu_sync().is_none(),
         "unchanged (closed) menu ships nothing"
     );
 
     let mut ev = TickEvents::default();
     game.server.open_chest_screen_for(0, pos, &mut ev);
     let up3 = pump_one_tick(&mut game);
-    let sync = up3.menu_sync.expect("the open ships the new view");
+    let sync = up3.menu_sync().cloned().expect("the open ships the new view");
     assert!(
         matches!(&sync.target, MenuTargetWire::Container { anchor, kind_key, .. }
             if *anchor == Some(pos.into()) && kind_key == "petramond:chest"),
@@ -361,7 +364,7 @@ fn menu_sync_ships_on_change_only() {
     );
     let up4 = pump_one_tick(&mut game);
     assert!(
-        up4.menu_sync.is_none(),
+        up4.menu_sync().is_none(),
         "a still-open, untouched chest ships nothing"
     );
 }
@@ -387,7 +390,7 @@ fn a_slot_click_forces_the_authoritative_pair_even_as_a_noop() {
     game.server.open_chest_screen_for(0, pos, &mut ev);
     pump_one_tick(&mut game);
     let quiet = pump_one_tick(&mut game);
-    assert!(quiet.menu_sync.is_none(), "baseline: nothing changes");
+    assert!(quiet.menu_sync().is_none(), "baseline: nothing changes");
 
     // Empty cursor onto an empty chest slot: a server-side no-op.
     game.server.apply_message(
@@ -404,15 +407,15 @@ fn a_slot_click_forces_the_authoritative_pair_even_as_a_noop() {
     );
     let up = pump_one_tick(&mut game);
     assert!(
-        up.action_outcomes.iter().any(|o| o.id == 11 && o.accepted),
+        up.action_outcomes().into_iter().flatten().any(|o| o.id == 11 && o.accepted),
         "the click is answered in the same batch"
     );
     assert!(
-        up.menu_sync.is_some(),
+        up.menu_sync().is_some(),
         "the outcome batch forces the menu view"
     );
     assert!(
-        up.self_state.is_some_and(|s| s.inventory.is_some()),
+        up.self_state().is_some_and(|s| s.inventory.is_some()),
         "the outcome batch forces the inventory body"
     );
 }
@@ -432,7 +435,7 @@ fn gui_state_ships_in_menu_sync_only_on_arc_change() {
     game.server.open_registered_gui_screen_for(0, kind, None);
 
     let up = pump_one_tick(&mut game);
-    let MenuTargetWire::Container { gui_state, .. } = up.menu_sync.expect("the open ships").target
+    let MenuTargetWire::Container { gui_state, .. } = up.menu_sync().cloned().expect("the open ships").target
     else {
         panic!("expected a Container target");
     };
@@ -443,7 +446,7 @@ fn gui_state_ships_in_menu_sync_only_on_arc_change() {
     );
 
     let up = pump_one_tick(&mut game);
-    assert!(up.menu_sync.is_none(), "no writes → no sync");
+    assert!(up.menu_sync().is_none(), "no writes → no sync");
 
     // What a mod's GuiStateSet HostCall does on the tick: a copy-on-write
     // write against the session's map.
@@ -454,7 +457,7 @@ fn gui_state_ships_in_menu_sync_only_on_arc_change() {
     );
     let up = pump_one_tick(&mut game);
     let MenuTargetWire::Container { gui_state, .. } =
-        up.menu_sync.expect("the write ships a sync").target
+        up.menu_sync().cloned().expect("the write ships a sync").target
     else {
         panic!("expected a Container target");
     };
@@ -465,7 +468,7 @@ fn gui_state_ships_in_menu_sync_only_on_arc_change() {
     );
 
     let up = pump_one_tick(&mut game);
-    assert!(up.menu_sync.is_none(), "same Arc → nothing ships");
+    assert!(up.menu_sync().is_none(), "same Arc → nothing ships");
 }
 
 #[test]

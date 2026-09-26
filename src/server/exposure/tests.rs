@@ -84,7 +84,8 @@ fn player_conditions_replicate_and_damage_sources_remain_distinct() {
     assert!(server.sessions[0].player.effects().is_empty());
     assert!(!server.build_self_state(0).conditions.is_empty());
     assert!(!replicated(&mut server, &events)
-        .players
+        .players()
+        .expect("the players section")
         .iter()
         .next()
         .expect("the recipient's own row")
@@ -185,7 +186,8 @@ fn a_mob_keeps_a_contact_condition_and_its_emitter_after_leaving_the_fluid() {
         .unwrap()
         .clone();
     assert!(replicated(&mut server, &TickEvents::default())
-        .mobs
+        .mobs()
+        .expect("the mobs section")
         .iter()
         .next()
         .expect("the mob is in view")
@@ -223,5 +225,5 @@ fn touched_fluids_use_body_edges_and_actual_flow_height() {
 
 fn replicated(server: &mut ServerGame, events: &TickEvents) -> crate::net::protocol::TickUpdate {
     let shared = server.shared_tick_rows(events);
-    server.build_tick_update(0, events, &[], &[], &[], &[], &shared)
+    server.build_tick_update(0, events, &shared)
 }

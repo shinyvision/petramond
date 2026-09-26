@@ -15,7 +15,7 @@ use crate::player::PlayerId;
 use petramond_world::inventory::Hand;
 
 use super::interest::{
-    LaneIndex, LaneSelection, Viewpoint, ITEM_TRACKING_BLOCKS, MIN_VIEW_CHUNKS, MOB_TRACKING_BLOCKS,
+    view_blocks, LaneIndex, LaneSelection, Viewpoint, ITEM_TRACKING_BLOCKS, MOB_TRACKING_BLOCKS,
 };
 use super::ServerGame;
 
@@ -91,14 +91,13 @@ impl ServerGame {
             })
             .collect();
         // Interest never reaches past what the server streams at all.
-        let view_cap = self.world.data().render_dist.max(MIN_VIEW_CHUNKS);
+        let view_cap = self.world.data().render_dist;
         let selections: Vec<_> = self
             .sessions
             .iter_mut()
             .enumerate()
             .map(|(s, sess)| {
-                let view_chunks = sess.transport.view_radius.min(view_cap).max(MIN_VIEW_CHUNKS);
-                let view_blocks = f64::from(view_chunks) * 16.0;
+                let view_blocks = view_blocks(sess.transport.view_radius, view_cap);
                 let at = sess.player.pos;
                 let players = sess.transport.interest.players.refresh(
                     &player_index,
