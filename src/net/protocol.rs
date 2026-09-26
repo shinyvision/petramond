@@ -96,7 +96,15 @@ pub enum ClientToServer {
     /// the mod-handshake contract.
     ModQuery,
     Join {
+        /// The requested display name; the server validates it and may
+        /// suffix it to keep names unique.
         player_name: String,
+        /// The joining player's identity: saves and operator rights key on
+        /// it, never on the display name.
+        key: crate::net::identity::PlayerKey,
+        /// `key`'s signature over this connection's `HelloAck` challenge
+        /// (`net::identity::join_proof_message`) — proof of possession.
+        proof: Vec<u8>,
         /// The client's view distance in chunks. The server streams
         /// `min(this, its own maximum)` for the session.
         view_distance: u8,
@@ -202,6 +210,9 @@ pub enum ClientToServer {
 pub enum ServerToClient {
     HelloAck {
         protocol: u16,
+        /// This connection's fresh join challenge: the client signs it with
+        /// its identity key in `Join` (see `net::identity`).
+        challenge: crate::net::identity::JoinChallenge,
     },
     HelloReject {
         server_protocol: u16,

@@ -40,9 +40,10 @@ pub struct ClientSettings {
     pub grade: bool,
     /// Scene supersampling (Options → Graphics); UI stays unfiltered.
     pub anti_aliasing: AntiAliasing,
-    /// The local player's name: multiplayer identity and the per-world save
-    /// key (`players/<name>.dat`). `None` = unset; [`resolve_player_name`]
-    /// falls back to the OS username.
+    /// The local player's display name. Identity (save files, operator
+    /// rights) is the separate keypair in `<data>/identity.key`
+    /// (`net::identity`). `None` = unset; [`resolve_player_name`] falls back
+    /// to the OS username.
     pub player_name: Option<String>,
     /// The address last joined via "Connect to server", as a convenience
     /// prefill for the connect screen. `None` until a first join.

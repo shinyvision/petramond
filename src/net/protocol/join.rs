@@ -14,14 +14,19 @@ pub struct ModEntry {
     pub version: String,
 }
 
-/// Why a `Join` was refused. Kept for protocol stability (clients still handle
-/// a reject) — the server no longer emits `NameTaken`: a duplicate name is
-/// auto-deduped with a numeric suffix at admission instead (see
+/// Why a `Join` was refused. A taken display name is NOT a refusal: it is
+/// auto-deduped with a numeric suffix at admission (see
 /// `ServerGame::admit_remote_player`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum JoinRejectReason {
-    /// A connected player already uses this name (case-insensitive).
-    NameTaken,
+    /// The identity proof did not verify against this connection's challenge.
+    BadProof,
+    /// The requested display name is unacceptable; the text says why.
+    InvalidName(String),
+    /// This identity is already connected to the server.
+    AlreadyConnected,
+    /// Every player slot is in use.
+    ServerFull,
 }
 
 /// The server's registry name tables, in server-runtime-id order — the wire's

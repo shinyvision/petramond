@@ -228,8 +228,12 @@ pub enum PendingMenuAction {
 /// per-player latch, timer, and menu session the tick stages consume.
 pub struct ConnectedPlayer {
     pub id: PlayerId,
-    /// Display / save-key name (`players/<name>.dat`). The local session takes
-    /// the client's configured name (`save::client::resolve_player_name`).
+    /// The player's authenticated identity: keys the save file
+    /// (`players/<key>.dat`) and operator rights. The local session's is the
+    /// host client's own identity.
+    pub key: crate::net::identity::PlayerKey,
+    /// Display name, unique among the world's identities
+    /// (`server::accounts`). Never a save or permission key.
     pub name: String,
     pub player: Player,
     /// Block under this player's crosshair (block + face normal), latched from
@@ -425,11 +429,18 @@ pub struct ConnectedPlayer {
 }
 
 impl ConnectedPlayer {
-    pub fn new(id: PlayerId, name: String, player: Player, view_radius: i32) -> Self {
+    pub fn new(
+        id: PlayerId,
+        key: crate::net::identity::PlayerKey,
+        name: String,
+        player: Player,
+        view_radius: i32,
+    ) -> Self {
         let fall = FallTracker::new(player.pos.y);
         let pos_before_ticks = player.pos;
         Self {
             id,
+            key,
             name,
             player,
             look: None,

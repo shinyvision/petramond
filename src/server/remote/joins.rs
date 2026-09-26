@@ -1,34 +1,60 @@
 use crate::events::tick::TickEvents;
-use crate::net::protocol::{ItemSlotWire, JoinData, SelfRestore};
+use crate::net::identity::PlayerKey;
+use crate::net::protocol::{ItemSlotWire, JoinData, JoinRejectReason, SelfRestore};
 use crate::player::PlayerId;
 use crate::server::game::{wire_world_events, ServerGame};
 use crate::server::player::ConnectedPlayer;
 
 impl ServerGame {
-    /// Admit `requested` as a new remote session and return the `JoinAccept`
-    /// payload plus the session's FINAL name. A join is never refused for its
-    /// name: if `requested` is taken (case-insensitive, vs connected
-    /// sessions), the lowest free numeric suffix is appended ("Rachel" →
-    /// "Rachel2" → "Rachel3") and the suffixed name IS the session's name —
-    /// it keys `players/<name>.dat`, so a deduped guest saves AND restores as
-    /// the suffixed name (a returning "Rachel" only sees "Rachel2"'s state
-    /// while the original "Rachel" is still connected to claim the base
-    /// name). Restore from `players/<name>.dat` when the world has a save,
-    /// else a fresh surface spawn — exactly the local session's restore path.
+    /// Whether an authenticated `key` may join right now: refused while that
+    /// identity is already connected, or when every `PlayerId` is taken.
+    /// Checked BEFORE the connection's I/O threads are spawned, so a refusal
+    /// costs nothing; [`admit_remote_player`](Self::admit_remote_player)
+    /// re-checks it.
+    pub fn check_admission(&self, key: &PlayerKey) -> Result<(), JoinRejectReason> {
+        if self.sessions.iter().any(|s| s.key == *key) {
+            return Err(JoinRejectReason::AlreadyConnected);
+        }
+        if self.next_free_player_id().is_none() {
+            return Err(JoinRejectReason::ServerFull);
+        }
+        Ok(())
+    }
+
+    /// Admit the authenticated identity `key` as a new remote session and
+    /// return the `JoinAccept` payload plus the session's FINAL name.
+    /// `requested` is a display name already validated at the edge
+    /// (`net::identity::validate_player_name`). A join is never refused for
+    /// its name: when another identity owns it (or a connected session uses
+    /// it) the lowest free numeric suffix is appended ("Rachel" → "Rachel2")
+    /// — see `server::accounts`. The player restores from `key`'s own save
+    /// file (never from the name's), else a fresh surface spawn — exactly the
+    /// local session's restore path.
     pub fn admit_remote_player(
         &mut self,
+        key: PlayerKey,
         requested: &str,
         view_distance: i32,
         cached_sections: &[crate::net::protocol::SectionCacheClaim],
-    ) -> (Box<JoinData>, String) {
-        let name = self.dedupe_player_name(requested);
-        let id = self.next_free_player_id();
-        let mut player = self
-            .world
-            .save()
-            .and_then(|save| save.load_player(&name))
-            .and_then(|bytes| crate::save::player::decode(&bytes))
-            .map(|data| data.restore())
+    ) -> Result<(Box<JoinData>, String), JoinRejectReason> {
+        self.check_admission(&key)?;
+        let id = self
+            .next_free_player_id()
+            .expect("check_admission found a free id");
+        let sessions = &self.sessions;
+        let claim = self
+            .accounts
+            .claim(self.world.save(), key, requested, |candidate| {
+                sessions
+                    .iter()
+                    .any(|s| s.key != key && s.name.eq_ignore_ascii_case(candidate))
+            });
+        if claim.first_seen && self.operators.claim_legacy(&claim.name, key) {
+            crate::server::permissions::store(&mut self.world, &self.operators);
+        }
+        let name = claim.name;
+        let mut player = claim
+            .restored
             .unwrap_or_else(|| crate::server::session_build::spawn_player(self.world.seed));
         // Reconcile the restored record against this world's catalog before
         // the handshake ships it (see `server::progression::catch_up`).
@@ -46,7 +72,7 @@ impl ServerGame {
                 .map(|s| (s.id, s.name.clone()))
                 .collect(),
         });
-        let mut session = ConnectedPlayer::new(id, name.clone(), player, view_distance);
+        let mut session = ConnectedPlayer::new(id, key, name.clone(), player, view_distance);
         // The handshake already carried the full unlocked list.
         session.sent_unlock_count = session.player.progression.unlocked().len();
         session.terrain.seed_client_cache(cached_sections);
@@ -55,33 +81,15 @@ impl ServerGame {
         self.last_shipped_env = None;
         self.sessions.push(session);
         self.replay_spatial_loops_to(self.sessions.len() - 1);
-        (data, name)
+        Ok((data, name))
     }
 
-    /// The requested name, or — when a connected session already uses it
-    /// (case-insensitive) — the requested name with the lowest free numeric
-    /// suffix appended (`{name}2`, `{name}3`, …).
-    fn dedupe_player_name(&self, requested: &str) -> String {
-        let taken = |candidate: &str| {
-            self.sessions
-                .iter()
-                .any(|s| s.name.eq_ignore_ascii_case(candidate))
-        };
-        if !taken(requested) {
-            return requested.to_string();
-        }
-        (2u32..)
-            .map(|n| format!("{requested}{n}"))
-            .find(|candidate| !taken(candidate))
-            .expect("fewer than u32::MAX sessions")
-    }
-
-    /// The smallest `PlayerId` no connected session uses (freed ids recycle).
-    fn next_free_player_id(&self) -> PlayerId {
-        (0u16..=u8::MAX as u16)
-            .map(|i| PlayerId(i as u8))
+    /// The smallest `PlayerId` no connected session uses (freed ids
+    /// recycle); `None` when all 256 are taken.
+    fn next_free_player_id(&self) -> Option<PlayerId> {
+        (0..=u8::MAX)
+            .map(PlayerId)
             .find(|id| !self.sessions.iter().any(|s| s.id == *id))
-            .expect("fewer than 256 sessions")
     }
 
     /// The leave path, in order: close the open menu (cursor/craft returns,
@@ -115,7 +123,7 @@ impl ServerGame {
         if let Some(save) = self.world.save() {
             if let Some(snapshot) = snapshot {
                 save.save_player(
-                    &self.sessions[s].name,
+                    &self.sessions[s].key,
                     crate::save::player::encode(&snapshot),
                 );
             } else {

@@ -19,6 +19,8 @@ fn representative_messages_roundtrip_through_postcard() {
     roundtrip(&ClientToServer::Hello { protocol: 1 });
     roundtrip(&ClientToServer::Join {
         player_name: "Rachel".into(),
+        key: crate::net::identity::PlayerKey([0xAB; 32]),
+        proof: vec![0x5A; 64],
         view_distance: 16,
         cached_sections: vec![SectionCacheClaim {
             pos: SectionPos::new(-3, 2, 40),
@@ -138,9 +140,18 @@ fn representative_messages_roundtrip_through_postcard() {
             },
         ],
     }));
-    roundtrip(&ServerToClient::JoinReject {
-        reason: JoinRejectReason::NameTaken,
+    roundtrip(&ServerToClient::HelloAck {
+        protocol: 50,
+        challenge: [0x11; 32],
     });
+    for reason in [
+        JoinRejectReason::BadProof,
+        JoinRejectReason::InvalidName("Player name cannot be empty".into()),
+        JoinRejectReason::AlreadyConnected,
+        JoinRejectReason::ServerFull,
+    ] {
+        roundtrip(&ServerToClient::JoinReject { reason });
+    }
 }
 
 #[test]

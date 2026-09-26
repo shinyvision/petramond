@@ -71,6 +71,11 @@ flate2 = "1"
 crc32fast = "1"
 # Content addressing for world-owned schematic assets.
 blake3 = "1"
+# Player identity: clients hold an ed25519 keypair and sign the server's
+# per-connection join challenge; saves and operator rights key on the public key.
+ed25519-dalek = "2"
+# OS randomness for identity keys and join challenges.
+getrandom = { version = "0.2", features = ["std"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 bincode = "1"

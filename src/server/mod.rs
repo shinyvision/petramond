@@ -8,6 +8,7 @@
 //! exclusively over message channels. Remote (TCP) connections ride the same
 //! loop through [`remote::RemoteHub`] ("Open to LAN").
 
+pub mod accounts;
 pub mod actions;
 mod actors;
 pub mod attack;

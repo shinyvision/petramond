@@ -1,5 +1,6 @@
-//! `players/<name>.dat`: one player's persisted state — position, velocity,
-//! look, mode, health, bed spawn, full inventory, and active status effects.
+//! `players/<key>.dat` (one per player identity): one player's persisted
+//! state — position, velocity, look, mode, health, bed spawn, full inventory,
+//! and active status effects.
 //!
 //! Split out of `level.dat` at v7 so every connected player saves and restores
 //! independently. The file name is the player name run
@@ -16,7 +17,7 @@ use petramond_world::item::ItemStack;
 /// no legacy ladders. Bump this and let old dev players respawn fresh.
 const VERSION: u32 = 7;
 
-/// Decoded `players/<name>.dat` contents.
+/// Decoded `players/<key>.dat` contents.
 pub struct PlayerData {
     pub pos: petramond_math::world_pos::WorldPos,
     pub vel: Vec3,

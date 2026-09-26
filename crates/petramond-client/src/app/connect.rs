@@ -151,7 +151,7 @@ impl App {
         }
         self.connect.addr = addr_text.clone();
         self.connect.name = name.clone();
-        persist_identity(&addr_text, &name);
+        persist_connect_fields(&addr_text, &name);
         let view_distance = self.render_dist;
 
         self.connect.gen += 1;
@@ -276,9 +276,9 @@ impl App {
 }
 
 /// Remember the attempt on disk: `last_server` prefills the next open and
-/// `player_name` becomes the sticky identity. Suppressed under test — the
+/// `player_name` becomes the sticky display name. Suppressed under test — the
 /// suite must never rewrite the developer's real client.json.
-fn persist_identity(addr: &str, name: &str) {
+fn persist_connect_fields(addr: &str, name: &str) {
     if cfg!(test) {
         return;
     }
@@ -286,7 +286,7 @@ fn persist_identity(addr: &str, name: &str) {
     settings.last_server = Some(addr.to_owned());
     settings.player_name = Some(name.to_owned());
     if let Err(e) = petramond::save::client::store(&settings) {
-        log::warn!("could not persist client identity: {e}");
+        log::warn!("could not persist the connect fields: {e}");
     }
 }
 
@@ -348,8 +348,15 @@ fn run_connect(
     if let Err(e) = stream.set_read_timeout(Some(CONNECT_TIMEOUT)) {
         return ConnectOutcome::Failed(format!("Couldn't reach {host}: {e}"));
     }
+    let identity = match crate::game::session::player_identity() {
+        Ok(identity) => identity,
+        Err(e) => {
+            return ConnectOutcome::Failed(format!("Couldn't load your player identity: {e}"))
+        }
+    };
     let join = match client_handshake(
         &mut stream,
+        &identity,
         name,
         view_distance,
         &installed_mod_ids(),

@@ -1,6 +1,8 @@
 //! Native world saving: a per-world directory under the OS data dir holding a
-//! `level.dat` (seed, world tick, mod world KV), per-player `players/<name>.dat`
-//! files (position, inventory, effects…), and `region/` files packing the
+//! `level.dat` (seed, world tick, mod world KV), per-player `players/<key>.dat`
+//! files keyed by player identity (position, inventory, effects…), the
+//! identity→display-name registry `players/names.json`, and `region/` files
+//! packing the
 //! 16³ sections the player has modified. Everything else regenerates from the
 //! seed, so a save stays small.
 //!
@@ -50,8 +52,12 @@ use crate::mob::SavedMob;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 use petramond_world::section::Section;
 
+use crate::net::identity::PlayerKey;
 use io::{read_thread, write_thread, IoMsg, ReadMsg};
-use worlds::player_path;
+use worlds::{legacy_player_path, player_path};
+
+/// The identity→display-name registry file inside `players/`.
+const PLAYER_REGISTRY_FILE: &str = "names.json";
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SectionStore {
@@ -99,8 +105,9 @@ pub struct WorldSave {
     /// load. Populated both when we save such a record and when we read one back (so
     /// cross-session staleness is seen).
     entities_on_disk: HashSet<SectionPos>,
-    /// `<world dir>/players/` — per-player `<sanitized name>.dat` files, read
-    /// synchronously at session open/join (one small file, like `level.dat`).
+    /// `<world dir>/players/` — per-identity `<hex key>.dat` files, read
+    /// synchronously at session open/join (one small file, like `level.dat`),
+    /// plus the name registry.
     players_dir: PathBuf,
     /// The world's save directory.
     dir: PathBuf,
@@ -180,7 +187,7 @@ pub struct OpenedWorld {
     pub saved: crate::world::SavedIndex,
     /// `Some` if a `level.dat` already existed (a returning world): seed, the
     /// world tick, and the mod world KV. Per-player state is NOT here — the
-    /// session reads it per name via [`WorldSave::load_player`].
+    /// session reads it per identity via [`WorldSave::load_player`].
     pub level: Option<LevelData>,
     /// Mod pack ids disabled for THIS world (`settings.json`; empty = all
     /// enabled). Already applied to the palette here; the session applies it
@@ -305,20 +312,56 @@ impl WorldSave {
         self.queue_write(IoMsg::SaveLevel(bytes));
     }
 
-    /// Queue a player-file write (`players/<sanitized name>.dat`, atomic like
+    /// Queue a player-file write (`players/<hex key>.dat`, atomic like
     /// `level.dat`). `bytes` come from [`player::encode`].
-    pub fn save_player(&self, name: &str, bytes: Vec<u8>) {
-        self.queue_write(IoMsg::SavePlayer {
-            name: name.to_string(),
-            bytes,
-        });
+    pub fn save_player(&self, key: &PlayerKey, bytes: Vec<u8>) {
+        self.queue_write(IoMsg::SavePlayer { key: *key, bytes });
     }
 
-    /// Blocking read of `players/<sanitized name>.dat` (`None` = no such
-    /// player yet, or unreadable). Called once per player at session open/join
-    /// time — one small file, synchronous like the `level.dat` read at open.
-    pub fn load_player(&self, name: &str) -> Option<Vec<u8>> {
-        std::fs::read(player_path(&self.players_dir, name)).ok()
+    /// Blocking read of `players/<hex key>.dat` (`None` = no such player
+    /// yet, or unreadable). Called once per player at session open/join time
+    /// — one small file, synchronous like the `level.dat` read at open.
+    pub fn load_player(&self, key: &PlayerKey) -> Option<Vec<u8>> {
+        std::fs::read(player_path(&self.players_dir, key)).ok()
+    }
+
+    /// Hand a pre-identity `players/<sanitized name>.dat` to `key`: the file
+    /// MOVES to `key`'s own path (synchronously, before anything else can
+    /// claim it) and its bytes are returned. `None` = no legacy file for that
+    /// name, or `key` already has a file of its own (never overwritten).
+    /// Worlds saved before player identities existed migrate one player at a
+    /// time this way, on that name's first authenticated claim.
+    pub fn adopt_legacy_player(&self, name: &str, key: &PlayerKey) -> Option<Vec<u8>> {
+        let legacy = legacy_player_path(&self.players_dir, name);
+        let owned = player_path(&self.players_dir, key);
+        if owned.exists() {
+            return None;
+        }
+        let bytes = std::fs::read(&legacy).ok()?;
+        if let Err(e) = std::fs::rename(&legacy, &owned) {
+            log::warn!(
+                "could not migrate legacy player file {}: {e}",
+                legacy.display()
+            );
+            return None;
+        }
+        if let Err(e) = petramond_util::atomic_file::sync_dir(&self.players_dir) {
+            log::warn!("could not sync the players directory: {e}");
+        }
+        Some(bytes)
+    }
+
+    /// The identity→display-name registry bytes (`None` = none saved yet).
+    pub fn load_player_registry(&self) -> Option<Vec<u8>> {
+        std::fs::read(self.players_dir.join(PLAYER_REGISTRY_FILE)).ok()
+    }
+
+    /// Replace the identity→display-name registry, synchronously and
+    /// atomically: it changes only when a player first joins or renames, and
+    /// it must never lag the player files it describes.
+    pub fn store_player_registry(&self, bytes: &[u8]) -> std::io::Result<()> {
+        std::fs::create_dir_all(&self.players_dir)?;
+        petramond_util::atomic_file::replace(&self.players_dir.join(PLAYER_REGISTRY_FILE), bytes)
     }
 
     /// Record the active mod set (`mods.json`) with the save — compared with a

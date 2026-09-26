@@ -24,7 +24,8 @@
 //! silence; readers run under a `READ_TIMEOUT` socket timeout, so a peer
 //! silent for that long reads as a lost connection. Sockets are NODELAY.
 //! Threads exit on their own (reader: socket error/shutdown; writer: channel
-//! close, after draining + flushing farewells) and are never joined.
+//! close, after draining + flushing farewells) and are never joined. Thread
+//! creation failures surface as `io::Error` from `spawn`, never as a panic.
 
 use std::io::{self, BufReader, BufWriter, Write};
 use std::net::{Shutdown, TcpStream};
@@ -102,6 +103,20 @@ fn write_loop<T: serde::Serialize>(
             }
         }
     }
+}
+
+/// Spawn a connection's writer thread. The reader is already running on a
+/// clone of `stream`; if the writer cannot start (the OS refused a thread),
+/// the socket is shut down so that reader exits too, and the error returns
+/// to the caller instead of panicking the thread that accepted the peer.
+fn spawn_writer(stream: &TcpStream, body: impl FnOnce() + Send + 'static) -> io::Result<()> {
+    std::thread::Builder::new()
+        .name("petramond-conn-write".to_string())
+        .spawn(body)
+        .map(drop)
+        .inspect_err(|_| {
+            let _ = stream.shutdown(Shutdown::Both);
+        })
 }
 
 /// Cumulative enqueued-message counts by kind. Every producer feeding a
@@ -190,30 +205,26 @@ impl TcpServerConn {
                     }
                 }
                 flag.store(true, Ordering::SeqCst);
-            })
-            .expect("spawn connection reader");
+            })?;
 
         let writer = stream.try_clone()?;
         let flag = Arc::clone(&dead);
         let depth = Arc::clone(&queued);
-        std::thread::Builder::new()
-            .name("petramond-conn-write".to_string())
-            .spawn(move || {
-                let mut w = BufWriter::new(writer);
-                // Authoritative light crosses TCP too: seeded cubes and
-                // follow-up `LightData` replace any disposable local-prediction
-                // bake. Mostly-uniform bytes — the frame
-                // compressor crushes them.
-                //
-                // The map hook runs once per DEQUEUED message (never for the
-                // internally-generated keepalives/farewell), so it is the
-                // exact counterpart of `send`'s increment.
-                write_loop(&mut w, &out_rx, ServerToClient::KeepAlive, None, |_| {
-                    depth.fetch_sub(1, Ordering::Relaxed);
-                });
-                flag.store(true, Ordering::SeqCst);
-            })
-            .expect("spawn connection writer");
+        spawn_writer(&stream, move || {
+            let mut w = BufWriter::new(writer);
+            // Authoritative light crosses TCP too: seeded cubes and
+            // follow-up `LightData` replace any disposable local-prediction
+            // bake. Mostly-uniform bytes — the frame
+            // compressor crushes them.
+            //
+            // The map hook runs once per DEQUEUED message (never for the
+            // internally-generated keepalives/farewell), so it is the
+            // exact counterpart of `send`'s increment.
+            write_loop(&mut w, &out_rx, ServerToClient::KeepAlive, None, |_| {
+                depth.fetch_sub(1, Ordering::Relaxed);
+            });
+            flag.store(true, Ordering::SeqCst);
+        })?;
 
         Ok(TcpServerConn {
             tx,
@@ -322,27 +333,23 @@ impl TcpClientConn {
                     }
                 }
                 flag.store(true, Ordering::SeqCst);
-            })
-            .expect("spawn connection reader");
+            })?;
 
         let writer = stream.try_clone()?;
         let flag = Arc::clone(&lost);
-        std::thread::Builder::new()
-            .name("petramond-conn-write".to_string())
-            .spawn(move || {
-                let mut w = BufWriter::new(writer);
-                // Farewell: whoever drops the last sender (a clean quit or a
-                // hard client teardown) still tells the server goodbye.
-                write_loop(
-                    &mut w,
-                    &out_rx,
-                    ClientToServer::KeepAlive,
-                    Some(ClientToServer::Disconnect),
-                    |msg| remap.remap_to_server(msg),
-                );
-                flag.store(true, Ordering::SeqCst);
-            })
-            .expect("spawn connection writer");
+        spawn_writer(&stream, move || {
+            let mut w = BufWriter::new(writer);
+            // Farewell: whoever drops the last sender (a clean quit or a
+            // hard client teardown) still tells the server goodbye.
+            write_loop(
+                &mut w,
+                &out_rx,
+                ClientToServer::KeepAlive,
+                Some(ClientToServer::Disconnect),
+                |msg| remap.remap_to_server(msg),
+            );
+            flag.store(true, Ordering::SeqCst);
+        })?;
 
         Ok(TcpClientConn {
             to_server,

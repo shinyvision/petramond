@@ -7,7 +7,7 @@
 //! stay `Send` (asserted below). Presentation (camera, particles, lid/swing
 //! animation) stays on the client side in `src/game/`.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 
 use crate::events::{EventBus, TickSystems};
 use crate::modding::ModHost;
@@ -92,10 +92,13 @@ pub struct ServerGame {
     /// windowed by the streaming ack loop, and the leave path may empty the
     /// list.
     pub has_local_session: bool,
-    /// Case-folded player names promoted through `op`. Persisted in the
-    /// world's engine KV map; the listen server's local session is always an
+    /// Player identities promoted through `op`. Persisted in the world's
+    /// engine KV map; the listen server's local session is always an
     /// operator independently of this set.
-    pub operators: BTreeSet<String>,
+    pub operators: crate::server::permissions::Operators,
+    /// Which identity goes by which display name on this world (the one
+    /// name → identity map; see `server::accounts`).
+    pub accounts: crate::server::accounts::PlayerRegistry,
     /// Loaded recipes (from layered `recipes.json`). Player CRAFT requests and
     /// machine-processing ticks share this immutable catalog, which is why it
     /// lives above individual menu sessions.

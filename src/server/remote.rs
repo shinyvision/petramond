@@ -4,43 +4,55 @@
 //! (`server::handle::server_main`) between its message drain and the pump.
 //!
 //! Design: an ACCEPTOR thread owns the (nonblocking) listener and hands raw
-//! `TcpStream`s over a channel; every handed-off socket immediately gets its
-//! reader/writer threads ([`TcpServerConn`]), but the handshake state machine
-//! itself runs IN the server loop (`RemoteHub::pump`) where it can reach the
-//! sessions/save/world. Pre-join connections have a 10 s deadline (dropped
-//! silently); out-of-sequence handshake traffic drops the connection.
+//! `TcpStream`s over a BOUNDED channel (a full channel closes the socket on
+//! the spot). The handshake state machine runs IN the server loop
+//! (`RemoteHub::pump`) where it can reach the sessions/save/world, over
+//! thread-free nonblocking sockets ([`admission`]) — the pending set is
+//! capped globally and per address, and each pending connection has a 10 s
+//! deadline (dropped silently). Out-of-sequence handshake traffic drops the
+//! connection. Only a join whose identity proof verifies
+//! (`net::identity::verify_join`) and that passes admission gets its
+//! reader/writer threads ([`TcpServerConn`]).
 
 use std::io;
-use std::net::{TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, Sender, TrySendError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::net::connection::TcpServerConn;
-use crate::net::protocol::{ClientToServer, ModEntry, ServerToClient};
+use crate::net::identity::{new_challenge, validate_player_name, verify_join, PlayerKey};
+use crate::net::protocol::{
+    ClientToServer, JoinRejectReason, ModEntry, SectionCacheClaim, ServerToClient,
+};
 use crate::net::PROTOCOL_VERSION;
 use crate::player::PlayerId;
 
 use super::game::ServerGame;
+use admission::{PendingConn, Refusals, Stage};
 
+mod admission;
 mod joins;
 #[cfg(test)]
 mod tests;
-
-/// A connection that hasn't completed Hello→Mods→Join within this window is
-/// dropped silently.
-const PRE_JOIN_DEADLINE: Duration = Duration::from_secs(10);
+#[cfg(test)]
+mod tests_admission;
 
 /// The acceptor thread's poll interval: the listener is NONBLOCKING and the
 /// thread sleeps this long between accept attempts, so dropping the listener
 /// only needs a stop flag — no self-connect trick, no mid-accept fd race.
 const ACCEPT_POLL: Duration = Duration::from_millis(25);
 
+/// Accepted sockets waiting for the server loop. Beyond this the acceptor
+/// closes new sockets itself, so a flood never piles up file descriptors
+/// behind a slow server tick.
+const ACCEPT_BACKLOG: usize = 64;
+
 /// The bound LAN listener + its acceptor thread.
 struct LanListener {
     port: u16,
-    handoff: Receiver<TcpStream>,
+    handoff: Receiver<(TcpStream, SocketAddr)>,
     stop: Arc<AtomicBool>,
     join: Option<std::thread::JoinHandle<()>>,
 }
@@ -52,17 +64,18 @@ impl LanListener {
         listener.set_nonblocking(true)?;
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
-        let (tx, handoff) = mpsc::channel();
+        let (tx, handoff) = mpsc::sync_channel(ACCEPT_BACKLOG);
         let join = std::thread::Builder::new()
             .name("petramond-accept".to_string())
             .spawn(move || {
                 while !flag.load(Ordering::SeqCst) {
                     match listener.accept() {
-                        Ok((stream, _)) => {
-                            if tx.send(stream).is_err() {
-                                return; // hub gone
-                            }
-                        }
+                        Ok(accepted) => match tx.try_send(accepted) {
+                            Ok(()) => {}
+                            // Dropping the socket closes it.
+                            Err(TrySendError::Full(_)) => {}
+                            Err(TrySendError::Disconnected(_)) => return, // hub gone
+                        },
                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                             std::thread::sleep(ACCEPT_POLL);
                         }
@@ -72,8 +85,7 @@ impl LanListener {
                         }
                     }
                 }
-            })
-            .expect("spawn LAN acceptor thread");
+            })?;
         Ok(LanListener {
             port,
             handoff,
@@ -92,14 +104,6 @@ impl Drop for LanListener {
     }
 }
 
-/// A connection still inside the join handshake.
-struct PendingConn {
-    conn: TcpServerConn,
-    /// `Hello` exchanged: `ModQuery`/`Join` are acceptable now.
-    helloed: bool,
-    deadline: Instant,
-}
-
 /// A joined remote client: its session is `sessions[i].id == id` (looked up
 /// per drain — session INDICES shift on `swap_remove`, `PlayerId`s never do).
 struct RemoteClient {
@@ -110,7 +114,17 @@ struct RemoteClient {
 enum PendingVerdict {
     Keep,
     Drop,
-    Joined { id: PlayerId, name: String },
+    Join(JoinRequest),
+}
+
+/// A `Join` frame, with the challenge it must prove itself against.
+struct JoinRequest {
+    challenge: crate::net::identity::JoinChallenge,
+    player_name: String,
+    key: PlayerKey,
+    proof: Vec<u8>,
+    view_distance: u8,
+    cached_sections: Vec<SectionCacheClaim>,
 }
 
 /// Everything the server thread owns about remote transport.
@@ -192,19 +206,21 @@ impl RemoteHub {
         let Some(listener) = &self.listener else {
             return;
         };
-        while let Ok(stream) = listener.handoff.try_recv() {
-            match TcpServerConn::spawn(stream) {
-                Ok(conn) => {
-                    log::info!("LAN connection from {}", conn.peer());
-                    self.pending.push(PendingConn {
-                        conn,
-                        helloed: false,
-                        deadline: Instant::now() + PRE_JOIN_DEADLINE,
-                    });
+        let mut refused = Refusals::default();
+        while let Ok((stream, peer)) = listener.handoff.try_recv() {
+            if let Err(why) = admission::admits(&self.pending, peer.ip()) {
+                refused.note(peer.ip(), why);
+                continue; // dropping the socket closes it
+            }
+            match PendingConn::new(stream, peer) {
+                Ok(pending) => {
+                    log::info!("LAN connection from {peer}");
+                    self.pending.push(pending);
                 }
-                Err(e) => log::warn!("LAN connection setup failed: {e}"),
+                Err(e) => log::warn!("LAN connection setup failed for {peer}: {e}"),
             }
         }
+        refused.log();
     }
 
     fn drive_pending(&mut self, server: &mut ServerGame, local_tx: &Sender<ServerToClient>) {
@@ -212,20 +228,24 @@ impl RemoteHub {
         while i < self.pending.len() {
             match step_pending(&mut self.pending[i], server) {
                 PendingVerdict::Keep => i += 1,
-                PendingVerdict::Drop => {
-                    // Dropping the conn flushes any farewell frame
-                    // (HelloReject/JoinReject) through its writer.
-                    self.pending.remove(i);
-                }
-                PendingVerdict::Joined { id, name } => {
-                    let pending = self.pending.remove(i);
-                    log::info!("player '{name}' joined as id {}", id.0);
+                // Dropping the socket closes it; any farewell frame
+                // (HelloReject) was already written.
+                PendingVerdict::Drop => drop(self.pending.swap_remove(i)),
+                PendingVerdict::Join(request) => {
+                    let pending = self.pending.swap_remove(i);
+                    let Some((client, name)) = admit(pending, request, server) else {
+                        continue;
+                    };
+                    log::info!("player '{name}' joined as id {}", client.id.0);
                     server.enqueue_join_chat(&name);
-                    self.broadcast(ServerToClient::PlayerJoined { id, name }, local_tx);
-                    self.clients.push(RemoteClient {
-                        id,
-                        conn: pending.conn,
-                    });
+                    self.broadcast(
+                        ServerToClient::PlayerJoined {
+                            id: client.id,
+                            name,
+                        },
+                        local_tx,
+                    );
+                    self.clients.push(client);
                 }
             }
         }
@@ -287,25 +307,35 @@ impl RemoteHub {
 
 /// Advance one pending connection's handshake with whatever frames arrived.
 /// Runs in the server loop — it can reach the sessions, save, and world.
-fn step_pending(pending: &mut PendingConn, server: &mut ServerGame) -> PendingVerdict {
-    if pending.conn.is_dead() || Instant::now() >= pending.deadline {
+fn step_pending(pending: &mut PendingConn, server: &ServerGame) -> PendingVerdict {
+    if pending.expired(Instant::now()) {
         return PendingVerdict::Drop; // silent: it never joined
     }
-    while let Some(msg) = pending.conn.try_recv() {
-        match msg {
-            ClientToServer::Hello { protocol } if !pending.helloed => {
+    loop {
+        let msg = match pending.poll() {
+            Ok(Some(msg)) => msg,
+            Ok(None) => return PendingVerdict::Keep,
+            Err(_) => return PendingVerdict::Drop,
+        };
+        let sent = match (msg, pending.stage) {
+            (ClientToServer::Hello { protocol }, Stage::Fresh) => {
                 if protocol != PROTOCOL_VERSION {
-                    pending.conn.send(ServerToClient::HelloReject {
+                    let _ = pending.send(&ServerToClient::HelloReject {
                         server_protocol: PROTOCOL_VERSION,
                     });
                     return PendingVerdict::Drop;
                 }
-                pending.helloed = true;
-                pending.conn.send(ServerToClient::HelloAck {
+                let Some(challenge) = new_challenge() else {
+                    log::error!("no OS randomness for a join challenge; refusing connection");
+                    return PendingVerdict::Drop;
+                };
+                pending.stage = Stage::Helloed { challenge };
+                pending.send(&ServerToClient::HelloAck {
                     protocol: PROTOCOL_VERSION,
-                });
+                    challenge,
+                })
             }
-            ClientToServer::ModQuery if pending.helloed => {
+            (ClientToServer::ModQuery, Stage::Helloed { .. }) => {
                 let mods = crate::modding::modset::active(server.world.disabled_mods())
                     .into_iter()
                     .map(|m| ModEntry {
@@ -313,30 +343,85 @@ fn step_pending(pending: &mut PendingConn, server: &mut ServerGame) -> PendingVe
                         version: m.version,
                     })
                     .collect();
-                pending.conn.send(ServerToClient::ModList { mods });
+                pending.send(&ServerToClient::ModList { mods })
             }
-            ClientToServer::Join {
-                player_name,
-                view_distance,
-                cached_sections,
-            } if pending.helloed => {
-                // Never rejected: a taken name is auto-deduped with a numeric
-                // suffix (the returned name is the session's — it keys the
-                // broadcast and the per-name save file).
-                let (data, name) = server.admit_remote_player(
-                    &player_name,
-                    view_distance as i32,
-                    &cached_sections,
-                );
-                let id = data.player_id;
-                pending.conn.send(ServerToClient::JoinAccept(data));
-                return PendingVerdict::Joined { id, name };
+            (
+                ClientToServer::Join {
+                    player_name,
+                    key,
+                    proof,
+                    view_distance,
+                    cached_sections,
+                },
+                Stage::Helloed { challenge },
+            ) => {
+                return PendingVerdict::Join(JoinRequest {
+                    challenge,
+                    player_name,
+                    key,
+                    proof,
+                    view_distance,
+                    cached_sections,
+                });
             }
-            ClientToServer::KeepAlive => {}
+            (ClientToServer::KeepAlive, _) => Ok(()),
             // Out-of-sequence handshake traffic (a pre-Hello Join/ModQuery, a
             // repeated Hello, gameplay before joining) drops the connection.
             _ => return PendingVerdict::Drop,
+        };
+        if sent.is_err() {
+            return PendingVerdict::Drop;
         }
     }
-    PendingVerdict::Keep
+}
+
+/// Settle a `Join`: verify the identity proof, validate the display name,
+/// check admission, and only then spawn the connection's I/O threads and
+/// admit the session. Every refusal before the spawn is a `JoinReject` over
+/// the thread-free socket; a spawn failure just closes it.
+fn admit(
+    mut pending: PendingConn,
+    request: JoinRequest,
+    server: &mut ServerGame,
+) -> Option<(RemoteClient, String)> {
+    let peer = pending.peer();
+    let verdict = if !verify_join(&request.challenge, &request.key, &request.proof) {
+        Err(JoinRejectReason::BadProof)
+    } else {
+        validate_player_name(&request.player_name)
+            .map_err(|e| JoinRejectReason::InvalidName(e.to_string()))
+            .and_then(|name| server.check_admission(&request.key).map(|()| name))
+    };
+    let name = match verdict {
+        Ok(name) => name,
+        Err(reason) => {
+            log::info!("refused join from {peer}: {reason:?}");
+            let _ = pending.send(&ServerToClient::JoinReject { reason });
+            return None;
+        }
+    };
+    let conn = match pending.into_conn() {
+        Ok(conn) => conn,
+        Err(e) => {
+            log::warn!("LAN connection setup failed for {peer}: {e}");
+            return None;
+        }
+    };
+    match server.admit_remote_player(
+        request.key,
+        &name,
+        request.view_distance as i32,
+        &request.cached_sections,
+    ) {
+        Ok((data, name)) => {
+            let id = data.player_id;
+            conn.send(ServerToClient::JoinAccept(data));
+            Some((RemoteClient { id, conn }, name))
+        }
+        Err(reason) => {
+            // Dropping the conn flushes the farewell through its writer.
+            conn.send(ServerToClient::JoinReject { reason });
+            None
+        }
+    }
 }

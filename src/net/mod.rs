@@ -12,6 +12,7 @@ pub mod blob;
 pub mod connection;
 pub mod framing;
 pub mod handshake;
+pub mod identity;
 pub mod protocol;
 pub mod remap;
 
@@ -64,7 +65,13 @@ pub mod remap;
 // 45: redo for authoritative creative schematic placement history.
 // 46: schematic capture requests carry region bounds instead of voxel coordinates.
 // 48: mob rows carry a digging mob's crack stage and the items it holds.
-pub const PROTOCOL_VERSION: u16 = 49;
+// 50: authenticated joins — `HelloAck` carries a per-connection `challenge`;
+//     `Join` carries the player's ed25519 identity `key` and a `proof`
+//     signature over that challenge (`net::identity`). Saves and operator
+//     rights key on the identity, not the display name. `JoinRejectReason`
+//     is now `BadProof` / `InvalidName` / `AlreadyConnected` / `ServerFull`
+//     (`NameTaken` is gone — taken names are still auto-suffixed).
+pub const PROTOCOL_VERSION: u16 = 50;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

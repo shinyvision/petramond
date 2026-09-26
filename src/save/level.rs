@@ -2,7 +2,7 @@
 //! game-tick counter, the world KV map, and the populated-chunk set (which
 //! chunk columns already spawned their one-time worldgen herd — see
 //! `mob::populate`). Per-player state (position, inventory, effects…) lives in
-//! `players/<name>.dat` (see [`super::player`]).
+//! `players/<key>.dat` (see [`super::player`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 

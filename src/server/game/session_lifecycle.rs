@@ -18,6 +18,7 @@ impl ServerGame {
         self.last_shipped_env = None;
         self.sessions.push(ConnectedPlayer::new(
             id,
+            crate::net::identity::PlayerKey([id.0; 32]),
             format!("Player{}", id.0),
             player,
             radius,
@@ -108,7 +109,7 @@ impl ServerGame {
                     );
                     return None;
                 }
-                Some((session.name.clone(), crate::save::player::encode(&snapshot)))
+                Some((session.key, crate::save::player::encode(&snapshot)))
             })
             .collect();
 
@@ -119,8 +120,8 @@ impl ServerGame {
                 self.world.world_kv(),
                 self.world.populated_columns(),
             ));
-            for (name, bytes) in players {
-                save.save_player(&name, bytes);
+            for (key, bytes) in players {
+                save.save_player(&key, bytes);
             }
             save.save_mods_json(crate::modding::modset::encode_active(
                 self.world.disabled_mods(),

@@ -5,6 +5,62 @@ use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::item::{ItemStack, ItemType};
 
+const RACHEL: crate::net::identity::PlayerKey = crate::net::identity::PlayerKey([0x2A; 32]);
+
+/// A pre-identity `players/<name>.dat` moves to the FIRST identity that
+/// claims the name; nobody else can adopt it afterwards, and an identity's
+/// own file is never overwritten by a legacy one.
+#[test]
+fn legacy_player_files_are_adopted_once_by_the_first_claimant() {
+    let dir = temp_world_dir("legacy-adopt");
+    let opened = open_at(dir.clone()).expect("open fresh");
+    std::fs::create_dir_all(dir.join("players")).expect("players dir");
+    std::fs::write(dir.join("players/Ann_.dat"), b"old ann").expect("legacy file");
+    std::fs::write(dir.join("players/Bob.dat"), b"old bob").expect("legacy file");
+    let (a, b) = (
+        crate::net::identity::PlayerKey([1; 32]),
+        crate::net::identity::PlayerKey([2; 32]),
+    );
+
+    assert_eq!(
+        opened.save.adopt_legacy_player("Ann ", &a).as_deref(),
+        Some(&b"old ann"[..]),
+        "the name sanitizes to the legacy file's key"
+    );
+    assert_eq!(
+        opened.save.load_player(&a).as_deref(),
+        Some(&b"old ann"[..])
+    );
+    assert!(
+        !dir.join("players/Ann_.dat").exists(),
+        "the legacy file moved"
+    );
+    assert_eq!(
+        opened.save.adopt_legacy_player("Ann ", &b),
+        None,
+        "a second claimant finds nothing"
+    );
+    assert_eq!(
+        opened.save.adopt_legacy_player("Bob", &a),
+        None,
+        "an identity with its own file never adopts another"
+    );
+    assert!(dir.join("players/Bob.dat").exists());
+
+    assert_eq!(opened.save.load_player_registry(), None);
+    opened
+        .save
+        .store_player_registry(b"{}")
+        .expect("registry writes");
+    assert_eq!(
+        opened.save.load_player_registry().as_deref(),
+        Some(&b"{}"[..])
+    );
+    let mut save = opened.save;
+    save.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 fn temp_world_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("petramond-savetest-{}-{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -39,7 +95,7 @@ fn save_reopen_roundtrips_section_level_entities() {
         let mut opened = open_at(dir.clone()).expect("open fresh");
         assert!(opened.level.is_none(), "fresh world has no level.dat");
         assert!(
-            opened.save.load_player("Rachel S!").is_none(),
+            opened.save.load_player(&RACHEL).is_none(),
             "fresh world has no player files"
         );
         assert!(!opened.saved.contains(pos));
@@ -64,11 +120,10 @@ fn save_reopen_roundtrips_section_level_entities() {
             &Default::default(),
         ));
 
-        // The player rides its own file, keyed by SANITIZED name — the
-        // display name may contain anything.
+        // The player rides its own file, keyed by identity.
         let mut plr = Player::new(WorldPos::new(80.0, 70.0, -40.0));
         plr.inventory.set_active(4);
-        opened.save.save_player("Rachel S!", player::encode(&plr));
+        opened.save.save_player(&RACHEL, player::encode(&plr));
 
         opened.save.shutdown(); // flush queued writes + join the I/O thread
     }
@@ -82,9 +137,9 @@ fn save_reopen_roundtrips_section_level_entities() {
 
         let restored = opened
             .save
-            .load_player("Rachel S!")
+            .load_player(&RACHEL)
             .and_then(|b| player::decode(&b))
-            .expect("player file restored under the same (sanitized) name");
+            .expect("player file restored under the same identity");
         assert_eq!(restored.pos, WorldPos::new(80.0, 70.0, -40.0));
         assert_eq!(restored.inventory.active_slot(), 4);
 

@@ -1,6 +1,7 @@
 //! Shared server-command parsing and execution for the dedicated console and
 //! operator-authored chat commands.
 
+use crate::net::identity::PlayerKey;
 use crate::net::protocol::ChatColor;
 use crate::player::PlayerId;
 use crate::server::chat::ChatTargets;
@@ -36,12 +37,7 @@ impl ServerGame {
     }
 
     pub fn is_operator(&self, s: usize) -> bool {
-        (self.has_local_session && s == 0)
-            || self
-                .operators
-                .contains(&crate::server::permissions::canonical_name(
-                    &self.sessions[s].name,
-                ))
+        (self.has_local_session && s == 0) || self.operators.contains(&self.sessions[s].key)
     }
 
     fn is_operator_id(&self, id: PlayerId) -> bool {
@@ -83,6 +79,35 @@ impl ServerGame {
         }
     }
 
+    /// Resolve an `op`/`deop` target to an identity and a display name: a
+    /// connected session by name, else any identity that ever joined this
+    /// world by its registered name, else a literal 64-hex-digit key (so a
+    /// dedicated-server admin can grant rights before the player's first
+    /// join).
+    fn resolve_player(&self, requested: &str) -> Option<(PlayerKey, String)> {
+        if let Some(session) = self
+            .sessions
+            .iter()
+            .find(|session| session.name.eq_ignore_ascii_case(requested))
+        {
+            return Some((session.key, session.name.clone()));
+        }
+        if let Some(key) = self.accounts.key_for_name(requested) {
+            let name = self.accounts.name_of(&key).unwrap_or(requested).to_owned();
+            return Some((key, name));
+        }
+        let key = requested.parse::<PlayerKey>().ok()?;
+        let name = self
+            .accounts
+            .name_of(&key)
+            .map_or_else(|| key.to_string(), str::to_owned);
+        Some((key, name))
+    }
+
+    fn is_local_player(&self, key: &PlayerKey) -> bool {
+        self.has_local_session && self.sessions.first().is_some_and(|s| s.key == *key)
+    }
+
     fn set_operator(&mut self, source: CommandSource, requested: &str, enabled: bool) {
         if requested.is_empty() {
             let usage = if enabled {
@@ -93,23 +118,17 @@ impl ServerGame {
             self.command_reply(source, ChatColor::Red, usage);
             return;
         }
-        let display = self
-            .sessions
-            .iter()
-            .find(|session| session.name.eq_ignore_ascii_case(requested))
-            .map(|session| session.name.clone())
-            .unwrap_or_else(|| requested.to_owned());
-        let canonical = crate::server::permissions::canonical_name(&display);
-        if canonical.is_empty() {
-            self.command_reply(source, ChatColor::Red, "Player name cannot be empty.");
+        let Some((key, display)) = self.resolve_player(requested) else {
+            self.command_reply(
+                source,
+                ChatColor::Red,
+                &format!("Unknown player '{requested}': they must join this world once first."),
+            );
             return;
-        }
+        };
 
         if enabled {
-            if self.sessions.first().is_some_and(|session| {
-                self.has_local_session && session.name.eq_ignore_ascii_case(&display)
-            }) || !self.operators.insert(canonical)
-            {
+            if self.is_local_player(&key) || !self.operators.insert(key) {
                 self.command_reply(
                     source,
                     ChatColor::Yellow,
@@ -123,11 +142,9 @@ impl ServerGame {
                 ChatColor::Yellow,
                 &format!("Made {display} an operator."),
             );
-            log::info!("server command: op {display}");
+            log::info!("server command: op {display} ({key})");
         } else {
-            if self.sessions.first().is_some_and(|session| {
-                self.has_local_session && session.name.eq_ignore_ascii_case(&display)
-            }) {
+            if self.is_local_player(&key) {
                 self.command_reply(
                     source,
                     ChatColor::Red,
@@ -135,7 +152,7 @@ impl ServerGame {
                 );
                 return;
             }
-            if !self.operators.remove(&canonical) {
+            if !self.operators.remove(&key) {
                 self.command_reply(
                     source,
                     ChatColor::Yellow,
@@ -145,11 +162,7 @@ impl ServerGame {
             }
             // Revoking a spectator without returning them to survival would
             // strand them in a mode they no longer have permission to toggle.
-            if let Some(session) = self
-                .sessions
-                .iter_mut()
-                .find(|session| session.name.eq_ignore_ascii_case(&display))
-            {
+            if let Some(session) = self.sessions.iter_mut().find(|session| session.key == key) {
                 session.player.set_mode(crate::player::PlayerMode::Survival);
                 session.fall.reset(session.player.pos.y);
                 session.pending_fall = 0.0;
@@ -160,7 +173,7 @@ impl ServerGame {
                 ChatColor::Yellow,
                 &format!("Revoked operator permissions from {display}."),
             );
-            log::info!("server command: deop {display}");
+            log::info!("server command: deop {display} ({key})");
         }
     }
 
@@ -319,6 +332,38 @@ mod tests {
                 && crate::server::chat::display_text(&pending.line)
                     .contains("only available from the server console")
         }));
+    }
+
+    /// Operator rights follow the identity, not the name: another identity
+    /// that later goes by an operator's old name inherits nothing, and a
+    /// name nobody has used cannot be pre-granted.
+    #[test]
+    fn operator_rights_key_on_identity_not_name() {
+        let (mut server, guest) = server_with_guest();
+        let guest_key = server.sessions[guest].key;
+        let name = server.sessions[guest].name.clone();
+        server.execute_console_command(&format!("op {name}"));
+        assert!(server.operators.contains(&guest_key));
+
+        // The operator goes by a new name; an impostor takes the old one.
+        server.sessions[guest].name = "Renamed".into();
+        let impostor = crate::server::session_build::spawn_player(server.world.seed);
+        let s = server.add_session_for_test(impostor);
+        server.sessions[s].name = name.clone();
+        assert!(server.is_operator(guest), "rights stay with the identity");
+        assert!(!server.is_operator(s), "the old name grants nothing");
+
+        server.execute_console_command("op NeverJoined");
+        let mut only_guest = crate::server::permissions::Operators::default();
+        only_guest.insert(guest_key);
+        assert_eq!(
+            server.operators, only_guest,
+            "a name no identity ever used cannot be pre-granted"
+        );
+
+        let hex = PlayerKey([0xEE; 32]);
+        server.execute_console_command(&format!("op {hex}"));
+        assert!(server.operators.contains(&hex), "a literal key pre-grants");
     }
 
     #[test]

@@ -72,14 +72,14 @@ fn mounted_autosave_expands_past_blocked_dismount_probes_without_moving_the_ride
     let _ = std::fs::remove_dir_all(&dir);
     let opened = petramond::save::open_at(dir.clone()).expect("temp save opens");
     game.server.world.attach_save(opened.save, opened.saved);
-    let name = game.server.sessions[0].name.clone();
+    let key = game.server.sessions[0].key;
 
     game.server.maybe_autosave(30.0);
 
     let saved = {
         let save = game.server.world.save_mut().expect("save stays attached");
         save.shutdown();
-        save.load_player(&name).expect("autosave wrote the player")
+        save.load_player(&key).expect("autosave wrote the player")
     };
     let restored = petramond::save::player::decode(&saved)
         .expect("saved player decodes")

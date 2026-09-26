@@ -26,9 +26,8 @@ fn invalid<E: Into<Box<dyn std::error::Error + Send + Sync>>>(e: E) -> io::Error
     io::Error::new(io::ErrorKind::InvalidData, e)
 }
 
-/// Encode `msg` as one frame and write it with a single `write_all` (one
-/// packet under NODELAY). Flushing is the caller's concern.
-pub fn write_msg<T: Serialize, W: Write>(w: &mut W, msg: &T) -> io::Result<()> {
+/// Encode `msg` as one complete frame (header + body).
+pub fn encode_frame<T: Serialize>(msg: &T) -> io::Result<Vec<u8>> {
     let body = postcard::to_allocvec(msg).map_err(invalid)?;
     if body.len() > MAX_FRAME {
         return Err(invalid(format!("oversize frame ({} bytes)", body.len())));
@@ -45,11 +44,45 @@ pub fn write_msg<T: Serialize, W: Write>(w: &mut W, msg: &T) -> io::Result<()> {
     } else {
         (0, body)
     };
-    let mut frame = Vec::with_capacity(5 + body.len());
+    let mut frame = Vec::with_capacity(HEADER_LEN + body.len());
     frame.extend_from_slice(&(body.len() as u32).to_le_bytes());
     frame.push(flags);
     frame.extend_from_slice(&body);
-    w.write_all(&frame)
+    Ok(frame)
+}
+
+/// Encode `msg` as one frame and write it with a single `write_all` (one
+/// packet under NODELAY). Flushing is the caller's concern.
+pub fn write_msg<T: Serialize, W: Write>(w: &mut W, msg: &T) -> io::Result<()> {
+    w.write_all(&encode_frame(msg)?)
+}
+
+/// Frame header: `[u32 LE len][u8 flags]`.
+const HEADER_LEN: usize = 5;
+
+fn parse_header(header: &[u8], max_body: usize) -> io::Result<(usize, u8)> {
+    let len = u32::from_le_bytes(header[0..4].try_into().expect("4 bytes")) as usize;
+    if len > max_body {
+        return Err(invalid(format!("oversize frame ({len} bytes)")));
+    }
+    Ok((len, header[4]))
+}
+
+/// Decode one frame body, inflating it when flagged — the decompressed size
+/// is capped at `max_body` as well (zlib-bomb guard).
+fn decode_body<T: DeserializeOwned>(flags: u8, body: &[u8], max_body: usize) -> io::Result<T> {
+    if flags & FLAG_ZLIB == 0 {
+        return postcard::from_bytes(body).map_err(invalid);
+    }
+    // Read at most one byte past the cap so overflow is detected, never
+    // materialized.
+    let mut dec = flate2::read::ZlibDecoder::new(body).take(max_body as u64 + 1);
+    let mut out = Vec::new();
+    dec.read_to_end(&mut out)?;
+    if out.len() > max_body {
+        return Err(invalid("oversize decompressed frame"));
+    }
+    postcard::from_bytes(&out).map_err(invalid)
 }
 
 /// Read one frame and decode it. Errors are terminal for the connection:
@@ -57,31 +90,36 @@ pub fn write_msg<T: Serialize, W: Write>(w: &mut W, msg: &T) -> io::Result<()> {
 /// EOF/timeout/reset. Reads exactly the frame's bytes (no over-read), so a
 /// handshake over the raw stream can hand off to a buffered reader safely.
 pub fn read_msg<T: DeserializeOwned, R: Read>(r: &mut R) -> io::Result<T> {
-    let mut header = [0u8; 5];
+    let mut header = [0u8; HEADER_LEN];
     r.read_exact(&mut header)?;
-    let len = u32::from_le_bytes(header[0..4].try_into().expect("4 bytes")) as usize;
-    let flags = header[4];
-    if len > MAX_FRAME {
-        return Err(invalid(format!("oversize frame ({len} bytes)")));
-    }
+    let (len, flags) = parse_header(&header, MAX_FRAME)?;
     let mut body = vec![0u8; len];
     r.read_exact(&mut body)?;
-    let decompressed;
-    let bytes: &[u8] = if flags & FLAG_ZLIB != 0 {
-        // Cap the decompressed size too (zlib-bomb guard): read at most one
-        // byte past the cap so overflow is detected, never materialized.
-        let mut dec = flate2::read::ZlibDecoder::new(&body[..]).take(MAX_FRAME as u64 + 1);
-        let mut out = Vec::new();
-        dec.read_to_end(&mut out)?;
-        if out.len() > MAX_FRAME {
-            return Err(invalid("oversize decompressed frame"));
-        }
-        decompressed = out;
-        &decompressed
-    } else {
-        &body
-    };
-    postcard::from_bytes(bytes).map_err(invalid)
+    decode_body(flags, &body, MAX_FRAME)
+}
+
+/// Decode the first frame at the front of `buf` without blocking — the
+/// incremental twin of [`read_msg`] for sockets read in nonblocking chunks.
+/// `Ok(None)` = the frame is still incomplete; `Ok(Some((msg, used)))` also
+/// reports how many bytes of `buf` the frame occupied. Frames (and their
+/// decompressed bodies) larger than `max_body` are `InvalidData` as soon as
+/// the header arrives, so a hostile peer can never make the caller buffer
+/// more than `max_body` bytes.
+pub fn decode_frame<T: DeserializeOwned>(
+    buf: &[u8],
+    max_body: usize,
+) -> io::Result<Option<(T, usize)>> {
+    if buf.len() < HEADER_LEN {
+        return Ok(None);
+    }
+    let max_body = max_body.min(MAX_FRAME);
+    let (len, flags) = parse_header(&buf[..HEADER_LEN], max_body)?;
+    let end = HEADER_LEN + len;
+    if buf.len() < end {
+        return Ok(None);
+    }
+    let msg = decode_body(flags, &buf[HEADER_LEN..end], max_body)?;
+    Ok(Some((msg, end)))
 }
 
 #[cfg(test)]
@@ -99,6 +137,8 @@ mod tests {
     fn small_messages_roundtrip_uncompressed() {
         let msg = ClientToServer::Join {
             player_name: "Rachel".into(),
+            key: crate::net::identity::PlayerKey([1; 32]),
+            proof: vec![2; 64],
             view_distance: 16,
             cached_sections: Vec::new(),
         };
@@ -158,6 +198,36 @@ mod tests {
         header.push(0);
         let err =
             read_msg::<ClientToServer, _>(&mut &header[..]).expect_err("oversize read rejected");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn incremental_decode_waits_for_whole_frames_and_caps_their_size() {
+        let msg = ClientToServer::Hello { protocol: 7 };
+        let mut stream = encode_frame(&msg).expect("encodes");
+        let one = stream.len();
+        stream.extend(encode_frame(&ClientToServer::KeepAlive).expect("encodes"));
+        for cut in 0..one {
+            assert!(
+                decode_frame::<ClientToServer>(&stream[..cut], 64)
+                    .expect("a partial frame is not an error")
+                    .is_none(),
+                "{cut} bytes are not a frame yet"
+            );
+        }
+        let (first, used) = decode_frame::<ClientToServer>(&stream, 64)
+            .expect("decodes")
+            .expect("complete");
+        assert_eq!((first, used), (msg, one));
+        let (second, _) = decode_frame::<ClientToServer>(&stream[used..], 64)
+            .expect("decodes")
+            .expect("complete");
+        assert_eq!(second, ClientToServer::KeepAlive);
+
+        // A header announcing more than the cap fails before its body exists.
+        let mut header = 65u32.to_le_bytes().to_vec();
+        header.push(0);
+        let err = decode_frame::<ClientToServer>(&header, 64).expect_err("capped");
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 }

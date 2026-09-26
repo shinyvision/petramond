@@ -18,7 +18,8 @@ fn a_failed_write_holds_the_barrier_and_lands_in_order_later() {
     let dir = std::env::temp_dir().join(format!("petramond-save-io-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     // A directory where the player file goes makes that write fail.
-    let blocker = dir.join("players/ada.dat");
+    let ada = crate::net::identity::PlayerKey([0xAD; 32]);
+    let blocker = dir.join(format!("players/{ada}.dat"));
     std::fs::create_dir_all(blocker.join("in-the-way")).unwrap();
 
     let (tx, rx) = std::sync::mpsc::channel();
@@ -29,7 +30,7 @@ fn a_failed_write_holds_the_barrier_and_lands_in_order_later() {
         std::thread::spawn(move || write_thread(dir, rx, completed, held))
     };
     let player = |byte: u8| IoMsg::SavePlayer {
-        name: "ada".into(),
+        key: ada,
         bytes: vec![byte; 4],
     };
     tx.send((1, player(1))).unwrap();

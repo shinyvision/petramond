@@ -1,6 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use super::{level, settings};
+use crate::net::identity::PlayerKey;
 use petramond_util::atomic_file;
 use petramond_util::paths::base_data_dir;
 
@@ -51,10 +52,17 @@ fn sanitize(name: &str) -> String {
     }
 }
 
-/// The on-disk file for a player name: `players/<sanitized name>.dat`. Names
-/// sanitize through the same routine as world save directories, so any display
-/// name maps to a single safe path component.
-pub(super) fn player_path(players_dir: &Path, name: &str) -> PathBuf {
+/// The on-disk file for a player identity: `players/<hex key>.dat`. Players
+/// are keyed by their authenticated identity (`net::identity`), never by the
+/// display name they chose.
+pub(super) fn player_path(players_dir: &Path, key: &PlayerKey) -> PathBuf {
+    players_dir.join(format!("{key}.dat"))
+}
+
+/// A pre-identity player file: `players/<sanitized name>.dat`. Only read once,
+/// to hand it to the first identity that claims the name
+/// (`WorldSave::adopt_legacy_player`).
+pub(super) fn legacy_player_path(players_dir: &Path, name: &str) -> PathBuf {
     players_dir.join(format!("{}.dat", sanitize(name)))
 }
 

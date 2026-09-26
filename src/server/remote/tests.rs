@@ -2,6 +2,7 @@ use super::*;
 use crate::net::connection::TcpClientConn;
 use crate::net::framing::{read_msg, write_msg};
 use crate::net::handshake::{client_handshake, installed_mod_ids};
+use crate::net::identity::PlayerIdentity;
 use crate::net::protocol::{PlayerAction, PlayerUpdate, TargetRef};
 use crate::net::remap::IdRemap;
 use crate::server::handle::ServerHandle;
@@ -13,6 +14,14 @@ use petramond_world::chunk::SectionPos;
 use petramond_world::item::{ItemStack, ItemType};
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+fn identity() -> PlayerIdentity {
+    PlayerIdentity::generate().expect("os randomness")
+}
+
+fn key(byte: u8) -> PlayerKey {
+    PlayerKey([byte; 32])
+}
 
 fn connect(port: u16) -> TcpStream {
     let stream = TcpStream::connect(("127.0.0.1", port)).expect("connect to loopback");
@@ -57,8 +66,9 @@ fn drain_until<T>(
 }
 
 /// Duplicate names are never rejected: admission appends the lowest free
-/// numeric suffix (case-insensitive vs every connected session), and the
-/// suffixed name IS the session name (it keys the per-name save file).
+/// numeric suffix (case-insensitive vs every other identity), and the
+/// suffixed name IS the session's display name. The same identity joining
+/// twice, however, is refused.
 #[test]
 fn duplicate_join_names_dedupe_with_the_lowest_free_numeric_suffix() {
     let mut server = crate::server::session_build::build_server_inline("", 3, 2);
@@ -66,17 +76,33 @@ fn duplicate_join_names_dedupe_with_the_lowest_free_numeric_suffix() {
     // (client.json / $USER); pin it so an ambient "Rachel"-ish name
     // can't occupy a suffix the assertions below count on.
     server.sessions[0].name = "Host".to_string();
-    let (_, first) = server.admit_remote_player("Rachel", 32, &[]);
+    let (_, first) = server
+        .admit_remote_player(key(1), "Rachel", 32, &[])
+        .expect("admitted");
     assert_eq!(first, "Rachel");
-    let (_, second) = server.admit_remote_player("rachel", 32, &[]);
+    let (_, second) = server
+        .admit_remote_player(key(2), "rachel", 32, &[])
+        .expect("admitted");
     assert_eq!(
         second, "rachel2",
         "case-insensitive dedupe, suffix appended"
     );
-    let (_, third) = server.admit_remote_player("RACHEL", 32, &[]);
+    let (_, third) = server
+        .admit_remote_player(key(3), "RACHEL", 32, &[])
+        .expect("admitted");
     assert_eq!(third, "RACHEL3", "the lowest FREE suffix (2 is taken)");
     let names: Vec<&str> = server.sessions.iter().map(|s| s.name.as_str()).collect();
     assert!(names.contains(&"Rachel") && names.contains(&"rachel2"));
+
+    assert_eq!(
+        server.admit_remote_player(key(2), "Other", 32, &[]).err(),
+        Some(JoinRejectReason::AlreadyConnected),
+        "one identity, one session"
+    );
+    let (_, host_name) = server
+        .admit_remote_player(key(4), "host", 32, &[])
+        .expect("admitted");
+    assert_eq!(host_name, "host2", "the local session's name is taken too");
 }
 
 #[test]
@@ -103,7 +129,9 @@ fn headless_disconnect_detaches_before_player_id_reuse() {
         },
     );
 
-    let (first, _) = server.admit_remote_player("First", 16, &[]);
+    let (first, _) = server
+        .admit_remote_player(key(1), "First", 16, &[])
+        .expect("admitted");
     assert_eq!(first.player_id, PlayerId(0));
     assert!(server
         .world
@@ -118,7 +146,9 @@ fn headless_disconnect_detaches_before_player_id_reuse() {
     assert!(server.sessions.is_empty());
     assert_eq!(server.world.riding().mount_of(0), None);
 
-    let (second, _) = server.admit_remote_player("Second", 16, &[]);
+    let (second, _) = server
+        .admit_remote_player(key(2), "Second", 16, &[])
+        .expect("admitted");
     assert_eq!(second.player_id, PlayerId(0), "the freed id recycles");
     assert_eq!(server.world.riding().mount_of(0), None);
     assert_eq!(server.sessions[0].mount, None);
@@ -135,9 +165,10 @@ fn headless_disconnect_detaches_before_player_id_reuse() {
 
 /// The full remote-join loop over real TCP on 127.0.0.1: open to LAN on an
 /// ephemeral port, handshake + join a remote client (restored from a
-/// pre-seeded player file), stream it terrain, place a block from the
-/// remote side and see the delta come back, dedupe a duplicate name,
-/// ignore Pause while remote players exist, and broadcast joins/leaves.
+/// pre-seeded, pre-identity player file it adopts on first join), stream it
+/// terrain, place a block from the remote side and see the delta come back,
+/// dedupe a duplicate name, ignore Pause while remote players exist, and
+/// broadcast joins/leaves.
 #[test]
 fn full_lan_join_place_pause_gate_and_leave() {
     // One wall-clock budget for the whole narrative (hard per-test rule).
@@ -154,7 +185,9 @@ fn full_lan_join_place_pause_gate_and_leave() {
     let dir = std::env::temp_dir().join(format!("petramond-lan-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("players")).expect("temp players dir");
-    // Pre-seed the joining player's save: standing on the seed's dry-land
+    // Pre-seed the joining player's save as a PRE-IDENTITY name-keyed file
+    // (the visitor's identity adopts it on first join): standing on the
+    // seed's dry-land
     // spawn pick (a placement within legitimate reach must exist around
     // it — the reach eye is ring-bounded, so the visitor builds from
     // where it actually stands) + dirt to place (a fresh spawn would be
@@ -185,9 +218,12 @@ fn full_lan_join_place_pause_gate_and_leave() {
         .expect("player file");
     }
 
-    let player_name = crate::save::client::resolve_player_name(&crate::save::client::load());
+    let host_player = crate::server::session_build::LocalPlayer {
+        key: identity().key(),
+        name: crate::save::client::resolve_player_name(&crate::save::client::load()),
+    };
     let (mut server, _, _) =
-        crate::server::session_build::build_server("", 7, 2, Some(player_name));
+        crate::server::session_build::build_server("", 7, 2, Some(host_player));
     let opened = crate::save::open_at(dir.clone()).expect("temp save opens");
     server.world.attach_save(opened.save, opened.saved);
     // Pre-build a tiny stone pad at the visitor's feet (threaded pool, but a
@@ -256,10 +292,18 @@ fn full_lan_join_place_pause_gate_and_leave() {
     // The real join. A render distance of 2 streams ~25 columns (enough for
     // a buildable spot near the visitor's feet) instead of ~1000 — the
     // wire path under test is identical.
+    let visitor_id = identity();
     let mut stream = connect(port);
-    let join = client_handshake(&mut stream, "Visitor", 2, &installed_mod_ids(), Vec::new())
-        .expect("handshake succeeds")
-        .join;
+    let join = client_handshake(
+        &mut stream,
+        &visitor_id,
+        "Visitor",
+        2,
+        &installed_mod_ids(),
+        Vec::new(),
+    )
+    .expect("handshake succeeds")
+    .join;
     assert_eq!(join.player_id, PlayerId(1));
     assert_eq!(join.seed, 7);
     assert_eq!(join.self_restore.transform.pos, visitor_feet);
@@ -404,9 +448,16 @@ fn full_lan_join_place_pause_gate_and_leave() {
     // load target for nothing.
     {
         let mut dup = connect(port);
-        let data = client_handshake(&mut dup, "vISITOR", 2, &installed_mod_ids(), Vec::new())
-            .expect("a duplicate name joins deduped, not rejected")
-            .join;
+        let data = client_handshake(
+            &mut dup,
+            &identity(),
+            "vISITOR",
+            2,
+            &installed_mod_ids(),
+            Vec::new(),
+        )
+        .expect("a duplicate name joins deduped, not rejected")
+        .join;
         let dup_id = data.player_id;
         let name = drain_until(&mut host, remain(), |msg| match msg {
             ServerToClient::PlayerJoined { id, name } if id == dup_id => Some(name),
@@ -429,9 +480,16 @@ fn full_lan_join_place_pause_gate_and_leave() {
     // everyone else hears PlayerJoined then PlayerLeft.
     let guest_id = {
         let mut guest = connect(port);
-        let data = client_handshake(&mut guest, "Guest", 2, &installed_mod_ids(), Vec::new())
-            .expect("guest joins")
-            .join;
+        let data = client_handshake(
+            &mut guest,
+            &identity(),
+            "Guest",
+            2,
+            &installed_mod_ids(),
+            Vec::new(),
+        )
+        .expect("guest joins")
+        .join;
         assert_eq!(
             data.players.len(),
             2,
@@ -470,7 +528,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
 
     let saved_count = loop {
         let left = remain();
-        if let Some(data) = std::fs::read(dir.join("players/Visitor.dat"))
+        if let Some(data) = std::fs::read(dir.join(format!("players/{}.dat", visitor_id.key())))
             .ok()
             .and_then(|bytes| crate::save::player::decode(&bytes))
         {
@@ -523,10 +581,18 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
     let port = host.open_to_lan(0).expect("bind an ephemeral port");
 
     // First join claims id 0 — no local session holds it on headless.
+    let head = identity();
     let mut stream = connect(port);
-    let join = client_handshake(&mut stream, "Head", 16, &installed_mod_ids(), Vec::new())
-        .expect("join")
-        .join;
+    let join = client_handshake(
+        &mut stream,
+        &head,
+        "Head",
+        16,
+        &installed_mod_ids(),
+        Vec::new(),
+    )
+    .expect("join")
+    .join;
     assert_eq!(join.player_id, PlayerId(0));
     let conn = TcpClientConn::spawn(stream, IdRemap::build(&join.tables)).expect("conn threads");
     let mut remote = ServerHandle::from_remote(conn);
@@ -558,9 +624,16 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
     std::thread::sleep(Duration::from_secs(1));
 
     let mut stream = connect(port);
-    let join = client_handshake(&mut stream, "Head", 16, &installed_mod_ids(), Vec::new())
-        .expect("rejoin")
-        .join;
+    let join = client_handshake(
+        &mut stream,
+        &head,
+        "Head",
+        16,
+        &installed_mod_ids(),
+        Vec::new(),
+    )
+    .expect("rejoin")
+    .join;
     assert_eq!(join.player_id, PlayerId(0), "the freed id recycles");
     let conn = TcpClientConn::spawn(stream, IdRemap::build(&join.tables)).expect("conn threads");
     let mut remote = ServerHandle::from_remote(conn);

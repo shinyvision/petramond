@@ -7,9 +7,11 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
+use crate::net::identity::PlayerKey;
 use crate::player::Player;
 use crate::player::PlayerId;
 use crate::save::{LevelData, WorldSave};
+use crate::server::accounts::PlayerRegistry;
 use crate::server::game::ServerGame;
 use crate::server::player::ConnectedPlayer;
 use crate::worker::JobPool;
@@ -53,6 +55,15 @@ pub fn build_headless_session(world_name: &str, new_seed: u32, render_dist: i32)
     build_server(world_name, new_seed, render_dist, None).0
 }
 
+/// The listen server's own player: the host's identity (the client's
+/// `net::identity::PlayerIdentity` key — it keys the host's save file like
+/// any remote player's) and its configured display name (coerced to a valid
+/// one here; see `net::identity::coerce_player_name`).
+pub struct LocalPlayer {
+    pub key: PlayerKey,
+    pub name: String,
+}
+
 /// [`build_server`] with an INLINE job pool and a local session — the core
 /// crate's in-process test harness: streaming work completes inside the pump
 /// that queued it, so tests never sleep-wait on background workers. The
@@ -64,15 +75,20 @@ pub fn build_server_inline(world_name: &str, new_seed: u32, render_dist: i32) ->
         world_name,
         new_seed,
         render_dist,
-        Some(crate::save::client::resolve_player_name(
-            &crate::save::client::load(),
-        )),
+        Some(LocalPlayer {
+            // A throwaway identity: tests never touch the developer's real
+            // identity file.
+            key: crate::net::identity::PlayerIdentity::generate()
+                .expect("os randomness")
+                .key(),
+            name: crate::save::client::resolve_player_name(&crate::save::client::load()),
+        }),
         Arc::new(JobPool::inline()),
     )
     .0
 }
 
-/// The ONE server constructor both shapes share. `local_player_name` decides
+/// The ONE server constructor both shapes share. `local_player` decides
 /// the shape: `Some` restores/spawns that player as the permanent session 0
 /// (listen server); `None` starts with no sessions at all (headless) — mod
 /// init then runs against a DISCARDED stand-in player (the single-player-
@@ -84,13 +100,13 @@ pub fn build_server(
     world_name: &str,
     new_seed: u32,
     render_dist: i32,
-    local_player_name: Option<String>,
+    local_player: Option<LocalPlayer>,
 ) -> (ServerGame, Arc<JobPool>, SurfaceDensitySystem) {
     build_server_with_pool(
         world_name,
         new_seed,
         render_dist,
-        local_player_name,
+        local_player,
         Arc::new(JobPool::new(JobPool::default_threads())),
     )
 }
@@ -103,7 +119,7 @@ pub fn build_server_with_pool(
     world_name: &str,
     new_seed: u32,
     render_dist: i32,
-    local_player_name: Option<String>,
+    local_player: Option<LocalPlayer>,
     pool: Arc<JobPool>,
 ) -> (ServerGame, Arc<JobPool>, SurfaceDensitySystem) {
     let mut perf = JoinPerf::start();
@@ -111,12 +127,17 @@ pub fn build_server_with_pool(
     perf.mark("save_open");
     let seed = opened.level.as_ref().map(|l| l.seed).unwrap_or(new_seed);
     let fallback_world = SurfaceDensitySystem::new(seed);
-    let local = local_player_name.map(|name| {
-        let player = player_for_session(opened.save.as_ref().map(|(s, _)| s), &name, seed);
+    let mut accounts = PlayerRegistry::load(opened.save.as_ref().map(|(s, _)| s));
+    let local = local_player.map(|LocalPlayer { key, name }| {
+        let requested = crate::net::identity::coerce_player_name(&name);
+        let save = opened.save.as_ref().map(|(s, _)| s);
+        let claim = accounts.claim(save, key, &requested, |_| false);
+        let player = claim.restored.unwrap_or_else(|| spawn_player(seed));
         // The local session starts at the full server budget (the host's own
         // view distance built this world); a live slider change follows
         // through `SetViewDistance` like any connection.
-        ConnectedPlayer::new(PlayerId(0), name, player, render_dist)
+        let session = ConnectedPlayer::new(PlayerId(0), key, claim.name, player, render_dist);
+        (session, claim.first_seen)
     });
     perf.mark("player_restore_or_spawn");
     let disabled_mods = opened.disabled_mods;
@@ -129,7 +150,7 @@ pub fn build_server_with_pool(
     // of the first column job deriving the whole neighbourhood serially.
     // (Tiles are pure `(seed, tile)` functions — mod hooks don't affect them,
     // so warming before mod init is safe.)
-    if let Some(local) = &local {
+    if let Some((local, _)) = &local {
         let feet = local.player.pos;
         let (pcx, pcz) = (
             (feet.x.floor() as i32).div_euclid(16),
@@ -164,7 +185,13 @@ pub fn build_server_with_pool(
         world.restore_tick(level.tick);
         world.set_populated_columns(level.populated_columns.clone());
     }
-    let operators = crate::server::permissions::load(&world);
+    let mut operators = crate::server::permissions::load(&world);
+    let local = local.map(|(session, first_seen)| {
+        if first_seen && operators.claim_legacy(&session.name, session.key) {
+            crate::server::permissions::store(&mut world, &operators);
+        }
+        session
+    });
     perf.mark("save_attach");
 
     let has_local_session = local.is_some();
@@ -183,6 +210,7 @@ pub fn build_server_with_pool(
         sessions: local.into_iter().collect(),
         has_local_session,
         operators,
+        accounts,
         recipes,
         unlocks: unlocks.clone(),
         bus: crate::events::EventBus::default(),
@@ -345,18 +373,8 @@ fn open_session(world_name: &str) -> OpenedSession {
     }
 }
 
-/// Restore this player from `players/<name>.dat` when present, else spawn
-/// fresh at the seed's surface pick (a brand-new world OR a new player joining
-/// an existing one).
-pub fn player_for_session(save: Option<&WorldSave>, name: &str, seed: u32) -> Player {
-    save.and_then(|s| s.load_player(name))
-        .and_then(|bytes| crate::save::player::decode(&bytes))
-        .map(|data| data.restore())
-        .unwrap_or_else(|| spawn_player(seed))
-}
-
 /// A fresh player at the seed's surface pick — the fallback for both the
-/// local session and a remote join with no `players/<name>.dat` yet.
+/// local session and a remote join with no saved player yet.
 pub fn spawn_player(seed: u32) -> Player {
     let surface = petramond_worldgen::spawn::find_spawn(seed);
     let feet = petramond_math::world_pos::WorldPos::block_min(surface) + Vec3::new(0.5, 1.0, 0.5);

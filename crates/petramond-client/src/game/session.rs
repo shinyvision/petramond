@@ -12,7 +12,8 @@ use petramond_render::camera::Camera;
 use petramond_world::crafting::CraftingCatalog;
 use petramond_worldgen::density::surface::SurfaceDensitySystem;
 
-use petramond::server::session_build::build_server_with_pool;
+use petramond::net::identity::PlayerIdentity;
+use petramond::server::session_build::{build_server_with_pool, LocalPlayer};
 
 use super::section_cache::section_cache_registry_key;
 use super::Game;
@@ -257,6 +258,17 @@ pub fn build_session_inline(
     )
 }
 
+/// This machine's player identity (`<data>/identity.key`, created on first
+/// use). Under test a throwaway one, so the suite never creates or reads the
+/// developer's real identity file.
+pub(crate) fn player_identity() -> std::io::Result<PlayerIdentity> {
+    if cfg!(test) {
+        PlayerIdentity::generate()
+    } else {
+        PlayerIdentity::load_or_create_default()
+    }
+}
+
 /// [`build_session`] over a caller-owned job pool. The in-process test
 /// harness passes an INLINE pool ([`JobPool::inline`]) so queued gen/light
 /// work completes inside the pump that queued it — tests gate on one more
@@ -267,12 +279,27 @@ pub fn build_session_with_pool(
     render_dist: i32,
     pool: Arc<JobPool>,
 ) -> (ServerGame, ClientBootstrap) {
-    // The LOCAL player's identity (client.json / env / OS username) keys
-    // its per-world save file: `players/<name>.dat`.
-    let player_name =
-        petramond::save::client::resolve_player_name(&petramond::save::client::load());
-    let (server, pool, fallback_world) =
-        build_server_with_pool(world_name, new_seed, render_dist, Some(player_name), pool);
+    // The LOCAL player: this machine's identity keys its per-world save
+    // file (`players/<key>.dat`); the display name comes from client.json /
+    // env / OS username.
+    let name = petramond::save::client::resolve_player_name(&petramond::save::client::load());
+    let key = match player_identity() {
+        Ok(identity) => identity.key(),
+        Err(e) => {
+            log::error!(
+                "could not load the player identity ({e}); this world saves the player \
+                 under an offline stand-in identity until it loads again"
+            );
+            petramond::net::identity::offline_key(&name)
+        }
+    };
+    let (server, pool, fallback_world) = build_server_with_pool(
+        world_name,
+        new_seed,
+        render_dist,
+        Some(LocalPlayer { key, name }),
+        pool,
+    );
     let t_client = std::time::Instant::now();
 
     // The CLIENT's replica world: fed by the server's terrain payloads and

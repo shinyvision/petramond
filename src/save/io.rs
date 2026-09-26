@@ -17,7 +17,7 @@ pub(super) enum IoMsg {
     SaveColumnGens(Vec<colgen::ColumnGenRecord>),
     SaveLevel(Vec<u8>),
     SavePlayer {
-        name: String,
+        key: crate::net::identity::PlayerKey,
         bytes: Vec<u8>,
     },
     SaveModsJson(Vec<u8>),
@@ -291,8 +291,8 @@ fn split_job(msg: IoMsg, job: &mut Job) {
             path: "level.dat".into(),
             bytes,
         }),
-        IoMsg::SavePlayer { name, bytes } => job.entries.push(Entry::File {
-            path: player_path(Path::new("players"), &name)
+        IoMsg::SavePlayer { key, bytes } => job.entries.push(Entry::File {
+            path: player_path(Path::new("players"), &key)
                 .to_string_lossy()
                 .into_owned(),
             bytes,
