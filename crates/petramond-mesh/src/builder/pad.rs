@@ -1,12 +1,14 @@
 use petramond_world::block::{Block, ShapeState};
-use petramond_world::chunk::{SECTION_SIZE, SKY_FULL, WORLD_MAX_Y, WORLD_MIN_Y};
+use petramond_world::chunk::SECTION_SIZE;
 use petramond_world::fluid_math;
 
+/// The pad's side: the section plus one cell of border on each face.
 pub(super) const SECTION_PAD: usize = SECTION_SIZE + 2;
-/// [`SECTION_PAD`] under the name the mesh module re-exports.
-pub(crate) const MESH_PAD_SIDE: usize = SECTION_PAD;
-const BIOME_PAD_RADIUS: i32 = 2;
-const BIOME_PAD: usize = SECTION_SIZE + (BIOME_PAD_RADIUS as usize * 2);
+/// How far the biome pad reaches past the section on X/Z (the tint blend
+/// window's radius).
+pub(super) const BIOME_PAD_RADIUS: i32 = 2;
+/// The biome pad's side.
+pub(super) const BIOME_PAD: usize = SECTION_SIZE + (BIOME_PAD_RADIUS as usize * 2);
 
 #[inline]
 pub(crate) fn mesh_pad_idx(x: usize, y: usize, z: usize) -> usize {
@@ -14,13 +16,18 @@ pub(crate) fn mesh_pad_idx(x: usize, y: usize, z: usize) -> usize {
 }
 
 #[inline]
-fn biome_pad_idx(x: usize, z: usize) -> usize {
+pub(super) fn biome_pad_idx(x: usize, z: usize) -> usize {
     z * BIOME_PAD + x
 }
 
+/// Everything one section mesh reads of the world: 18³ cells (the section and
+/// a one-cell border, indexed by `mesh_pad_idx`) plus a 20×20 biome window.
+/// Reads beyond the pad answer air / no state / open sky / not loaded.
 pub struct SectionMeshPad<'a> {
     pub blocks: &'a [u16],
     pub fluid: &'a [u8],
+    /// Baked skylight. Cells above the world must hold `SKY_FULL` and cells
+    /// below it `0` — the lighting gather reads this array directly.
     pub skylight: &'a [u8],
     /// Per-cell block light, packed RGB — the mesher averages it PER CHANNEL
     /// and emits all three into the vertex's split light lanes.
@@ -35,119 +42,6 @@ pub struct SectionMeshPad<'a> {
 }
 
 impl SectionMeshPad<'_> {
-    pub(super) fn transition_blocked_world(
-        &self,
-        ox: i32,
-        oy: i32,
-        oz: i32,
-        wx: i32,
-        wy: i32,
-        wz: i32,
-    ) -> bool {
-        self.world_idx(ox, oy, oz, wx, wy, wz)
-            .is_none_or(|i| self.transition_blocked[i])
-    }
-
-    #[inline]
-    pub(crate) fn block_at_pad(&self, px: usize, py: usize, pz: usize) -> Block {
-        Block::from_id(self.blocks[mesh_pad_idx(px, py, pz)])
-    }
-
-    #[inline]
-    fn world_idx(&self, ox: i32, oy: i32, oz: i32, wx: i32, wy: i32, wz: i32) -> Option<usize> {
-        let (px, py, pz) = (wx - (ox - 1), wy - (oy - 1), wz - (oz - 1));
-        let n = SECTION_PAD as i32;
-        if (0..n).contains(&px) && (0..n).contains(&py) && (0..n).contains(&pz) {
-            Some(mesh_pad_idx(px as usize, py as usize, pz as usize))
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    pub(super) fn block_world(&self, ox: i32, oy: i32, oz: i32, wx: i32, wy: i32, wz: i32) -> u16 {
-        self.world_idx(ox, oy, oz, wx, wy, wz)
-            .map_or(0, |i| self.blocks[i])
-    }
-
-    #[inline]
-    pub(super) fn cell_state_world(
-        &self,
-        ox: i32,
-        oy: i32,
-        oz: i32,
-        wx: i32,
-        wy: i32,
-        wz: i32,
-    ) -> ShapeState {
-        self.world_idx(ox, oy, oz, wx, wy, wz)
-            .map_or(ShapeState::NONE, |i| self.cell_states[i])
-    }
-
-    #[inline]
-    pub(super) fn fluid_meta_world(
-        &self,
-        ox: i32,
-        oy: i32,
-        oz: i32,
-        wx: i32,
-        wy: i32,
-        wz: i32,
-    ) -> u8 {
-        self.world_idx(ox, oy, oz, wx, wy, wz)
-            .map_or(0, |i| self.fluid[i])
-    }
-
-    #[inline]
-    pub(super) fn skylight_world(
-        &self,
-        ox: i32,
-        oy: i32,
-        oz: i32,
-        wx: i32,
-        wy: i32,
-        wz: i32,
-    ) -> u8 {
-        if wy >= WORLD_MAX_Y {
-            return SKY_FULL;
-        }
-        if wy < WORLD_MIN_Y {
-            return 0;
-        }
-        self.world_idx(ox, oy, oz, wx, wy, wz)
-            .map_or(SKY_FULL, |i| self.skylight[i])
-    }
-
-    #[inline]
-    pub(super) fn blocklight_world(
-        &self,
-        ox: i32,
-        oy: i32,
-        oz: i32,
-        wx: i32,
-        wy: i32,
-        wz: i32,
-    ) -> petramond_world::light::LightRgb {
-        self.world_idx(ox, oy, oz, wx, wy, wz)
-            .map_or(petramond_world::light::LightRgb::ZERO, |i| {
-                self.blocklight[i]
-            })
-    }
-
-    #[inline]
-    pub(super) fn loaded_world(
-        &self,
-        ox: i32,
-        oy: i32,
-        oz: i32,
-        wx: i32,
-        wy: i32,
-        wz: i32,
-    ) -> bool {
-        self.world_idx(ox, oy, oz, wx, wy, wz)
-            .is_some_and(|i| self.loaded[i])
-    }
-
     #[inline]
     pub(super) fn biome_world(&self, ox: i32, oz: i32, wx: i32, wz: i32) -> u8 {
         let (px, pz) = (wx - (ox - BIOME_PAD_RADIUS), wz - (oz - BIOME_PAD_RADIUS));

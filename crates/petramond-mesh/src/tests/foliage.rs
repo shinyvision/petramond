@@ -47,13 +47,13 @@ fn leaves_go_to_opaque_pass() {
 
 #[test]
 fn distant_canopy_keeps_exterior_sprays_and_materials() {
-    // BOTH emitters: cube-family leaves take the exposure-mask fast path when a
-    // pad is present and the generic per-face path when it is not, and each has
+    // BOTH culls: cube-family leaves take the exposure-mask fast path in the
+    // production build and the per-face cull in the reference, and each has
     // to split the leaf-to-leaf internals off the far LOD's prefix for itself.
     type Mesher = fn(&Section) -> ChunkMesh;
     for (path, build) in [
-        ("closures", mesh as Mesher),
-        ("pad", mesh_via_pad as Mesher),
+        ("exposure masks", mesh as Mesher),
+        ("per face", mesh_per_face as Mesher),
     ] {
         for leaf in [Block::OakLeaves, Block::SpruceLeaves] {
             let mut section = Section::new(0, 0, 0);

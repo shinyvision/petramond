@@ -1,5 +1,4 @@
 use super::*;
-use petramond_world::block_state::SlabSplit;
 
 /// Parallel mesh building (the mesh pool on native) must produce byte-identical
 /// meshes to a serial build: `build_section_mesh` is a pure function of
@@ -173,159 +172,53 @@ mod parallel_parity_tests {
     }
 }
 
+/// Every stream of two meshes, byte for byte.
+fn assert_same_mesh(a: &ChunkMesh, b: &ChunkMesh, what: &str) {
+    let verts = |v: &[Vertex]| bytemuck::cast_slice::<Vertex, u8>(v).to_vec();
+    assert_eq!(verts(&a.opaque), verts(&b.opaque), "{what}: opaque");
+    assert_eq!(a.far_opaque_len, b.far_opaque_len, "{what}: far LOD");
+    assert_eq!(
+        verts(&a.transparent),
+        verts(&b.transparent),
+        "{what}: transparent"
+    );
+    assert_eq!(
+        verts(&a.transparent_two_sided),
+        verts(&b.transparent_two_sided),
+        "{what}: transparent two-sided"
+    );
+    assert_eq!(
+        verts(&a.translucent),
+        verts(&b.translucent),
+        "{what}: translucent"
+    );
+    assert_eq!(
+        bytemuck::cast_slice::<ModelVertex, u8>(&a.model),
+        bytemuck::cast_slice::<ModelVertex, u8>(&b.model),
+        "{what}: model"
+    );
+    assert_eq!(a.model_idx, b.model_idx, "{what}: model indices");
+    assert_eq!(
+        a.model_blend_idx, b.model_blend_idx,
+        "{what}: model blend indices"
+    );
+    assert_eq!(
+        bytemuck::cast_slice::<crate::ContactShadowVertex, u8>(&a.contact),
+        bytemuck::cast_slice::<crate::ContactShadowVertex, u8>(&b.contact),
+        "{what}: contact"
+    );
+    assert_eq!(a.mesh_dirty, b.mesh_dirty, "{what}: dirty flag");
+}
+
+/// The exposure-mask fast path (buried rows skipped, cube faces culled from
+/// bitsets) and the per-face cull (every cube face asks its front cell) must
+/// mesh the showcase identically — slabs, snow seals, glass, fluids at the
+/// pad's top face, coloured light and cross-seam transitions included.
 #[test]
-fn pad_local_section_mesher_matches_closure_mesher() {
-    use petramond_world::furnace::Furnace;
-
-    const PAD: usize = SECTION_SIZE + 2;
-    const PAD_VOL: usize = PAD * PAD * PAD;
-    const BIOME_PAD_RADIUS: i32 = 2;
-    const BIOME_PAD: usize = SECTION_SIZE + (BIOME_PAD_RADIUS as usize * 2);
-    let pidx = |x: usize, y: usize, z: usize| (y * PAD + z) * PAD + x;
-    let bidx = |x: usize, z: usize| z * BIOME_PAD + x;
-
+fn exposure_masks_match_the_per_face_cull_on_the_showcase() {
+    let (section, scene) = fixtures::showcase();
     let pos = SectionPos::new(0, 0, 0);
-    let mut section = floor_section(Block::Stone);
-    section.set_block(2, 1, 2, Block::Grass);
-    section.set_block(3, 1, 2, Block::OakLeaves);
-    section.set_block(4, 1, 2, Block::ShortGrass);
-    section.set_fluid(5, 1, 2, Block::Water, 4);
-    // Top-of-section water: the pad-local fill probe reads the neighbour
-    // ABOVE (one past the top pad face for that neighbour) — must not OOB.
-    section.set_fluid(5, SECTION_SIZE - 1, 2, Block::Water, 0);
-    // A BURNING furnace is the `furnace_lit` row; the machine state rides
-    // along as it does in the live world (the mesher only reads the row).
-    section.set_block(6, 1, 2, Block::FurnaceLit);
-    section.insert_furnace(
-        6,
-        1,
-        2,
-        Furnace {
-            burn_remaining: 10,
-            ..Default::default()
-        },
-    );
-    section.insert_entity_facing(6, 1, 2, Facing::East);
-    section.set_block(7, 1, 2, Block::Cactus);
-    section.set_block(8, 1, 2, Block::OakStairs);
-    section.set_stair_facing(8, 1, 2, Facing::South);
-    // Slabs: single layer, same-material full stack (cube fast path), mixed full
-    // stack, and an opaque cube against the mixed stack (both-way culling).
-    section.set_block(9, 1, 2, Block::OakSlab);
-    section.set_slab_state(9, 1, 2, SlabState::single(SlabSplit::Y, 0, Block::OakSlab));
-    section.set_block(10, 1, 2, Block::StoneSlab);
-    section.set_slab_state(
-        10,
-        1,
-        2,
-        SlabState {
-            split: SlabSplit::Y,
-            layers: [Block::StoneSlab, Block::StoneSlab],
-        },
-    );
-    section.set_block(11, 1, 2, Block::StoneSlab);
-    section.set_slab_state(
-        11,
-        1,
-        2,
-        SlabState {
-            split: SlabSplit::Y,
-            layers: [Block::DirtSlab, Block::StoneSlab],
-        },
-    );
-    section.set_block(12, 1, 2, Block::Stone);
-    // Glass pair (same-block cull on the per-face path) and a connected pane run.
-    section.set_block(13, 1, 2, Block::Glass);
-    section.set_block(14, 1, 2, Block::Glass);
-    section.set_block(2, 1, 4, Block::GlassPane);
-    section.set_block(3, 1, 4, Block::GlassPane);
-    // Snow layers over a full cube (grass: snowy sides + culled top) and over
-    // the bare floor — the floor-flush SEAL cull must agree between the fast
-    // exposure masks and the per-face closure path.
-    section.set_block(2, 2, 2, Block::SnowLayer);
-    section.set_block(12, 1, 4, Block::SnowLayer);
-
-    section.set_block(7, 1, 7, Block::Dirt);
-    section.set_block(8, 1, 7, Block::Grass);
-    section.set_block(8, 2, 7, Block::ShortGrass);
-    section.set_block(8, 1, 8, Block::Sand);
-    section.set_block(8, 2, 8, Block::PebblesSmall);
-    // Transitions across the section seam: a dyed neighbour cell excludes
-    // itself as a donor, an undyed one does not.
-    section.set_block(15, 1, 3, Block::Dirt);
-    section.set_block(15, 1, 5, Block::Dirt);
-
-    // Resolve stored shape states (stair corners, pane masks) the way the
-    // world's edit cascade would have — the fixture wrote raw cells.
-    let section = super::refined(&section);
-    let block_at = |wx: i32, wy: i32, wz: i32| -> u16 {
-        if in_section(wx, wy, wz) {
-            section.block_raw(wx as usize, wy as usize, wz as usize)
-        } else if wy == 0
-            && (-1..=SECTION_SIZE as i32).contains(&wx)
-            && (-1..=SECTION_SIZE as i32).contains(&wz)
-        {
-            Block::Stone.id()
-        } else if wy == 1 && wx == SECTION_SIZE as i32 && (wz == 3 || wz == 5) {
-            // Grass donors in the east neighbour; the one at z = 3 is dyed.
-            Block::Grass.id()
-        } else if wy == SECTION_SIZE as i32 && wx == 5 && wz == 2 {
-            // Water column continuing above the section (pad top face).
-            Block::Water.id()
-        } else {
-            Block::Air.id()
-        }
-    };
-    let fluid_at = |wx: i32, wy: i32, wz: i32| -> u8 {
-        if in_section(wx, wy, wz) {
-            section.fluid_meta(wx as usize, wy as usize, wz as usize)
-        } else {
-            0
-        }
-    };
-    let cell_state_at = |wx: i32, wy: i32, wz: i32| -> petramond_world::block::ShapeState {
-        if in_section(wx, wy, wz) {
-            section.cell_state(wx as usize, wy as usize, wz as usize)
-        } else {
-            petramond_world::block::ShapeState::NONE
-        }
-    };
-    let sky_at = |wx: i32, wy: i32, wz: i32| -> u8 {
-        if wy < 0 {
-            0
-        } else if wy >= SECTION_SIZE as i32 {
-            SKY_FULL
-        } else {
-            (18 + (wx * 3 + wy * 5 + wz * 7).rem_euclid(13)) as u8
-        }
-    };
-    // A COLOURED per-cell light, so the pad path and the closure path must agree
-    // on every channel, not just on brightness.
-    let blocklight_at = |wx: i32, wy: i32, wz: i32| -> petramond_world::light::LightRgb {
-        petramond_world::light::LightRgb::new(
-            ((wx + wy * 2 + wz * 3).rem_euclid(5) * 2) as u8,
-            ((wx * 2 + wy + wz * 5).rem_euclid(7) * 2) as u8,
-            ((wx * 3 + wy * 7 + wz).rem_euclid(4) * 2) as u8,
-        )
-    };
-    let biome_at = |_: i32, _: i32| -> u8 { 0 };
-    let loaded_at = |_: i32, _: i32, _: i32| -> bool { true };
-    let dyed_at =
-        |wx: i32, wy: i32, wz: i32| -> bool { (wx, wy, wz) == (SECTION_SIZE as i32, 1, 3) };
-
-    let serial = build_section_mesh(
-        &section,
-        pos,
-        test_rules(),
-        block_at,
-        cell_state_at,
-        fluid_at,
-        biome_at,
-        sky_at,
-        blocklight_at,
-        loaded_at,
-        dyed_at,
-    );
+    let fast = scene.mesh(&section, pos);
     let transitions_at = |mesh: &ChunkMesh, z: f32| {
         mesh.opaque
             .chunks_exact(4)
@@ -337,14 +230,188 @@ fn pad_local_section_mesher_matches_closure_mesher() {
             .count()
     };
     assert_eq!(
-        transitions_at(&serial, 3.0),
+        transitions_at(&fast, 3.0),
         0,
         "a dyed cross-section donor is excluded"
     );
     assert_eq!(
-        transitions_at(&serial, 5.0),
+        transitions_at(&fast, 5.0),
         1,
         "an undyed cross-section donor bleeds"
+    );
+    assert_same_mesh(&fast, &scene.mesh_per_face(&section, pos), "showcase");
+}
+
+/// The same parity over real generated terrain: surface, water, foliage and
+/// the buried rows the masks exist to skip.
+#[test]
+fn exposure_masks_match_the_per_face_cull_on_generated_terrain() {
+    for (pos, section, scene) in fixtures::generated_sections() {
+        assert_same_mesh(
+            &scene.mesh(&section, pos),
+            &scene.mesh_per_face(&section, pos),
+            &format!("generated section {pos:?}"),
+        );
+    }
+}
+
+/// A small deterministic generator (xorshift64*): the parity property runs
+/// the same random sections on every platform and every run.
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+    }
+
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+}
+
+/// A stable per-cell hash for the random scene's neighbour shell.
+fn cell_hash(seed: u64, x: i32, y: i32, z: i32) -> u64 {
+    let mixed = seed
+        ^ (x as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
+        ^ (y as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f)
+        ^ (z as u64).wrapping_mul(0x1656_67b1_9e37_79f9);
+    Rng(mixed | 1).next()
+}
+
+/// One random section at the origin and the scene around it: a mix of air,
+/// plain terrain and ANY registered block (so every render family meets
+/// every other), fluids at random levels, and a neighbour shell with random
+/// blocks, skylight, coloured block light, gaps in loadedness and dyed cells.
+fn random_scene(seed: u64) -> (Section, fixtures::Scene) {
+    let all: Vec<Block> = Block::all().to_vec();
+    let common = [
+        Block::Air,
+        Block::Stone,
+        Block::Dirt,
+        Block::Grass,
+        Block::Water,
+        Block::OakLeaves,
+        Block::Glass,
+        Block::SnowLayer,
+    ];
+    let mut rng = Rng(seed | 1);
+    let mut section = Section::new(0, 0, 0);
+    for y in 0..SECTION_SIZE {
+        for z in 0..SECTION_SIZE {
+            for x in 0..SECTION_SIZE {
+                let block = match rng.below(10) {
+                    0..=3 => Block::Air,
+                    4..=7 => common[rng.below(common.len() as u64) as usize],
+                    _ => all[rng.below(all.len() as u64) as usize],
+                };
+                if block.is_fluid() {
+                    let level = rng.below(16) as u8;
+                    let falling = if rng.below(4) == 0 {
+                        petramond_world::fluid_math::FALLING
+                    } else {
+                        0
+                    };
+                    section.set_fluid(x, y, z, block, level | falling);
+                } else {
+                    section.set_block(x, y, z, block);
+                }
+            }
+        }
+    }
+    let section = refined(&section);
+    let shell = [
+        Block::Air,
+        Block::Air,
+        Block::Stone,
+        Block::Grass,
+        Block::Water,
+        Block::OakLeaves,
+        Block::Glass,
+        Block::OakSlab,
+        Block::SnowLayer,
+    ];
+    let s = std::rc::Rc::new(section.clone());
+    let (b, f) = (s.clone(), s);
+    let n = SECTION_SIZE as i32;
+    let scene = fixtures::Scene {
+        block: Box::new(move |x, y, z| {
+            if in_section(x, y, z) {
+                b.block_raw(x as usize, y as usize, z as usize)
+            } else {
+                shell[(cell_hash(seed, x, y, z) % shell.len() as u64) as usize].id()
+            }
+        }),
+        cell_state: Box::new(|_, _, _| petramond_world::block::ShapeState::NONE),
+        fluid: Box::new(move |x, y, z| {
+            if in_section(x, y, z) {
+                f.fluid_meta(x as usize, y as usize, z as usize)
+            } else {
+                (cell_hash(seed ^ 1, x, y, z) % 8) as u8
+            }
+        }),
+        biome: Box::new(move |x, z| (cell_hash(seed ^ 2, x, 0, z) % 4) as u8),
+        sky: Box::new(move |x, y, z| {
+            (cell_hash(seed ^ 3, x, y, z) % (u64::from(SKY_FULL) + 1)) as u8
+        }),
+        blocklight: Box::new(move |x, y, z| {
+            let h = cell_hash(seed ^ 4, x, y, z);
+            petramond_world::light::LightRgb::new(
+                (h % 16) as u8 * 2,
+                ((h >> 8) % 16) as u8 * 2,
+                ((h >> 16) % 16) as u8 * 2,
+            )
+        }),
+        loaded: Box::new(move |x, y, z| {
+            (0..n).contains(&y) || cell_hash(seed ^ 5, x, y, z) % 8 != 0
+        }),
+        dyed: Box::new(move |x, y, z| {
+            !in_section(x, y, z) && cell_hash(seed ^ 6, x, y, z) % 5 == 0
+        }),
+    };
+    (section, scene)
+}
+
+/// Property: on random sections the fast path and the per-face cull agree
+/// byte for byte on every stream.
+#[test]
+fn exposure_masks_match_the_per_face_cull_on_random_sections() {
+    let pos = SectionPos::new(0, 0, 0);
+    for seed in 0..48u64 {
+        let (section, scene) = random_scene(0x5eed_0000 + seed);
+        assert_same_mesh(
+            &scene.mesh(&section, pos),
+            &scene.mesh_per_face(&section, pos),
+            &format!("random section seed {seed}"),
+        );
+    }
+}
+
+/// The public closure front end lowers onto the pad exactly like the live
+/// mesh pool's assembler: meshing the showcase through `build_section_mesh`
+/// equals meshing a pad assembled by hand from the same reads.
+#[test]
+fn closure_front_end_meshes_the_pad_the_mesh_pool_would_assemble() {
+    const PAD: usize = SECTION_SIZE + 2;
+    const PAD_VOL: usize = PAD * PAD * PAD;
+    const BIOME_PAD: usize = SECTION_SIZE + 4;
+    let pidx = |x: usize, y: usize, z: usize| (y * PAD + z) * PAD + x;
+    let (section, scene) = fixtures::showcase();
+    let pos = SectionPos::new(0, 0, 0);
+    let closures = build_section_mesh(
+        &section,
+        pos,
+        test_rules(),
+        &scene.block,
+        &scene.cell_state,
+        &scene.fluid,
+        &scene.biome,
+        &scene.sky,
+        &scene.blocklight,
+        &scene.loaded,
+        &scene.dyed,
     );
 
     let mut blocks = vec![0u16; PAD_VOL];
@@ -352,34 +419,33 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     let mut skylight = vec![SKY_FULL; PAD_VOL];
     let mut blocklight = vec![petramond_world::light::LightRgb::ZERO; PAD_VOL];
     let mut cell_states = vec![petramond_world::block::ShapeState::NONE; PAD_VOL];
-    let loaded = vec![true; PAD_VOL];
+    let mut loaded = vec![false; PAD_VOL];
     let mut transition_blocked = vec![false; PAD_VOL];
     for py in 0..PAD {
         for pz in 0..PAD {
             for px in 0..PAD {
                 let (wx, wy, wz) = (px as i32 - 1, py as i32 - 1, pz as i32 - 1);
                 let i = pidx(px, py, pz);
-                blocks[i] = block_at(wx, wy, wz);
-                transition_blocked[i] = dyed_at(wx, wy, wz)
+                blocks[i] = (scene.block)(wx, wy, wz);
+                transition_blocked[i] = (scene.dyed)(wx, wy, wz)
                     || petramond_world::block::snow_cover_at(IVec3::new(wx, wy + 1, wz), |p| {
-                        Block::from_id(block_at(p.x, p.y, p.z))
+                        Block::from_id((scene.block)(p.x, p.y, p.z))
                     })
                     .is_some();
-                fluid[i] = fluid_at(wx, wy, wz);
-                skylight[i] = sky_at(wx, wy, wz);
-                blocklight[i] = blocklight_at(wx, wy, wz);
-                cell_states[i] = cell_state_at(wx, wy, wz);
+                fluid[i] = (scene.fluid)(wx, wy, wz);
+                skylight[i] = (scene.sky)(wx, wy, wz);
+                blocklight[i] = (scene.blocklight)(wx, wy, wz);
+                cell_states[i] = (scene.cell_state)(wx, wy, wz);
+                loaded[i] = (scene.loaded)(wx, wy, wz);
             }
         }
     }
     let mut biome = vec![0u8; BIOME_PAD * BIOME_PAD];
     for pz in 0..BIOME_PAD {
         for px in 0..BIOME_PAD {
-            biome[bidx(px, pz)] =
-                biome_at(px as i32 - BIOME_PAD_RADIUS, pz as i32 - BIOME_PAD_RADIUS);
+            biome[pz * BIOME_PAD + px] = (scene.biome)(px as i32 - 2, pz as i32 - 2);
         }
     }
-
     let pad = build_section_mesh_from_pad(
         &section,
         pos,
@@ -395,24 +461,5 @@ fn pad_local_section_mesher_matches_closure_mesher() {
         },
         test_rules(),
     );
-
-    assert_eq!(
-        bytemuck::cast_slice::<Vertex, u8>(&serial.opaque),
-        bytemuck::cast_slice::<Vertex, u8>(&pad.opaque)
-    );
-    assert_eq!(
-        bytemuck::cast_slice::<Vertex, u8>(&serial.transparent),
-        bytemuck::cast_slice::<Vertex, u8>(&pad.transparent)
-    );
-    assert_eq!(serial.far_opaque_len, pad.far_opaque_len);
-    assert_eq!(
-        bytemuck::cast_slice::<ModelVertex, u8>(&serial.model),
-        bytemuck::cast_slice::<ModelVertex, u8>(&pad.model)
-    );
-    assert_eq!(serial.model_idx, pad.model_idx);
-    assert_eq!(
-        bytemuck::cast_slice::<crate::ContactShadowVertex, u8>(&serial.contact),
-        bytemuck::cast_slice::<crate::ContactShadowVertex, u8>(&pad.contact)
-    );
-    assert_eq!(serial.mesh_dirty, pad.mesh_dirty);
+    assert_same_mesh(&closures, &pad, "closure front end vs assembled pad");
 }

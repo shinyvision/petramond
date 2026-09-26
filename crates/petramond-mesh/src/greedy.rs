@@ -102,6 +102,16 @@ pub(super) struct GreedyScratch {
 }
 
 impl GreedyScratch {
+    /// An unallocated scratch; [`begin`](Self::begin) sizes it on first use.
+    pub(super) const fn new() -> Self {
+        Self {
+            faces: Vec::new(),
+            merged: Vec::new(),
+            gen: 0,
+            slice_counts: [0; FACES.len() * SECTION_SIZE],
+        }
+    }
+
     /// Retire the previous build and return this build's generation. No `faces` reset: a bumped
     /// `gen` makes every prior entry read as absent. Only allocates on first use per thread, and
     /// only re-zeroes on the (≈4-billion-build) `gen` wrap so a stale entry can't alias.
@@ -123,14 +133,7 @@ impl GreedyScratch {
 }
 
 thread_local! {
-    pub(super) static GREEDY: RefCell<GreedyScratch> = const {
-        RefCell::new(GreedyScratch {
-            faces: Vec::new(),
-            merged: Vec::new(),
-            gen: 0,
-            slice_counts: [0; FACES.len() * SECTION_SIZE],
-        })
-    };
+    pub(super) static GREEDY: RefCell<GreedyScratch> = const { RefCell::new(GreedyScratch::new()) };
 }
 
 /// Greedy-merge every deferred flat face (in `scratch.faces`) into the fewest tiled quads and

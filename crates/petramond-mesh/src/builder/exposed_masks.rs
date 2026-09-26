@@ -6,7 +6,8 @@ use super::cell_class::{
     class_of, FAST_CUBE, PAD_OPAQUE, PAD_OPAQUE_FLUID, PAD_SEALS, PAD_SLAB, SKIP,
 };
 use super::cube_face::face_index;
-use super::pad::{mesh_pad_idx, SectionMeshPad, SECTION_PAD};
+use super::neighbourhood::Neighbourhood;
+use super::pad::{mesh_pad_idx, SECTION_PAD};
 
 const FACE_MASK_WORDS: usize = SECTION_VOLUME / u64::BITS as usize;
 
@@ -22,8 +23,8 @@ pub(super) struct ExposedMasks {
     visit: [u16; SECTION_SIZE * SECTION_SIZE],
 }
 
-/// The scan's fallback when no exposure masks were built (the far-leaf LOD
-/// pass, which has no pad): visit every cell.
+/// The scan's fallback when no exposure masks were built (the per-face
+/// reference cull): visit every cell.
 pub(super) const VISIT_ALL: [u16; SECTION_SIZE * SECTION_SIZE] =
     [u16::MAX; SECTION_SIZE * SECTION_SIZE];
 
@@ -51,15 +52,13 @@ pub(super) fn mask_has(masks: &ExposedMasks, face: Face, cell: usize) -> bool {
     masks.faces[face_index(face)][word] & bit != 0
 }
 
-/// `seals_floor(world_pos)`: does that cell's own geometry seal the boundary
-/// under it? The SAME seam the per-face path asks (`boxset::cell_seals_face`),
-/// passed in rather than re-derived here so the two paths cannot disagree —
+/// Build the section's exposure masks from its pad. Whether a cell's own
+/// geometry seals the boundary under it is [`Neighbourhood::seals_floor`] —
+/// the SAME query the per-face cull asks, so the two culls cannot disagree;
 /// their agreement is what `mesh::tests::parity` pins.
-pub(super) fn build_exposed_masks(
-    pad: &SectionMeshPad<'_>,
-    origin: (i32, i32, i32),
-    seals_floor: &dyn Fn(petramond_world::mathh::IVec3) -> bool,
-) -> ExposedMasks {
+pub(super) fn build_exposed_masks(nb: &Neighbourhood<'_>) -> ExposedMasks {
+    let pad = nb.pad();
+    let origin = nb.origin();
     const CENTER_BITS: u32 = (1u32 << SECTION_SIZE) - 1;
 
     #[inline]
@@ -121,11 +120,10 @@ pub(super) fn build_exposed_masks(
                 // majority of pad cells; the dense flag keeps every one of
                 // them off the shape seam.
                 } else if c & PAD_SEALS != 0
-                    && seals_floor(petramond_world::mathh::IVec3::new(
-                        origin.0 - 1 + px as i32,
-                        origin.1 - 1 + py as i32,
-                        origin.2 - 1 + pz as i32,
-                    ))
+                    && nb.seals_floor(
+                        origin - glam::IVec3::ONE
+                            + glam::IVec3::new(px as i32, py as i32, pz as i32),
+                    )
                 {
                     covers_row |= 1u32 << px;
                 }
@@ -152,8 +150,8 @@ pub(super) fn build_exposed_masks(
                 }
                 if class_of(classes, id) & FAST_CUBE == 0 {
                     // Same-material full slab stacks take the cube fast path too;
-                    // this MUST match the slab-branch fall-through in
-                    // `section_geometry`.
+                    // this MUST match the box families' whole-cube fall-through
+                    // (`ShapeRender::meshes_as_cube`) the scan dispatches on.
                     if class_of(pad_class, id) & PAD_SLAB == 0
                         || !petramond_world::slab::is_uniform_full_stack(
                             petramond_world::block_state::SlabState::from_cell(pad.cell_states[i]),

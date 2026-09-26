@@ -124,7 +124,7 @@ fn an_opaque_top_under_a_lid_draws_only_when_recessed(opaque: Block, clear: Bloc
     section.set_block(8, 5, 8, Block::Stone);
     section.set_fluid(12, 4, 12, clear, FALLING);
     section.set_block(12, 5, 12, Block::Stone);
-    for m in [mesh(&section), mesh_via_pad(&section)] {
+    for m in [mesh(&section), mesh_per_face(&section)] {
         assert_eq!(tops_at(&m, opaque, 4.0), 0, "full opaque top under a lid");
         assert_eq!(
             tops_at(&m, opaque, 8.0),
@@ -136,7 +136,7 @@ fn an_opaque_top_under_a_lid_draws_only_when_recessed(opaque: Block, clear: Bloc
 }
 
 /// Stone's face toward a FULL cell of an opaque medium is hidden like a face
-/// toward stone, on the closure path and on the pad path's exposure masks; a
+/// toward stone, by the exposure masks and by the per-face cull alike; a
 /// see-through medium hides nothing.
 fn only_a_full_opaque_medium_covers_the_faces_behind_it(opaque: Block, clear: Block) {
     for (fluid, covers) in [(opaque, true), (clear, false)] {
@@ -145,7 +145,7 @@ fn only_a_full_opaque_medium_covers_the_faces_behind_it(opaque: Block, clear: Bl
         // Capped from above, so the cell beside the stone is full.
         section.set_fluid(5, 4, 4, fluid, 0);
         section.set_fluid(5, 5, 4, fluid, 0);
-        for m in [mesh(&section), mesh_via_pad(&section)] {
+        for m in [mesh(&section), mesh_per_face(&section)] {
             let stone_east = m
                 .opaque
                 .chunks_exact(4)

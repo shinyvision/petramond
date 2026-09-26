@@ -229,10 +229,7 @@ fn a_posed_plane_lands_on_its_rotated_corners_and_seals_nothing() {
         &|_| false,
         &|_, _| {},
         &|_, _, _| false,
-        &|_, _, _| petramond_world::block::Block::Air,
-        &|_, _, _| None,
-        &|_, _, _| 63,
-        &|_, _, _| petramond_world::light::LightRgb::ZERO,
+        &|_, _, _, _| ([3; 4], [63; 4], [petramond_world::light::BlockLight6::DARK; 4]),
     );
     // The slope's +Y face: front + back windings, 8 vertices, every
     // corner on the tilted plane (y = 1 - z).

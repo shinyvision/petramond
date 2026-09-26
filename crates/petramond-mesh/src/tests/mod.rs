@@ -12,7 +12,9 @@ use petramond_world::section::Section;
 // shared by the tests below. The wrappers answer every voxel lookup from the
 // section itself (air / no water / default stair+slab state outside it);
 // skylight and loadedness default to uniform full sky and everything-loaded
-// unless a test overrides them.
+// unless a test overrides them. `build_section_mesh` samples those reads into
+// the section's pad and meshes it exactly as the live world's mesh pool does,
+// so every suite exercises the production mesher.
 
 // Decoders read the ENCODER's own constants, so a layout change moves both
 // halves together instead of silently rotting the assertions.
@@ -228,42 +230,12 @@ fn mesh(section: &Section) -> ChunkMesh {
     mesh_with(section, |_, _, _| SKY_FULL, |_, _, _| true)
 }
 
-/// Mesh `section` standalone through the PAD path (exposure masks, pad-local
-/// fluid probes) — the path live meshing takes — with air around it.
-fn mesh_via_pad(section: &Section) -> ChunkMesh {
-    use super::builder::mesh_pad_idx;
-    const PAD: usize = SECTION_SIZE + 2;
-    const PAD_VOL: usize = PAD * PAD * PAD;
+/// [`mesh`] with the exposure-mask fast path off: every cube face culled by
+/// asking its front cell. The fast path must reproduce it byte for byte, so
+/// a suite run through both pins both culls.
+fn mesh_per_face(section: &Section) -> ChunkMesh {
     let section = &refined(section);
-    let mut blocks = vec![Block::Air.id(); PAD_VOL];
-    let mut fluid = vec![0u8; PAD_VOL];
-    let mut cell_states = vec![petramond_world::block::ShapeState::NONE; PAD_VOL];
-    for y in 0..SECTION_SIZE {
-        for z in 0..SECTION_SIZE {
-            for x in 0..SECTION_SIZE {
-                let i = mesh_pad_idx(x + 1, y + 1, z + 1);
-                blocks[i] = section.block_raw(x, y, z);
-                fluid[i] = section.fluid_meta(x, y, z);
-                cell_states[i] = section.cell_state(x, y, z);
-            }
-        }
-    }
-    let biome_side = SECTION_SIZE + 4;
-    build_section_mesh_from_pad(
-        section,
-        SectionPos::new(0, 0, 0),
-        SectionMeshPad {
-            blocks: &blocks,
-            fluid: &fluid,
-            skylight: &vec![SKY_FULL; PAD_VOL],
-            blocklight: &vec![petramond_world::light::LightRgb::ZERO; PAD_VOL],
-            cell_states: &cell_states,
-            loaded: &vec![true; PAD_VOL],
-            transition_blocked: &vec![false; PAD_VOL],
-            biome: &vec![0u8; biome_side * biome_side],
-        },
-        test_rules(),
-    )
+    fixtures::standalone(section).mesh_per_face(section, SectionPos::new(0, 0, 0))
 }
 
 /// Mesh `section` standalone with a custom baked-skylight shape.
@@ -381,6 +353,7 @@ mod block_light_color;
 mod boxes;
 mod contact;
 mod fence;
+mod fixtures;
 mod fluid;
 mod foliage;
 mod glass;
@@ -392,6 +365,7 @@ mod quad_streams;
 mod seams;
 mod skylight;
 mod slabs;
+mod snapshots;
 mod snow;
 mod stairs;
 mod synthetic_fluids;

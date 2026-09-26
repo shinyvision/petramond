@@ -1,18 +1,13 @@
 //! Per-face emission for the chunk mesher: folding sky/block light into the
-//! packed vertex channels, one cube face's per-corner AO/smooth-light gather
-//! over the section pad, and the packed-vertex face pushes.
+//! packed vertex channels, the partial-slab light gate the face-lighting
+//! gather applies per corner, and the packed-vertex face pushes.
 
 use crate::vertex::BlockLightVertexExt;
-use petramond_world::block::CellView;
 use petramond_world::block_state::SlabState;
-use petramond_world::chunk::SKY_FULL;
-use petramond_world::light::{BlockLight6, LightRgb};
+use petramond_world::light::BlockLight6;
 use petramond_world::tile::Tile;
 
-use petramond_world::block::Block;
-
-use super::builder::{mesh_pad_idx, SectionMeshPad};
-use super::face::{quad_ao, should_flip, Face};
+use super::face::{should_flip, Face};
 use super::vertex::{
     pack_cell_uv, pack_normal_code, pack_overlay, pack_uv_turn, pack_uv_turn2, pack_vertex, Vertex,
     UV_MODE_CELL_LOCAL, UV_MODE_SHIFT,
@@ -123,170 +118,6 @@ pub(super) fn slab_corner_open(
     !petramond_world::slab::half_cell_occupied(state, pick(ux, vx), pick(uy, vy), pick(uz, vz))
 }
 
-/// The flat-array step of one pad cell along `(dx, dy, dz)`.
-#[inline]
-fn pad_stride(dx: i32, dy: i32, dz: i32) -> isize {
-    let pad = super::builder::MESH_PAD_SIDE as isize;
-    dx as isize + dz as isize * pad + dy as isize * pad * pad
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn cube_face_lighting_pad<P>(
-    pad: &SectionMeshPad<'_>,
-    face: Face,
-    fx: usize,
-    fy: usize,
-    fz: usize,
-    // The front voxel's WORLD coords, for the sub-cell AO cast probes (the
-    // probe closure speaks world cells like the closure-path gather's).
-    wf: (i32, i32, i32),
-    f_l: u32,
-    f_bl: LightRgb,
-    smooth_light: bool,
-    probe: &P,
-) -> ([u32; 4], [u32; 4], [BlockLight6; 4])
-where
-    P: Fn((i32, i32, i32), [f32; 3], [f32; 3]) -> bool,
-{
-    let (ux, uy, uz) = face.ao_u();
-    let (vx, vy, vz) = face.ao_v();
-    // The ring's eight pad indices are the front voxel's plus a constant
-    // stride per tangent step — the pad is a flat array and the face's tangent
-    // axes are fixed, so the coordinate arithmetic and its two multiplies per
-    // ring cell collapse to one add. The ring never leaves the pad: the axis
-    // that can sit on the pad's outer plane is the face NORMAL, and the ring
-    // only steps along the two tangents.
-    let (fi, ustride, vstride) = (
-        mesh_pad_idx(fx, fy, fz) as isize,
-        pad_stride(ux, uy, uz),
-        pad_stride(vx, vy, vz),
-    );
-    // The pad path meshes cube faces only, always on the voxel boundary.
-    let plane = super::builder::boundary_plane(face);
-    let front_half = {
-        let (dx, dy, dz) = face.dir();
-        (dx + dy + dz < 0) as usize
-    };
-
-    // Front cell's own sub-cell matter joins the interior quadrant — the
-    // closure gather's `front_probe`, mirrored for byte parity.
-    let front_probe = super::builder::probe_worthy(pad.block_at_pad(fx, fy, fz));
-
-    let mut occ = [[false; 3]; 3];
-    let mut probe_cell = [[false; 3]; 3];
-    let mut opq = [[false; 3]; 3];
-    let mut sky = [[0u32; 3]; 3];
-    let mut blk = [[LightRgb::ZERO; 3]; 3];
-    let mut slab = [[SlabState::EMPTY; 3]; 3];
-    for a in -1i32..=1 {
-        for b in -1i32..=1 {
-            if a == 0 && b == 0 {
-                continue;
-            }
-            let i = (fi + a as isize * ustride + b as isize * vstride) as usize;
-            let cell = Block::from_id(pad.blocks[i]);
-            // ONE dense flag word per ring cell: the four shape questions
-            // below become bit tests instead of four table lookups.
-            let cf = cell.flags();
-            let (ia, ib) = ((a + 1) as usize, (b + 1) as usize);
-            // Full slab stacks occlude AO/light like opaque cubes; partial slab
-            // states are kept for the per-corner octant gate below — mirrors the
-            // closure-path gather in `cube_face_lighting` (byte parity).
-            let slab_state = cf.is_slab().then(|| {
-                petramond_world::slab::normalize_state(
-                    cell,
-                    petramond_world::block_state::SlabState::from_cell(pad.cell_states[i]),
-                )
-            });
-            let full_stack = slab_state.is_some_and(|s| s.is_full());
-            occ[ia][ib] = cf.occludes_ao() || full_stack;
-            probe_cell[ia][ib] = !occ[ia][ib] && cf.has_box_shape();
-            if smooth_light {
-                opq[ia][ib] = cf.is_opaque() || full_stack;
-                if !opq[ia][ib] {
-                    sky[ia][ib] = pad.skylight[i] as u32;
-                    blk[ia][ib] = pad.blocklight[i];
-                    if let Some(state) = slab_state {
-                        slab[ia][ib] = state;
-                    }
-                }
-            }
-        }
-    }
-
-    let signs = face.ao_signs();
-    let mut ao = [3u32; 4];
-    let mut light6 = [0u32; 4];
-    let mut block6 = [BlockLight6::DARK; 4];
-    let flat = fold_light(f_l, f_bl.channels().map(u32::from), SKY_FULL as u32);
-    for corner in 0..4 {
-        let (su, sv) = signs[corner];
-        let (iu, iv) = ((su + 1) as usize, (sv + 1) as usize);
-        let (mut s1, mut s2, mut c) = (occ[iu][1], occ[1][iv], occ[iu][iv]);
-        let mut q_int = false;
-        if front_probe
-            || (probe_cell[iu][1] && !s1)
-            || (probe_cell[1][iv] && !s2)
-            || (probe_cell[iu][iv] && !c)
-        {
-            let pk = super::builder::corner_cast_probes(face, su, sv, plane);
-            let cell_of = |s_u: i32, s_v: i32| {
-                (
-                    wf.0 + s_u * ux + s_v * vx,
-                    wf.1 + s_u * uy + s_v * vy,
-                    wf.2 + s_u * uz + s_v * vz,
-                )
-            };
-            let local = |p: [f32; 3], cl: (i32, i32, i32)| {
-                [
-                    p[0] - (cl.0 - wf.0) as f32,
-                    p[1] - (cl.1 - wf.1) as f32,
-                    p[2] - (cl.2 - wf.2) as f32,
-                ]
-            };
-            if probe_cell[iu][1] && !s1 {
-                let cl = cell_of(su, 0);
-                s1 = probe(cl, local(pk[0].0, cl), local(pk[0].1, cl));
-            }
-            if probe_cell[1][iv] && !s2 {
-                let cl = cell_of(0, sv);
-                s2 = probe(cl, local(pk[1].0, cl), local(pk[1].1, cl));
-            }
-            if probe_cell[iu][iv] && !c {
-                let cl = cell_of(su, sv);
-                c = probe(cl, local(pk[2].0, cl), local(pk[2].1, cl));
-            }
-            if front_probe {
-                let cl = wf;
-                q_int = probe(cl, local(pk[3].0, cl), local(pk[3].1, cl));
-            }
-        }
-        ao[corner] = quad_ao(q_int, s1, s2, c);
-        if !smooth_light {
-            (light6[corner], block6[corner]) = flat;
-            continue;
-        }
-        let mut sum = f_l;
-        // The block mean is taken PER CHANNEL, in the linear light space: an
-        // average of two hues is only meaningful there.
-        let mut sum_block = f_bl.channels().map(u32::from);
-        let mut cnt = 1u32;
-        for (ia, ib, a, b) in [(iu, 1, su, 0), (1, iv, 0, sv), (iu, iv, su, sv)] {
-            if opq[ia][ib] || !slab_corner_open(slab[ia][ib], face, a, b, su, sv, front_half) {
-                continue;
-            }
-            sum += sky[ia][ib];
-            let c = blk[ia][ib];
-            sum_block[0] += c.r() as u32;
-            sum_block[1] += c.g() as u32;
-            sum_block[2] += c.b() as u32;
-            cnt += 1;
-        }
-        (light6[corner], block6[corner]) = fold_light_smooth(sum, sum_block, cnt);
-    }
-    (ao, light6, block6)
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn push_cube_face_with_cell_uvs(
     vbuf: &mut Vec<Vertex>,
@@ -358,6 +189,7 @@ pub(super) fn push_cube_face_with_cell_uvs(
 #[cfg(test)]
 mod fold_light_tests {
     use super::*;
+    use petramond_world::chunk::SKY_FULL;
 
     /// The light-channel split's terrain identity: per-channel quantization is
     /// monotone, so for COLOURLESS light `max(sky6, block6)` reproduces the

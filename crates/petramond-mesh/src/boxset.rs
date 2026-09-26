@@ -19,8 +19,8 @@
 //!   neighbour. The old per-family rules (fence post-cap enums, pane
 //!   per-segment caps, stair/slab half-cell adjacency) are subsumed by this
 //!   subtraction.
-//! - **Lighting is the cube's, per plane.** The emitter gathers
-//!   [`cube_face_lighting`] once per (face direction, boundary/interior
+//! - **Lighting is the cube's, per plane.** The emitter gathers the
+//!   mesher's face lighting (`face_light`) once per (face direction, boundary/interior
 //!   plane) — the front voxel is the neighbour for a flush face, the cell
 //!   itself for an interior one, exactly the stair/slab convention — and
 //!   bilinearly samples it at every emitted corner, so a box face shades
@@ -41,7 +41,7 @@
 //!   Probes are lifted off the face plane, so two flush boxes forming one
 //!   continuous surface never darken their shared seam (the model-AO rule).
 //!   The cube gathers run the same probes against box-family ring cells
-//!   ([`super::builder::corner_cast_probes`]), which is what makes a stair
+//!   (the face-lighting gather's corner cast probes), which is what makes a stair
 //!   or cauldron CAST onto the terrain beside it.
 //!
 //! Emitted quads carry cell-local UVs (carved from the tile like a stair),
@@ -51,9 +51,8 @@
 
 use crate::vertex::BlockLightVertexExt;
 use petramond_world::block::Block;
-use petramond_world::block_state::SlabState;
 
-use super::builder::{boundary_plane, cube_face_lighting, face_axes};
+use super::builder::{boundary_plane, face_axes, CornerLight};
 use super::face::{quad_ao, should_flip, Face, FACES};
 use super::plane::{cell_uv, face_fraction, PlaneLight};
 use super::vertex::{pack_cell_uv, pack_normal_code, pack_vertex, Vertex, UV_MODE_CELL_LOCAL};
@@ -99,8 +98,8 @@ const T: f32 = 1e-4;
 const AREA_EPS: f32 = 1e-4;
 /// Probe lift off the face plane: keeps a coplanar continuation (two flush
 /// boxes forming one surface) from shadowing its own seam, the model-AO rule.
-/// Shared with the cube gathers' cast probes (`builder::corner_cast_probes`)
-/// so casting and self-AO speak one geometry.
+/// Shared with the face-lighting gather's cast probes so casting and self-AO
+/// speak one geometry.
 pub(super) const PROBE_LIFT: f32 = 0.02;
 /// Probe tangential reach (1.5 texels): how close sub-cell geometry must be
 /// to a corner to occlude it. Shared with the cube gathers' cast probes.
@@ -112,6 +111,12 @@ pub(super) type MatterFn<'a> = dyn Fn((i32, i32, i32), [f32; 3], [f32; 3]) -> bo
 
 /// Fills `out` with a neighbour cell's occupancy boxes (neighbour-local).
 pub(super) type NeighborBoxesFn<'a> = dyn Fn(Face, &mut Vec<([f32; 3], [f32; 3])>) + 'a;
+
+/// The mesher's face-lighting gather: `face_light(face, front, plane, smooth)` is
+/// the per-corner light of a `face` plane lying `plane` along the normal from
+/// the `front` world voxel's minimum corner; `smooth = false` lights it flat
+/// from the front voxel.
+pub(super) type FaceLightFn<'a> = dyn Fn(Face, glam::IVec3, f32, bool) -> CornerLight + 'a;
 
 /// Reusable scratch for [`emit_box_set`] — one per mesh build, so the hot
 /// loop allocates nothing after warm-up.
@@ -141,9 +146,10 @@ pub(super) struct BoxSetScratch {
 ///   cell + cell-local pocket AABB) — the out-of-cell probe resolution AND
 ///   the plane gather's cast probe, so box shapes receive neighbour casting
 ///   with exactly the cube faces' semantics.
+/// - `face_light`: the face-lighting gather every plane is lit through.
 /// - `anchor`: the mesh-space origin the emitted positions are relative to.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn emit_box_set<B, S, L, K>(
+pub(super) fn emit_box_set(
     vbuf: &mut Vec<Vertex>,
     wx: i32,
     wy: i32,
@@ -154,16 +160,8 @@ pub(super) fn emit_box_set<B, S, L, K>(
     neighbor_solid: &dyn Fn(Face) -> bool,
     neighbor_boxes: &NeighborBoxesFn,
     matter: &MatterFn,
-    block_at: &B,
-    slab_at: &S,
-    neighbour_light: &L,
-    neighbour_blocklight: &K,
-) where
-    B: Fn(i32, i32, i32) -> Block,
-    S: Fn(i32, i32, i32) -> Option<SlabState>,
-    L: Fn(i32, i32, i32) -> u8,
-    K: Fn(i32, i32, i32) -> petramond_world::light::LightRgb,
-{
+    face_light: &FaceLightFn,
+) {
     for face in FACES {
         let fi = face as usize;
         let (axis, ua, va) = face_axes(face);
@@ -186,11 +184,7 @@ pub(super) fn emit_box_set<B, S, L, K>(
                     &pose,
                     face,
                     &style,
-                    block_at,
-                    slab_at,
-                    neighbour_light,
-                    neighbour_blocklight,
-                    matter,
+                    face_light,
                 );
                 continue;
             }
@@ -290,23 +284,14 @@ pub(super) fn emit_box_set<B, S, L, K>(
                 // box's own plane height when interior (a slab top's pockets
                 // at 0.5, not the cell floor).
                 let plane = if flush { boundary_plane(face) } else { d };
-                let (ao, sky, block) = cube_face_lighting(
+                let (ao, sky, block) = face_light(
                     face,
-                    fx,
-                    fy,
-                    fz,
+                    glam::IVec3::new(fx, fy, fz),
                     plane,
-                    neighbour_light(fx, fy, fz) as u32,
-                    neighbour_blocklight(fx, fy, fz),
                     // The closed-underside rule (stairs, slabs): a NegY
                     // plane must not smooth sky from cells beside a dark
                     // cell below.
                     face != Face::NegY,
-                    block_at,
-                    slab_at,
-                    neighbour_light,
-                    neighbour_blocklight,
-                    &matter,
                 );
                 scratch.planes.push((d, PlaneLight { ao, sky, block }));
             }
@@ -420,7 +405,7 @@ fn quant_uv(x: f32) -> u32 {
 /// cell's light at its edges. The sub-cell corner probes are axis-aligned by
 /// construction and are skipped; the plane's own ring AO still applies.
 #[allow(clippy::too_many_arguments)]
-fn emit_posed_face<B, S, L, K>(
+fn emit_posed_face(
     vbuf: &mut Vec<Vertex>,
     (wx, wy, wz): (i32, i32, i32),
     anchor: glam::IVec3,
@@ -428,17 +413,8 @@ fn emit_posed_face<B, S, L, K>(
     pose: &petramond_world::block::BoxPose,
     face: Face,
     style: &ShapeFace,
-    block_at: &B,
-    slab_at: &S,
-    neighbour_light: &L,
-    neighbour_blocklight: &K,
-    matter: &MatterFn,
-) where
-    B: Fn(i32, i32, i32) -> Block,
-    S: Fn(i32, i32, i32) -> Option<SlabState>,
-    L: Fn(i32, i32, i32) -> u8,
-    K: Fn(i32, i32, i32) -> petramond_world::light::LightRgb,
-{
+    face_light: &FaceLightFn,
+) {
     let (_, ua, va) = face_axes(face);
     // The edge faces of a flat plane have no area.
     if b.aabb.max[ua] - b.aabb.min[ua] <= 0.0 || b.aabb.max[va] - b.aabb.min[va] <= 0.0 {
@@ -453,20 +429,11 @@ fn emit_posed_face<B, S, L, K>(
         .iter()
         .fold(0.0f32, |acc, p| acc + p[laxis] * 0.25)
         .clamp(0.0, 1.0);
-    let (ao, sky6, block6) = cube_face_lighting(
+    let (ao, sky6, block6) = face_light(
         lit,
-        wx,
-        wy,
-        wz,
+        glam::IVec3::new(wx, wy, wz),
         centre,
-        neighbour_light(wx, wy, wz) as u32,
-        neighbour_blocklight(wx, wy, wz),
         lit != Face::NegY,
-        block_at,
-        slab_at,
-        neighbour_light,
-        neighbour_blocklight,
-        &matter,
     );
     let pl = PlaneLight {
         ao,
