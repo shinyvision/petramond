@@ -15,7 +15,7 @@ use crate::net::protocol::JoinData;
 use crate::server::game::ServerGame;
 use crate::server::session_build::{build_server_with_pool, LocalPlayer};
 use crate::worker::JobPool;
-use petramond_worldgen::density::surface::SurfaceDensitySystem;
+use petramond_worldgen::SurfaceDensitySystem;
 
 /// Everything a local session's client needs beyond the handle.
 pub struct LocalSession {

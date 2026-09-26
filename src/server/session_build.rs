@@ -19,7 +19,7 @@ use crate::worker::JobPool;
 use crate::world::ServerWorld;
 use petramond_math::math::Vec3;
 use petramond_world::crafting::load_recipes_for;
-use petramond_worldgen::density::surface::SurfaceDensitySystem;
+use petramond_worldgen::SurfaceDensitySystem;
 
 struct OpenedSession {
     save: Option<(WorldSave, crate::world::SavedIndex)>,

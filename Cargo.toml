@@ -126,6 +126,8 @@ default = []
 # Exposes the in-process test harness (inline pools, world fixtures, the
 # WAT-built unit guest — hence wasmtime/wat) to dependent crates' test suites.
 test-support = ["wasmtime/wat", "petramond-world/test-support"]
+# Worldgen dev tooling re-exported through `tooling::worldgen` (genmap).
+tools = ["petramond-worldgen/tools"]
 
 # Headless dedicated server: the same ServerGame/loop the in-game
 # "Open to LAN" runs, with no local session and no renderer.

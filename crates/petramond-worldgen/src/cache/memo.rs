@@ -199,6 +199,12 @@ impl<K: Eq + Hash + Clone, V: Clone> SharedMemo<K, V> {
         value
     }
 
+    /// Whether a value is published for `key`, without counting a lookup —
+    /// for a scheduler deciding what to derive ahead of its readers.
+    pub(crate) fn contains(&self, key: &K) -> bool {
+        Self::ready(self.slot(key), key).is_some()
+    }
+
     /// `compute` must be a pure function of the complete key and must not
     /// recursively access this memo for the same key. One worker derives a
     /// missing value while the others asking for that key wait for it; other
@@ -349,6 +355,11 @@ impl<K: Eq + Hash + Clone, V: Clone> Memo<K, V> {
     /// See [`SharedMemo::get`].
     pub(crate) fn get(&self, key: &K) -> Option<V> {
         self.table().get(key)
+    }
+
+    /// See [`SharedMemo::contains`].
+    pub(crate) fn contains(&self, key: &K) -> bool {
+        self.table().contains(key)
     }
 
     /// See [`SharedMemo::get_or_insert`].

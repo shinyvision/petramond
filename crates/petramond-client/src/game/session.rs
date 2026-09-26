@@ -12,7 +12,7 @@ use petramond::worker::JobPool;
 use petramond::world::ReplicaWorld;
 use petramond_render::camera::Camera;
 use petramond_world::crafting::CraftingCatalog;
-use petramond_worldgen::density::surface::SurfaceDensitySystem;
+use petramond_worldgen::SurfaceDensitySystem;
 
 use super::section_cache::section_cache_registry_key;
 use super::Game;

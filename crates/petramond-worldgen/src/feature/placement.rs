@@ -1,18 +1,26 @@
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use petramond_world::{block::Block, mathh::IVec3, section::Section};
+use petramond_world::{mathh::IVec3, section::Section};
 
-use super::{Feature, FeatureCtx, SectionSink, VoxelSink};
+use super::{Feature, FeaturePlan};
 use crate::{rng::FeatureRng, TerrainSpace};
 
-mod cache;
-
-/// An admitted configured feature, recorded before section clipping. Occupancy
-/// and root support use positional terrain, so a neighbour cannot admit half a
-/// tree whose trunk failed in its owner's section.
+/// An admitted configured feature: its [`FeaturePlan`], recorded before
+/// section clipping and replayed with the engine trees' own overwrite rules.
+/// Occupancy and root support use positional terrain, so a neighbour cannot
+/// admit half a tree whose trunk failed in its owner's section.
 pub struct PlacedFeature {
-    cells: Vec<(IVec3, Block)>,
+    plan: FeaturePlan,
+}
+
+/// A memoized [`PlacedFeature::resolve`]: the world's context, the feature
+/// key, the origin and the salt.
+pub(crate) type PlacedKey = (crate::cache::GenContext, Box<str>, [i32; 3], u64);
+
+/// Resident bytes of a memoized placement.
+pub(crate) fn placed_heap(placed: &Arc<PlacedFeature>) -> usize {
+    std::mem::size_of::<PlacedFeature>() + placed.plan.memory_bytes()
 }
 
 impl PlacedFeature {
@@ -34,8 +42,19 @@ impl PlacedFeature {
         {
             return Err("configured feature origin exceeds world bounds".into());
         }
+        let caches = crate::cache::installed();
+        let context = crate::cache::GenContext::installed(world_seed);
         Self::first_admitted(origins, |origin| {
-            cache::resolve(key, origin, world_seed, salt)
+            let memo_key: PlacedKey = (context, key.into(), origin, salt);
+            if let Some(placed) = caches.terrain.placed_features.get(&memo_key) {
+                return Ok(placed);
+            }
+            let placed = Arc::new(Self::resolve(key, origin, world_seed, salt)?);
+            caches
+                .terrain
+                .placed_features
+                .insert(memo_key, Arc::clone(&placed));
+            Ok(placed)
         })
     }
 
@@ -45,11 +64,13 @@ impl PlacedFeature {
     ) -> Result<Arc<Self>, String> {
         for &origin in origins {
             let placed = resolve(origin)?;
-            if !placed.cells.is_empty() {
+            if !placed.plan.is_empty() {
                 return Ok(placed);
             }
         }
-        Ok(Arc::new(Self { cells: Vec::new() }))
+        Ok(Arc::new(Self {
+            plan: FeaturePlan::empty(),
+        }))
     }
 
     /// Resolve and sample one configured feature. Occupied geometry or an
@@ -78,34 +99,20 @@ impl PlacedFeature {
         mut rng: FeatureRng,
         solid: impl FnOnce(&[[i32; 3]]) -> Vec<TerrainSpace>,
     ) -> Result<Self, String> {
-        let mut recorder = Recorder {
-            origin,
-            cells: BTreeMap::new(),
-            overflow: false,
-        };
-        feature.generate(
-            &mut FeatureCtx::new(&mut recorder),
-            &mut |_| true,
-            origin,
-            &mut rng,
-        );
-        if recorder.overflow {
-            return Err("configured feature exceeds its placement envelope".into());
-        }
-        let cells: Vec<_> = recorder
-            .cells
-            .into_iter()
-            .map(|(p, block)| (IVec3::from(p), block))
+        let plan = FeaturePlan::record_feature(feature, origin, &mut rng)
+            .ok_or("configured feature exceeds its placement envelope")?;
+        // Every cell the feature writes must be open terrain, and every
+        // non-leaf cell it roots at the origin's level must stand on ground.
+        let cells: BTreeSet<[i32; 3]> = plan.placements().map(|p| p.pos.to_array()).collect();
+        let ground: BTreeSet<[i32; 3]> = plan
+            .placements()
+            .filter(|p| p.pos.y == origin.y && !p.block.is_leaves())
+            .map(|p| (p.pos - IVec3::Y).to_array())
             .collect();
         let mut probes: Vec<_> = cells
-            .iter()
-            .map(|(p, _)| (p.to_array(), TerrainSpace::Air))
-            .chain(
-                cells
-                    .iter()
-                    .filter(|(p, block)| p.y == origin.y && !block.is_leaves())
-                    .map(|(p, _)| ((*p - IVec3::Y).to_array(), TerrainSpace::Solid)),
-            )
+            .into_iter()
+            .map(|p| (p, TerrainSpace::Air))
+            .chain(ground.into_iter().map(|p| (p, TerrainSpace::Solid)))
             .collect();
         // Keep each terrain tile hot while probing an entire crown.
         probes.sort_unstable_by_key(|([x, y, z], _)| {
@@ -121,47 +128,17 @@ impl PlacedFeature {
             .zip(answers)
             .all(|((_, expected), actual)| *expected == actual);
         Ok(Self {
-            cells: if admitted { cells } else { Vec::new() },
+            plan: if admitted { plan } else { FeaturePlan::empty() },
         })
     }
 
+    /// Whether admission rejected every candidate.
+    pub fn is_empty(&self) -> bool {
+        self.plan.is_empty()
+    }
+
     pub(crate) fn apply(&self, section: &mut Section) {
-        let mut sink = SectionSink::new(section);
-        for &(pos, block) in &self.cells {
-            // Earlier feature stages may have dressed the admitted terrain.
-            // Their plants yield, while authored buildings remain intact.
-            let current = sink.get(pos);
-            if current == Block::Air || current.is_fragile() || current.is_leaves() {
-                sink.set(pos, block);
-            }
-        }
-    }
-}
-
-struct Recorder {
-    origin: IVec3,
-    cells: BTreeMap<[i32; 3], Block>,
-    overflow: bool,
-}
-
-impl VoxelSink for Recorder {
-    fn get(&self, pos: IVec3) -> Block {
-        self.cells
-            .get(&pos.to_array())
-            .copied()
-            .unwrap_or(Block::Air)
-    }
-
-    fn set(&mut self, pos: IVec3, block: Block) {
-        let delta = pos - self.origin;
-        if delta.x.abs() > crate::feature::MARGIN
-            || delta.z.abs() > crate::feature::MARGIN
-            || !(0..=super::MAX_TREE_REACH_ABOVE).contains(&delta.y)
-        {
-            self.overflow = true;
-            return;
-        }
-        self.cells.insert(pos.to_array(), block);
+        self.plan.apply(section);
     }
 }
 

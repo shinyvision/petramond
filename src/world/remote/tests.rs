@@ -770,7 +770,7 @@ fn terrain_send_defers_deep_sections_outside_the_anchor_window() {
     let sky = || Arc::from(vec![0u8; SECTION_VOLUME].into_boxed_slice());
     let mut w = ServerWorld::new(0, 8);
     let cp = ChunkPos::new(0, 0);
-    let gen = petramond_worldgen::driver::ChunkGenerator::new(0).generate_column_gen(cp.cx, cp.cz);
+    let gen = petramond_worldgen::ChunkGenerator::new(0).generate_column_gen(cp.cx, cp.cz);
     let band_lo = *ServerWorld::surface_window_for_column(&gen, 0).start();
     w.set_column_gen(cp, Arc::new(gen));
 

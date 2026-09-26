@@ -226,9 +226,17 @@ pub(crate) fn parse(biome: Biome, generation: Option<&str>) -> Result<BiomeSpec,
             RawFlag::Mountain => flags.mountain = true,
         }
     }
+    let surface = raw.surface.resolve();
+    let limit = crate::surface::MAX_SKIN_BAND_DEPTH;
+    if let Some(band) = surface.deepest_band().filter(|&band| band > limit as u32) {
+        return Err(format!(
+            "generation: surface: a depth_from_top band of {band} exceeds the engine's \
+             {limit}-block skin limit"
+        ));
+    }
     Ok(BiomeSpec {
         biome,
-        surface: raw.surface.resolve(),
+        surface,
         vegetation: raw
             .vegetation
             .resolve()

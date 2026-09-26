@@ -5,7 +5,7 @@ use super::settings::*;
 
 use super::{cave_density::CaveDensity, cave_walk::WalkField};
 use crate::data::underground::{self, LiningFaces, UndergroundBiomes};
-use crate::density::terrain::{channels, TerrainDensityGraph, TerrainDensitySpec};
+use crate::density::terrain::{channels, TerrainDensityGraph};
 use crate::graph::SamplePoint;
 use petramond_world::block::Block;
 use petramond_world::chunk::{section_idx, SECTION_SIZE};
@@ -76,8 +76,8 @@ pub struct CaveField {
     context: crate::cache::GenContext,
     /// The world's memos (see `crate::cache`), captured at construction.
     caches: std::sync::Arc<crate::cache::GenCaches>,
-    natural: CaveDensity,
-    terrain: TerrainDensityGraph,
+    natural: std::sync::Arc<CaveDensity>,
+    terrain: std::sync::Arc<TerrainDensityGraph>,
     underground: &'static UndergroundBiomes,
     excavations: &'static crate::data::excavations::Excavations,
     chamber_y_span: Option<(i32, i32)>,
@@ -187,6 +187,7 @@ impl CaveField {
         underground: &'static UndergroundBiomes,
         excavations: &'static crate::data::excavations::Excavations,
     ) -> Self {
+        let sources = super::sources::SeedSources::for_seed(seed);
         Self {
             seed,
             context: crate::cache::GenContext::new(seed, underground, excavations),
@@ -195,8 +196,8 @@ impl CaveField {
             chamber_y_span: excavations.y_span,
             excavations,
             lining_faces: underground.lining_faces_vary,
-            natural: CaveDensity::new(seed),
-            terrain: TerrainDensitySpec::default_surface().build_graph(seed),
+            natural: sources.natural,
+            terrain: sources.terrain,
         }
     }
 

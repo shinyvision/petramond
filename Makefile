@@ -137,7 +137,7 @@ fmt-check:
 # The lint policy itself lives in [workspace.lints] (so editors agree with
 # CI); `-D warnings` makes every warning fatal here.
 clippy:
-	$(CARGO) clippy --workspace --all-targets -- -D warnings
+	$(CARGO) clippy --workspace --all-targets --features petramond-client/tools,petramond-worldgen/tools -- -D warnings
 	$(CARGO) clippy --manifest-path mods-src/Cargo.toml --target-dir target --workspace --all-targets -- -D warnings
 
 # Supply-chain gate over both lockfiles: RUSTSEC advisories, licenses,

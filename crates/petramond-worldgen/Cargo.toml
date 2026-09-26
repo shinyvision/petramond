@@ -9,6 +9,12 @@ description = "Deterministic worldgen pipeline: climate, terrain density, caves,
 [lints]
 workspace = true
 
+[features]
+# Dev tooling: the genmap audits, the feature previewer and the `genfeature`
+# PNG bin. Off for the game and server builds, so they neither compile the
+# tooling nor link `image`.
+tools = ["dep:image"]
+
 [dependencies]
 petramond-math = { workspace = true }
 petramond-util = { workspace = true }
@@ -21,11 +27,12 @@ serde = { workspace = true }
 # `float_roundtrip`: data recipes (density/terrain.json) carry computed f64
 # knots that must parse back to the exact bits they were written from.
 serde_json = { workspace = true, features = ["float_roundtrip"] }
-image = { workspace = true }
+image = { workspace = true, optional = true }
 
 [[bin]]
 name = "genfeature"
 path = "src/bin/genfeature.rs"
+required-features = ["tools"]
 
 [[bin]]
 name = "genparity"

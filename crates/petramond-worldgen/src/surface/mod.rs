@@ -11,6 +11,12 @@ use petramond_world::block::Block;
 use petramond_world::chunk::SEA_LEVEL;
 use rule::{SurfaceCtx, SurfaceRule};
 
+/// Deepest `DepthFromTop` band a biome surface rule may carry. Below it every
+/// rule resolves to one depth-independent block, so `fill_section` fills a
+/// whole section column with one block; the biome catalog refuses a rule
+/// whose band reaches deeper (see `SurfaceRule::deepest_band`).
+pub(crate) const MAX_SKIN_BAND_DEPTH: i32 = 8;
+
 #[derive(Copy, Clone, Debug, Default)]
 pub struct SurfaceSystem;
 

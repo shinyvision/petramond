@@ -194,6 +194,7 @@ pub mod chunk {
     pub use petramond_world::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 }
 
+#[cfg(feature = "tools")]
 pub mod worldgen {
     //! Worldgen dev-tool surface — moved to `petramond_worldgen::preview`;
     //! this shim keeps the tooling paths stable for genmap/littercensus.

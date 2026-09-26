@@ -14,7 +14,7 @@
 
 use petramond_world::chunk::{ChunkPos, SectionPos};
 use petramond_world::section::Section;
-use petramond_worldgen::driver::{ChunkGenerator, ColumnGen, PendingSection, SectionGen};
+use petramond_worldgen::{ChunkGenerator, ColumnGen, PendingSection, SectionGen};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::collections::BinaryHeap;

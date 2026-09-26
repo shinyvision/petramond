@@ -72,6 +72,24 @@ impl SurfaceCond {
 }
 
 impl SurfaceRule {
+    /// The deepest `DepthFromTop` band anywhere in this rule, or `None` when
+    /// no branch depends on depth.
+    pub fn deepest_band(&self) -> Option<u32> {
+        match self {
+            SurfaceRule::Block(_) => None,
+            SurfaceRule::Sequence(rules) => {
+                rules.iter().filter_map(SurfaceRule::deepest_band).max()
+            }
+            SurfaceRule::Condition { when, then } => {
+                let own = match when {
+                    SurfaceCond::DepthFromTop(n) => Some(*n),
+                    _ => None,
+                };
+                own.max(then.deepest_band())
+            }
+        }
+    }
+
     /// Resolve to a block for this context, or `None` if no branch matches.
     pub fn resolve(&self, c: &SurfaceCtx) -> Option<Block> {
         match self {

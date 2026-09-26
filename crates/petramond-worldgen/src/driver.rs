@@ -311,9 +311,8 @@ impl ChunkGenerator {
     }
 
     /// The process's shared generator for `seed` under the installed hook
-    /// config and memos — built once (the two density graphs and the cave
-    /// field are the expensive part) and handed out by `Arc` to every caller
-    /// without a generator of its own: the positional host queries,
+    /// config and memos, handed out by `Arc` to every caller without a
+    /// generator of its own: the positional host queries,
     /// whole-chunk tooling and on-demand section materialization. A seed or
     /// installed-config change replaces it; concurrent first callers wait for
     /// the one build.
@@ -377,6 +376,26 @@ impl ChunkGenerator {
             CHUNK_SX,
             CHUNK_SZ,
         );
+    }
+
+    /// The 16×16 surface tiles [`generate_column_gen`](Self::generate_column_gen)
+    /// for `(cx, cz)` reads (its candidate window) that are not memoized yet.
+    /// A scheduler runs them as independent jobs ahead of the column job, each
+    /// through [`warm_surface_tile`](Self::warm_surface_tile): the tiles build
+    /// in parallel across workers, neighbouring columns share them, and the
+    /// column job assembles its window from ready tiles (the memo is
+    /// single-flight, so a tile still building is waited on, never rebuilt).
+    pub fn missing_surface_tiles(&self, cx: i32, cz: i32) -> Vec<(i32, i32)> {
+        const T: i32 = CHUNK_SX as i32;
+        let (x0, z0, w, h) = feature_candidate_bounds(cx * T, cz * T);
+        let tiles_x = x0.div_euclid(T)..=(x0 + w as i32 - 1).div_euclid(T);
+        let tiles_z = z0.div_euclid(T)..=(z0 + h as i32 - 1).div_euclid(T);
+        let memo = &self.caves.caches().terrain.surface_tiles;
+        let context = self.caves.context();
+        tiles_z
+            .flat_map(|tcz| tiles_x.clone().map(move |tcx| (tcx, tcz)))
+            .filter(|&(tcx, tcz)| !memo.contains(&(context, [tcx, tcz])))
+            .collect()
     }
 
     pub fn biome_at(&self, wx: i32, wz: i32) -> petramond_world::biome::Biome {

@@ -1,6 +1,6 @@
 use super::*;
 use petramond_world::chunk::SectionPos;
-use petramond_worldgen::driver::ChunkGenerator;
+use petramond_worldgen::ChunkGenerator;
 
 #[test]
 fn invalid_plan_members_reject_the_whole_generation_output() {

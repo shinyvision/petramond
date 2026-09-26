@@ -200,7 +200,7 @@ mod tests {
     use petramond_world::block::Block;
     use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
     use petramond_world::section::Section;
-    use petramond_worldgen::driver::ChunkGenerator;
+    use petramond_worldgen::ChunkGenerator;
     use std::sync::Arc;
 
     fn solid_section(pos: SectionPos) -> Section {

@@ -136,7 +136,10 @@ impl RawShape {
                 f.validate()?;
                 Box::leak(Box::new(f))
             }
-            RawShape::Redwood(f) => Box::leak(Box::new(f)),
+            RawShape::Redwood(f) => {
+                f.validate()?;
+                Box::leak(Box::new(f))
+            }
             RawShape::Tree(t) => {
                 crate::data::bounds::ascending("height", t.height, 5..=56)?;
                 let trunk: &'static dyn TrunkPlacer = match t.trunk {
@@ -321,6 +324,13 @@ mod tests {
             "redwood": {"log": "petramond:redwood_log", "leaf": "petramond:redwood_leaves",
             "height": [38, 52], "sparkle": 1}}}]}"#;
         assert!(parse_layers(&[stray]).is_err(), "unknown shape param");
+        let towering = r#"{"features": [{"feature": "petramond:redwood", "shape": {
+            "redwood": {"log": "petramond:redwood_log", "leaf": "petramond:redwood_leaves",
+            "height": [50, 70]}}}]}"#;
+        assert!(
+            parse_layers(&[towering]).is_err(),
+            "a crown past the tree reach"
+        );
         let unknown_block = r#"{"features": [{"feature": "petramond:redwood", "shape": {
             "redwood": {"log": "petramond:not_a_block", "leaf": "petramond:redwood_leaves",
             "height": [38, 52]}}}]}"#;

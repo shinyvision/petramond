@@ -2,7 +2,7 @@ use crate::world::{World, WorldSide};
 use petramond_world::chunk::{
     ChunkPos, SectionPos, SEA_LEVEL, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE,
 };
-use petramond_worldgen::driver::ColumnGen;
+use petramond_worldgen::ColumnGen;
 
 use crate::world::store::{LoadTarget, VERTICAL_LOAD_RADIUS};
 

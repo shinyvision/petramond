@@ -5,7 +5,7 @@ use crate::worker::JobPool;
 use petramond_math::math::IVec3;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 use petramond_world::section::{Section, SectionSummary};
-use petramond_worldgen::driver::{ChunkGenerator, SectionGen};
+use petramond_worldgen::{ChunkGenerator, SectionGen};
 
 use super::light::LightBakeQueue;
 use super::side::{ReplicaSide, ServerSide, WorldSide};
@@ -177,7 +177,7 @@ impl<S: WorldSide> World<S> {
     pub(in crate::world) fn column_gen(
         &self,
         pos: ChunkPos,
-    ) -> Option<&Arc<petramond_worldgen::driver::ColumnGen>> {
+    ) -> Option<&Arc<petramond_worldgen::ColumnGen>> {
         self.side.server()?.gen.column_gen.get(&pos)
     }
 
@@ -247,7 +247,7 @@ impl ServerWorld {
     pub(in crate::world) fn set_column_gen(
         &mut self,
         pos: ChunkPos,
-        col: Arc<petramond_worldgen::driver::ColumnGen>,
+        col: Arc<petramond_worldgen::ColumnGen>,
     ) {
         let summaries: Box<[SectionSummary]> = WorldData::column_section_range()
             .map(|cy| col.section_summary(cy))

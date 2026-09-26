@@ -49,7 +49,7 @@ fn mesh_job_uses_the_replicated_biome_tint_halo() {
     insert_solid_section(&mut world, pos);
     // The halo column generation captures and the ColumnPayload ships.
     let gen =
-        petramond_worldgen::driver::ChunkGenerator::new(0).generate_column_gen(pos.cx, pos.cz);
+        petramond_worldgen::ChunkGenerator::new(0).generate_column_gen(pos.cx, pos.cz);
     world
         .data
         .column_biome_halos

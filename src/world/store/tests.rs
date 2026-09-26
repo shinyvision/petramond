@@ -8,7 +8,7 @@ use petramond_world::chunk::{
     ChunkPos, SectionPos, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE, SECTION_VOLUME,
 };
 use petramond_world::section::Section;
-use petramond_worldgen::driver::ChunkGenerator;
+use petramond_worldgen::ChunkGenerator;
 
 
 fn install_column_summary(world: &mut ServerWorld, generator: &ChunkGenerator, pos: ChunkPos) {

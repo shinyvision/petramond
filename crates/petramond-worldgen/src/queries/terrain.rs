@@ -75,7 +75,7 @@ pub fn section_blocks(seed: u32, section: [i32; 3]) -> Vec<u16> {
     }
     let generator = crate::driver::ChunkGenerator::shared(seed);
     let (surface, caves) = generator.sources();
-    super::section_memo::terrain_cube(
+    crate::section_memo::terrain_cube(
         surface,
         caves,
         SectionPos::new(section[0], section[1], section[2]),
@@ -88,7 +88,7 @@ pub fn blocks_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u16> {
     let generator = crate::driver::ChunkGenerator::shared(seed);
     let (surface, caves) = generator.sources();
     if let Some(cell) = whole_section(positions) {
-        return super::section_memo::terrain_cube(
+        return crate::section_memo::terrain_cube(
             surface,
             caves,
             SectionPos::new(cell[0], cell[1], cell[2]),
@@ -103,7 +103,7 @@ pub fn blocks_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u16> {
             let [x, y, z] = super::clamp_query(pos);
             let cell = [x, y, z].map(|v| v.div_euclid(16));
             let cube = cubes.entry(cell).or_insert_with(|| {
-                super::section_memo::terrain_cube(
+                crate::section_memo::terrain_cube(
                     surface,
                     caves,
                     SectionPos::new(cell[0], cell[1], cell[2]),

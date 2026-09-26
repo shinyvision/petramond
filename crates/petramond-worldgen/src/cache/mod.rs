@@ -193,6 +193,10 @@ memo_group! {
         /// The underground biome ids that can occur in a queried box.
         underground_boxes: crate::UndergroundBoxKey => Arc<[u8]> =
             ("terrain.underground_boxes", 4096, Frontier, slice),
+        /// Mod-placed configured features, admitted (or rejected) whole.
+        placed_features: crate::feature::placement::PlacedKey =>
+            Arc<crate::feature::placement::PlacedFeature> =
+            ("terrain.placed_features", 256, Frontier, crate::feature::placement::placed_heap),
     }
 }
 

@@ -29,7 +29,7 @@ use petramond_math::math::IVec3;
 use petramond_mesh::ChunkMesh;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 use petramond_worldgen::cache::{CacheBudget, GenCaches};
-use petramond_worldgen::driver::ColumnGen;
+use petramond_worldgen::ColumnGen;
 
 use super::entities::DroppedItems;
 use super::mesh_queue::DirtyMeshQueue;

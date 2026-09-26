@@ -39,8 +39,7 @@ fn replay_matches_direct_generation_in_any_section_order_and_on_occupied_cells()
 fn replay_keeps_predicates_and_write_order() {
     let pos = IVec3::new(1, 65, 1);
     let mut recorder = Recorder {
-        ox: 0,
-        oz: 0,
+        bounds: Bounds::Column { ox: 0, oz: 0 },
         sections: BTreeMap::new(),
     };
     let mut ctx = FeatureCtx::new(&mut recorder);

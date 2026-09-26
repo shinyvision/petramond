@@ -97,7 +97,7 @@ impl ServerGame {
         let p = inputs.place_pos;
         let variants = item.placement_variants();
         if !variants.is_empty() {
-            let mut rng = petramond_worldgen::rng::FeatureRng::positional(
+            let mut rng = petramond_worldgen::FeatureRng::positional(
                 self.world.data().seed,
                 0x706c_6163_656d_656e ^ self.world.current_tick(),
                 p.x,

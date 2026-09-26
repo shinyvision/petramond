@@ -1,4 +1,6 @@
 use super::*;
+use crate::feature::FeatureCtx;
+use petramond_world::block::Block;
 
 struct Branch;
 
@@ -47,7 +49,7 @@ fn whole_geometry_admission_precedes_section_clipping() {
     assert_eq!(b.block(0, 0, 0), Block::OakLog);
     assert_eq!(b.block(1, 0, 0), Block::OakLeaves);
     for obstacle in [TerrainSpace::Solid, TerrainSpace::Fluid] {
-        assert!(make(obstacle).cells.is_empty());
+        assert!(make(obstacle).is_empty());
     }
 }
 
@@ -57,7 +59,7 @@ fn unsupported_roots_reject_the_whole_feature() {
         vec![TerrainSpace::Air; probes.len()]
     })
     .unwrap();
-    assert!(plan.cells.is_empty());
+    assert!(plan.is_empty());
 }
 
 #[test]

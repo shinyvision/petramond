@@ -45,10 +45,12 @@ pub(crate) const CAVE_WALK_STEEP: u64 = 0xB40B;
 /// Xor into an excavation row's salt for the passages between its rooms.
 pub(crate) const EXCAVATION_PASSAGE_XOR: u64 = 0x5041_5353_4147_4500;
 /// The feature preview tool's placement roll.
+#[cfg(any(test, feature = "tools"))]
 pub(crate) const FEATURE_PREVIEW: u64 = 0x0000_FE47_0000_0001;
 
 /// Every engine salt, named, for the uniqueness check.
-pub(crate) const ENGINE: &[(&str, u64)] = &[
+#[cfg(test)]
+const ENGINE: &[(&str, u64)] = &[
     ("tree feature", TREE_FEATURE),
     ("tree priority", TREE_PRIORITY),
     ("tree branch", TREE_BRANCH),

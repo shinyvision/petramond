@@ -84,7 +84,7 @@ use petramond_math::math::IVec3;
 use petramond_render::camera::Camera;
 use petramond_world::block_state::HeldBlockState;
 use petramond_world::world::placement::HeldRotation;
-use petramond_worldgen::density::surface::SurfaceDensitySystem;
+use petramond_worldgen::SurfaceDensitySystem;
 
 pub use environment::GameEnvironment;
 pub use frame::{render_bone_offsets, render_held_pose};

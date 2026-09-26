@@ -143,7 +143,7 @@ fn water_kick_queues_source_water_over_a_drop() {
 
 #[test]
 fn high_flight_still_wants_the_surface_band() {
-    let generator = petramond_worldgen::driver::ChunkGenerator::new(0x51EED);
+    let generator = petramond_worldgen::ChunkGenerator::new(0x51EED);
     let col = generator.generate_column_gen(0, 0);
     let cys = ServerWorld::wanted_section_cys(&col, SECTION_MAX_CY + 100, 0);
     let surface_cy = col
@@ -360,7 +360,7 @@ fn first_bake_defers_until_generation_neighborhood_settles() {
     let mut world = ServerWorld::new(0x51EED, 4);
     let target = LoadTarget::new(0, 4, 0, 4);
     world.data.last_load_target = Some(target);
-    let generator = petramond_worldgen::driver::ChunkGenerator::new(world.data.seed);
+    let generator = petramond_worldgen::ChunkGenerator::new(world.data.seed);
     for dz in -1..=1 {
         for dx in -1..=1 {
             let cp = ChunkPos::new(dx, dz);
@@ -429,7 +429,7 @@ fn sealed_first_light_waits_for_player_proximity_then_bakes() {
         section.recompute_opaque_count();
         world.insert_section_for_test(pos, section);
     }
-    let generator = petramond_worldgen::driver::ChunkGenerator::new(world.data.seed);
+    let generator = petramond_worldgen::ChunkGenerator::new(world.data.seed);
     world.side.gen.column_gen.insert(
         center.chunk_pos(),
         Arc::new(generator.generate_column_gen(center.cx, center.cz)),
@@ -488,7 +488,7 @@ fn horizontal_move_requests_sections_for_newly_wanted_loaded_columns() {
         "test setup: column starts outside the old disc"
     );
 
-    let generator = petramond_worldgen::driver::ChunkGenerator::new(world.data.seed);
+    let generator = petramond_worldgen::ChunkGenerator::new(world.data.seed);
     let col = Arc::new(generator.generate_column_gen(newly_wanted.cx, newly_wanted.cz));
     world.set_column_gen(newly_wanted, col);
     world.data.last_load_target = Some(old);

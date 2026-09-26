@@ -16,9 +16,12 @@ path = "src/bin/petramond_native.rs"
 [[bin]]
 name = "genmap"
 path = "src/bin/genmap.rs"
+required-features = ["tools"]
 
 [features]
 default = ["audio"]
+# The genmap previewer (worldgen audits and previews).
+tools = ["petramond/tools"]
 # Client sound playback, forwarded to the audio engine in the core crate (the
 # sound registry is always compiled there).
 audio = ["petramond-audio/playback"]

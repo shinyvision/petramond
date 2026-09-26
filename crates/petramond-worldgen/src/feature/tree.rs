@@ -274,6 +274,24 @@ pub struct RedwoodFeature {
 
 pub const REDWOOD_BASE_SUPPORT_REACH: i32 = 5;
 
+/// How far a redwood's crown can rise above its nominal height: a top whorl
+/// tip (one above the spine, plus its jitter) under a radius-3 leaf blob.
+const REDWOOD_CROWN_OVERHANG: i32 = 4;
+/// Shortest nominal height the whorl layout is laid out for.
+const REDWOOD_MIN_HEIGHT: i32 = 12;
+
+impl RedwoodFeature {
+    /// A redwood's whole crown must stay within the tree reach the section
+    /// gates assume (`MAX_TREE_REACH_ABOVE`), or its top is silently clipped.
+    pub fn validate(&self) -> Result<(), String> {
+        crate::data::bounds::ascending(
+            "height",
+            self.height,
+            REDWOOD_MIN_HEIGHT..=super::MAX_TREE_REACH_ABOVE - REDWOOD_CROWN_OVERHANG,
+        )
+    }
+}
+
 /// Per-corner trim chance for the redwood whorl leaf masses — high enough that the
 /// small (r=2) clumps read as rounded blobs rather than the solid cubes a plain
 /// `leaf_blob` produces at that radius.

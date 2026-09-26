@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::save::SectionRecord;
 use crate::worker::{GenJob, GenOutput};
 use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
-use petramond_worldgen::driver::ColumnGen;
+use petramond_worldgen::ColumnGen;
 
 use crate::world::store::{LoadTarget, SkyCoverChange};
 

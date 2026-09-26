@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::worker::GenJob;
 use petramond_world::chunk::{ChunkPos, SectionPos};
-use petramond_worldgen::driver::ColumnGen;
+use petramond_worldgen::ColumnGen;
 
 use crate::world::store::{LoadAnchor, LoadTarget};
 

@@ -11,7 +11,7 @@ use petramond_world::chunk::{section_idx, SEA_LEVEL, SECTION_SIZE, WORLD_MAX_Y};
 use petramond_world::section::Section;
 
 use super::lattice::{DensityLattice, DensityLatticeBounds, DensityLatticeCellSize};
-use super::terrain::{channels, FloorDensitySpec, TerrainDensityGraph, TerrainDensitySpec};
+use super::terrain::{channels, FloorDensitySpec, TerrainDensityGraph};
 
 use crate::biome::climate::{
     BiomeClimateIndex, ClimateAxis, ClimateSampleCell, ClimateSampler, CLIMATE_SAMPLE_CELL_X,
@@ -29,10 +29,7 @@ mod tests;
 
 use climate_cache::{CellClimate, ClimateCellCache};
 
-/// Depth below which every biome surface rule resolves to a single depth-independent
-/// block (the deepest `DepthFromTop` band across all biomes is 4; this leaves margin).
-/// Below this depth `fill_section` fills a whole section-column with one block.
-const MAX_SKIN_BAND_DEPTH: i32 = 8;
+use crate::surface::MAX_SKIN_BAND_DEPTH;
 
 const BEACH_MAX_SURFACE_Y: i32 = SEA_LEVEL + 5;
 const BEACH_MAX_CONTINENTALITY: f32 = 0.14;
@@ -52,7 +49,8 @@ const SEA_ICE_EDGE_PERIOD: f32 = 24.0;
 #[derive(Clone, Debug)]
 pub struct SurfaceDensitySystem {
     seed: u32,
-    density: TerrainDensityGraph,
+    /// Shared with every other system of this world (see `SeedSources`).
+    density: std::sync::Arc<TerrainDensityGraph>,
     climate: &'static BiomeClimateIndex,
     surface: SurfaceSystem,
 }
@@ -61,7 +59,7 @@ impl SurfaceDensitySystem {
     pub fn new(seed: u32) -> Self {
         Self {
             seed,
-            density: TerrainDensitySpec::default_surface().build_graph(seed),
+            density: crate::noise::sources::SeedSources::for_seed(seed).terrain,
             climate: BiomeClimateIndex::default_surface(),
             surface: SurfaceSystem,
         }

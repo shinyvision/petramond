@@ -115,6 +115,6 @@ make gui-builder
 Generate world preview images:
 
 ```sh
-cargo run --quiet --bin genmap -- 42 /tmp/top.png top
-cargo run --quiet --bin genfeature -- redwood /tmp/redwood.png 42 all 8
+cargo run --quiet -p petramond-client --features tools --bin genmap -- 42 /tmp/top.png top
+cargo run --quiet -p petramond-worldgen --features tools --bin genfeature -- redwood /tmp/redwood.png 42 all 8
 ```

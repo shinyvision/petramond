@@ -34,8 +34,8 @@ use std::collections::HashMap;
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 use petramond_world::section::SectionSummary;
-use petramond_worldgen::feature::{ConfiguredFeature, FeatureCtx, VoxelSink};
-use petramond_worldgen::rng::FeatureRng;
+use petramond_worldgen::growth::{ConfiguredFeature, FeatureCtx, VoxelSink};
+use petramond_worldgen::FeatureRng;
 
 use super::fragile::FRAGILE;
 
@@ -104,7 +104,7 @@ fn pick_growth(
         }
         remaining -= weight;
     }
-    petramond_worldgen::data::features::by_name(picked)
+    petramond_worldgen::growth::feature_by_name(picked)
 }
 
 impl ServerWorld {

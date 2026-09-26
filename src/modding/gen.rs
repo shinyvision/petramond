@@ -408,7 +408,7 @@ fn validated_writes(output: mod_api::GenOutput, seed: u32) -> Result<GenerationP
         .features
         .into_iter()
         .map(|placement| {
-            petramond_worldgen::feature::placement::PlacedFeature::resolve_first(
+            petramond_worldgen::growth::PlacedFeature::resolve_first(
                 &placement.feature,
                 &placement.origins,
                 seed,
