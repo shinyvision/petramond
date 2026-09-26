@@ -244,10 +244,12 @@ impl Renderer {
             self.block_entity.baked_origin = render_origin;
         }
 
-        // Mobs (animated entity models), grouped by species and frustum-culled, baked
-        // into each species' OWN `ItemVertex` buffers (a different vertex type from the
-        // packed block vertex). Each instance is posed by the walk animation at its
-        // `anim_time` when moving, else the model's rest pose.
+        // Mobs (animated entity models), grouped by species and frustum-culled, then
+        // POSED into the frame's skin batch: one bone palette run + one instance row
+        // each, contiguous per species so each species draws as one instanced call
+        // over its static mesh. Each instance is posed by the walk animation at its
+        // `anim_time` when moving, else the model's rest pose. Player bodies join the
+        // same batch below; it uploads once after both.
         for g in &mut self.actor.mob_gpu {
             g.visible.clear();
         }
@@ -273,39 +275,25 @@ impl Renderer {
                     .push(inst.clone());
             }
         }
-        let (device, queue) = (&self.device, &self.queue);
+        self.actor.skin.batch.clear();
         let mut mob_held = Vec::new();
         for g in &mut self.actor.mob_gpu {
-            let model = g.model;
-            let scale = g.scale;
-            let visible = &g.visible;
-            let rig = &g.rig;
-            g.draw.bake(
-                device,
-                queue,
-                &mut g.verts,
-                &mut g.indices,
-                |verts, indices| {
-                    build_mob_instances(
-                        model,
-                        scale,
-                        env,
-                        visible,
-                        render_origin,
-                        verts,
-                        indices,
-                        &mut mob_held,
-                        rig,
-                    )
-                },
+            g.drawn = pose_mob_instances(
+                g.model,
+                g.scale,
+                &g.visible,
+                render_origin,
+                &g.rig,
+                &mut self.actor.skin.batch,
+                &mut mob_held,
             );
         }
 
         // Player bodies + their held items: the LOCAL third-person body (when
         // the view is up, driven by the renderer's own local hand state) plus
         // EVERY remote player (each carrying its own), frustum-culled like
-        // mobs and ALL appended into the one player_gpu vertex/index stream
-        // (every body shares the player model + skin bind). Held items
+        // mobs and ALL posed into the skin batch as one contiguous instance
+        // range (every body shares the rig's mesh + skin bind). Held items
         // accumulate per render kind into three combined streams — block
         // mini-cubes on the packed opaque stream, extruded sprites and bbmodel
         // items on explicit-UV streams split by atlas — each uploaded and
@@ -338,10 +326,8 @@ impl Renderer {
                 }
             }
         }
-        // Combined streams + per-body scratch taken out so the loop below can
-        // borrow them alongside `self` reads (restored after the uploads).
-        let mut body_verts = std::mem::take(&mut self.actor.player_gpu.verts);
-        let mut body_indices = std::mem::take(&mut self.actor.player_gpu.indices);
+        // Combined held-item streams taken out so the loop below can borrow
+        // them alongside `self` reads (restored after the uploads).
         let mut streams = HeldStreams {
             sprite_verts: std::mem::take(&mut self.actor.item_verts),
             sprite_indices: std::mem::take(&mut self.actor.item_indices),
@@ -351,10 +337,6 @@ impl Renderer {
             block_indices: std::mem::take(&mut self.item_entity.indices),
             sprite_scratch: std::mem::take(&mut self.actor.sprite_verts),
         };
-        let mut scratch_verts = std::mem::take(&mut self.actor.body_verts);
-        let mut scratch_indices = std::mem::take(&mut self.actor.body_indices);
-        body_verts.clear();
-        body_indices.clear();
         streams.sprite_verts.clear();
         streams.sprite_indices.clear();
         streams.model_verts.clear();
@@ -407,6 +389,7 @@ impl Renderer {
                 );
             }
         }
+        let bodies_first = self.actor.skin.batch.next_instance();
         for body in &self.actor.player_visible {
             let Some(rig) = body_rig else { break };
             let (inst, held, off) = (&body.inst, &body.held, &body.off);
@@ -426,26 +409,19 @@ impl Renderer {
                     dt,
                 }
             });
-            // The builder clears its buffers, so each body bakes into the
-            // scratch and appends with a base-vertex offset.
-            let (_, hand, off_hand) = crate::player_model::build_player_body(
+            let (hand, off_hand) = crate::player_model::pose_player_body(
                 rig,
-                env,
                 inst,
                 render_origin,
                 inst.bones.of(&self.actor.bone_offsets),
                 drive,
-                &mut scratch_verts,
-                &mut scratch_indices,
+                &mut self.actor.skin.batch,
             );
             // claimed poses ride their own per-hand attach frames (the off
             // frame mirrors the pose, lefthand-style), upstream of the
             // per-render-kind transforms below so every kind wears them.
             let hand = crate::player_model::posed_hand(hand, &held.pose.third_person, false);
             let off_hand = crate::player_model::posed_hand(off_hand, &off.pose.third_person, true);
-            let base = body_verts.len() as u32;
-            body_verts.extend_from_slice(&scratch_verts);
-            body_indices.extend(scratch_indices.iter().map(|&i| i + base));
 
             let light = crate::lighting::DynLight::new(inst.skylight, inst.blocklight);
             // A sleeper's hands are empty — the held items would poke through
@@ -471,6 +447,10 @@ impl Renderer {
                 );
             }
         }
+        self.actor.player_gpu.drawn = bodies_first..self.actor.skin.batch.next_instance();
+        // Every mob and body is posed: one upload of the palette + instance
+        // rows serves every skinned draw this frame.
+        self.actor.skin.upload(&self.device, &self.queue);
         for held in mob_held {
             streams.push(
                 held.item,
@@ -494,16 +474,9 @@ impl Renderer {
         // Edges, consumed by this bake: a redraw before the next
         // `set_local_animator` must not fire them again.
         self.hand.local_events.clear();
-        // Upload the four combined streams (a stream that stayed empty draws
-        // nothing).
+        // Upload the three combined held-item streams (a stream that stayed
+        // empty draws nothing).
         let prebuilt = |_: &mut Vec<_>, i: &mut Vec<u32>| i.len() as u32;
-        self.actor.player_gpu.draw.bake(
-            &self.device,
-            &self.queue,
-            &mut body_verts,
-            &mut body_indices,
-            prebuilt,
-        );
         self.actor.item_draw.bake(
             &self.device,
             &self.queue,
@@ -525,16 +498,12 @@ impl Renderer {
             &mut block_indices,
             |_: &mut Vec<_>, i: &mut Vec<u32>| i.len() as u32,
         );
-        self.actor.player_gpu.verts = body_verts;
-        self.actor.player_gpu.indices = body_indices;
         self.actor.item_verts = sprite_verts;
         self.actor.item_indices = sprite_indices;
         self.actor.model_item_verts = model_verts;
         self.actor.model_item_indices = model_indices;
         self.item_entity.verts = block_verts;
         self.item_entity.indices = block_indices;
-        self.actor.body_verts = scratch_verts;
-        self.actor.body_indices = scratch_indices;
         self.actor.sprite_verts = sprite_scratch;
 
         // Break-overlay (destroy crack) geometry: ONE combined stream over
@@ -554,34 +523,35 @@ impl Renderer {
         );
         self.hand.break_overlays = break_overlays;
 
-        // Tiny 3D particle cubes into the reusable vbuf (static cube ibuf): block-atlas
-        // flecks first, then bbmodel-block (model-atlas) flecks, so the draw splits at one
-        // contiguous index boundary (`particle_block_vertex_count`).
+        // Tiny 3D particle cubes: one instance row each (the vertex stage expands
+        // the cube over the static cube pattern). Block-atlas flecks first, then
+        // bbmodel-block (model-atlas) flecks, so the draw splits at one contiguous
+        // instance boundary (`block_count`).
         let particles = &self.particle.instances;
         let model_particles = &self.particle.model_instances;
-        let mut block_v = 0u32;
+        let mut block_rows = 0u32;
         self.particle.draw.bake(
             &self.device,
             &self.queue,
-            &mut self.particle.verts,
-            |verts| {
-                let (total, nb) =
-                    build_particles_split(particles, model_particles, env, render_origin, verts);
-                block_v = nb;
+            &mut self.particle.rows,
+            |rows| {
+                let (total, block) =
+                    build_particles_split(particles, model_particles, env, render_origin, rows);
+                block_rows = block;
                 total
             },
         );
-        self.particle.block_vertex_count = if self.particle.draw.vertex_count == 0 {
+        self.particle.block_count = if self.particle.draw.instance_count == 0 {
             0
         } else {
-            block_v
+            block_rows
         };
 
         // Particle emitters (torch flames, mod content, burning mobs). The set
         // arrives already culled against this frame's view volume — the gather
         // holds the same frustum and fog distance published by `update_uniforms`
         // above — so all that is left is the far-to-near order the alpha-blended
-        // cubes are built in.
+        // cubes' rows are written (and so rasterized) in.
         let cam_pos = self.view.cam_pos;
         self.particle.emitters.sort_by(|a, b| {
             let da = (a.origin - cam_pos).length_squared();
@@ -595,8 +565,8 @@ impl Renderer {
         self.particle.emitter_draw.bake(
             &self.device,
             &self.queue,
-            &mut self.particle.emitter_verts,
-            |verts| {
+            &mut self.particle.emitter_rows,
+            |rows| {
                 build_transparent_emitter_particles(
                     emitters,
                     solids,
@@ -605,7 +575,7 @@ impl Renderer {
                     cam_pos.relative_to(render_origin),
                     env,
                     density,
-                    verts,
+                    rows,
                     &mut self.particle.emitter_scratch,
                 )
             },

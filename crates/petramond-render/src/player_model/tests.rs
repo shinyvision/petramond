@@ -72,72 +72,65 @@ fn instance() -> PlayerRenderInstance {
     }
 }
 
-fn bake(inst: &PlayerRenderInstance) -> Vec<ItemVertex> {
-    let (mut v, mut i) = (Vec::new(), Vec::new());
-    let (n, _, _) = build_player_body(
+/// One skinned vertex's render-local position, as the GPU draws it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Skinned {
+    pos: [f32; 3],
+}
+
+/// Pose one body into a fresh batch, answering the batch and its hands.
+fn pose(inst: &PlayerRenderInstance) -> (SkinBatch, Mat4, Mat4) {
+    let mut batch = SkinBatch::default();
+    let (hand, off) = pose_player_body(
         body_rig(),
-        LightEnv::IDENTITY,
         inst,
         petramond_math::math::IVec3::ZERO,
         &[],
         None,
-        &mut v,
-        &mut i,
+        &mut batch,
     );
-    assert_eq!(n as usize, i.len());
-    v
+    assert_eq!(batch.instances.len(), 1);
+    (batch, hand, off)
+}
+
+/// Pose and skin one body.
+fn bake(inst: &PlayerRenderInstance) -> Vec<Skinned> {
+    let model = &body_rig().model;
+    let mesh = crate::skinned::SkinMesh::build(model, PLAYER_MODEL_SCALE, None, |_| 0);
+    let (batch, _, _) = pose(inst);
+    crate::skinned::skin_positions(&mesh, &batch, 0)
+        .into_iter()
+        .map(|p| Skinned { pos: p.to_array() })
+        .collect()
 }
 
 #[test]
-fn self_lit_players_keep_fire_and_hurt_tints_in_darkness() {
+fn a_body_carries_its_hurt_fire_and_light_to_the_instance() {
+    // The inputs the CPU bake folded into every vertex's tint ride the
+    // instance row (`skinned` pins the shader's fold against `body_tint`).
     let mut inst = instance();
     inst.emitter_tint = [1.0, 0.7, 0.4];
     inst.hurt = 0.5;
-    let daylight = bake(&inst);
     inst.skylight = 0;
-    let dark = bake(&inst);
     inst.emitter_self_lit = 1.0;
-    let (mut lit, mut indices) = (Vec::new(), Vec::new());
-    build_player_body(
-        body_rig(),
-        LightEnv {
-            sky_scale: 0.0,
-            sky_color: [0.6, 0.7, 1.0],
-        },
-        &inst,
-        petramond_math::math::IVec3::ZERO,
-        &[],
-        None,
-        &mut lit,
-        &mut indices,
+    let (batch, _, _) = pose(&inst);
+    let row = batch.instances[0];
+    assert_eq!(
+        row.tint,
+        crate::lighting::mul3(crate::mob_model::hurt_tint(0.5), [1.0, 0.7, 0.4])
     );
-    assert!(!lit.is_empty());
-    for ((day, lit), dark) in daylight.iter().zip(&lit).zip(&dark) {
-        assert_eq!(
-            lit.tint, day.tint,
-            "body light preserves fire tint and hurt flash"
-        );
-        assert_eq!(lit.shade, day.shade);
-        assert!(
-            dark.tint[0] < lit.tint[0],
-            "ordinary bodies still follow world light"
-        );
-    }
+    assert_eq!(row.self_lit, 1.0);
+    assert_eq!(row.light[0], 0.0);
+    assert_eq!(row.hidden, 0);
+    assert_eq!(
+        batch.palette.len() as u32,
+        crate::skinned::bone_slots(&body_rig().model)
+    );
 }
 
 /// The two hand attach frames of a body at rest.
 fn hands(inst: &PlayerRenderInstance) -> (Mat4, Mat4) {
-    let (mut v, mut i) = (Vec::new(), Vec::new());
-    let (_, hand, off) = build_player_body(
-        body_rig(),
-        LightEnv::IDENTITY,
-        inst,
-        petramond_math::math::IVec3::ZERO,
-        &[],
-        None,
-        &mut v,
-        &mut i,
-    );
+    let (_, hand, off) = pose(inst);
     (hand, off)
 }
 
@@ -235,7 +228,7 @@ fn seated_swings_the_thighs_forward_and_hangs_the_shins() {
     let mut riding = instance();
     riding.seated = true;
     let seated = bake(&riding);
-    let span = |v: &[ItemVertex], axis: usize| {
+    let span = |v: &[Skinned], axis: usize| {
         let lo = v.iter().map(|x| x.pos[axis]).fold(f32::MAX, f32::min);
         let hi = v.iter().map(|x| x.pos[axis]).fold(f32::MIN, f32::max);
         (lo, hi)
@@ -276,7 +269,7 @@ fn sleeping_lies_the_body_flat() {
     let mut asleep = instance();
     asleep.sleeping = true;
     let lying = bake(&asleep);
-    let height = |v: &[ItemVertex]| {
+    let height = |v: &[Skinned]| {
         let ys: Vec<f32> = v.iter().map(|x| x.pos[1]).collect();
         ys.iter().fold(f32::MIN, |a, &b| a.max(b)) - ys.iter().fold(f32::MAX, |a, &b| a.min(b))
     };

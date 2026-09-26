@@ -1,48 +1,65 @@
 //! Tiny 3D particle cubes.
 //!
 //! Each [`ParticleInstance`] (world pos + **absolute** atlas uv patch + tint +
-//! alpha + size) is expanded into a small textured CUBE each frame (NOT a
-//! camera-facing billboard) so dust is visible from any angle, including from
-//! directly above. Six faces, each textured with the particle's sub-patch of the
-//! block atlas (the absolute `uv_min` + `uv_size`), multiplied by the particle
-//! tint and a per-face directional shade so the cube reads as a solid 3D nugget.
+//! alpha + size) draws as a small textured CUBE (NOT a camera-facing billboard)
+//! so dust is visible from any angle, including from directly above. Six faces,
+//! each textured with the particle's sub-patch of the block atlas (the absolute
+//! `uv_min` + `uv_size`), multiplied by the particle tint and a per-face
+//! directional shade so the cube reads as a solid 3D nugget.
 //!
-//! Geometry is built CPU-side into a reusable dynamic vbuf with a compact
-//! per-vertex format ([`ParticleVertex`]: pos + uv + tint + shade + alpha =
-//! 40 bytes). The dedicated `particles.wgsl` pipeline transforms by `view_proj`,
-//! samples the atlas, applies `shade * tint`, and uses an alpha **cutout**
-//! (discard a<0.5) so the cubes are depth-TESTED *and* depth-WRITTEN — correctly
-//! occluded by terrain, visible from above, and mutually self-sorting. Particles
-//! fade near end-of-life by SHRINKING the cube (alpha is folded into the cutout).
+//! The CPU writes ONE [`ParticleRow`] per particle (centre, half size, uv
+//! rect, lit tint, alpha — 80 bytes) and nothing per vertex: the
+//! `particles.wgsl` vertex stage expands each instance into its 24 cube
+//! vertices from `vertex_index` and the face table `wgsl_faces` generates
+//! from `FACES`, transforms by `view_proj`, and the fragment samples the
+//! atlas, applies `shade * tint`, and uses an alpha **cutout** so the cubes are
+//! depth-TESTED *and* depth-WRITTEN — correctly occluded by terrain, visible
+//! from above, and mutually self-sorting. Particles fade near end-of-life by
+//! SHRINKING the cube (alpha is folded into the cutout).
 //!
-//! Block-row emitters reuse the same vertex format but bake solid-colour cubes for
-//! a separate alpha-blended pipeline. Those cubes are presentation-only, sorted
-//! far-to-near before vertex emission, and back-face culled by the render pipeline
-//! so tiny transparent flames do not reveal all six faces at once.
+//! Block-row emitters reuse the same row format for solid-colour cubes on a
+//! separate alpha-blended pipeline. Those cubes are presentation-only, sorted
+//! far-to-near before their rows are written (instances rasterize in order),
+//! and back-face culled by the render pipeline so tiny transparent flames do
+//! not reveal all six faces at once.
 //!
-//! Geometry is unbounded: every live particle bakes, and the dynamic buffer
-//! behind it grows to fit (`DynamicVertexDraw`).
+//! Instances are unbounded: every live particle writes a row, and the instance
+//! buffer behind them grows to fit (`DynamicInstanceDraw`).
 
 use super::lighting::{self, DynLight, LightEnv};
 use super::{ParticleEmitterInstance, ParticleInstance};
 use glam::Vec3;
 
-/// Compact particle vertex: world position + absolute atlas uv + RGB tint +
-/// per-face shade + alpha. 40 bytes, matching the `particles.wgsl` `VsIn` and the
-/// pipeline's vertex attributes.
+/// One particle, stepped per instance: the vertex stage expands it into a cube
+/// (or, with `quad` set, one oriented quad). 80 bytes, matching the
+/// `particles.wgsl` `ParticleIn` and the pipeline's instance attributes
+/// (centre f32x3 @0, half f32 @12, right f32x3 @16, stretch f32 @28, up f32x3
+/// @32, alpha f32 @44, uv_min f32x2 @48, uv_max f32x2 @56, tint f32x3 @64,
+/// quad u32 @76).
 #[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct ParticleVertex {
-    pub pos: [f32; 3],
-    pub uv: [f32; 2],
-    pub tint: [f32; 3],
-    /// Per-face directional shade (0..1) baked CPU-side so the cube reads 3D.
-    pub shade: f32,
+#[derive(Copy, Clone, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ParticleRow {
+    /// Render-local centre.
+    pub center: [f32; 3],
+    /// Half the cube's side.
+    pub half: f32,
+    /// A quad's half-extent axes in its plane (zero for a cube).
+    pub right: [f32; 3],
+    /// A cube's vertical elongation about its centre (1 = a cube).
+    pub stretch: f32,
+    pub up: [f32; 3],
     pub alpha: f32,
+    /// The absolute atlas patch: `(u0, v0)` top-left to `(u1, v1)` bottom-right.
+    pub uv_min: [f32; 2],
+    pub uv_max: [f32; 2],
+    /// The tint with the sampled light folded in.
+    pub tint: [f32; 3],
+    /// 1 = one oriented quad over `right`/`up`, 0 = a cube.
+    pub quad: u32,
 }
 
 /// Vertices per particle cube (6 faces * 4 verts, indexed; no shared verts so
-/// each face carries its own uv + shade).
+/// each face carries its own uv + shade) — what one instance expands to.
 pub const VERTS_PER_CUBE: usize = 24;
 /// Indices per particle cube (6 faces * 2 triangles * 3).
 pub const INDICES_PER_CUBE: usize = 36;
@@ -69,6 +86,7 @@ const fn cube_index_pattern() -> [u32; INDICES_PER_CUBE] {
 }
 
 /// Per-face data: the in-plane basis (`right`/`up`) and the directional shade.
+/// The vertex stage reads this table through [`wgsl_faces`].
 /// Faces are ordered +X, -X, +Y, -Y, +Z, -Z. The face plane is offset outward
 /// from the cube centre by `right.cross(up) * h` (the cross points outward), so
 /// the four corners are `centre + normal*h +/- right*h +/- up*h` — i.e. the six
@@ -123,61 +141,78 @@ const FACES: [Face; 6] = [
     },
 ];
 
-/// Build tiny 3D cubes for `instances` into `verts` (cleared, capacity reused).
-/// Returns the **vertex** count written (24 per cube). Caps at
-/// every instance. Indices are the static cube pattern
-/// (see [`particle_indices`]) so only the vbuf is rewritten each frame.
+/// The face table as WGSL, generated from [`FACES`] so the vertex stage and
+/// this module share one definition: `particle_face_right`, `particle_face_up`
+/// and `particle_face_shade`, indexed by face (`vertex_index / 4`).
+pub(crate) fn wgsl_faces() -> String {
+    let vec3 = |v: Vec3| format!("vec3<f32>({:?}, {:?}, {:?})", v.x, v.y, v.z);
+    let list = |f: &dyn Fn(&Face) -> String| {
+        FACES.iter().map(f).collect::<Vec<_>>().join(", ")
+    };
+    format!(
+        "var<private> particle_face_right: array<vec3<f32>, 6> = array<vec3<f32>, 6>({});\n\
+         var<private> particle_face_up: array<vec3<f32>, 6> = array<vec3<f32>, 6>({});\n\
+         var<private> particle_face_shade: array<f32, 6> = array<f32, 6>({});\n",
+        list(&|f| vec3(f.right)),
+        list(&|f| vec3(f.up)),
+        list(&|f| format!("{:?}", f.shade)),
+    )
+}
+
+/// Write one row per visible particle in `instances` into `rows` (cleared,
+/// capacity reused). Returns the row count.
 ///
 /// Each cube is centred at `inst.pos` with side `inst.size`; the renderer shrinks
 /// the size near end-of-life so a fading cube also shrinks. Every face samples
 /// the particle's absolute atlas patch (`uv_min` + `uv_size`) tinted by
 /// `inst.tint` and shaded per-face.
-/// Block-atlas-only cube builder, kept as the focused unit-test entry for the per-cube
+/// Block-atlas-only builder, kept as the focused unit-test entry for the per-cube
 /// geometry (faces, shades, centring, caps). The renderer uses [`build_particles_split`].
 #[cfg(test)]
-pub fn build_particles(instances: &[ParticleInstance], verts: &mut Vec<ParticleVertex>) -> u32 {
-    verts.clear();
-    for inst in instances {
-        if inst.alpha <= 0.0 {
-            continue;
-        }
-        push_particle_cube(inst, LightEnv::IDENTITY, glam::IVec3::ZERO, verts);
-    }
-    verts.len() as u32
+pub fn build_particles(instances: &[ParticleInstance], rows: &mut Vec<ParticleRow>) -> u32 {
+    rows.clear();
+    rows.extend(
+        instances
+            .iter()
+            .filter(|inst| inst.alpha > 0.0)
+            .map(|inst| particle_row(inst, LightEnv::IDENTITY, glam::IVec3::ZERO)),
+    );
+    rows.len() as u32
 }
 
-/// Build BLOCK-atlas cubes then MODEL-atlas cubes into ONE vbuf (cleared, capacity
-/// reused). Returns `(total_verts,
-/// block_verts)` — the renderer draws `[0..block_verts)` with the block atlas bound and
-/// `[block_verts..total)` with the model atlas bound, so bbmodel-block flecks sample
-/// their own texture in the same pass. Block cubes come first so the split is a single
-/// contiguous index boundary.
+/// Write BLOCK-atlas rows then MODEL-atlas rows into ONE instance list (cleared,
+/// capacity reused). Returns `(total_rows, block_rows)` — the renderer draws
+/// instances `[0..block_rows)` with the block atlas bound and
+/// `[block_rows..total)` with the model atlas bound, so bbmodel-block flecks
+/// sample their own texture in the same pass. Block rows come first so the
+/// split is a single contiguous instance boundary.
 pub fn build_particles_split(
     block: &[ParticleInstance],
     model: &[ParticleInstance],
     env: LightEnv,
     render_origin: glam::IVec3,
-    verts: &mut Vec<ParticleVertex>,
+    rows: &mut Vec<ParticleRow>,
 ) -> (u32, u32) {
-    verts.clear();
-    for inst in block {
-        if inst.alpha <= 0.0 {
-            continue;
-        }
-        push_particle_cube(inst, env, render_origin, verts);
-    }
-    let block_verts = verts.len() as u32;
-    for inst in model {
-        if inst.alpha <= 0.0 {
-            continue;
-        }
-        push_particle_cube(inst, env, render_origin, verts);
-    }
-    (verts.len() as u32, block_verts)
+    rows.clear();
+    let visible = |inst: &&ParticleInstance| inst.alpha > 0.0;
+    rows.extend(
+        block
+            .iter()
+            .filter(visible)
+            .map(|inst| particle_row(inst, env, render_origin)),
+    );
+    let block_rows = rows.len() as u32;
+    rows.extend(
+        model
+            .iter()
+            .filter(visible)
+            .map(|inst| particle_row(inst, env, render_origin)),
+    );
+    (rows.len() as u32, block_rows)
 }
 
-/// A generated translucent cube particle, sorted by centre distance before vertices
-/// are emitted so alpha blending is stable enough for tiny cube puffs.
+/// A generated translucent cube particle, sorted by centre distance before its
+/// row is written so alpha blending is stable enough for tiny cube puffs.
 pub struct TransparentParticleCube {
     pos: Vec3,
     color: [f32; 3],
@@ -204,7 +239,8 @@ struct EmitterSchedule {
 /// `solids` are the SIMULATED solid-color particles (emitter-burst droplets,
 /// already positioned by the particle system's physics): they join the same
 /// sorted alpha-blended draw so splashes and flames composite correctly.
-/// Vertices come out relative to `render_origin`, and `cam_pos` is too.
+/// Rows come out relative to `render_origin`, and `cam_pos` is too. Returns
+/// the row count.
 #[allow(clippy::too_many_arguments)]
 pub fn build_transparent_emitter_particles(
     emitters: &[ParticleEmitterInstance],
@@ -214,10 +250,10 @@ pub fn build_transparent_emitter_particles(
     cam_pos: Vec3,
     env: LightEnv,
     density: f32,
-    verts: &mut Vec<ParticleVertex>,
+    rows: &mut Vec<ParticleRow>,
     scratch: &mut Vec<TransparentParticleCube>,
 ) -> u32 {
-    verts.clear();
+    rows.clear();
     scratch.clear();
     for s in solids {
         if s.alpha <= 0.001 || s.size <= 0.001 {
@@ -237,10 +273,8 @@ pub fn build_transparent_emitter_particles(
         append_emitter_particles(inst, time, render_origin, cam_pos, env, density, scratch);
     }
     scratch.sort_by(|a, b| b.dist_sq.total_cmp(&a.dist_sq));
-    for p in scratch.iter() {
-        push_colored_particle_cube(p, verts);
-    }
-    verts.len() as u32
+    rows.extend(scratch.iter().map(colored_particle_row));
+    rows.len() as u32
 }
 
 fn append_emitter_particles(
@@ -377,19 +411,11 @@ fn emitter_birth_time(seed: u64, schedule: EmitterSchedule, seq: i64) -> f32 {
     schedule.phase + seq as f32 * schedule.base_gap + jitter * schedule.jitter
 }
 
-/// Append one particle's textured cube (24 verts) to `verts`. Every face samples the
-/// particle's absolute atlas patch (`uv_min` + `uv_size`) tinted by `inst.tint` and
-/// shaded per-face. The caller does the capacity + alpha gating.
-fn push_particle_cube(
-    inst: &ParticleInstance,
-    env: LightEnv,
-    render_origin: glam::IVec3,
-    verts: &mut Vec<ParticleVertex>,
-) {
-    let pos = inst.pos.relative_to(render_origin);
+/// One particle's textured row: the cube (or oriented quad) at its
+/// render-local position, sampling its absolute atlas patch (`uv_min` +
+/// `uv_size`) tinted by `inst.tint`. The caller does the alpha gating.
+fn particle_row(inst: &ParticleInstance, env: LightEnv, render_origin: glam::IVec3) -> ParticleRow {
     let [u0, v0] = inst.uv_min;
-    let u1 = u0 + inst.uv_size[0];
-    let v1 = v0 + inst.uv_size[1];
     // Two-channel RGB light folds into the tint (shade keeps the directional
     // term), so a fleck drifting through torch light stays lit at night.
     let tint = lighting::fold_tint(
@@ -397,94 +423,40 @@ fn push_particle_cube(
         DynLight::new(inst.skylight, inst.blocklight),
         env,
     );
-    // UV per face: bl=(u0,v1), br=(u1,v1), tr=(u1,v0), tl=(u0,v0) to match the
-    // block pipeline (v grows downward in the atlas). The four corners follow
-    // the same CCW order as the uv corners: bl, br, tr, tl.
-    let corner_uv = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
-    if let Some([right, up]) = inst.quad_axes {
-        let corners = [
-            pos - right - up,
-            pos + right - up,
-            pos + right + up,
-            pos - right + up,
-        ];
-        // The textured cutout pipeline has no face culling, so one quad shows both sides.
-        for i in 0..4 {
-            verts.push(ParticleVertex {
-                pos: corners[i].to_array(),
-                uv: corner_uv[i],
-                tint,
-                shade: 1.0,
-                alpha: inst.alpha,
-            });
-        }
-        return;
+    // The textured cutout pipeline has no face culling, so one quad shows both
+    // sides.
+    let (right, up, quad) = match inst.quad_axes {
+        Some([right, up]) => (right, up, 1),
+        None => (Vec3::ZERO, Vec3::ZERO, 0),
+    };
+    ParticleRow {
+        center: inst.pos.relative_to(render_origin).to_array(),
+        half: inst.size * 0.5,
+        right: right.to_array(),
+        stretch: 1.0,
+        up: up.to_array(),
+        alpha: inst.alpha,
+        uv_min: [u0, v0],
+        uv_max: [u0 + inst.uv_size[0], v0 + inst.uv_size[1]],
+        tint,
+        quad,
     }
-    push_cube_faces(pos, inst.size, corner_uv, tint, inst.alpha, verts);
 }
 
-fn push_colored_particle_cube(inst: &TransparentParticleCube, verts: &mut Vec<ParticleVertex>) {
-    push_stretched_cube_faces(
-        inst.pos,
-        inst.size,
-        inst.stretch,
-        [[0.0, 0.0]; 4],
-        inst.color,
-        inst.alpha,
-        verts,
-    );
-}
-
-/// Emit the six shaded faces (24 verts) of one particle cube of side `size`
-/// centred at `c`, with per-corner UVs (bl, br, tr, tl order) shared by every
-/// face. The textured and solid-colour builders differ only in what they feed in.
-fn push_cube_faces(
-    c: Vec3,
-    size: f32,
-    corner_uv: [[f32; 2]; 4],
-    tint: [f32; 3],
-    alpha: f32,
-    verts: &mut Vec<ParticleVertex>,
-) {
-    push_stretched_cube_faces(c, size, 1.0, corner_uv, tint, alpha, verts);
-}
-
-/// [`push_cube_faces`] with a vertical elongation: each vertex's y is scaled
-/// by `stretch` around the centre, turning the cube into a tall box (rain
-/// streaks) while faces stay planar.
-#[allow(clippy::too_many_arguments)]
-fn push_stretched_cube_faces(
-    c: Vec3,
-    size: f32,
-    stretch: f32,
-    corner_uv: [[f32; 2]; 4],
-    tint: [f32; 3],
-    alpha: f32,
-    verts: &mut Vec<ParticleVertex>,
-) {
-    let h = size * 0.5;
-    for face in &FACES {
-        let r = face.right * h;
-        let up = face.up * h;
-        // Offset the face plane outward along its normal (right x up points
-        // out) so each face sits on the cube SURFACE, not through the centre.
-        let fc = c + face.right.cross(face.up) * h;
-        let corners = [
-            (fc - r - up, corner_uv[0]),
-            (fc + r - up, corner_uv[1]),
-            (fc + r + up, corner_uv[2]),
-            (fc - r + up, corner_uv[3]),
-        ];
-        for (mut pos, uv) in corners {
-            pos.y = c.y + (pos.y - c.y) * stretch;
-            verts.push(ParticleVertex {
-                pos: pos.to_array(),
-                uv,
-                tint,
-                shade: face.shade,
-                alpha,
-            });
-        }
+/// A solid-colour emitter cube's row (its uv rect is unused: the transparent
+/// fragment stage never samples).
+fn colored_particle_row(inst: &TransparentParticleCube) -> ParticleRow {
+    ParticleRow {
+        center: inst.pos.to_array(),
+        half: inst.size * 0.5,
+        right: [0.0; 3],
+        stretch: inst.stretch,
+        up: [0.0; 3],
+        alpha: inst.alpha,
+        uv_min: [0.0; 2],
+        uv_max: [0.0; 2],
+        tint: inst.color,
+        quad: 0,
     }
 }
 

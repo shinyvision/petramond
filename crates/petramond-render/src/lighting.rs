@@ -14,7 +14,8 @@ pub(super) const FULL_SKYLIGHT: u8 = 63;
 // `model3d.wgsl` and `mob.wgsl`, which no Rust code can execute. Drift between
 // them is invisible until something renders wrong, so
 // `every_light_shader_spells_the_same_curve` re-reads the three sources and
-// pins them against these.
+// pins them against these. `skinned.wgsl` reuses `mob.wgsl`'s constants and
+// its per-instance fold is pinned by the `skinned` tests.
 const SKY_MIN: f32 = 0.02;
 const FINAL_MIN: f32 = 0.006;
 

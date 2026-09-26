@@ -150,6 +150,13 @@ fn packed_vertex_pipeline_validates() {
     // The model-break decal: its own group(2) layout over the model vertex
     // stream, and the only pipeline nothing else in this test instantiates.
     let _ = resources.model_break_pipe.get(1);
+    // The skinned body pipeline: a vertex-stage storage palette and an
+    // instance-stepped buffer, which no other pipeline has.
+    let _ = resources.skinned_pipe.get(1);
+    // The particle pipelines: instance-stepped rows expanded from
+    // `vertex_index`, with no per-vertex buffer.
+    let _ = resources.particle_pipe.get(1);
+    let _ = resources.emitter_particle_pipe.get(1);
 
     let err = pollster::block_on(device.pop_error_scope());
     assert!(err.is_none(), "real-pipeline validation error: {err:?}");

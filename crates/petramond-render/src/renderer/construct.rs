@@ -252,8 +252,13 @@ pub(super) fn new_renderer_inner(
     let item_entity_pipe = pipelines.dynamic_opaque_pipe.clone();
     let block_entity_pipe = pipelines.dynamic_opaque_pipe.clone();
 
-    let mob_gpu = build_mob_gpu(&device, &queue, &pipelines.atlas_bgl, &pipelines.mob_pipe);
-    let player_gpu = build_player_gpu(&device, &queue, &pipelines.atlas_bgl, &pipelines.mob_pipe);
+    let mob_gpu = build_mob_gpu(&device, &queue, &pipelines.atlas_bgl);
+    let player_gpu = build_player_gpu(&device, &queue, &pipelines.atlas_bgl);
+    let skin = SkinFrame::new(
+        &device,
+        pipelines.skinned_pipe.clone(),
+        pipelines.bone_palette_bgl.clone(),
+    );
     let player_item_draw = DynamicDraw::new(&device, pipelines.mob_pipe.clone(), "player item");
     let player_model_item_draw =
         DynamicDraw::new(&device, pipelines.mob_pipe.clone(), "player model item");
@@ -344,19 +349,17 @@ pub(super) fn new_renderer_inner(
         DynamicDraw::new(&device, pipelines.mob_pipe.clone(), "item sprite entity");
     let block_entity_draw = DynamicDraw::new(&device, block_entity_pipe, "block entity");
     let break_draw = DynamicDraw::new(&device, pipelines.break_pipe, "break overlay");
-    let emitter_particle_draw = DynamicVertexDraw::new(
+    let emitter_particle_draw = DynamicInstanceDraw::new(
         &device,
         pipelines.emitter_particle_pipe,
         "emitter particle",
-        crate::particles::VERTS_PER_CUBE as u32,
         &crate::particles::CUBE_INDEX_PATTERN,
     );
-    let particle_draw = DynamicVertexDraw::new(
+    let particle_draw = DynamicInstanceDraw::new(
         &device,
         pipelines.particle_pipe,
         "particle",
-        4,
-        &[0, 1, 2, 0, 2, 3],
+        &crate::particles::CUBE_INDEX_PATTERN,
     );
     let entity_shadow_draw = DynamicVertexDraw::new(
         &device,
@@ -414,6 +417,7 @@ pub(super) fn new_renderer_inner(
         },
         actor: ActorPass {
             mob_gpu,
+            skin,
             player_gpu,
             item_draw: player_item_draw,
             model_item_draw: player_model_item_draw,
@@ -426,8 +430,6 @@ pub(super) fn new_renderer_inner(
             animator_events: Vec::new(),
             player_visible: Vec::new(),
             body_animators: crate::player_model::BodyAnimators::shipped(),
-            body_verts: Vec::new(),
-            body_indices: Vec::new(),
             item_verts: Vec::new(),
             item_indices: Vec::new(),
             sprite_verts: Vec::new(),
@@ -594,9 +596,9 @@ pub(super) fn new_renderer_inner(
             solid_instances: Vec::new(),
             emitters: Vec::new(),
             density: 1.0,
-            block_vertex_count: 0,
-            verts: Vec::new(),
-            emitter_verts: Vec::new(),
+            block_count: 0,
+            rows: Vec::new(),
+            emitter_rows: Vec::new(),
             emitter_scratch: Vec::new(),
         },
         shadow: ShadowPass {

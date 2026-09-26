@@ -2,18 +2,22 @@
 
 use super::*;
 
-/// Per-species GPU resources for the mob pipeline, built once at renderer init by
+/// Per-species GPU resources for the skinned pipeline, built once at renderer init by
 /// iterating [`petramond::mob::defs()`] (so the renderer never names a species). Borrows
 /// the species' precached [`Model`] + its render scale, the species' own texture/sampler + group(1)
-/// bind, its dynamic draw buffers, and reused per-frame scratch (the visible subset
-/// + the baked `ItemVertex` geometry). The `Vec<MobGpu>` is in `Mob as usize` order.
+/// bind, its static skinned mesh (uploaded once), and per-frame state (the visible
+/// subset + its instance range in the frame's skin batch). The `Vec<MobGpu>` is in
+/// `Mob as usize` order.
 pub(super) struct MobGpu {
     pub(super) model: &'static Model,
     pub(super) scale: f32,
     /// The model's hand bones, coat cubes and self-AO, resolved once.
     pub(super) rig: crate::mob_model::MobRig,
     pub(super) bind: wgpu::BindGroup,
-    pub(super) draw: DynamicDraw,
+    /// The species' bind-space mesh, skinned per instance on the GPU.
+    pub(super) mesh: SkinnedModel,
+    /// This frame's instances of the species in the skin batch.
+    pub(super) drawn: std::ops::Range<u32>,
     /// Live-mob frustum cull volume around the instance position, derived from
     /// the REST-POSED model bounds × scale plus animation slack (see
     /// `construct`): horizontal radius (yaw-independent — the farthest posed
@@ -25,21 +29,18 @@ pub(super) struct MobGpu {
     pub(super) cull_y1: f32,
     /// Frustum-visible subset of this species' instances this frame.
     pub(super) visible: Vec<MobRenderInstance>,
-    /// Reused CPU staging for this species' baked geometry.
-    pub(super) verts: Vec<ItemVertex>,
-    pub(super) indices: Vec<u32>,
 }
 
 /// GPU resources for player bodies — the local third-person body AND every
-/// remote player, all sharing the precached player model + skin texture bind
-/// (per-remote skins are out of scope). One dynamic draw over the shared mob
-/// pipeline; `verts`/`indices` are the COMBINED per-frame staging every
-/// visible body appends into.
+/// remote player, all sharing the body rig's skinned mesh + the player skin
+/// texture bind (per-remote skins are out of scope). Every visible body is one
+/// instance of one instanced draw.
 pub(super) struct PlayerGpu {
     pub(super) bind: wgpu::BindGroup,
-    pub(super) draw: DynamicDraw,
-    pub(super) verts: Vec<ItemVertex>,
-    pub(super) indices: Vec<u32>,
+    /// The body rig's bind-space mesh, skinned per instance on the GPU.
+    pub(super) mesh: SkinnedModel,
+    /// This frame's bodies in the skin batch.
+    pub(super) drawn: std::ops::Range<u32>,
 }
 
 /// One body the frame draws, with what drives its animator.
@@ -60,13 +61,16 @@ pub(super) struct VisibleBody {
 pub(super) struct ActorPass {
     /// Per-species mob render resources, indexed by `Mob as usize` (registry id
     /// order). Built once from `mob::defs()`; each frame the visible mobs are
-    /// grouped here by species, baked, and drawn in the mob pass.
+    /// grouped here by species, posed, and drawn in the mob pass.
     pub(super) mob_gpu: Vec<MobGpu>,
+    /// The frame's skinned bodies — every mob and player body's bone palette
+    /// and instance row — and the buffers they upload to.
+    pub(super) skin: SkinFrame,
     /// Mobs to draw in the world this frame (the scene adapter fills this by
     /// interpolating the sim's live mob instances).
     pub(super) mobs: Vec<MobRenderInstance>,
     /// Player-body resources (local third-person + remote players, one
-    /// combined stream drawn in the mob pass).
+    /// instanced draw in the mob pass).
     pub(super) player_gpu: PlayerGpu,
     /// The LOCAL third-person body to draw this frame (`None` in first person).
     pub(super) player_view: Option<PlayerRenderInstance>,
@@ -85,10 +89,6 @@ pub(super) struct ActorPass {
     pub(super) player_visible: Vec<VisibleBody>,
     /// Every roster body's animator.
     pub(super) body_animators: crate::player_model::BodyAnimators,
-    /// Per-body staging for one `build_player_body` bake, appended into
-    /// `player_gpu`'s combined stream.
-    pub(super) body_verts: Vec<crate::item_model::ItemVertex>,
-    pub(super) body_indices: Vec<u32>,
     /// Held EXTRUDED-SPRITE items across all bodies (explicit-UV stream, 2D
     /// atlas), attached to each posed right hand.
     pub(super) item_draw: DynamicDraw,
@@ -109,11 +109,12 @@ pub(super) struct ActorPass {
 impl ActorPass {
     pub(super) fn clear_world(&mut self) {
         for mob in &mut self.mob_gpu {
-            mob.draw.index_count = 0;
+            mob.drawn = 0..0;
             mob.visible.clear();
         }
+        self.skin.batch.clear();
         self.mobs.clear();
-        self.player_gpu.draw.index_count = 0;
+        self.player_gpu.drawn = 0..0;
         self.player_view = None;
         self.remote_players.clear();
         self.bone_offsets.clear();

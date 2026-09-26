@@ -356,14 +356,14 @@ impl Renderer {
             pass.set_bind_group(1, &self.atlas_array_bind, &[]);
             self.block_entity.draw.draw(&mut pass, samples);
         }
-        // MOB PASS: animated entity models, one draw per visible species. Loads color
-        // + depth (test + WRITE) so mobs occlude and are occluded by terrain — like
-        // the item-entity / chest passes — but binds each species' OWN texture at
-        // group(1) (not the block atlas); the mob pipeline (set by each DynamicDraw)
-        // uses explicit-UV vertices so a model's arbitrary sub-rect UVs sample its
-        // own sheet.
-        if self.actor.mob_gpu.iter().any(|g| g.draw.index_count > 0)
-            || self.actor.player_gpu.draw.index_count > 0
+        // MOB PASS: animated entity models, one instanced draw per visible species.
+        // Loads color + depth (test + WRITE) so mobs occlude and are occluded by
+        // terrain — like the item-entity / chest passes — but binds each species' OWN
+        // texture at group(1) (not the block atlas); the skinned pipeline skins each
+        // species' static explicit-UV mesh by the frame's bone palette, so a model's
+        // arbitrary sub-rect UVs sample its own sheet.
+        if self.actor.mob_gpu.iter().any(|g| !g.drawn.is_empty())
+            || !self.actor.player_gpu.drawn.is_empty()
             || self.actor.item_draw.index_count > 0
             || self.actor.model_item_draw.index_count > 0
             || self.actor.block_item_draw.index_count > 0
@@ -379,17 +379,22 @@ impl Renderer {
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             for g in &self.actor.mob_gpu {
-                if g.draw.index_count == 0 {
+                if g.drawn.is_empty() {
                     continue;
                 }
                 pass.set_bind_group(1, &g.bind, &[]);
-                g.draw.draw(&mut pass, samples);
+                self.actor
+                    .skin
+                    .draw(&mut pass, samples, &g.mesh, g.drawn.clone());
             }
             // Player bodies — the local third-person body and every remote
-            // player, one combined stream (shared skin texture, mob pipeline)…
-            if self.actor.player_gpu.draw.index_count > 0 {
-                pass.set_bind_group(1, &self.actor.player_gpu.bind, &[]);
-                self.actor.player_gpu.draw.draw(&mut pass, samples);
+            // player, one instanced draw (shared skin texture and mesh)…
+            let bodies = &self.actor.player_gpu;
+            if !bodies.drawn.is_empty() {
+                pass.set_bind_group(1, &bodies.bind, &[]);
+                self.actor
+                    .skin
+                    .draw(&mut pass, samples, &bodies.mesh, bodies.drawn.clone());
             }
             // …their extruded-sprite held items (2D atlas)…
             if self.actor.item_draw.index_count > 0 {
@@ -585,13 +590,11 @@ impl Renderer {
         // of the crack): they are alpha-CUTOUT solids that DEPTH-TEST + DEPTH-WRITE,
         // so water blends over the ones behind it (underwater dust reads as
         // submerged) while ones in front of the water still occlude it. Reuses
-        // uniform_bind + atlas_bind. Cube faces and oriented sprites share quad indices.
-        if self.particle.draw.vertex_count > 0 {
-            let verts_per_quad = 4;
-            let idx_per_quad = 6;
-            // Quad boundaries: block flecks occupy [0..block_quads), model flecks the rest.
-            let total_quads = self.particle.draw.vertex_count / verts_per_quad;
-            let block_quads = self.particle.block_vertex_count / verts_per_quad;
+        // uniform_bind + atlas_bind. One instance per particle (cube or oriented quad).
+        if self.particle.draw.instance_count > 0 {
+            // Instance boundaries: block flecks occupy [0..block), model flecks the rest.
+            let total = self.particle.draw.instance_count;
+            let block = self.particle.block_count;
             let mut pass = color_depth_pass(
                 enc,
                 view,
@@ -602,26 +605,16 @@ impl Renderer {
                 self.gpu_timer.as_ref(),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
-            // Block-atlas flecks: the leading index range via the standard draw.
-            if block_quads > 0 {
+            // Block-atlas flecks: the leading instances.
+            if block > 0 {
                 pass.set_bind_group(1, &self.atlas_bind, &[]);
-                self.particle
-                    .draw
-                    .draw(&mut pass, block_quads * idx_per_quad, samples);
+                self.particle.draw.draw(&mut pass, samples, 0..block);
             }
-            // Model-atlas flecks (bbmodel blocks): the trailing index range, same vbuf with
-            // the model atlas bound. Indices are absolute into the shared vbuf, so no base-
-            // vertex offset is needed.
-            if total_quads > block_quads {
+            // Model-atlas flecks (bbmodel blocks): the trailing instances of the
+            // same rows, with the model atlas bound.
+            if total > block {
                 pass.set_bind_group(1, &self.model_atlas_bind, &[]);
-                pass.set_pipeline(self.particle.draw.pipeline.get(samples));
-                pass.set_vertex_buffer(0, self.particle.draw.vbuf.slice(..));
-                pass.set_index_buffer(self.particle.draw.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(
-                    block_quads * idx_per_quad..total_quads * idx_per_quad,
-                    0,
-                    0..1,
-                );
+                self.particle.draw.draw(&mut pass, samples, block..total);
             }
         }
         // TRANSPARENT (TRANSLUCENT FLUID) PASS: far→near back-to-front, depth
@@ -698,10 +691,8 @@ impl Renderer {
         // rows (torch flame cubes and mod emitters). They draw after water with alpha
         // blending, depth test but no write, and back-face culling in the pipeline so
         // transparency never exposes the whole cube shell.
-        if self.particle.emitter_draw.vertex_count > 0 {
-            let verts_per_cube = crate::particles::VERTS_PER_CUBE as u32;
-            let idx_per_cube = crate::particles::INDICES_PER_CUBE as u32;
-            let cubes = self.particle.emitter_draw.vertex_count / verts_per_cube;
+        let cubes = self.particle.emitter_draw.instance_count;
+        if cubes > 0 {
             let mut pass = color_depth_pass(
                 enc,
                 view,
@@ -713,9 +704,7 @@ impl Renderer {
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_bind, &[]);
-            self.particle
-                .emitter_draw
-                .draw(&mut pass, cubes * idx_per_cube, samples);
+            self.particle.emitter_draw.draw(&mut pass, samples, 0..cubes);
         }
         // Selection outline, after particles: load color + depth, depth-test (no
         // write) so it draws over terrain/water at the targeted block but stays

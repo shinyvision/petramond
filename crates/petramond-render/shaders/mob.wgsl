@@ -1,14 +1,16 @@
-// mob: in-world animated entity models.
+// mob: explicit-UV entity geometry in the world.
 //
-// Draws CPU-baked, world-space, skeletally-posed geometry (see
-// render::mob_model::build_mob_instances) with the shared world `view_proj` at group(0)
-// and a DEDICATED entity texture (NOT the block atlas) at group(1). Vertices are
-// the explicit-per-vertex `ItemVertex` (pos, uv, shade, tint) used by the item3d
-// pipeline, so the model's arbitrary sub-rectangle UVs sample the entity sheet
-// directly (the model3d packed-vertex shader can only SELECT whole-tile corners).
+// `vs_mob` draws CPU-baked, world-space geometry (held and dropped sprite and
+// bbmodel items) with the shared world `view_proj` at group(0) and the sheet
+// the stream samples at group(1). Vertices are the explicit-per-vertex
+// `ItemVertex` (pos, uv, shade, tint) used by the item3d pipeline, so a model's
+// arbitrary sub-rectangle UVs sample its sheet directly (the model3d
+// packed-vertex shader can only SELECT whole-tile corners). Mobs and player
+// bodies are skinned on the GPU by skinned.wgsl (appended to this source) and
+// share `fs_mob`.
 //
-// Full lighting is baked into `shade` on the CPU (face directional shade × the
-// instance's sampled world skylight), matching item_model. Alpha-cutout so the
+// Full lighting is baked into the vertex on the CPU (face directional shade ×
+// the instance's sampled light), matching item_model. Alpha-cutout so the
 // texture's transparent texels (and zero-area faces of flat sub-cubes) drop out;
 // depth-tested + written in its own world pass so mobs occlude and are occluded
 // by terrain. Double-sided (the pipeline disables back-face culling) so flat

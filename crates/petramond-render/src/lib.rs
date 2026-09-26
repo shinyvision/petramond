@@ -36,6 +36,7 @@ pub mod resources;
 pub mod scene;
 pub mod selection;
 mod selection_highlight;
+pub(crate) mod skinned;
 pub mod shader_pack;
 pub mod ui;
 pub mod uniforms;
@@ -339,8 +340,8 @@ pub enum GaitClip {
 /// `anim_time` into its walk cycle (when `moving`; otherwise its rest pose), placed
 /// at `pos` (its feet) facing `yaw`, lit by the sampled `skylight`. The scene
 /// adapter fills a slice of these by interpolating the sim's live mob instances; the
-/// renderer groups them by species, frustum-culls, and bakes each with
-/// [`mob_model::build_mob_instances`] against that species' model + texture.
+/// renderer groups them by species, frustum-culls, and poses each with
+/// `mob_model::pose_mob_instances` for that species' skinned mesh + texture.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MobRenderInstance {
     /// Which species (selects the model / texture / draw buffers).
@@ -505,7 +506,7 @@ pub struct PlayerRenderInstance {
 /// One REMOTE player's body + held items to draw this frame, already
 /// interpolated/posed by the game's presentation layer: the same
 /// [`PlayerRenderInstance`] shape the local third-person body uses (so both
-/// bake through `build_player_body` identically), plus that remote's OWN
+/// pose through `pose_player_body` identically), plus that remote's OWN
 /// eased [`HeldItemView`]s and what drives its body animator.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct RemotePlayerRender {

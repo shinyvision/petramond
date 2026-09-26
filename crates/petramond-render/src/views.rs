@@ -386,7 +386,7 @@ pub struct GamePresentation<'a> {
     pub mobs: &'a [MobPresentation],
     /// Every OTHER connected player's body + held item for this frame,
     /// already interpolated and posed — the render input rows themselves
-    /// (`build_player_body` consumes `PlayerRenderInstance` directly, so no
+    /// (`pose_player_body` consumes `PlayerRenderInstance` directly, so no
     /// second translation buys anything).
     pub remote_players: &'a [RemotePlayerRender],
     /// Every drawn body's bone offsets, back to back — the local third-person

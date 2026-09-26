@@ -14,6 +14,8 @@
 //! subsystems here and the hand-managed hand/outline/icon streams alike —
 //! starts through [`new_buffer`] and grows through [`upload`].
 
+use std::ops::Range;
+
 /// Bytes every growable buffer starts at, and the granule growth rounds to.
 const INITIAL_BYTES: u64 = 4096;
 
@@ -279,6 +281,93 @@ impl DynamicVertexDraw {
         pass.set_vertex_buffer(0, self.vbuf.slice(..));
         pass.set_index_buffer(self.ibuf.slice(..), wgpu::IndexFormat::Uint32);
         pass.draw_indexed(0..index_count, 0, 0..1);
+    }
+}
+
+/// An INSTANCED dynamic draw — the particles: the vertex stage expands each
+/// per-instance row `I` into one primitive's vertices from `vertex_index`, so
+/// the only per-frame upload is one row per primitive. The index buffer is the
+/// primitive's static `pattern`, uploaded once at construction; the instance
+/// buffer grows like every other dynamic buffer.
+pub(super) struct DynamicInstanceDraw<I> {
+    pub pipeline: crate::pipeline::SampledPipeline,
+    ibuf: wgpu::Buffer,
+    index_count: u32,
+    instances: wgpu::Buffer,
+    label: String,
+    /// Rows uploaded this frame (`0` = nothing baked).
+    pub instance_count: u32,
+    _row: std::marker::PhantomData<I>,
+}
+
+impl<I: bytemuck::Pod> DynamicInstanceDraw<I> {
+    pub(super) fn new(
+        device: &wgpu::Device,
+        pipeline: crate::pipeline::SampledPipeline,
+        label: &'static str,
+        pattern: &[u32],
+    ) -> Self {
+        use wgpu::util::DeviceExt;
+        let label = format!("{label} instances");
+        Self {
+            pipeline,
+            ibuf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("{label} pattern")),
+                contents: bytemuck::cast_slice(pattern),
+                usage: wgpu::BufferUsages::INDEX,
+            }),
+            index_count: pattern.len() as u32,
+            instances: new_buffer(device, wgpu::BufferUsages::VERTEX, &label),
+            label,
+            instance_count: 0,
+            _row: std::marker::PhantomData,
+        }
+    }
+
+    /// Bake one frame's rows. Clears the count, runs `build` to fill the
+    /// supplied scratch (returns the row count), and — if it produced any —
+    /// grows the instance buffer to fit and uploads them.
+    pub(super) fn bake(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        rows: &mut Vec<I>,
+        build: impl FnOnce(&mut Vec<I>) -> u32,
+    ) {
+        self.instance_count = 0;
+        let count = build(rows);
+        if count == 0 {
+            return;
+        }
+        upload(
+            device,
+            queue,
+            &mut self.instances,
+            rows,
+            wgpu::BufferUsages::VERTEX,
+            &self.label,
+        );
+        self.instance_count = count;
+    }
+
+    /// Bind the pipeline, the pattern and the rows in `range`, and draw one
+    /// primitive per row. The caller sets the shared bind groups first. No-op
+    /// for an empty range.
+    pub(super) fn draw(&self, pass: &mut wgpu::RenderPass<'_>, samples: u32, range: Range<u32>) {
+        if range.is_empty() {
+            return;
+        }
+        let stride = std::mem::size_of::<I>() as u64;
+        pass.set_pipeline(self.pipeline.get(samples));
+        // Offsetting the row stream to the range start (rather than a
+        // non-zero first instance) keeps the draw valid on every backend.
+        pass.set_vertex_buffer(
+            0,
+            self.instances
+                .slice(range.start as u64 * stride..range.end as u64 * stride),
+        );
+        pass.set_index_buffer(self.ibuf.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(0..self.index_count, 0, 0..range.len() as u32);
     }
 }
 

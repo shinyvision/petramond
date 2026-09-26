@@ -1,17 +1,17 @@
 use super::builders::{color_target, shader_module, world_pipeline, DepthPreset};
 
-/// mob pipeline (in-world animated entity models).
+/// mob pipeline (world-space, CPU-baked explicit-UV geometry: held and dropped
+/// sprite/bbmodel items, and the model-block streams through its module).
 /// Reuses the BLOCK pipeline layout (`layout` = [uniform_bgl, atlas_bgl]): group0
 /// is the world `view_proj` uniform (the shader reads only view_proj; the uv_rects
 /// binding in the layout is simply unused), group1 is an atlas-shaped texture+
-/// sampler — bound by the renderer to the ENTITY texture, not the block atlas.
+/// sampler — bound by the renderer to whichever sheet the stream samples.
 /// Same explicit-UV `ItemVertex` layout as item3d (the model carries arbitrary
-/// sub-rect UVs). REPLACE blend + cutout (opaque creature), depth test + WRITE,
-/// double-sided (cull off) so flat mob sub-cubes show from both sides.
+/// sub-rect UVs). REPLACE blend + cutout, depth test + WRITE, double-sided
+/// (cull off) so flat sub-cubes show from both sides. Mobs and player bodies
+/// themselves draw through [`create_skinned_pipeline`], which shares this
+/// pipeline's fragment stage.
 ///
-/// The mob pipeline is shared across species; each species' own vbuf/ibuf +
-/// bind group + DynamicDraw are built in the renderer by iterating `mob::defs()`
-/// (each species has a distinct texture, so geometry can't share one buffer).
 /// Also returns the mob shader module, which the world-model pipeline shares.
 pub(super) fn create_mob_pipeline(
     device: &wgpu::Device,
@@ -28,17 +28,9 @@ pub(super) fn create_mob_pipeline(
     let mob_shader = shader_module(
         device,
         "mob shader",
-        [
-            include_str!("../../shaders/cel.wgsl"),
-            include_str!("../../shaders/atmosphere.wgsl"),
-            &super::flipbook::model_declarations(),
-            crate::selection_highlight::SHADER,
-            include_str!("../../shaders/mob.wgsl"),
-            // The break-crack decal over a model block: same module, so it
-            // draws with the model's own vertex stage and texture sampling.
-            include_str!("../../shaders/model_break.wgsl"),
-        ]
-        .concat(),
+        // The break-crack decal over a model block: same module, so it draws
+        // with the model's own vertex stage and texture sampling.
+        mob_shader_source() + include_str!("../../shaders/model_break.wgsl"),
     );
     let mob_pipe = world_pipeline(
         device,
@@ -54,6 +46,106 @@ pub(super) fn create_mob_pipeline(
         max_samples,
     );
     (mob_pipe, mob_shader)
+}
+
+/// The mob module's shared body: the helpers `mob.wgsl` calls, then
+/// `mob.wgsl` itself (its uniforms, entity texture, `fs_mob`, the light-curve
+/// constants and the world-model stages).
+fn mob_shader_source() -> String {
+    [
+        include_str!("../../shaders/cel.wgsl"),
+        include_str!("../../shaders/atmosphere.wgsl"),
+        &super::flipbook::model_declarations(),
+        crate::selection_highlight::SHADER,
+        include_str!("../../shaders/mob.wgsl"),
+    ]
+    .concat()
+}
+
+/// `SkinVertex`: pos / uv / shade / bone / parts, stepped per vertex.
+const SKIN_VERTEX_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
+    0 => Float32x3,
+    1 => Float32x2,
+    2 => Float32,
+    3 => Uint32,
+    4 => Uint32,
+];
+
+/// `SkinInstance`: tint / self_lit / light / bone_base / hidden, stepped per
+/// instance (the trailing padding carries no attribute).
+const SKIN_INSTANCE_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
+    5 => Float32x3,
+    6 => Float32,
+    7 => Float32x4,
+    8 => Uint32,
+    9 => Uint32,
+];
+
+/// The bone-palette group(2) layout: one read-only storage array of
+/// `mat4x4<f32>`, read by the vertex stage.
+pub(super) fn create_bone_palette_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("bone palette bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: std::num::NonZeroU64::new(64),
+            },
+            count: None,
+        }],
+    })
+}
+
+/// skinned pipeline (GPU-skinned mobs + player bodies, see `skinned.wgsl`).
+/// `layout` is [uniform_bgl, atlas_bgl, bone palette bgl]: the world
+/// uniforms, the model's own texture, the frame's bone palette. Vertex
+/// buffer 0 is the model's static `SkinVertex` mesh, buffer 1 the frame's
+/// per-instance `SkinInstance` rows. Blend, cutout, depth and the disabled
+/// back-face culling are the mob pipeline's — `fs_mob` is its fragment stage —
+/// so a skinned body draws exactly as the CPU-baked one did.
+pub(super) fn create_skinned_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    max_samples: u32,
+    layout: &wgpu::PipelineLayout,
+) -> crate::pipeline::SampledPipeline {
+    let targets = color_target(
+        format,
+        Some(wgpu::BlendState::REPLACE),
+        wgpu::ColorWrites::ALL,
+    );
+    let shader = shader_module(
+        device,
+        "skinned shader",
+        mob_shader_source() + include_str!("../../shaders/skinned.wgsl"),
+    );
+    world_pipeline(
+        device,
+        "skinned pipe",
+        layout,
+        &shader,
+        "vs_skinned",
+        "fs_mob",
+        &[
+            wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<crate::skinned::SkinVertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &SKIN_VERTEX_ATTRS,
+            },
+            wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<crate::skinned::SkinInstance>() as u64,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &SKIN_INSTANCE_ATTRS,
+            },
+        ],
+        &targets,
+        wgpu::PrimitiveState::default(),
+        Some(DepthPreset::WriteLess),
+        max_samples,
+    )
 }
 
 /// `ModelVertex`'s attributes: pos / uv / shade / packed light / packed tint.
@@ -178,4 +270,27 @@ pub(super) fn create_model_break_pipeline(
         Some(DepthPreset::ReadLessEqualBiased),
         max_samples,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    /// The skinned module is `mob.wgsl` plus `skinned.wgsl`: it must parse
+    /// and validate as one module, with the entry points the pipeline names.
+    #[test]
+    fn skinned_shader_validates() {
+        let source = super::mob_shader_source() + include_str!("../../shaders/skinned.wgsl");
+        let module = naga::front::wgsl::parse_str(&source).expect("skinned shader parses");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .expect("skinned shader validates");
+        for entry in ["vs_skinned", "fs_mob"] {
+            assert!(
+                module.entry_points.iter().any(|e| e.name == entry),
+                "no `{entry}` entry point"
+            );
+        }
+    }
 }

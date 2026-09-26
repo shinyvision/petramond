@@ -10,6 +10,7 @@ use wgpu::util::DeviceExt;
 
 mod actor_pass;
 use actor_pass::{ActorPass, MobGpu, PlayerGpu, VisibleBody};
+use skinned_draw::{SkinFrame, SkinnedModel};
 mod client_overlay;
 mod column_store;
 use column_store::{ColumnSlot, ColumnStore};
@@ -26,6 +27,7 @@ mod frame;
 mod frame_state;
 mod hand_pass;
 mod selection;
+mod skinned_draw;
 use hand_pass::HandPass;
 mod hand_bake;
 mod icon_atlas;
@@ -38,9 +40,7 @@ mod ui_frame;
 #[cfg(test)]
 pub(crate) use construct::instance_descriptor;
 pub use construct::new_renderer_from_target;
-#[cfg(test)]
-pub(crate) use dynamic_draw::prim_index_list;
-use dynamic_draw::{DynamicDraw, DynamicVertexDraw};
+use dynamic_draw::{DynamicDraw, DynamicInstanceDraw, DynamicVertexDraw};
 use icon_atlas::IconAtlas;
 use lod::far_leaf_lod_active;
 pub use offscreen::new_offscreen_renderer;
@@ -52,7 +52,7 @@ use super::crosshair::crosshair_vertices;
 use super::entity_shadow::{build_entity_shadows, ShadowVertex};
 use super::item_entity::build_item_entities;
 use super::item_model::ItemVertex;
-use super::mob_model::build_mob_instances;
+use super::mob_model::pose_mob_instances;
 use super::particles::{build_particles_split, build_transparent_emitter_particles};
 use super::pipeline::{create_pipeline_resources, EnvPassResources};
 use super::resources::{
@@ -161,18 +161,19 @@ struct EnvPass {
 
 /// The particle pass: its two draws (cutout block/model cubes and the
 /// alpha-blended emitter cubes), the per-frame instances the scene handed
-/// over, and the reusable CPU staging both bakes fill.
+/// over, and the reusable CPU rows both bakes fill.
 struct ParticlePass {
-    /// Particle billboard draw: the particle pipeline + a per-frame vbuf and a
-    /// patterned cube ibuf, as one [`DynamicVertexDraw`].
-    draw: DynamicVertexDraw,
-    /// Translucent block-emitter particles: same cube vertex format as mining dust,
-    /// but a separate alpha-blended pipeline/vbuf so cutout dust remains unchanged.
-    emitter_draw: DynamicVertexDraw,
+    /// Particle cube draw: the particle pipeline, one instance row per
+    /// particle expanded to its cube in the vertex stage, as one
+    /// [`DynamicInstanceDraw`].
+    draw: DynamicInstanceDraw<super::particles::ParticleRow>,
+    /// Translucent block-emitter particles: same cube rows as mining dust,
+    /// but a separate alpha-blended pipeline/buffer so cutout dust remains unchanged.
+    emitter_draw: DynamicInstanceDraw<super::particles::ParticleRow>,
     /// Block-atlas particle cubes to draw this frame.
     instances: Vec<ParticleInstance>,
-    /// Model-atlas particle cubes (bbmodel-block flecks) to draw this frame — baked into
-    /// the SAME particle vbuf after the block cubes, then drawn with the model atlas bound.
+    /// Model-atlas particle cubes (bbmodel-block flecks) to draw this frame — written into
+    /// the SAME particle rows after the block cubes, then drawn with the model atlas bound.
     model_instances: Vec<ParticleInstance>,
     /// Solid-color simulated particles (emitter-burst droplets) joining the
     /// emitter cubes' alpha-blended bake.
@@ -183,14 +184,15 @@ struct ParticlePass {
     emitters: Vec<ParticleEmitterInstance>,
     /// See [`Renderer::set_particle_density`].
     density: f32,
-    /// Vertex count of the BLOCK-atlas portion of `draw` this frame (the split
-    /// point: `[0..this)` draws with the block atlas, the rest with the model atlas).
-    block_vertex_count: u32,
-    /// Reusable CPU staging for baked particle vertices.
-    verts: Vec<super::particles::ParticleVertex>,
-    /// Reusable CPU staging for translucent emitter-particle vertices.
-    emitter_verts: Vec<super::particles::ParticleVertex>,
-    /// Reusable generated translucent particle rows, sorted far-to-near before vertex bake.
+    /// Row count of the BLOCK-atlas portion of `draw` this frame (the split
+    /// point: instances `[0..this)` draw with the block atlas, the rest with the
+    /// model atlas).
+    block_count: u32,
+    /// Reusable CPU staging for the particle rows.
+    rows: Vec<super::particles::ParticleRow>,
+    /// Reusable CPU staging for the translucent emitter-particle rows.
+    emitter_rows: Vec<super::particles::ParticleRow>,
+    /// Reusable generated translucent particles, sorted far-to-near before their rows are written.
     emitter_scratch: Vec<super::particles::TransparentParticleCube>,
 }
 
@@ -198,9 +200,9 @@ impl ParticlePass {
     /// Drop every world-scoped particle. Leaving a world must leave nothing
     /// behind that a later frame could draw at stale coordinates.
     fn clear_world(&mut self) {
-        self.draw.vertex_count = 0;
-        self.emitter_draw.vertex_count = 0;
-        self.block_vertex_count = 0;
+        self.draw.instance_count = 0;
+        self.emitter_draw.instance_count = 0;
+        self.block_count = 0;
         self.instances.clear();
         self.model_instances.clear();
         self.solid_instances.clear();
@@ -502,7 +504,8 @@ struct SkyPass {
     fog_start: f32,
     fog_end: f32,
     /// Sim-owned skylight scale (1.0 = identity), mirrored to the CPU lighting
-    /// path (`render::lighting::light_rgb`) for mobs/items/particles.
+    /// path (`render::lighting::light_rgb`) for items/particles (skinned bodies
+    /// light in their vertex stage).
     scale: f32,
     /// Sim-owned sky light colour (white = identity), the CPU mirror of the
     /// `sky_color` uniform lane — applied to the SKY term only.

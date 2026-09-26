@@ -1,16 +1,20 @@
 // particles: tiny 3D cubes. Mining/break particles are textured cutout cubes;
 // block-row emitters use the transparent solid-color fragment entry below.
 //
-// Cubes are built CPU-side (world-space, 6 faces each) with a compact per-vertex
-// format: pos + ABSOLUTE atlas uv + RGB tint + per-face shade + alpha. group(0) is
-// the shared Uniforms + uv_rects bind (the SAME bind group the block pipeline uses
-// — uv_rects is unused here but declared so the layout matches and the bind is
+// Each particle is ONE instance row (render::particles::ParticleRow: centre,
+// half size, stretch, ABSOLUTE atlas uv rect, lit RGB tint, alpha, or an
+// oriented quad's axes); the vertex stage expands it into the cube's 24
+// vertices from `vertex_index` (face = index / 4, corner = index % 4) and the
+// face table render::particles::wgsl_faces prepends. group(0) is the shared
+// Uniforms + uv_rects bind (the SAME bind group the block pipeline uses —
+// uv_rects is unused here but declared so the layout matches and the bind is
 // reused). group(1) is the block atlas. The fragment samples the absolute uv,
 // multiplies by shade (per-face directional shading so the cube reads 3D) and tint
 // (foliage-green for grass/leaf flecks, white otherwise). An alpha CUTOUT
 // (discard a<0.5) keeps the cubes solid and depth-WRITING so they are correctly
 // occluded by terrain and visible from any angle including above. End-of-life fade
-// is done CPU-side by SHRINKING the cube; alpha gates the cutout.
+// is done CPU-side by SHRINKING the cube (its row's half size); alpha gates the
+// cutout.
 
 struct Uniforms {
     view_proj: mat4x4<f32>,
@@ -34,12 +38,18 @@ struct Uniforms {
 @group(1) @binding(0) var atlas: texture_2d<f32>;
 @group(1) @binding(1) var samp: sampler;
 
-struct VsIn {
-    @location(0) pos:   vec3<f32>,
-    @location(1) uv:    vec2<f32>,
-    @location(2) tint:  vec3<f32>,
-    @location(3) shade: f32,
-    @location(4) alpha: f32,
+struct ParticleIn {
+    @builtin(vertex_index) vertex: u32,
+    @location(0) center:  vec3<f32>,
+    @location(1) half_size: f32,
+    @location(2) right:   vec3<f32>,
+    @location(3) stretch: f32,
+    @location(4) up:      vec3<f32>,
+    @location(5) alpha:   f32,
+    @location(6) uv_min:  vec2<f32>,
+    @location(7) uv_max:  vec2<f32>,
+    @location(8) tint:    vec3<f32>,
+    @location(9) quad:    u32,
 };
 
 struct VsOut {
@@ -56,16 +66,45 @@ struct VsOut {
 };
 
 @vertex
-fn vs_particle(in: VsIn) -> VsOut {
+fn vs_particle(in: ParticleIn) -> VsOut {
     var out: VsOut;
-    let local_pos = in.pos;
-    out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
-    out.uv = in.uv;
+    let face = in.vertex / 4u;
+    let corner = in.vertex % 4u;
+    // Corners bl, br, tr, tl — the order the uv corners follow, v growing
+    // downward in the atlas like the block pipeline.
+    let sx = select(-1.0, 1.0, corner == 1u || corner == 2u);
+    let sy = select(-1.0, 1.0, corner >= 2u);
+    var pos: vec3<f32>;
+    var shade: f32;
+    if (in.quad != 0u) {
+        // An oriented quad is the first face alone; the other five collapse
+        // onto one point and rasterize nothing.
+        if (face != 0u) {
+            out.clip = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+            return out;
+        }
+        pos = in.center + in.right * sx + in.up * sy;
+        shade = 1.0;
+    } else {
+        let right = particle_face_right[face];
+        let up = particle_face_up[face];
+        // The face plane sits on the cube SURFACE, offset outward along its
+        // normal (right x up points out), not through the centre.
+        let fc = in.center + cross(right, up) * in.half_size;
+        pos = fc + right * in.half_size * sx + up * in.half_size * sy;
+        pos.y = in.center.y + (pos.y - in.center.y) * in.stretch;
+        shade = particle_face_shade[face];
+    }
+    out.clip = u.view_proj * vec4<f32>(pos, 1.0);
+    out.uv = vec2<f32>(
+        select(in.uv_min.x, in.uv_max.x, corner == 1u || corner == 2u),
+        select(in.uv_max.y, in.uv_min.y, corner >= 2u),
+    );
     out.tint = in.tint;
-    out.shade = in.shade;
+    out.shade = shade;
     out.alpha = in.alpha;
-    out.view = local_pos - u.cam_pos.xyz;
-    out.world_y = in.pos.y + f32(u.render_origin.y);
+    out.view = pos - u.cam_pos.xyz;
+    out.world_y = pos.y + f32(u.render_origin.y);
     return out;
 }
 

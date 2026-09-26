@@ -1,6 +1,8 @@
-//! Third-person player body: the rigs catalog's body rig posed and baked each
-//! frame into the mob-layout `ItemVertex` stream (world space, drawn in the mob
-//! pass with the player's own skin texture bound).
+//! Third-person player body: the rigs catalog's body rig posed each frame
+//! into the GPU skinning batch (`crate::skinned`) — one bone palette run and
+//! one instance row per body, skinned in the vertex shader from the rig's
+//! static mesh and drawn in the mob pass with the player's own skin texture
+//! bound.
 //!
 //! Pose composition, in order: the locomotion table's clips blended by their
 //! weights (`locomotion.rs`) as the GROUND, the body animator's graph
@@ -20,9 +22,8 @@ pub(crate) use body_animator::{BodyAnimator, BodyAnimators, LOCAL_BODY};
 
 use glam::{Mat4, Quat, Vec3};
 
-use super::item_model::ItemVertex;
-use super::lighting::{DynLight, LightEnv};
-use super::mob_model::{bake_model_cubes, body_tint};
+use super::lighting::DynLight;
+use super::skinned::{bone_slots, SkinBatch, SkinLook};
 use super::PlayerRenderInstance;
 use petramond::player::model::{PLAYER_HIP_HEIGHT, PLAYER_MODEL_SCALE};
 use petramond::player::rigs::Rig;
@@ -77,27 +78,22 @@ pub(super) struct BodyDrive<'a> {
     pub dt: f32,
 }
 
-/// Pose and bake one player body of `rig` into `verts`/`indices`, answering
-/// its index count and the visual right- and left-hand attach frames
-/// (model-pixel space under the placed, scaled body) for the held items. With
-/// a `drive` the locomotion pose is the animator's ground and the animator's
-/// pose is what bakes; without one (no body graph) the locomotion pose bakes
-/// as it is.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn build_player_body(
+/// Pose one player body of `rig` into `batch` (one palette run + one
+/// instance row, skinned from the rig's static mesh), answering the visual
+/// right- and left-hand attach frames (model-pixel space under the placed,
+/// scaled body) for the held items. With a `drive` the locomotion pose is the
+/// animator's ground and the animator's pose is what draws; without one (no
+/// body graph) the locomotion pose draws as it is.
+pub(super) fn pose_player_body(
     rig: &Rig,
-    env: LightEnv,
     inst: &PlayerRenderInstance,
     render_origin: glam::IVec3,
     bones: &[crate::BoneOffset],
     drive: Option<BodyDrive<'_>>,
-    verts: &mut Vec<ItemVertex>,
-    indices: &mut Vec<u32>,
-) -> (u32, Mat4, Mat4) {
+    batch: &mut SkinBatch,
+) -> (Mat4, Mat4) {
     let model = &rig.model;
     let pos = inst.pos.relative_to(render_origin);
-    verts.clear();
-    indices.clear();
 
     let layers = locomotion::layers(model, inst);
     let mut twist_total = 0.0;
@@ -131,7 +127,7 @@ pub(super) fn build_player_body(
             * Mat4::from_rotation_y(inst.body_yaw)
             * Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2)
             * Mat4::from_scale(Vec3::splat(PLAYER_MODEL_SCALE));
-        return bake_cubes(model, rig.grips, &pose, global, inst, env, verts, indices);
+        return push_body(model, rig.grips, &pose, global, inst, batch);
     }
 
     // Seated (riding a mob seat): thighs swing forward at the hip and the
@@ -216,35 +212,36 @@ pub(super) fn build_player_body(
         * Mat4::from_rotation_y(inst.body_yaw + std::f32::consts::PI)
         * lean
         * Mat4::from_scale(Vec3::splat(PLAYER_MODEL_SCALE));
-    bake_cubes(model, rig.grips, &pose, global, inst, env, verts, indices)
+    push_body(model, rig.grips, &pose, global, inst, batch)
 }
 
-/// Emit every cube of the posed model under `global`, lit and hurt-tinted, and
-/// return the index count plus the `[main, off]` grip bones' world transforms.
-#[allow(clippy::too_many_arguments)]
-fn bake_cubes(
+/// Push the posed model under `global` — lit and hurt-tinted per instance —
+/// and return the `[main, off]` grip bones' world transforms.
+fn push_body(
     model: &Model,
     grips: [usize; 2],
     pose: &[Mat4],
     global: Mat4,
     inst: &PlayerRenderInstance,
-    env: LightEnv,
-    verts: &mut Vec<ItemVertex>,
-    indices: &mut Vec<u32>,
-) -> (u32, Mat4, Mat4) {
-    let tint = body_tint(
-        inst.hurt,
-        inst.emitter_tint,
-        DynLight::new(inst.skylight, inst.blocklight),
-        env,
-        inst.emitter_self_lit,
+    batch: &mut SkinBatch,
+) -> (Mat4, Mat4) {
+    batch.push(
+        pose,
+        global,
+        bone_slots(model),
+        SkinLook {
+            hurt: inst.hurt,
+            emitter_tint: inst.emitter_tint,
+            emitter_self_lit: inst.emitter_self_lit,
+            light: DynLight::new(inst.skylight, inst.blocklight),
+            hidden: 0,
+        },
     );
-    bake_model_cubes(model, pose, global, tint, |_| false, None, verts, indices);
 
     // A clip turning a grip bone turns the item in the fist.
     let [hand, off_hand] =
         grips.map(|bone| global * pose.get(bone).copied().unwrap_or(Mat4::IDENTITY));
-    (indices.len() as u32, hand, off_hand)
+    (hand, off_hand)
 }
 
 /// Compose a claimed held pose ([`HeldItemView::pose`]) onto a hand attach
@@ -292,7 +289,7 @@ pub(super) struct Grip {
 }
 
 impl Grip {
-    /// The body's main-hand grip on an arm frame from [`build_player_body`].
+    /// The body's main-hand grip on an arm frame from [`pose_player_body`].
     pub(super) fn body(frame: Mat4) -> Self {
         Self {
             frame,
@@ -447,7 +444,8 @@ pub(super) fn held_model_off_at(
 /// CPU-transform the given vertex positions by `m` — baking in model space then
 /// placing in the world on the CPU, since the opaque pipeline has no per-draw
 /// model matrix. Takes a position iterator so both vertex layouts (packed
-/// [`petramond_mesh::Vertex`] and explicit-UV [`ItemVertex`]) share it.
+/// [`petramond_mesh::Vertex`] and explicit-UV
+/// [`ItemVertex`](crate::item_model::ItemVertex)) share it.
 pub(super) fn transform_positions<'a>(pos: impl Iterator<Item = &'a mut [f32; 3]>, m: Mat4) {
     for p in pos {
         *p = m.transform_point3(Vec3::from(*p)).to_array();

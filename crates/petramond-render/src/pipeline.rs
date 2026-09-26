@@ -41,7 +41,8 @@ pub(super) use self::grade::create_grade_bind;
 
 use self::builders::{pipeline_layout, shader_module, texture_sampler_bgl_bind, uniform_entry};
 use self::entity_models::{
-    create_mob_pipeline, create_model_break_pipeline, create_world_model_pipeline,
+    create_bone_palette_bgl, create_mob_pipeline, create_model_break_pipeline,
+    create_skinned_pipeline, create_world_model_pipeline,
 };
 use self::environment::{create_env_scaler, create_environment_pipelines};
 use self::grade::create_grade_pipeline;
@@ -132,12 +133,19 @@ pub(super) struct PipelineResources {
     /// Reusable dynamic vbuf for the extruded held-item geometry (non-indexed
     /// triangle list, rewritten in place per frame).
     pub item3d_vbuf: wgpu::Buffer,
-    /// `mob` pipeline: in-world animated entity models. Reuses the block
-    /// `uniform_bgl` + `atlas_bgl` pipeline layout (group0 = world `view_proj`,
-    /// group1 = the ENTITY texture bound by the renderer), the explicit-UV
-    /// `ItemVertex`, REPLACE blend + alpha-cutout, double-sided (flat sub-cubes show
-    /// from both sides), depth test + WRITE so mobs occlude terrain.
+    /// `mob` pipeline: world-space explicit-UV streams (held and dropped
+    /// sprite/bbmodel items). Reuses the block `uniform_bgl` + `atlas_bgl`
+    /// pipeline layout (group0 = world `view_proj`, group1 = the sheet the
+    /// stream samples), the explicit-UV `ItemVertex`, REPLACE blend +
+    /// alpha-cutout, double-sided (flat sub-cubes show from both sides), depth
+    /// test + WRITE so the geometry occludes terrain.
     pub mob_pipe: crate::pipeline::SampledPipeline,
+    /// `skinned` pipeline: mobs and player bodies skinned on the GPU from
+    /// each model's static bind-space mesh (see [`crate::skinned`]). The mob
+    /// pipeline's layout plus group2 = the frame's bone palette, laid out by
+    /// `bone_palette_bgl`; draws instanced, one call per model.
+    pub skinned_pipe: crate::pipeline::SampledPipeline,
+    pub bone_palette_bgl: wgpu::BindGroupLayout,
     /// World-model pipeline: the chunk's bbmodel-block stream (`ModelVertex`,
     /// model atlas at group1). Same layout/blend/depth as `mob_pipe`, but its
     /// vertices carry (sky, block) light separately and the shader applies the
@@ -395,6 +403,13 @@ pub(super) fn create_pipeline_resources(
         &shared.layout,
         &item3d_vbuf_layout,
     );
+    let bone_palette_bgl = create_bone_palette_bgl(device);
+    let skinned_layout = pipeline_layout(
+        device,
+        "skinned pipe layout",
+        &[&shared.uniform_bgl, &shared.atlas_bgl, &bone_palette_bgl],
+    );
+    let skinned_pipe = create_skinned_pipeline(device, format, max_samples, &skinned_layout);
     let world_model_pipe = create_world_model_pipeline(
         device,
         format,
@@ -474,6 +489,8 @@ pub(super) fn create_pipeline_resources(
         item3d_mvp_bind,
         item3d_vbuf,
         mob_pipe,
+        skinned_pipe,
+        bone_palette_bgl,
         world_model_pipe,
         world_model_blend_pipe,
         model_break_pipe,

@@ -1,25 +1,29 @@
-//! World-space geometry for animated entity models (mobs), baked each frame into
-//! the explicit-UV [`ItemVertex`] stream and drawn by
-//! the dedicated `mob` pipeline (see `pipeline.rs` / `mob.wgsl`).
+//! Animated entity models (mobs): each instance's skeleton posed per frame on
+//! the CPU and handed to the GPU skinning path (`crate::skinned`), drawn by
+//! the `skinned` pipeline (see `pipeline.rs` / `skinned.wgsl`).
 //!
 //! Generic over species: the caller passes the parsed [`Model`], its render `scale`,
 //! and (optionally) the walk [`Animation`]; each instance is posed by its own
 //! `anim_time` when `moving`, or in the model's neutral [rest pose](Model::rest_pose)
 //! when idle (so a standing mob shows straight legs with no per-animation tuning).
 //!
-//! Like [`item_entity`](super::item_entity) / [`block_entity_model`](super::block_entity_model)
-//! this bakes in WORLD space on the CPU (the mob pipeline's vertex shader applies
-//! only `view_proj`). Per cube the transform is `G · pose[bone] · S_cube`, where
-//! `S_cube` is the cube's modelled static tilt, `pose[bone]` the animation (or rest)
-//! transform, and `G = T(pos)·yaw·scale` places the model in the world. Faces use the
-//! same `quad_box` winding the chunk mesher + block models use, so the bbmodel's
-//! per-face sub-rect UVs map upright. Per-face directional shade × the instance
-//! skylight is folded into the vertex `shade`, matching `item_model`.
+//! Per cube the world transform is `G · pose[bone] · S_cube`, where `S_cube` is
+//! the cube's modelled static tilt, `pose[bone]` the animation (or rest)
+//! transform, and `G = T(pos)·yaw·scale` places the model in the world. The
+//! species. `SkinMesh` holds every face under `S_cube` once; per frame a mob
+//! costs one palette entry `G · pose[bone]` per bone and one instance row —
+//! never a vertex. Faces use the same `quad_box` winding the chunk mesher +
+//! block models use, so the bbmodel's per-face sub-rect UVs map upright.
+//!
+//! `bake_model_cubes` still bakes a posed model into world-space vertices on
+//! the CPU: the first-person rig (one rig, drawn through the hand pass's own
+//! MVP) uses it, and it is the reference the skinned mesh is pinned against.
 
 use glam::{Mat4, Vec3};
 
 use super::item_model::ItemVertex;
 use super::lighting::{fold_tint_self_lit, mul3, DynLight, LightEnv};
+use super::skinned::{bone_slots, SkinBatch, SkinLook, SkinMesh, PART_COAT};
 use super::MobRenderInstance;
 use petramond_math::face::Face;
 use petramond_mesh::SHADES;
@@ -44,9 +48,10 @@ pub(super) fn hurt_tint(hurt: f32) -> [f32; 3] {
     ]
 }
 
-/// A body's baked vertex tint — mobs and player bodies alike: the hurt flash
-/// times its emitter tint, lit by the sampled light mixed toward full bright by
-/// its emitter self-lighting.
+/// A body's lit tint: the hurt flash times its emitter tint, lit by the
+/// sampled light mixed toward full bright by its emitter self-lighting. The
+/// first-person arms bake it into their vertices; skinned bodies carry the
+/// same inputs per instance and `skinned.wgsl` computes the same value.
 pub(super) fn body_tint(
     hurt: f32,
     emitter_tint: [f32; 3],
@@ -57,12 +62,6 @@ pub(super) fn body_tint(
     fold_tint_self_lit(mul3(hurt_tint(hurt), emitter_tint), light, env, self_lit)
 }
 
-/// Bake every instance of ONE species into `verts`/`indices` (cleared first, capacity
-/// reused) using `model` at `scale`. Returns the index count. Each instance selects
-/// its own animation — walk while moving, an `idle_*` if one is playing, else the
-/// neutral rest pose — and (when the model has a `head` bone and the active animation
-/// isn't already moving it) the AI head-look is applied to the head. The caller groups
-/// instances by species and frustum-culls them first.
 /// Where one posed mob holds one item: the hand's grip and the light to draw
 /// the item in. Collected while the mobs bake and drawn with the held items.
 pub(crate) struct MobHeld {
@@ -72,7 +71,7 @@ pub(crate) struct MobHeld {
     pub light: DynLight,
 }
 
-/// What a species' model resolves to once, so the per-instance bake compares
+/// What a species' model resolves to once, so the per-instance pose compares
 /// no names: its hand bones, its coat cubes, and its rest-pose self-AO.
 pub(crate) struct MobRig {
     /// Main and off hand: the bone index and the grip point in its rest pose.
@@ -119,22 +118,39 @@ impl MobRig {
         self.self_ao = Some(table);
         self
     }
+
+    /// The species' static skinned mesh at render `scale`: every cube face in
+    /// bind space, the coat's cubes in [`PART_COAT`] so a shorn instance can
+    /// hide them, the self-AO folded into the shade.
+    pub(crate) fn mesh(&self, model: &Model, scale: f32) -> SkinMesh {
+        SkinMesh::build(model, scale, self.self_ao.as_deref(), |cube| {
+            if self.coat.get(cube).copied().unwrap_or(false) {
+                PART_COAT
+            } else {
+                0
+            }
+        })
+    }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn build_mob_instances(
+/// Pose every instance of ONE species (`model` at `scale`) into `batch` —
+/// one palette run and one instance row each, contiguous — and answer the
+/// instance range the species draws. Each instance selects its own animation
+/// — walk while moving, an `idle_*` if one is playing, else the neutral rest
+/// pose — and (when the model has a `head` bone and the active animation isn't
+/// already moving it) the AI head-look is applied to the head. The caller
+/// groups instances by species and frustum-culls them first.
+pub(crate) fn pose_mob_instances(
     model: &Model,
     scale: f32,
-    env: LightEnv,
     instances: &[MobRenderInstance],
     render_origin: glam::IVec3,
-    verts: &mut Vec<ItemVertex>,
-    indices: &mut Vec<u32>,
-    held: &mut Vec<MobHeld>,
     rig: &MobRig,
-) -> u32 {
-    verts.clear();
-    indices.clear();
+    batch: &mut SkinBatch,
+    held: &mut Vec<MobHeld>,
+) -> std::ops::Range<u32> {
+    let first = batch.next_instance();
+    let slots = bone_slots(model);
     let head_bone = model.head_bone();
     let walk = model.animation(clips::WALK);
     // Animation layers for the instance being posed (base + active named
@@ -238,24 +254,20 @@ pub(crate) fn build_mob_instances(
         let global = Mat4::from_translation(inst.pos.relative_to(render_origin))
             * inst.tilt.body_frame(inst.yaw)
             * Mat4::from_scale(Vec3::splat(scale));
-        // Two-channel RGB light folds into the tint (shade keeps the directional
-        // term), so a mob standing in torch light stays lit at night.
-        let tint = body_tint(
-            inst.hurt,
-            inst.emitter_tint,
-            DynLight::new(inst.skylight, inst.blocklight),
-            env,
-            inst.emitter_self_lit,
-        );
-        bake_model_cubes(
-            model,
+        // The two-channel RGB light rides the instance and lights the tint in
+        // the shader (shade keeps the directional term), so a mob standing in
+        // torch light stays lit at night. A shorn mob hides its coat.
+        batch.push(
             &pose,
             global,
-            tint,
-            |cube| inst.shorn && rig.coat[cube],
-            rig.self_ao.as_deref(),
-            verts,
-            indices,
+            slots,
+            SkinLook {
+                hurt: inst.hurt,
+                emitter_tint: inst.emitter_tint,
+                emitter_self_lit: inst.emitter_self_lit,
+                light: DynLight::new(inst.skylight, inst.blocklight),
+                hidden: if inst.shorn { PART_COAT } else { 0 },
+            },
         );
         for (side, hand) in rig.hands.iter().enumerate() {
             let (Some((bone, grip)), Some(item)) = (*hand, inst.held[side]) else {
@@ -279,14 +291,15 @@ pub(crate) fn build_mob_instances(
             });
         }
     }
-    indices.len() as u32
+    first..batch.next_instance()
 }
 
 /// Emit every cube of the posed model under `global`, tinted by `tint`, skipping
 /// cubes whose INDEX `skip` returns true for (per-instance part hiding like a
 /// shorn sheep's coat; pass `|_| false` for none). Per cube the transform is
-/// `global · pose[bone] · S_cube` (see the module doc). Shared with the
-/// third-person player bake ([`super::player_model`]).
+/// `global · pose[bone] · S_cube` (see the module doc). The first-person rig's
+/// CPU bake ([`super::first_person`]), and the reference [`SkinMesh`] is
+/// tested against.
 pub(super) fn bake_model_cubes(
     model: &Model,
     pose: &[Mat4],
@@ -319,10 +332,9 @@ pub(super) fn bake_model_cubes(
 
 /// Append one textured cube face (4 verts / 6 indices) transformed by `m`. Skips
 /// degenerate (zero-area) faces — flat sub-cubes (legs/tail) have only one pair of
-/// faces with area, and the rest collapse to lines. Shared with the third-person
-/// player bake ([`super::player_model`]).
+/// faces with area, and the rest collapse to lines.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn push_face(
+fn push_face(
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
     m: Mat4,

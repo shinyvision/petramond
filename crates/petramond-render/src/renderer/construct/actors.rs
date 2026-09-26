@@ -1,21 +1,20 @@
 //! Per-species and player body GPU resources built at renderer construction.
 
-use super::super::{create_model_texture, DynamicDraw, MobGpu, PlayerGpu};
+use super::super::{create_model_texture, MobGpu, PlayerGpu, SkinnedModel};
 
 /// World-space margin added around each species' rest-pose cull bounds.
 const MOB_CULL_SLACK: f32 = 0.5;
 
 /// Build per-species mob render resources by iterating the mob registry: load each
 /// species' `.bbmodel` (geometry + walk animation + embedded texture), upload its
-/// texture as a dedicated atlas, build its group(1) bind, and give it its own
-/// dynamic-draw buffers over the shared mob pipeline. Adding a species is a row in
-/// `mobs.json` — no renderer edit. A model parse failure degrades to an empty
+/// texture as a dedicated atlas, build its group(1) bind, and upload its static
+/// skinned mesh once (drawn instanced by the shared skinned pipeline). Adding a
+/// species is a row in `mobs.json` — no renderer edit. A model parse failure degrades to an empty
 /// model (that species just doesn't draw) rather than crashing the renderer.
 pub(super) fn build_mob_gpu(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     atlas_bgl: &wgpu::BindGroupLayout,
-    mob_pipe: &crate::pipeline::SampledPipeline,
 ) -> Vec<MobGpu> {
     petramond::mob::defs()
         .iter()
@@ -52,36 +51,33 @@ pub(super) fn build_mob_gpu(
                 .into_iter()
                 .flat_map(|x| [bmin.z, bmax.z].map(|z| (x * x + z * z).sqrt()))
                 .fold(0.0f32, f32::max);
+            let rig = crate::mob_model::MobRig::resolve(model, d.hands, d.shear.map(|s| s.coat.0))
+                .with_self_ao(model, d.scale, d.self_ao);
+            let mesh = SkinnedModel::new(device, &rig.mesh(model, d.scale), "mob");
             MobGpu {
                 model,
                 scale: d.scale,
-                rig: crate::mob_model::MobRig::resolve(model, d.hands, d.shear.map(|s| s.coat.0))
-                    .with_self_ao(model, d.scale, d.self_ao),
+                rig,
                 bind,
-                draw: DynamicDraw::new(device, mob_pipe.clone(), "mob"),
+                mesh,
+                drawn: 0..0,
                 cull_r: r * d.scale + MOB_CULL_SLACK,
                 cull_y0: bmin.y * d.scale - MOB_CULL_SLACK,
                 cull_y1: bmax.y * d.scale + MOB_CULL_SLACK,
                 visible: Vec::new(),
-                verts: Vec::new(),
-                indices: Vec::new(),
             }
         })
         .collect()
 }
 
-/// Player bodies: the precached player model gets the same shape of
-/// resources as one mob species (own skin texture bind + dynamic draw over
-/// the shared mob pipeline), plus three held-item draws attached to the
-/// posed hands: an extruded-sprite stream (2D atlas), a bbmodel-item stream
-/// (model atlas), and a packed block-vertex stream (held mini-cube on the
-/// opaque pipeline). EVERY connected player's body appends into the one
-/// stream, which grows to fit the party.
+/// Player bodies: the same shape of resources as one mob species — the
+/// player skin texture bind, and the body rig's static skinned mesh uploaded
+/// once (a rig that failed to load draws nothing). EVERY connected player's
+/// body is one instance of the one draw.
 pub(super) fn build_player_gpu(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     atlas_bgl: &wgpu::BindGroupLayout,
-    mob_pipe: &crate::pipeline::SampledPipeline,
 ) -> PlayerGpu {
     let model = petramond::player::model::player_model();
     let (_texture, view, sampler) =
@@ -100,10 +96,19 @@ pub(super) fn build_player_gpu(
             },
         ],
     });
+    let mesh = petramond::player::rigs::presented(petramond::player::Presenter::Body)
+        .map(|(_, rig)| {
+            crate::skinned::SkinMesh::build(
+                &rig.model,
+                petramond::player::model::PLAYER_MODEL_SCALE,
+                None,
+                |_| 0,
+            )
+        })
+        .unwrap_or_default();
     PlayerGpu {
         bind,
-        draw: DynamicDraw::new(device, mob_pipe.clone(), "player"),
-        verts: Vec::new(),
-        indices: Vec::new(),
+        mesh: SkinnedModel::new(device, &mesh, "player"),
+        drawn: 0..0,
     }
 }
