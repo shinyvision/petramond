@@ -9,6 +9,11 @@
 //! Each store keeps the PREVIOUS and CURRENT batch row per stable id — the
 //! interpolation-ready pair `collect_mobs`/`collect_item_entities` blend at
 //! `tick_alpha`, exactly as the renderer used to blend `Instance::prev_*`.
+//! The server replicates only the entities in this client's interest, as
+//! per-kind [`EntityLane`]s: an entity lives in its store from its spawn to
+//! its despawn — which is how leaving view differs from absence in one batch
+//! — and dying is presented from its rows (`dead`, ragdoll) while it is
+//! still tracked.
 //! Light is deliberately absent from the rows: the client samples it at the
 //! entity position from its REPLICA world.
 
@@ -21,8 +26,9 @@ use petramond_render::GaitClip;
 use petramond_world::gui_state::ContainerView;
 
 use petramond::net::protocol::{
-    ItemSlotWire, ItemStateRow, MenuSyncMsg, MenuTargetWire, MobStateRow, PlayerActionKind,
-    PlayerMount, PlayerStateRow, SelfState, SpatialSoundMsg, TickUpdate, WorldEventMsg,
+    EntityLane, EntityRow, ItemLane, ItemSlotWire, ItemStateRow, MenuSyncMsg, MenuTargetWire,
+    MobLane, MobStateRow, PlayerActionKind, PlayerLane, PlayerMount, SelfState, SpatialSoundMsg,
+    TickUpdate, WorldEventMsg,
 };
 use petramond::player::PlayerId;
 use petramond::player::{Player, PlayerMode};
@@ -40,18 +46,73 @@ use super::Game;
 /// is what keeps interpolated motion — and a rider's camera glued to it —
 /// free of arrival-jitter rubber-banding.
 pub struct StagedRows {
-    // Shared straight off the batch: the server builds one copy of each row
-    // set per tick window and the FIFO holds up to four windows, so staging
-    // them is four refcount bumps rather than four deep copies of every
-    // entity in the world.
-    pub mobs: std::sync::Arc<[MobStateRow]>,
-    pub items: std::sync::Arc<[ItemStateRow]>,
-    pub players: std::sync::Arc<[PlayerStateRow]>,
+    // Shared straight off the batch: each lane selects rows out of tables
+    // the server builds once per tick window, and the FIFO holds up to four
+    // windows, so staging them is refcount bumps and index lists rather than
+    // deep copies of every tracked entity.
+    pub mobs: MobLane,
+    pub items: ItemLane,
+    pub players: PlayerLane,
     pub actions: std::sync::Arc<[(PlayerId, PlayerActionKind)]>,
-    /// An overflow collapsed older pending snapshots into this newest one.
-    /// Its first boundary commit must seed prev == curr rather than lerp over
-    /// the dropped gap.
+    /// An overflow folded older pending windows into this one (see
+    /// [`EntityLane::absorb`]). Its first boundary commit must seed
+    /// prev == curr rather than lerp over the dropped gap.
     resync: bool,
+}
+
+/// The lane a FULL-snapshot sender would ship for `rows` against a store
+/// holding `held`: every held id missing from the snapshot despawns, every
+/// row is an update. How tests drive the stores with plain row lists.
+#[cfg(test)]
+pub(super) fn snapshot_lane<R: EntityRow>(
+    held: impl Iterator<Item = R::Id>,
+    rows: &[R],
+) -> EntityLane<R, R::Id> {
+    EntityLane {
+        despawned: held
+            .filter(|id| !rows.iter().any(|row| row.entity_id() == *id))
+            .collect(),
+        spawned: Default::default(),
+        updated: rows.to_vec().into(),
+    }
+}
+
+/// Apply one lane to an id-keyed store, in the lane's order: despawned ids
+/// drop, a spawn replaces whatever the store held under its id, an update
+/// advances its entry (an update for an id the store lacks — say its spawn
+/// was a remap-dropped unknown kind — spawns it), and a held id the lane does
+/// not mention is UNCHANGED this window and holds still. Rows `keep` rejects
+/// are skipped entirely.
+pub(super) fn apply_lane<R: EntityRow, E>(
+    store: &mut BTreeMap<R::Id, E>,
+    lane: &EntityLane<R, R::Id>,
+    keep: impl Fn(&R) -> bool,
+    mut spawn: impl FnMut(&R) -> E,
+    mut update: impl FnMut(&mut E, &R),
+    mut hold: impl FnMut(&mut E),
+) {
+    for id in &lane.despawned {
+        store.remove(id);
+    }
+    let mut touched = std::collections::BTreeSet::new();
+    for row in lane.spawned.iter().filter(|row| keep(row)) {
+        store.insert(row.entity_id(), spawn(row));
+        touched.insert(row.entity_id());
+    }
+    for row in lane.updated.iter().filter(|row| keep(row)) {
+        match store.get_mut(&row.entity_id()) {
+            Some(entry) => update(entry, row),
+            None => {
+                store.insert(row.entity_id(), spawn(row));
+            }
+        }
+        touched.insert(row.entity_id());
+    }
+    for (id, entry) in store.iter_mut() {
+        if !touched.contains(id) {
+            hold(entry);
+        }
+    }
 }
 
 /// Normal scheduling jitter needs only a few pending ticks. If a stalled
@@ -86,6 +147,15 @@ pub struct ReplicatedMob {
     pub draw: Option<petramond::world::draw::BlockDraw>,
 }
 
+/// A row's draw set resolved for the renderer (`None` = draws nothing).
+fn resolve_draw(row: &MobStateRow) -> Option<petramond::world::draw::BlockDraw> {
+    (!row.draw.prims.is_empty()).then(|| {
+        std::sync::Arc::new(petramond::world::draw::BlockDrawSet::new(
+            row.draw.prims.clone(),
+        ))
+    })
+}
+
 /// The gait a replicated row is in, or `None` at rest.
 pub fn gait_of(row: &MobStateRow) -> Option<GaitClip> {
     if row.moving {
@@ -96,6 +166,39 @@ pub fn gait_of(row: &MobStateRow) -> Option<GaitClip> {
 }
 
 impl ReplicatedMob {
+    /// A freshly tracked mob: prev == curr, and its animations start at FULL
+    /// weight (a mob streamed in mid-row must not fade in from rest).
+    fn spawn(row: &MobStateRow) -> Self {
+        ReplicatedMob {
+            prev: row.clone(),
+            curr: row.clone(),
+            anim_blend: row
+                .anims
+                .iter()
+                .map(|(n, phase)| (n.clone(), 1.0, *phase))
+                .collect(),
+            gait_blend: gait_of(row)
+                .map(|clip| (clip, 1.0, row.anim_time))
+                .into_iter()
+                .collect(),
+            draw: resolve_draw(row),
+        }
+    }
+
+    /// Adopt the next row: curr→prev, keeping the blend state (it eases
+    /// toward the new target set) and the resolved draw set while unchanged.
+    fn advance(&mut self, row: &MobStateRow) {
+        if self.curr.draw.prims != row.draw.prims {
+            self.draw = resolve_draw(row);
+        }
+        self.prev = std::mem::replace(&mut self.curr, row.clone());
+    }
+
+    /// An unchanged window: the pair collapses onto the current row.
+    fn hold(&mut self) {
+        self.prev.clone_from(&self.curr);
+    }
+
     /// The feet pose this replicated row presents at `alpha`. Picking,
     /// collision, seats, and rendering all speak this same prev→curr blend;
     /// keeping the shortest-arc yaw rule here prevents interaction geometry
@@ -133,61 +236,39 @@ pub struct ReplicatedMobs {
 }
 
 impl ReplicatedMobs {
-    /// Apply one batch: a known id shifts curr→prev and adopts the new row, a
-    /// fresh id starts with prev == curr (no interpolation from nowhere), and
-    /// an id absent from the batch is dropped (killed/despawned server-side).
-    pub fn apply(&mut self, batch: &[MobStateRow]) {
-        let mut old = std::mem::take(&mut self.rows);
-        for row in batch.iter().cloned() {
-            // A fresh id starts its animations at FULL weight (a mob streamed
-            // in mid-row must not fade in from rest); a known id keeps its
-            // blend state and eases toward the new target set.
-            let resolve = |row: &MobStateRow| {
-                (!row.draw.prims.is_empty()).then(|| {
-                    std::sync::Arc::new(petramond::world::draw::BlockDrawSet::new(
-                        row.draw.prims.clone(),
-                    ))
-                })
-            };
-            let (prev, anim_blend, gait_blend, draw) = match old.remove(&row.id) {
-                Some(entry) => {
-                    let draw = if entry.curr.draw.prims == row.draw.prims {
-                        entry.draw
-                    } else {
-                        resolve(&row)
-                    };
-                    (entry.curr, entry.anim_blend, entry.gait_blend, draw)
-                }
-                None => (
-                    row.clone(),
-                    row.anims
-                        .iter()
-                        .map(|(n, phase)| (n.clone(), 1.0, *phase))
-                        .collect(),
-                    gait_of(&row)
-                        .map(|clip| (clip, 1.0, row.anim_time))
-                        .into_iter()
-                        .collect(),
-                    resolve(&row),
-                ),
-            };
-            self.rows.insert(
-                row.id,
-                ReplicatedMob {
-                    prev,
-                    curr: row,
-                    anim_blend,
-                    gait_blend,
-                    draw,
-                },
-            );
-        }
+    /// Apply one lane (see [`apply_lane`]): a spawn starts with prev == curr
+    /// (no interpolation from nowhere), an update shifts curr→prev and adopts
+    /// the new row, and a despawn — out of view, or gone from the world —
+    /// drops the id.
+    pub fn apply(&mut self, lane: &MobLane) {
+        apply_lane(
+            &mut self.rows,
+            lane,
+            |_| true,
+            ReplicatedMob::spawn,
+            ReplicatedMob::advance,
+            ReplicatedMob::hold,
+        );
     }
 
-    /// Replace a discontinuous backlog with one fresh interpolation seed.
-    fn resync(&mut self, batch: &[MobStateRow]) {
-        self.rows.clear();
-        self.apply(batch);
+    /// [`apply`](Self::apply) a full row snapshot (see [`snapshot_lane`]).
+    #[cfg(test)]
+    pub fn apply_snapshot(&mut self, rows: &[MobStateRow]) {
+        let lane = snapshot_lane(self.rows.keys().copied(), rows);
+        self.apply(&lane);
+    }
+
+    /// Replace a discontinuous backlog with one fresh interpolation seed:
+    /// every row the lane carries starts over as a spawn.
+    fn resync(&mut self, lane: &MobLane) {
+        apply_lane(
+            &mut self.rows,
+            lane,
+            |_| true,
+            ReplicatedMob::spawn,
+            |entry, row| *entry = ReplicatedMob::spawn(row),
+            ReplicatedMob::hold,
+        );
     }
 
     /// Ease every entry's animation blend weights toward its replicated
@@ -294,22 +375,45 @@ pub struct ReplicatedItems {
     rows: BTreeMap<u64, ReplicatedItem>,
 }
 
-impl ReplicatedItems {
-    pub fn apply(&mut self, batch: &[ItemStateRow]) {
-        let mut old = std::mem::take(&mut self.rows);
-        for row in batch.iter().cloned() {
-            let prev = match old.remove(&row.id) {
-                Some(entry) => entry.curr,
-                None => row.clone(),
-            };
-            self.rows.insert(row.id, ReplicatedItem { prev, curr: row });
+impl ReplicatedItem {
+    fn spawn(row: &ItemStateRow) -> Self {
+        ReplicatedItem {
+            prev: row.clone(),
+            curr: row.clone(),
         }
     }
 
+    fn advance(&mut self, row: &ItemStateRow) {
+        self.prev = std::mem::replace(&mut self.curr, row.clone());
+    }
+
+    fn hold(&mut self) {
+        self.prev.clone_from(&self.curr);
+    }
+}
+
+impl ReplicatedItems {
+    pub fn apply(&mut self, lane: &ItemLane) {
+        apply_lane(
+            &mut self.rows,
+            lane,
+            |_| true,
+            ReplicatedItem::spawn,
+            ReplicatedItem::advance,
+            ReplicatedItem::hold,
+        );
+    }
+
     /// Replace a discontinuous backlog with one fresh interpolation seed.
-    fn resync(&mut self, batch: &[ItemStateRow]) {
-        self.rows.clear();
-        self.apply(batch);
+    fn resync(&mut self, lane: &ItemLane) {
+        apply_lane(
+            &mut self.rows,
+            lane,
+            |_| true,
+            ReplicatedItem::spawn,
+            |entry, row| *entry = ReplicatedItem::spawn(row),
+            ReplicatedItem::hold,
+        );
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &ReplicatedItem> {
@@ -757,41 +861,34 @@ impl Game {
             resync,
         } = staged;
         let was_mounted = self.self_mount.is_some();
+        // The own row always rides (a session tracks itself); a window that
+        // leaves it out left it unchanged.
         if let Some(own) = players.iter().find(|row| row.id == self.self_id) {
             self.self_mount = own.mount;
         }
-        // A resync's player rows snap rather than interpolate across the
-        // dropped gap. The batch's rows are shared with every other holder of
-        // this snapshot, so the flagged copy is this path's own.
-        let snapped: Vec<PlayerStateRow>;
-        let players: &[PlayerStateRow] = if resync {
+        if resync {
             self.replicated_mobs.resync(&mobs);
             self.replicated_items.resync(&items);
-            snapped = players
-                .iter()
-                .cloned()
-                .map(|mut row| {
-                    row.snap = true;
-                    row
-                })
-                .collect();
-            &snapped
         } else {
             self.replicated_mobs.apply(&mobs);
             self.replicated_items.apply(&items);
-            &players
-        };
-        self.remote_players.apply(players, &actions, self.self_id);
+        }
+        // A resync's player rows snap rather than interpolate across the
+        // dropped gap.
+        self.remote_players
+            .apply(&players, &actions, self.self_id, resync);
         if was_mounted && self.self_mount.is_none() {
             self.predict_dismount_placement();
         }
     }
 
     /// Queue one post-bootstrap row snapshot. Overflow is a declared resync:
-    /// retain only the newest state, but prepend every dropped batch's player
-    /// actions in arrival order so one-shot animation triggers are not lost.
-    fn stage_rows(&mut self, mut staged: StagedRows) {
-        if self.staged_rows.len() >= MAX_STAGED_ROW_BATCHES {
+    /// every pending window folds into one (lanes compose, so no spawn or
+    /// despawn is lost and each entity keeps its newest row), and every
+    /// dropped batch's player actions survive in arrival order so one-shot
+    /// animation triggers are not lost.
+    fn stage_rows(&mut self, staged: StagedRows) {
+        let staged = if self.staged_rows.len() >= MAX_STAGED_ROW_BATCHES {
             let action_count = self
                 .staged_rows
                 .iter()
@@ -799,13 +896,21 @@ impl Game {
                 .sum::<usize>()
                 + staged.actions.len();
             let mut actions = Vec::with_capacity(action_count);
-            for rows in self.staged_rows.drain(..) {
+            let mut pending = self.staged_rows.drain(..).chain(std::iter::once(staged));
+            let mut folded = pending.next().expect("the queue was full");
+            actions.extend(folded.actions.iter().cloned());
+            for rows in pending {
                 actions.extend(rows.actions.iter().cloned());
+                folded.mobs.absorb(rows.mobs);
+                folded.items.absorb(rows.items);
+                folded.players.absorb(rows.players);
             }
-            actions.extend(staged.actions.iter().cloned());
-            staged.actions = actions.into();
-            staged.resync = true;
-        }
+            folded.actions = actions.into();
+            folded.resync = true;
+            folded
+        } else {
+            staged
+        };
         self.staged_rows.push_back(staged);
         debug_assert!(self.staged_rows.len() <= MAX_STAGED_ROW_BATCHES);
     }
@@ -895,6 +1000,7 @@ impl Game {
         // self state, events, menu — applies immediately: it is either an
         // authoritative correction or one-shot presentation, not interpolated
         // motion.
+        self.sleep_tally = update.sleep_tally;
         let staged = StagedRows {
             mobs: update.mobs,
             items: update.items,

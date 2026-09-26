@@ -175,6 +175,7 @@ impl Game {
             self_id: bootstrap.self_id,
             player_roster: HashMap::new(),
             remote_players: Default::default(),
+            sleep_tally: Default::default(),
             replicated_tick: bootstrap.replicated_tick,
             open_chests: Default::default(),
             prediction: super::prediction::PredictionLedger::new(),

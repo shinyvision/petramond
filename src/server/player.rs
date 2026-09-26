@@ -413,6 +413,9 @@ pub struct ConnectedPlayer {
     /// Per-connection terrain replication state (which columns/sections this
     /// client holds) — see `server::streaming`.
     pub terrain: crate::server::streaming::TerrainSync,
+    /// Per-connection entity interest (which mobs, items and players this
+    /// client tracks) — see `server::game::interest`.
+    pub interest: crate::server::game::EntityInterest,
     /// The transform of the last `PlayerUpdate` this session applied — what
     /// the CLIENT last claimed. After the ticks, a session transform that no
     /// longer matches it means the tick moved the player (teleport,
@@ -501,6 +504,7 @@ impl ConnectedPlayer {
             last_menu_sync: None,
             last_sent_gui_state: None,
             terrain: Default::default(),
+            interest: Default::default(),
             last_reported_transform: None,
             view_radius: view_radius.clamp(4, 64),
         }

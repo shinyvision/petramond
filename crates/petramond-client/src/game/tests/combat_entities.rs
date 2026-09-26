@@ -433,7 +433,7 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
             .collect()
     };
     let batch = rows(&game);
-    game.replicated_mobs.apply(&batch);
+    game.replicated_mobs.apply_snapshot(&batch);
 
     assert_eq!(
         game.closest_mob(game.cam.pos, dir, player::REACH)
@@ -462,7 +462,7 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
         )
         .is_some());
     let batch = rows(&game);
-    game.replicated_mobs.apply(&batch);
+    game.replicated_mobs.apply_snapshot(&batch);
     assert_eq!(
         game.closest_mob(game.cam.pos, dir, player::REACH),
         None,
@@ -506,9 +506,9 @@ fn closest_mob_targets_the_interpolated_render_pose_not_the_future_row() {
     let previous = eye + dir * 2.0;
     let future = eye + dir * 6.0;
     game.replicated_mobs
-        .apply(&[row(42, WorldPos::new(previous.x, feet_y, previous.z))]);
+        .apply_snapshot(&[row(42, WorldPos::new(previous.x, feet_y, previous.z))]);
     game.replicated_mobs
-        .apply(&[row(42, WorldPos::new(future.x, feet_y, future.z))]);
+        .apply_snapshot(&[row(42, WorldPos::new(future.x, feet_y, future.z))]);
     game.replica_clock.start();
     game.replica_clock.advance(TICK_DT * 0.5);
 
@@ -558,9 +558,9 @@ fn a_mob_eases_into_and_out_of_its_gait() {
     };
 
     let mut game = game();
-    game.replicated_mobs.apply(&[row(false, 0.0)]);
+    game.replicated_mobs.apply_snapshot(&[row(false, 0.0)]);
     // A step begins: the walk comes in from rest, never at full weight.
-    game.replicated_mobs.apply(&[row(true, 0.4)]);
+    game.replicated_mobs.apply_snapshot(&[row(true, 0.4)]);
     game.replicated_mobs.advance_anim_blends(0.05);
     game.replicated_mobs.advance_anim_blends(0.05);
     let (weight, _) = walk(&game).expect("the walk is blending in");
@@ -570,7 +570,7 @@ fn a_mob_eases_into_and_out_of_its_gait() {
     );
     // And ends mid-stride (the sim's clock resets with the gait): the walk
     // fades from the stride it was in, not from the reset clock.
-    game.replicated_mobs.apply(&[row(false, 0.0)]);
+    game.replicated_mobs.apply_snapshot(&[row(false, 0.0)]);
     game.replicated_mobs.advance_anim_blends(0.05);
     let (fading, phase) = walk(&game).expect("the walk is still fading out");
     assert!(fading > 0.0 && fading < weight + 1e-6);
@@ -1110,7 +1110,7 @@ fn a_mob_pushes_the_player_per_frame() {
     let mut game = game();
     game.player.pos = WorldPos::new(8.0, 64.0, 8.0);
     game.replicated_mobs
-        .apply(&[petramond::net::protocol::MobStateRow {
+        .apply_snapshot(&[petramond::net::protocol::MobStateRow {
             id: 1,
             kind_id: Mob::Owl.0,
             pos: WorldPos::new(8.2, 64.0, 8.0),
@@ -1195,7 +1195,7 @@ fn a_remote_player_pushes_the_local_player_per_frame() {
 
     let run = |game: &mut common::TestGame, row: PlayerStateRow| {
         game.player.pos = start;
-        game.game.remote_players.apply(&[row], &[], own_id);
+        game.game.remote_players.apply_snapshot(&[row], &[], own_id);
         for _ in 0..30 {
             game.apply_entity_push(1.0 / 60.0);
         }
@@ -1591,7 +1591,7 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
     feet.y -= 1.0;
     game.game
         .remote_players
-        .apply(&[remote_row(1, feet, true)], &[], own_id);
+        .apply_snapshot(&[remote_row(1, feet, true)], &[], own_id);
     game.refresh_target();
     assert_eq!(game.targeted_player, Some(1), "the remote body is targeted");
     assert!(game.targeted_mob.is_none(), "at most one target kind");
@@ -1605,7 +1605,7 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
     mob_feet.y -= 0.35;
     game.game
         .replicated_mobs
-        .apply(&[petramond::net::protocol::MobStateRow {
+        .apply_snapshot(&[petramond::net::protocol::MobStateRow {
             id: 42,
             kind_id: Mob::Owl.0,
             pos: mob_feet,
@@ -1632,10 +1632,10 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
     assert!(game.targeted_player.is_none());
 
     // A hidden (dead/spectator) remote is never targeted.
-    game.game.replicated_mobs.apply(&[]);
+    game.game.replicated_mobs.apply_snapshot(&[]);
     game.game
         .remote_players
-        .apply(&[remote_row(1, feet, false)], &[], own_id);
+        .apply_snapshot(&[remote_row(1, feet, false)], &[], own_id);
     game.refresh_target();
     assert!(
         game.targeted_player.is_none(),

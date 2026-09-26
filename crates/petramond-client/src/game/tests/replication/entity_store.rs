@@ -51,7 +51,7 @@ fn fire_body_light_composes_and_survives_the_ragdoll_transition() {
     for dead in [false, true] {
         row.dead = dead;
         row.ragdoll = dead.then(|| vec![([0.0; 3], [0.0, 0.0, 0.0, 1.0])]);
-        game.replicated_mobs.apply(&[row.clone()]);
+        game.replicated_mobs.apply_snapshot(&[row.clone()]);
         let presentation = scratch.snapshot(&game, 0.0, &view);
         assert!(presentation.particle_emitters.is_empty());
         assert_eq!(presentation.mobs[0].emitter_self_lit, expected);
@@ -59,33 +59,62 @@ fn fire_body_light_composes_and_survives_the_ragdoll_transition() {
         row.emitters.reverse();
     }
     row.emitters.clear();
-    game.replicated_mobs.apply(&[row]);
+    game.replicated_mobs.apply_snapshot(&[row]);
     assert_eq!(
         scratch.snapshot(&game, 0.0, &view).mobs[0].emitter_self_lit,
         0.0
     );
 }
 
-/// Store semantics: a fresh id starts with prev == curr, a repeated id shifts
-/// curr→prev, and an id absent from a batch is dropped.
+/// Store semantics over interest lanes: a spawn starts with prev == curr, an
+/// update shifts curr→prev, a tracked id the lane does not mention holds
+/// still (unchanged, NOT gone), and only an explicit despawn drops an id.
 #[test]
-fn replicated_store_pairs_consecutive_batches_and_drops_absent_ids() {
+fn replicated_store_pairs_updates_holds_unmentioned_ids_and_drops_despawns() {
+    use petramond::net::protocol::{EntityLane, RowSet};
+
     let mut store = crate::game::replicated::ReplicatedMobs::default();
     let p1 = WorldPos::new(1.0, 70.0, 1.0);
     let p2 = WorldPos::new(1.5, 69.0, 1.0);
 
-    store.apply(&[mob_row(7, p1, 0.3), mob_row(9, p1, 0.0)]);
-    let fresh = store.iter().find(|e| e.curr.id == 7).expect("stored");
-    assert_eq!(fresh.prev.pos, p1, "a fresh id interpolates from itself");
+    store.apply(&EntityLane {
+        despawned: Vec::new(),
+        spawned: vec![mob_row(7, p1, 0.3), mob_row(9, p1, 0.0)].into(),
+        updated: RowSet::default(),
+    });
+    let fresh = store.get(7).expect("stored");
+    assert_eq!(fresh.prev.pos, p1, "a spawn interpolates from itself");
     assert_eq!(store.len(), 2);
 
-    store.apply(&[mob_row(7, p2, 0.25)]);
-    assert_eq!(store.len(), 1, "id 9 was absent from the batch: dropped");
-    let paired = store.iter().next().expect("id 7 kept");
+    store.apply(&vec![mob_row(7, p2, 0.25)].into());
+    assert_eq!(store.len(), 2, "id 9 was not despawned: still tracked");
+    let paired = store.get(7).expect("id 7 kept");
     assert_eq!(paired.prev.pos, p1, "previous batch became the prev row");
     assert_eq!(paired.curr.pos, p2);
     assert_eq!(paired.prev.hurt_timer, 0.3);
     assert_eq!(paired.curr.hurt_timer, 0.25);
+
+    store.apply(&EntityLane {
+        despawned: vec![9],
+        spawned: RowSet::default(),
+        updated: RowSet::default(),
+    });
+    assert!(store.get(9).is_none(), "a despawn drops the id");
+    let held = store.get(7).expect("id 7 kept");
+    assert_eq!(
+        (held.prev.pos, held.curr.pos),
+        (p2, p2),
+        "an unmentioned tracked id holds at its last row"
+    );
+
+    // A re-spawn of a held id reseeds rather than lerping from the old row.
+    store.apply(&EntityLane {
+        despawned: Vec::new(),
+        spawned: vec![mob_row(7, p1, 0.0)].into(),
+        updated: RowSet::default(),
+    });
+    let reseeded = store.get(7).unwrap();
+    assert_eq!((reseeded.prev.pos, reseeded.curr.pos), (p1, p1));
 }
 
 /// A receive burst must fill the FIFO without turning the interpolation
@@ -251,7 +280,16 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
     let resync_tick = burst_len as u64 + 1;
     let resync_x = resync_tick as f64;
     assert_eq!(
-        game.game.staged_rows.front().unwrap().mobs[0].pos.x,
+        game.game
+            .staged_rows
+            .front()
+            .unwrap()
+            .mobs
+            .iter()
+            .next()
+            .unwrap()
+            .pos
+            .x,
         resync_x,
         "the retained state is the newest arrival"
     );
@@ -419,7 +457,7 @@ fn pumped_mob_batches_become_interpolated_presentation_rows() {
     assert_eq!(row.pos, row2.pos, "curr = latest batch state");
 }
 
-/// A killed/despawned mob vanishes from the next batch, so its id drops from
+/// A mob removed server-side despawns in the next batch, so its id drops from
 /// the store and the presentation rows.
 #[test]
 fn a_despawned_mob_drops_from_the_store_on_the_next_batch() {
@@ -450,7 +488,7 @@ fn a_despawned_mob_drops_from_the_store_on_the_next_batch() {
 
     assert!(
         !game.replicated_mobs.iter().any(|e| e.curr.id == id),
-        "an id absent from the batch drops from the store"
+        "a removed mob despawns from the store"
     );
     let mut scratch = GamePresentationScratch::new();
     let presentation = scratch.snapshot(
@@ -544,9 +582,9 @@ fn a_mob_draw_set_follows_the_interpolated_body_and_clears() {
     };
     let mut row = mob_row(7, WorldPos::new(4.25, 65.0, 4.0), 0.0);
     row.draw = worn.clone();
-    game.replicated_mobs.apply(&[row.clone()]);
+    game.replicated_mobs.apply_snapshot(&[row.clone()]);
     row.pos = WorldPos::new(5.25, 65.0, 4.0);
-    game.replicated_mobs.apply(&[row.clone()]);
+    game.replicated_mobs.apply_snapshot(&[row.clone()]);
 
     let presentation = scratch.snapshot(&game, 0.5, &view);
     let [draw] = presentation.block_draws else {
@@ -562,6 +600,6 @@ fn a_mob_draw_set_follows_the_interpolated_body_and_clears() {
     assert!((feet.x - body.x).abs() < 1e-4, "{} vs {}", feet.x, body.x);
 
     row.draw = Default::default();
-    game.replicated_mobs.apply(&[row]);
+    game.replicated_mobs.apply_snapshot(&[row]);
     assert!(scratch.snapshot(&game, 0.5, &view).block_draws.is_empty());
 }

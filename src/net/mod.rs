@@ -71,7 +71,12 @@ pub mod remap;
 //     rights key on the identity, not the display name. `JoinRejectReason`
 //     is now `BadProof` / `InvalidName` / `AlreadyConnected` / `ServerFull`
 //     (`NameTaken` is gone — taken names are still auto-suffixed).
-pub const PROTOCOL_VERSION: u16 = 50;
+// 51: interest-scoped entity replication — `TickUpdate` mobs/items/players are
+//     per-recipient `EntityLane`s (despawned ids, spawned rows, updated rows)
+//     over the connection's interest set instead of the whole population,
+//     `player_actions` only for tracked players, and a `SleepTally` for the
+//     server-wide sleep headcount the player rows no longer imply.
+pub const PROTOCOL_VERSION: u16 = 51;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

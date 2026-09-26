@@ -242,11 +242,14 @@ pub struct Game {
     /// `JoinData::players` on a remote join, then maintained by
     /// `PlayerJoined`/`PlayerLeft` broadcasts on every connection kind.
     player_roster: HashMap<petramond::player::PlayerId, String>,
-    /// REPLICATED remote-player store: every OTHER session's
-    /// prev/curr row pair plus its body-pose / held-item animation state —
-    /// what `collect_remote_players` renders bodies from. The local player
-    /// is never in it.
+    /// REPLICATED remote-player store: every OTHER session in this client's
+    /// interest — its prev/curr row pair plus its body-pose / held-item
+    /// animation state, what `collect_remote_players` renders bodies from.
+    /// The local player is never in it.
     remote_players: remote_players::RemotePlayers,
+    /// The server-wide sleep headcount from the latest batch — remote rows
+    /// only cover the players in view, the overlay counts everyone.
+    sleep_tally: petramond::net::protocol::SleepTally,
     /// The latest replicated tick number (`TickUpdate::tick`) — the client's
     /// notion of game time for presentation scheduling.
     replicated_tick: u64,
@@ -493,14 +496,14 @@ impl Game {
         self.self_view.sleeping
     }
 
-    /// `(sleeping, total)` across every connected player — the replicated
-    /// remote rows plus the local self view. The sleep overlay shows
+    /// `(sleeping, total)` across every connected player, the local one
+    /// included — the server's headcount, since remote rows only reach this
+    /// client for the players in its view. The sleep overlay shows
     /// "x/y players sleeping" from this when `total > 1`.
     pub fn sleeping_player_counts(&self) -> (usize, usize) {
-        let self_sleeping = usize::from(self.self_view.sleeping.is_some());
         (
-            self.remote_players.sleeping_count() + self_sleeping,
-            self.remote_players.len() + 1,
+            usize::from(self.sleep_tally.sleeping),
+            usize::from(self.sleep_tally.connected),
         )
     }
 

@@ -1,6 +1,6 @@
 //! Contract tests for the entity + self replication batches:
 //! the pump emits `TickUpdate`s, the client's replicated stores
-//! feed presentation with prev/curr interpolation pairs, absent ids drop, the
+//! feed presentation with prev/curr interpolation pairs, despawned ids drop, the
 //! inventory rides a `SelfState` only when its revision moved, and the HUD
 //! read models mirror session truth through the batch — never by direct read.
 

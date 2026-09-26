@@ -1,6 +1,8 @@
 use crate::net::protocol::ServerToClient;
 use crate::server::chat::ChatTargets;
 
+mod interest;
+
 fn chat_texts(msgs: &[ServerToClient]) -> Vec<String> {
     msgs.iter()
         .filter_map(|m| match m {

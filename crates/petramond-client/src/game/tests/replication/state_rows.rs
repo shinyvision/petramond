@@ -304,7 +304,7 @@ fn break_overlays_collect_own_and_visible_remote_miners() {
         row(2, Some((IVec3::new(5, 64, 5), 2)), false), // hidden: no overlay
         row(3, None, true),                             // not mining: no overlay
     ];
-    game.game.remote_players.apply(&rows, &[], own_id);
+    game.game.remote_players.apply_snapshot(&rows, &[], own_id);
 
     let mut scratch = GamePresentationScratch::new();
     let presentation = scratch.snapshot(

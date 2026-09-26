@@ -11,16 +11,16 @@ use std::collections::HashMap;
 
 use crate::events::{EventBus, TickSystems};
 use crate::modding::ModHost;
-use crate::net::protocol::{
-    ItemStateRow, MobStateRow, PlayerActionKind, PlayerStateRow, ServerToClient, WorldEventMsg,
-};
+use crate::net::protocol::{ServerToClient, SleepTally, WorldEventMsg};
 use crate::player::PlayerId;
 use crate::server::player::ConnectedPlayer;
 use crate::world::World;
 use petramond_math::math::IVec3;
 use petramond_world::crafting::Recipes;
 
+mod entity_rows;
 mod fixed_tick;
+mod interest;
 mod player_actions;
 mod pump;
 mod replication;
@@ -30,6 +30,7 @@ mod stream_events;
 #[cfg(test)]
 mod tests;
 
+pub use interest::EntityInterest;
 pub use replication::wire_world_events;
 
 /// Most fixed ticks run in a single frame before the leftover is dropped. Caps
@@ -57,16 +58,16 @@ pub struct PumpOutput {
 /// bars the next attack itself.
 pub const ATTACK_COOLDOWN_TICKS: u32 = 8;
 
-/// The per-tick replication parts every recipient shares: built once per tick
-/// window by [`ServerGame::shared_tick_rows`], cloned into each recipient's
+/// One tick window's replication parts: built once per window by
+/// [`ServerGame::shared_tick_rows`], cut into each recipient's
 /// [`TickUpdate`](crate::net::protocol::TickUpdate).
 pub struct SharedTickRows {
     tick: u64,
     clock: u64,
-    mobs: std::sync::Arc<[MobStateRow]>,
-    items: std::sync::Arc<[ItemStateRow]>,
-    players: std::sync::Arc<[PlayerStateRow]>,
-    player_actions: std::sync::Arc<[(PlayerId, PlayerActionKind)]>,
+    /// Each session's entity lanes, indexed like `sessions` — selections over
+    /// row tables shared between them.
+    recipients: Vec<entity_rows::RecipientEntities>,
+    sleep_tally: SleepTally,
     open_chests: Vec<IVec3>,
     /// The full shader-param map when anything changed since the last window
     /// (`None` = unchanged) — see [`crate::net::protocol::TickUpdate::env`].

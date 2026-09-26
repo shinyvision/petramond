@@ -38,7 +38,7 @@ fn row(id: u8, pos: WorldPos) -> PlayerStateRow {
 }
 
 fn apply(store: &mut RemotePlayers, rows: &[PlayerStateRow]) {
-    store.apply(rows, &[], PlayerId(0));
+    store.apply_snapshot(rows, &[], PlayerId(0));
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn store_pairs_batches_skips_own_id_and_drops_absent_ids() {
     );
 
     apply(&mut store, &[row(1, p2)]);
-    assert_eq!(store.len(), 1, "id 2 absent from the batch: dropped");
+    assert_eq!(store.len(), 1, "id 2 absent from the snapshot: despawned");
     let paired = store.iter().next().unwrap();
     assert_eq!(
         paired.prev.transform.pos, p1,
@@ -115,7 +115,7 @@ fn a_fired_action_reaches_the_body_animator_exactly_once() {
     let action = PlayerActionKind::Animator { rig: body, event };
     let mut store = RemotePlayers::default();
     // Two batches in one window both carry the row: one edge this frame.
-    store.apply(
+    store.apply_snapshot(
         &[row(1, WorldPos::ZERO)],
         &[(PlayerId(1), action), (PlayerId(1), action)],
         PlayerId(0),

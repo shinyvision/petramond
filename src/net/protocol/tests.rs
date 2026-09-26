@@ -299,16 +299,24 @@ fn tick_updates_roundtrip() {
             draw: Default::default(),
         }]
         .into(),
-        items: vec![ItemStateRow {
-            id: 7,
-            item_id: 3,
-            count: 12,
-            data: None,
-            pos: WorldPos::new(0.5, 65.0, 0.5),
-            spin: 1.25,
-            flight: None,
-        }]
-        .into(),
+        items: EntityLane {
+            despawned: vec![3, 5],
+            spawned: vec![ItemStateRow {
+                id: 7,
+                item_id: 3,
+                count: 12,
+                data: None,
+                pos: WorldPos::new(0.5, 65.0, 0.5),
+                spin: 1.25,
+                flight: None,
+            }]
+            .into(),
+            updated: RowSet::default(),
+        },
+        sleep_tally: SleepTally {
+            sleeping: 1,
+            connected: 3,
+        },
         players: vec![PlayerStateRow {
             conditions: Vec::new(),
             id: PlayerId(1),
@@ -522,4 +530,70 @@ fn wire_block_cubes_carry_ids_past_one_byte() {
         let back: SectionPayload = postcard::from_bytes(&bytes).expect("decode");
         assert_eq!(&back.blocks.0[..], &cells[..], "{} cells", cells.len());
     }
+}
+
+fn item(id: u64, x: f64) -> ItemStateRow {
+    ItemStateRow {
+        id,
+        item_id: 1,
+        count: 1,
+        data: None,
+        pos: WorldPos::new(x, 64.0, 0.0),
+        spin: 0.0,
+        flight: None,
+    }
+}
+
+/// A selection over a shared table encodes ONLY its picks, in pick order, and
+/// decodes to an owned set equal to it.
+#[test]
+fn a_row_selection_encodes_only_its_picks() {
+    let table: Arc<[ItemStateRow]> = (0..6).map(|i| item(i, i as f64)).collect::<Vec<_>>().into();
+    let picked = RowSet::select(Arc::clone(&table), vec![1, 4]);
+    let owned: RowSet<ItemStateRow> = vec![item(1, 1.0), item(4, 4.0)].into();
+    assert_eq!(
+        postcard::to_allocvec(&picked).unwrap(),
+        postcard::to_allocvec(&owned).unwrap(),
+        "the wire never sees the table"
+    );
+    let back: RowSet<ItemStateRow> =
+        postcard::from_bytes(&postcard::to_allocvec(&picked).unwrap()).unwrap();
+    assert_eq!(back, picked);
+    assert_eq!(back.iter().map(|r| r.id).collect::<Vec<_>>(), [1, 4]);
+}
+
+/// Folding consecutive lanes equals applying them in order: a despawn wipes
+/// the older row, a re-entry stays a spawn, the newest row per id wins.
+#[test]
+fn absorbing_a_newer_lane_composes_spawns_updates_and_despawns() {
+    let mut lane: ItemLane = EntityLane {
+        despawned: vec![9],
+        spawned: vec![item(1, 0.0)].into(),
+        updated: vec![item(2, 0.0), item(3, 0.0)].into(),
+    };
+    lane.absorb(EntityLane {
+        despawned: vec![3, 1],
+        spawned: vec![item(3, 5.0)].into(),
+        updated: vec![item(2, 1.0)].into(),
+    });
+    assert_eq!(lane.despawned, [1, 3, 9]);
+    let ids =
+        |rows: &RowSet<ItemStateRow>| rows.iter().map(|r| (r.id, r.pos.x)).collect::<Vec<_>>();
+    assert_eq!(ids(&lane.spawned), [(3, 5.0)], "3 left and came back");
+    assert_eq!(
+        ids(&lane.updated),
+        [(2, 1.0)],
+        "1 is gone; 2 took its newest row"
+    );
+
+    lane.absorb(EntityLane {
+        despawned: Vec::new(),
+        spawned: RowSet::default(),
+        updated: vec![item(3, 6.0)].into(),
+    });
+    assert_eq!(
+        ids(&lane.spawned),
+        [(3, 6.0)],
+        "an update after a spawn in the span is still a spawn"
+    );
 }

@@ -129,10 +129,11 @@ pub struct ItemStateRow {
     pub flight: Option<[f32; 3]>,
 }
 
-/// One connected player's replicated state as of the batch's tick — EVERY
-/// session's row is sent to every recipient (bytes are trivial); the client
-/// skips its OWN id (the local body renders from the predicted player). Light
-/// is client-sampled at `pos`, like mobs and items.
+/// One connected player's replicated state as of the batch's tick — sent for
+/// every session in the recipient's interest, which always includes the
+/// recipient itself; the client skips its OWN row for the body (the local
+/// body renders from the predicted player) but reads its mount. Light is
+/// client-sampled at `pos`, like mobs and items.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlayerStateRow {
     /// Visible body-condition stages `(condition id, stage)`, independent of
@@ -184,8 +185,9 @@ pub struct PlayerStateRow {
     /// The resolved rig-bone offsets — what makes a raised arm visible on
     /// somebody else's body. Empty on ordinary rows.
     ///
-    /// Rig IDS, not names: this row ships for every player every tick, and a
-    /// bone name is authoring vocabulary with no business on the wire.
+    /// Rig IDS, not names: this row ships for every tracked player every
+    /// tick, and a bone name is authoring vocabulary with no business on the
+    /// wire.
     pub bone_poses: Vec<crate::player::BonePose>,
     /// The resolved animator claims on this body's OBSERVED rigs (params
     /// set, slots played) — rig, graph and library ids, remapped by name at
@@ -536,22 +538,25 @@ pub struct TickUpdate {
     pub cell_kv_deltas: Vec<CellKvDelta>,
     /// This window's changed mod draw sets (see [`BlockDrawDelta`]).
     pub block_draws: Vec<BlockDrawDelta>,
-    /// Every live mob's state (interest scoping lands with per-player
-    /// streaming).
+    /// The mobs in the recipient's interest: spawns, despawns and updates
+    /// against what it already tracks (see [`EntityLane`]).
     ///
-    /// These four are IDENTICAL for every recipient of a tick window, so the
-    /// server builds them once and every batch shares the one allocation
-    /// instead of deep-copying every entity row per connected player. In
-    /// process that is the whole cost; on the wire each connection still
-    /// encodes its own copy.
-    pub mobs: std::sync::Arc<[MobStateRow]>,
-    /// Every active dropped item's state.
-    pub items: std::sync::Arc<[ItemStateRow]>,
-    /// Every connected session's player state (recipient included — the
-    /// client skips its own id).
-    pub players: std::sync::Arc<[PlayerStateRow]>,
-    /// This window's one-shot player animation events, in emission order.
+    /// The three entity lanes select rows out of tables the server builds
+    /// once per tick window, so an entity tracked by many recipients costs
+    /// one row plus a refcount bump per batch in process; on the wire each
+    /// connection encodes only its own selection.
+    pub mobs: super::MobLane,
+    /// The dropped items in the recipient's interest.
+    pub items: super::ItemLane,
+    /// The players in the recipient's interest — always including the
+    /// recipient itself (the client reads its own mount from that row).
+    pub players: super::PlayerLane,
+    /// This window's one-shot player animation events of the players in
+    /// the recipient's interest, in emission order.
     pub player_actions: std::sync::Arc<[(PlayerId, PlayerActionKind)]>,
+    /// How many connected players are asleep, out of how many — every
+    /// session, tracked or not (the sleep overlay's "x/y players sleeping").
+    pub sleep_tally: SleepTally,
     /// The recipient's own player state (per-recipient; in-process there is
     /// one recipient — session 0).
     pub self_state: Option<SelfState>,
@@ -578,6 +583,14 @@ pub struct TickUpdate {
     pub schematics: Vec<crate::schematic::share::SchematicNotice>,
     /// The recipient's menu-session view when it changed (`None` = unchanged).
     pub menu_sync: Option<MenuSyncMsg>,
+}
+
+/// The server-wide sleep headcount a [`TickUpdate`] carries: player rows only
+/// reach recipients that track the player, but the overlay counts everyone.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SleepTally {
+    pub sleeping: u16,
+    pub connected: u16,
 }
 
 /// What a fired burst's particles are cut from. A tile travels by NAME (tiles

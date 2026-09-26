@@ -1,8 +1,7 @@
 use crate::events::tick::{TickEvents, WorldEvents};
 use crate::net::protocol::{
-    BlockDelta, ClientEventMsg, ItemSlotWire, ItemStateRow, MobStateRow, OpenScreen,
-    PlayerStateRow, SelfEvents, SelfState, SelfTransform, SpatialSoundMsg, TickUpdate, Transform,
-    WorldEventMsg,
+    BlockDelta, ClientEventMsg, ItemSlotWire, OpenScreen, SelfEvents, SelfState, SelfTransform,
+    SleepTally, SpatialSoundMsg, TickUpdate, Transform, WorldEventMsg,
 };
 use petramond_math::math::IVec3;
 use petramond_world::inventory::Hand;
@@ -10,140 +9,17 @@ use petramond_world::inventory::Hand;
 use super::{ServerGame, SharedTickRows};
 
 impl ServerGame {
-    /// The per-tick batch parts every recipient shares, built once per window
-    /// and cheaply cloned per recipient (small rows; `SectionBytes` never
-    /// rides here). `&mut` for the env-diff bookkeeping only.
+    /// The per-tick batch parts, built once per window: the parts every
+    /// recipient shares, and each recipient's entity lanes — which advance
+    /// every session's interest set, so every session must be sent this
+    /// window's batch. Entity rows are built once and shared across the
+    /// lanes that select them (`SectionBytes` never rides here).
     pub fn shared_tick_rows(&mut self, events: &TickEvents) -> SharedTickRows {
-        let now = self.world.current_tick();
-        let mobs = self
-            .world
-            .mobs()
-            .instances()
-            .iter()
-            .map(|m| MobStateRow {
-                id: m.id(),
-                kind_id: m.kind.0,
-                pos: m.pos,
-                yaw: m.yaw,
-                tilt: m.tilt,
-                anim_time: m.anim_time,
-                moving: m.moving,
-                idle_anim: m.idle_anim,
-                head_yaw: m.head_yaw,
-                head_pitch: m.head_pitch,
-                hurt_timer: m.hurt_timer(),
-                dead: m.is_dead(),
-                shorn: m.is_shorn(),
-                emitters: m.active_emitters().to_vec(),
-                conditions: condition_stages(m.exposure().conditions()),
-                anims: m
-                    .active_anims()
-                    .iter()
-                    .map(|l| (l.name.clone(), l.phase))
-                    .collect(),
-                // Present only while the death ragdoll plays (bounded): the
-                // pose as of this tick (alpha 1.0); the client interpolates
-                // consecutive batches.
-                ragdoll: m.ragdoll_pose(1.0).map(|pose| {
-                    pose.into_iter()
-                        .map(|(p, q)| (p.to_array(), q.to_array()))
-                        .collect()
-                }),
-                dig: m.dig_overlay(now),
-                held: m.held().map(|item| item.map(|item| item.0)),
-                draw: m.draw().clone(),
-            })
-            .collect();
-        let items = self
-            .world
-            .item_entities()
-            .iter()
-            .map(|it| ItemStateRow {
-                id: it.id,
-                item_id: it.stack.item.0,
-                count: it.stack.count,
-                data: petramond_world::item::variant::blob(it.stack.variant).map(|b| (*b).clone()),
-                pos: it.pos,
-                spin: it.spin,
-                flight: it.heading().map(|h| [h.yaw, h.pitch, it.vel.length()]),
-            })
-            .collect();
-        // Player rows: EVERY session, to every recipient (the client skips
-        // its own id). `hurt_recent` ships the damage EDGE — sessions track
-        // no hurt timer; each client runs its own flash envelope.
-        let players = self
-            .sessions
-            .iter()
-            .enumerate()
-            .map(|(s, sess)| {
-                let alive = sess.player.health() > 0;
-                PlayerStateRow {
-                    conditions: condition_stages(sess.player.conditions()),
-                    id: sess.id,
-                    transform: Transform {
-                        pos: sess.player.pos,
-                        vel: sess.player.vel,
-                        yaw: sess.player.yaw,
-                        pitch: sess.player.pitch,
-                    },
-                    on_ground: sess.player.on_ground,
-                    sneaking: sess.sneaking(),
-                    sleeping: sess.sleep.is_some(),
-                    sleep_yaw: self.sleep_head_yaw(s),
-                    alive,
-                    visible: alive && !sess.player.is_spectator(),
-                    held_item: sess.selected_item().map(|item| item.0),
-                    held_data: sess
-                        .player
-                        .inventory
-                        .selected()
-                        .and_then(|st| petramond_world::item::variant::blob(st.variant))
-                        .map(|b| (*b).clone()),
-                    off_hand_item: sess.player.inventory.off_hand().map(|st| st.item.0),
-                    off_hand_data: sess
-                        .player
-                        .inventory
-                        .off_hand()
-                        .and_then(|st| petramond_world::item::variant::blob(st.variant))
-                        .map(|b| (*b).clone()),
-                    // The same overlay state `SelfState::mining` ships for the
-                    // player's own hand: target cell + crack stage. Observers
-                    // derive the arm-swing flag AND the remote crack overlay.
-                    mining: sess.mining.overlay(),
-                    eating: sess.eating.is_some(),
-                    eating_off_hand: sess
-                        .eating
-                        .as_ref()
-                        .is_some_and(|eat| eat.hand == petramond_world::inventory::Hand::Off),
-                    // Mod-set held-item poses (`SetPlayerHeldPose`), already
-                    // resolved across mods — this is what makes a raised
-                    // guard visible on somebody ELSE's body.
-                    held_pose_main: sess.player.claims.held_pose(Hand::Main),
-                    held_pose_off: sess.player.claims.held_pose(Hand::Off),
-                    held_display: [
-                        sess.player.claims.held_display(Hand::Main).map(|i| i.0),
-                        sess.player.claims.held_display(Hand::Off).map(|i| i.0),
-                    ],
-                    bone_poses: sess.player.claims.bone_poses().collect(),
-                    animator: {
-                        let mut claims = sess.player.claims.animator().clone();
-                        claims.retain_observed();
-                        claims
-                    },
-                    hurt_recent: events.player_at(s).player_damaged,
-                    snap: sess.tick_teleported,
-                    mount: sess
-                        .mount
-                        .map(crate::net::protocol::PlayerMount::from_mount),
-                }
-            })
-            .collect();
-        let mut player_actions = Vec::new();
-        for (s, sess) in self.sessions.iter().enumerate() {
-            super::player_actions::player_action_kinds(events.player_at(s), |kind| {
-                player_actions.push((sess.id, kind))
-            });
-        }
+        let recipients = self.entity_lanes(events);
+        let sleep_tally = SleepTally {
+            sleeping: self.sessions.iter().filter(|s| s.sleep.is_some()).count() as u16,
+            connected: self.sessions.len() as u16,
+        };
         // Full open-chest state per batch (chest_viewers keys; tiny), sorted
         // so the wire batch is deterministic.
         let mut open_chests: Vec<IVec3> = self.chest_viewers.keys().copied().collect();
@@ -167,19 +43,17 @@ impl ServerGame {
         SharedTickRows {
             tick: self.world.current_tick(),
             clock: crate::server::daynight::current_clock(&self.world),
-            mobs,
-            items,
-            players,
-            player_actions: player_actions.into(),
+            recipients,
+            sleep_tally,
             open_chests,
             env,
         }
     }
 
-    /// Build one recipient's replication batch: the shared rows (all mobs and
-    /// dropped items as of the latest tick — interest scoping lands with
-    /// per-player streaming), the window's coalesced block deltas restricted
-    /// to the recipient's sent sections, the window's world events + session
+    /// Build one recipient's replication batch: its entity lanes (the mobs,
+    /// dropped items and players in its interest as of the latest tick), the
+    /// window's coalesced block deltas restricted to the recipient's sent
+    /// sections, the window's world events + session
     /// `s`'s one-shots, its menu sync (when changed), and its own state.
     pub fn build_tick_update(
         &mut self,
@@ -191,6 +65,7 @@ impl ServerGame {
         draw_deltas: &[crate::net::protocol::BlockDrawDelta],
         shared: &SharedTickRows,
     ) -> TickUpdate {
+        let entities = &shared.recipients[s];
         // Per-recipient delta filter: only sections this client holds.
         let mut block_deltas: Vec<BlockDelta> = deltas
             .iter()
@@ -257,11 +132,13 @@ impl ServerGame {
             clock: shared.clock,
             block_deltas,
             cell_kv_deltas,
-            // Refcount bumps, not deep copies: see `TickUpdate::mobs`.
-            mobs: std::sync::Arc::clone(&shared.mobs),
-            items: std::sync::Arc::clone(&shared.items),
-            players: std::sync::Arc::clone(&shared.players),
-            player_actions: std::sync::Arc::clone(&shared.player_actions),
+            // Refcount bumps plus index lists, not deep copies: see
+            // `TickUpdate::mobs`.
+            mobs: entities.mobs.clone(),
+            items: entities.items.clone(),
+            players: entities.players.clone(),
+            player_actions: std::sync::Arc::clone(&entities.player_actions),
+            sleep_tally: shared.sleep_tally,
             self_state: Some(self.build_self_state(s)),
             open_chests: shared.open_chests.clone(),
             env: shared.env.clone(),
@@ -621,7 +498,9 @@ pub fn wire_world_events(world: &mut WorldEvents) -> Vec<WorldEventMsg> {
 }
 
 /// A body's replicated condition stages: `(condition id, stage)` in id order.
-fn condition_stages(conditions: &petramond_world::condition::BodyConditions) -> Vec<(u8, u8)> {
+pub(super) fn condition_stages(
+    conditions: &petramond_world::condition::BodyConditions,
+) -> Vec<(u8, u8)> {
     conditions
         .active()
         .iter()

@@ -83,7 +83,11 @@ fn player_conditions_replicate_and_damage_sources_remain_distinct() {
     );
     assert!(server.sessions[0].player.effects().is_empty());
     assert!(!server.build_self_state(0).conditions.is_empty());
-    assert!(!replicated(&mut server, &events).players[0]
+    assert!(!replicated(&mut server, &events)
+        .players
+        .iter()
+        .next()
+        .expect("the recipient's own row")
         .conditions
         .is_empty());
 
@@ -179,7 +183,11 @@ fn a_mob_keeps_a_contact_condition_and_its_emitter_after_leaving_the_fluid() {
         .get(condition())
         .unwrap()
         .clone();
-    assert!(replicated(&mut server, &TickEvents::default()).mobs[0]
+    assert!(replicated(&mut server, &TickEvents::default())
+        .mobs
+        .iter()
+        .next()
+        .expect("the mob is in view")
         .conditions
         .contains(&(condition().0, active.stage())));
     server.world.set_block_world(8, 65, 8, Block::Air);

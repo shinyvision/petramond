@@ -19,6 +19,7 @@ use petramond_world::chunk::{ChunkPos, SectionPos};
 
 mod actions;
 mod chat;
+mod entities;
 mod join;
 mod menu;
 mod state;
@@ -29,6 +30,7 @@ mod tests;
 
 pub use actions::*;
 pub use chat::*;
+pub use entities::*;
 pub use join::*;
 pub use menu::*;
 pub use state::*;

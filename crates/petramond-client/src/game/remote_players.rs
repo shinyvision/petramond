@@ -4,8 +4,9 @@
 //!
 //! Fed by the per-tick [`TickUpdate`](petramond::net::protocol::TickUpdate)
 //! batches like the mob/item stores (`game/replicated.rs`): prev/curr row
-//! pairs interpolate at `tick_alpha`, absent ids drop, `snap` rows skip
-//! interpolation (tick-side teleports). On top of the rows each remote owns
+//! pairs interpolate at `tick_alpha`, a remote lives here from its spawn into
+//! this client's interest to its despawn (out of view, or left the game),
+//! `snap` rows skip interpolation (tick-side teleports). On top of the rows each remote owns
 //! the SAME drivers the local player uses — the shared [`BodyPose`] (walk
 //! cycle + body-yaw follow), an eased held view per hand, and the two hand
 //! FRAMES its renderer-owned body animator reads — advanced once per frame
@@ -21,7 +22,7 @@
 
 use std::collections::BTreeMap;
 
-use petramond::net::protocol::{PlayerActionKind, PlayerStateRow};
+use petramond::net::protocol::{PlayerActionKind, PlayerLane, PlayerStateRow};
 use petramond::player::{AnimatorClock, AnimatorPlay, PlayerId, RigId};
 use petramond_render::{HeldItemEase, HeldItemFrame, HeldItemView};
 
@@ -135,6 +136,21 @@ fn present_plays(
 }
 
 impl RemotePlayer {
+    /// Adopt the next row; `snap` (the row's own, or a forced resync) skips
+    /// interpolation across the jump.
+    fn advance(&mut self, row: &PlayerStateRow, snap: bool) {
+        if snap || row.snap {
+            self.prev = row.clone();
+            self.curr = row.clone();
+            self.pose.reset_facing(row.transform.yaw);
+        } else {
+            self.prev = std::mem::replace(&mut self.curr, row.clone());
+        }
+        if row.hurt_recent {
+            self.hurt_t = HURT_FLASH_SECS;
+        }
+    }
+
     fn new(row: PlayerStateRow) -> Self {
         let mut pose = BodyPose::default();
         pose.reset_facing(row.transform.yaw);
@@ -189,40 +205,35 @@ pub struct RemotePlayers {
 }
 
 impl RemotePlayers {
-    /// Apply one batch: a known id shifts curr→prev and adopts the new row
-    /// (`snap` rows adopt into BOTH so no frame interpolates across the
-    /// teleport, and the pose re-faces the landing yaw); a fresh id starts
-    /// with prev == curr; an id absent from the batch dropped (left). The
+    /// Apply one lane (see [`super::replicated::apply_lane`]): an update
+    /// shifts curr→prev and adopts the new row (`snap` rows adopt into BOTH
+    /// so no frame interpolates across the teleport, and the pose re-faces
+    /// the landing yaw), a spawn starts with prev == curr, a despawn drops
+    /// the remote. `resync` snaps every row (a folded backlog). The
     /// recipient's OWN id is skipped entirely — the local body renders from
     /// the existing predicted-player path.
     pub fn apply(
         &mut self,
-        players: &[PlayerStateRow],
+        players: &PlayerLane,
         actions: &[(PlayerId, PlayerActionKind)],
         self_id: PlayerId,
+        resync: bool,
     ) {
-        let mut old = std::mem::take(&mut self.map);
-        for row in players {
-            if row.id == self_id {
-                continue;
-            }
-            let mut entry = old
-                .remove(&row.id)
-                .unwrap_or_else(|| RemotePlayer::new(row.clone()));
-            entry.prev = if row.snap {
-                row.clone()
-            } else {
-                entry.curr.clone()
-            };
-            if row.snap {
-                entry.pose.reset_facing(row.transform.yaw);
-            }
-            entry.curr = row.clone();
+        let spawn = |row: &PlayerStateRow| {
+            let mut entry = RemotePlayer::new(row.clone());
             if row.hurt_recent {
                 entry.hurt_t = HURT_FLASH_SECS;
             }
-            self.map.insert(row.id, entry);
-        }
+            entry
+        };
+        super::replicated::apply_lane(
+            &mut self.map,
+            players,
+            |row| row.id != self_id,
+            spawn,
+            |entry, row| entry.advance(row, resync),
+            |entry| entry.prev.clone_from(&entry.curr),
+        );
         // `Died`/`Respawned` need no edge: the `visible` flag and `snap`
         // carry their presentation.
         for (id, kind) in actions {
@@ -232,6 +243,19 @@ impl RemotePlayers {
                 }
             }
         }
+    }
+
+    /// [`apply`](Self::apply) a full row snapshot (see
+    /// [`super::replicated::snapshot_lane`]).
+    #[cfg(test)]
+    pub fn apply_snapshot(
+        &mut self,
+        players: &[PlayerStateRow],
+        actions: &[(PlayerId, PlayerActionKind)],
+        self_id: PlayerId,
+    ) {
+        let lane = super::replicated::snapshot_lane(self.map.keys().copied(), players);
+        self.apply(&lane, actions, self_id, false);
     }
 
     /// One frame of presentation state for every remote: the shared body pose

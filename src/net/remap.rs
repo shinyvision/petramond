@@ -293,7 +293,7 @@ impl IdRemap {
                 // Unknown mob/item rows are DROPPED (skip semantics — a
                 // disabled server-side mod's residue), like every non-block
                 // unknown.
-                t.mobs = retain_shared(&t.mobs, |m| match self.mob(m.kind_id) {
+                t.mobs.retain_rows_mut(|m| match self.mob(m.kind_id) {
                     Some(id) => {
                         m.kind_id = id;
                         self.remap_conditions(&mut m.conditions);
@@ -315,7 +315,7 @@ impl IdRemap {
                     }
                     None => false,
                 });
-                t.items = retain_shared(&t.items, |i| match self.item(i.item_id) {
+                t.items.retain_rows_mut(|i| match self.item(i.item_id) {
                     Some(id) => {
                         i.item_id = id;
                         true
@@ -328,7 +328,7 @@ impl IdRemap {
                 // graph ids. Of the `player_actions` kinds only the fired
                 // graph event carries one; `env` entries are param NAME
                 // strings + floats.
-                t.players = retain_shared(&t.players, |p| {
+                t.players.retain_rows_mut(|p| {
                     self.remap_conditions(&mut p.conditions);
                     p.held_item = p.held_item.and_then(|id| self.item(id));
                     p.off_hand_item = p.off_hand_item.and_then(|id| self.item(id));
@@ -963,13 +963,14 @@ mod tests {
             unreachable!()
         };
         assert_eq!(t.mobs.len(), 1, "the unknown mob row is dropped");
-        assert_eq!(t.mobs[0].kind_id, 0);
+        assert_eq!(t.mobs.iter().next().unwrap().kind_id, 0);
         assert_eq!(t.items.len(), 1, "the unknown item row is dropped");
-        assert_eq!(t.items[0].item_id, 2);
-        assert_eq!(t.players.len(), 2, "player rows are never dropped");
-        assert_eq!(t.players[0].held_item, Some(2));
+        assert_eq!(t.items.iter().next().unwrap().item_id, 2);
+        let players: Vec<_> = t.players.iter().collect();
+        assert_eq!(players.len(), 2, "player rows are never dropped");
+        assert_eq!(players[0].held_item, Some(2));
         assert_eq!(
-            t.players[1].held_item, None,
+            players[1].held_item, None,
             "an unknown held item reads as an empty hand"
         );
         let s = t.self_state.as_ref().expect("self state kept");
