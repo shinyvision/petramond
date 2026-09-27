@@ -32,8 +32,20 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 
 /// The production part of a source file: everything before its test module.
 fn production(text: &str) -> &str {
-    text.find("#[cfg(test)]\nmod ")
+    ["#[cfg(test)]\nmod ", "#[cfg(test)]\r\nmod "]
+        .into_iter()
+        .filter_map(|marker| text.find(marker))
+        .min()
         .map_or(text, |end| &text[..end])
+}
+
+#[test]
+fn production_stops_at_test_module_with_either_line_ending() {
+    for newline in ["\n", "\r\n"] {
+        let prefix = format!("fn production_code() {{}}{newline}");
+        let source = format!("{prefix}#[cfg(test)]{newline}mod tests {{ ShapeFamily::Cube }}");
+        assert_eq!(production(&source), prefix);
+    }
 }
 
 #[test]
