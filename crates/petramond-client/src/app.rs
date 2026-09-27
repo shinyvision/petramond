@@ -146,6 +146,7 @@ pub struct App {
     /// The content library: listing, downloads, pending changes, and the
     /// browser's own state while it is open.
     content: content::ContentSession,
+    content_apply_requested: bool,
     renderer_world_clear_pending: bool,
     /// The presented world jumped in time (an apply restated it): the renderer
     /// drops what presents its moment and keeps its terrain.
@@ -227,6 +228,7 @@ impl App {
             content_report: Default::default(),
             start_route: content::StartRoute::take_from_env(),
             content: Default::default(),
+            content_apply_requested: false,
             renderer_world_clear_pending: true,
             renderer_moment_clear_pending: false,
             media: Default::default(),

@@ -317,6 +317,7 @@ impl App {
             ShellCommand::LeaveModsMissing => self.leave_mods_missing(),
             ShellCommand::OpenContent { back, filter } => self.open_content(back, filter),
             ShellCommand::CloseContent => self.close_content(),
+            ShellCommand::ApplyContent => self.request_content_apply(),
             ShellCommand::OpenAccount(status) => self.open_account(status),
             ShellCommand::LeaveAccount => self.leave_account(),
             ShellCommand::OpenAccountSignIn => self.open_account_sign_in(),

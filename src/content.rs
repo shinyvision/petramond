@@ -7,11 +7,11 @@
 //! The content library's engine half: which tier an installed pack is, the
 //! install records, the website's listing and downloads, the guarded archive
 //! reader, staging a download as a pending change, and applying pending
-//! changes at startup under the content lock.
+//! changes under the content lock.
 //!
-//! Nothing on disk changes under a running game: installs, updates and
-//! removals are STAGED, and the next startup applies them before pack
-//! discovery. The screen that drives all this is the client's; nothing here
+//! Installs, updates and removals are staged, then applied between world
+//! sessions (or at startup) before a new content registry is installed.
+//! The screen that drives all this is the client's; nothing here
 //! knows what it looks like. Every network call BLOCKS, so callers run them
 //! on worker threads.
 

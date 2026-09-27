@@ -424,6 +424,17 @@ impl Solver<'_, '_, '_> {
             natural.1 = p;
         }
         let content_h = natural.1;
+        if matches!(
+            node.kind,
+            NodeKind::Scroll {
+                axis: ScrollAxis::Horizontal
+            }
+        ) && matches!(l.h, Size::Auto)
+            && l.reserve_scrollbar
+        {
+            // An auto-height horizontal scroll owns its reserved lane too.
+            natural.1 += self.env.scrollbar_width();
+        }
         natural.1 = clamp_opt(natural.1, l.min_h, l.max_h);
         // A vertical scroll its own cap makes overflow already knows it will
         // show its bar: the lane belongs in its natural width, not carved out
@@ -434,7 +445,7 @@ impl Solver<'_, '_, '_> {
                 axis: ScrollAxis::Vertical
             }
         ) && matches!(l.w, Size::Auto)
-            && natural.1 < content_h
+            && (natural.1 < content_h || l.reserve_scrollbar)
         {
             natural.0 += self.env.scrollbar_width();
         }
@@ -742,7 +753,7 @@ impl Solver<'_, '_, '_> {
                 ScrollAxis::Vertical => (rect.h, pad[1] + pad[3]),
                 ScrollAxis::Horizontal => (rect.w, pad[0] + pad[2]),
             };
-            if flow_len + pad_axis > viewport_len {
+            if l.reserve_scrollbar || flow_len + pad_axis > viewport_len {
                 let bar = self.env.scrollbar_width();
                 match axis {
                     ScrollAxis::Vertical => avail.w = (avail.w - bar).max(0),

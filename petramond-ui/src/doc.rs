@@ -808,6 +808,10 @@ pub struct LayoutProps {
     /// viewport width), everything else starts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub align: Option<Align>,
+    /// Keep a scroll's bar lane reserved even while its contents fit, so
+    /// children do not change width when the bar appears.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub reserve_scrollbar: bool,
     pub justify: Justify,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_w: Option<i32>,
@@ -841,6 +845,7 @@ impl Default for LayoutProps {
             gap: 0,
             dir: Dir::Column,
             align: None,
+            reserve_scrollbar: false,
             justify: Justify::Start,
             min_w: None,
             min_h: None,

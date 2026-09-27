@@ -20,6 +20,14 @@ fn frame_period(fps: u32) -> Duration {
     Duration::from_nanos(1_000_000_000 / fps.clamp(10, 240) as u64)
 }
 
+fn client_content_stages() -> [&'static dyn petramond_world::content::Stage; 3] {
+    [
+        &petramond_audio::music_registry::CATALOG,
+        &crate::animation::locomotion::TABLE,
+        petramond_render::atlas::stage(),
+    ]
+}
+
 pub fn run() {
     petramond::platform::init_logging();
     // Staged content changes land before any pack is discovered; the lock
@@ -29,12 +37,7 @@ pub fn run() {
     // Every content catalog loads here, once, before anything touches one: a
     // bad pack is a load report on stderr, not a panic on whichever thread
     // first read a catalog.
-    let client_stages: [&'static dyn petramond_world::content::Stage; 3] = [
-        &petramond_audio::music_registry::CATALOG,
-        &crate::animation::locomotion::TABLE,
-        petramond_render::atlas::stage(),
-    ];
-    if let Err(e) = petramond::content::install_from_env(&client_stages) {
+    if let Err(e) = petramond::content::install_from_env(&client_content_stages()) {
         eprintln!("{e}");
         std::process::exit(1);
     }
@@ -60,6 +63,7 @@ pub fn run() {
         .unwrap_or(client.fps_cap);
     let mut host = NativeHost::new(seed, rd, fps, client.menu_fps_cap.min(fps));
     host.content_report = Some(content_report);
+    host.content_lock = content_lock;
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
     event_loop.run_app(&mut host).unwrap();
@@ -70,6 +74,7 @@ pub fn run() {
         app.save_on_exit();
         app.take_relaunch()
     });
+    let content_lock = host.content_lock.take();
     drop(host);
     // What mods queued to their files (the instances' closing syncs
     // included) reaches the disk before the I/O threads die with the
@@ -114,6 +119,7 @@ struct NativeHost {
     refresh_mhz: Option<u32>,
     /// The startup content apply's report, handed to the app once it exists.
     content_report: Option<petramond::content::ApplyReport>,
+    content_lock: Option<petramond::content::ContentLock>,
 }
 
 impl NativeHost {
@@ -139,7 +145,61 @@ impl NativeHost {
             modifiers: Modifiers::default(),
             refresh_mhz: None,
             content_report: None,
+            content_lock: None,
         }
+    }
+
+    fn apply_content(&mut self, event_loop: &ActiveEventLoop) {
+        let dirs = petramond::content::Dirs::installed();
+        if self.content_lock.is_none() {
+            self.content_lock = petramond::content::ContentLock::shared(&dirs).ok();
+        }
+        let Some(lock) = self.content_lock.as_mut() else {
+            if let Some(app) = self.app.as_mut() {
+                app.content_applied(petramond::content::ApplyReport {
+                    failed: vec![(
+                        "content lock".into(),
+                        "could not open the content lock".into(),
+                    )],
+                    ..Default::default()
+                });
+            }
+            return;
+        };
+        let report = petramond::content::install::apply_pending_live(&dirs, lock);
+        if !report.applied.is_empty() {
+            if let Err(error) = petramond::content::install_from_env(&client_content_stages()) {
+                log::error!("installed content failed to load: {error}");
+                eprintln!("Petramond cannot load the installed content: {error}");
+                event_loop.exit();
+                return;
+            }
+            petramond::modding::clear_module_cache();
+            petramond::gui::doc_theme::reload();
+            petramond::gui::documents::reload();
+            let Some(window) = self.window.clone() else {
+                return;
+            };
+            self.renderer = None;
+            let size = window.inner_size();
+            match pollster::block_on(new_renderer_from_target(window, size.width, size.height)) {
+                Ok(mut renderer) => {
+                    if let Some(app) = self.app.as_mut() {
+                        app.renderer_recreated(&mut renderer);
+                    }
+                    self.renderer = Some(renderer);
+                }
+                Err(error) => {
+                    fatal_render_error(event_loop, &error);
+                    return;
+                }
+            }
+            petramond::modding::prewarm_modules();
+        }
+        if let Some(app) = self.app.as_mut() {
+            app.content_applied(report);
+        }
+        self.next_update = Instant::now();
     }
 
     /// React to a failure the renderer reported. A lost device gets a new
@@ -457,6 +517,14 @@ impl ApplicationHandler for NativeHost {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self
+            .app
+            .as_mut()
+            .is_some_and(App::take_content_apply_requested)
+        {
+            self.apply_content(event_loop);
+            return;
+        }
         let (Some(app), Some(renderer)) = (self.app.as_mut(), self.renderer.as_mut()) else {
             return;
         };

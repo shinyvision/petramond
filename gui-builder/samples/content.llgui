@@ -269,6 +269,7 @@
                     ],
                     "gap": 0,
                     "dir": "column",
+                    "reserve_scrollbar": true,
                     "justify": "start",
                     "min_h": 60
                   },
@@ -408,14 +409,17 @@
                                     ],
                                     "gap": 0,
                                     "dir": "column",
-                                    "justify": "end"
+                                    "align": "stretch",
+                                    "justify": "start"
                                   },
                                   "children": [
                                     {
                                       "id": "message_action",
                                       "type": "button",
                                       "layout": {
-                                        "w": 72,
+                                        "w": {
+                                          "grow": 1
+                                        },
                                         "h": "auto",
                                         "pad": [
                                           0,
@@ -433,6 +437,7 @@
                                         "dir": "column",
                                         "justify": "start"
                                       },
+                                      "style": "button.success",
                                       "bind": {
                                         "text": "message_action_text",
                                         "visible": "has_message_action"
@@ -778,7 +783,7 @@
                                 {
                                   "type": "column",
                                   "layout": {
-                                    "w": 64,
+                                    "w": 92,
                                     "h": "auto",
                                     "pad": [
                                       0,
@@ -854,33 +859,6 @@
                                       }
                                     },
                                     {
-                                      "id": "undo",
-                                      "type": "button",
-                                      "icon": "icon.undo",
-                                      "layout": {
-                                        "w": 24,
-                                        "h": 24,
-                                        "pad": [
-                                          0,
-                                          0,
-                                          0,
-                                          0
-                                        ],
-                                        "margin": [
-                                          0,
-                                          0,
-                                          0,
-                                          0
-                                        ],
-                                        "gap": 0,
-                                        "dir": "column",
-                                        "justify": "start"
-                                      },
-                                      "bind": {
-                                        "visible": "can_undo"
-                                      }
-                                    },
-                                    {
                                       "type": "gauge",
                                       "mode": "grow_lr",
                                       "layout": {
@@ -907,31 +885,58 @@
                                         "value": "progress",
                                         "visible": "busy"
                                       }
-                                    }
-                                  ]
-                                },
-                                {
-                                  "type": "column",
-                                  "layout": {
-                                    "w": 24,
-                                    "h": "auto",
-                                    "pad": [
-                                      0,
-                                      0,
-                                      0,
-                                      0
-                                    ],
-                                    "margin": [
-                                      0,
-                                      0,
-                                      0,
-                                      0
-                                    ],
-                                    "gap": 0,
-                                    "dir": "column",
-                                    "justify": "end"
-                                  },
-                                  "children": [
+                                    },
+                                    {
+                                      "type": "spacer",
+                                      "layout": {
+                                        "w": "auto",
+                                        "h": {
+                                          "grow": 1
+                                        },
+                                        "pad": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "margin": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "gap": 0,
+                                        "dir": "column",
+                                        "justify": "start"
+                                      }
+                                    },
+                                    {
+                                      "id": "undo",
+                                      "type": "button",
+                                      "icon": "icon.undo",
+                                      "layout": {
+                                        "w": 24,
+                                        "h": 24,
+                                        "pad": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "margin": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "gap": 0,
+                                        "dir": "column",
+                                        "justify": "start"
+                                      },
+                                      "bind": {
+                                        "visible": "can_undo"
+                                      }
+                                    },
                                     {
                                       "id": "delete",
                                       "type": "button",
@@ -998,6 +1003,45 @@
                   ]
                 },
                 {
+                  "id": "browse_empty",
+                  "type": "button",
+                  "text": "Browse",
+                  "layout": {
+                    "w": {
+                      "grow": 1
+                    },
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  },
+                  "style": "button.success",
+                  "bind": {
+                    "visible": "browse_empty"
+                  }
+                },
+                {
+                  "type": "label",
+                  "small": true,
+                  "style": "label.muted",
+                  "bind": {
+                    "text": "apply_status",
+                    "visible": "apply_status"
+                  }
+                },
+                {
                   "type": "row",
                   "layout": {
                     "w": "auto",
@@ -1031,7 +1075,7 @@
                       "icon": "icon.account",
                       "layout": {
                         "w": 24,
-                        "h": 24,
+                        "h": 20,
                         "pad": [
                           0,
                           0,
@@ -1074,9 +1118,9 @@
                       }
                     },
                     {
-                      "id": "restart",
+                      "id": "apply",
                       "type": "button",
-                      "text": "Restart now",
+                      "text": "Apply now",
                       "style": "button.success",
                       "bind": {
                         "visible": "pending_changes"
@@ -1138,6 +1182,7 @@
                     ],
                     "gap": 4,
                     "dir": "column",
+                    "reserve_scrollbar": true,
                     "justify": "start",
                     "min_h": 40
                   },
@@ -1462,9 +1507,9 @@
           ]
         },
         {
-          "id": "restart_tooltip",
+          "id": "apply_tooltip",
           "type": "tooltip",
-          "hover": "restart",
+          "hover": "apply",
           "layout": {
             "w": "auto",
             "h": "auto",
@@ -1492,7 +1537,7 @@
           },
           "style": "panel.inset",
           "bind": {
-            "visible": "restart_tip"
+            "visible": "apply_tip"
           },
           "children": [
             {
@@ -1500,7 +1545,7 @@
               "wrap": true,
               "small": true,
               "bind": {
-                "text": "restart_tip"
+                "text": "apply_tip"
               }
             }
           ]
@@ -1588,50 +1633,6 @@
               "text": "Petramond Addon",
               "wrap": true,
               "small": true
-            }
-          ]
-        },
-        {
-          "id": "get_tooltip",
-          "type": "tooltip",
-          "hover": "get",
-          "layout": {
-            "w": "auto",
-            "h": "auto",
-            "pad": [
-              3,
-              2,
-              3,
-              3
-            ],
-            "margin": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "gap": 0,
-            "dir": "column",
-            "align": "stretch",
-            "justify": "start",
-            "max_w": 200,
-            "abs": {
-              "x": 4,
-              "y": 4
-            }
-          },
-          "style": "panel.inset",
-          "bind": {
-            "visible": "get_tip"
-          },
-          "children": [
-            {
-              "type": "label",
-              "wrap": true,
-              "small": true,
-              "bind": {
-                "text": "get_tip"
-              }
             }
           ]
         },
@@ -1863,6 +1864,15 @@
       "account_tip": {
         "str": "Sample text"
       },
+      "apply_status": {
+        "str": "Sample text"
+      },
+      "apply_tip": {
+        "str": "Sample text"
+      },
+      "browse_empty": {
+        "bool": true
+      },
       "cancel_left": {
         "bool": true
       },
@@ -1902,9 +1912,6 @@
       "detail_tip": {
         "str": "Sample text"
       },
-      "get_tip": {
-        "str": "Sample text"
-      },
       "list_page": {
         "bool": true
       },
@@ -1915,9 +1922,6 @@
         "bool": true
       },
       "replace_tip": {
-        "str": "Sample text"
-      },
-      "restart_tip": {
         "str": "Sample text"
       },
       "row_sel": {

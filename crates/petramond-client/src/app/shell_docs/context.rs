@@ -67,6 +67,7 @@ pub(in crate::app) enum ShellCommand {
         filter: Option<Vec<String>>,
     },
     CloseContent,
+    ApplyContent,
     /// Open the Account screen, with a status line to show.
     OpenAccount(Option<String>),
     /// Leave the Account screen for the screen that opened it.

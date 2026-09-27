@@ -12,14 +12,19 @@
 //! the pack layers rather than losing the base kit.
 
 use petramond_ui::{Theme, ThemeLayer};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex};
 
 const THEME_JSON: &str = "ui/theme/theme.json";
 
-static THEME: OnceLock<Arc<Theme>> = OnceLock::new();
+static THEME: Mutex<Option<Arc<Theme>>> = Mutex::new(None);
 
 pub fn theme() -> Arc<Theme> {
-    THEME.get_or_init(load).clone()
+    THEME.lock().unwrap().get_or_insert_with(load).clone()
+}
+
+/// Re-read the theme after the installed pack set changes.
+pub fn reload() {
+    *THEME.lock().unwrap() = None;
 }
 
 /// The theme's UI font: what text surfaces outside documents (chat, mod

@@ -174,6 +174,27 @@ fn giant_rolls_over(seed: u32, lo: [i32; 3], hi: [i32; 3]) -> Vec<Candidate> {
     out
 }
 
+pub(super) fn could_reach_box(c: &Candidate, lo: [i32; 3], hi: [i32; 3]) -> bool {
+    let r = c.giant.reach();
+    c.x + r >= lo[0]
+        && c.x - r <= hi[0]
+        && c.z + r >= lo[2]
+        && c.z - r <= hi[2]
+        && c.cell_floor_y <= hi[1]
+        && c.cell_top_y() + c.giant.rise() >= lo[1]
+}
+
+pub(super) fn could_beat(a: &Candidate, b: &Candidate) -> bool {
+    if a.lat >= b.lat {
+        return false;
+    }
+    let (ax, az, ar) = a.giant.cap_footprint();
+    let (bx, bz, br) = b.giant.cap_footprint();
+    let (dx, dz) = (a.x + ax - b.x - bx, a.z + az - b.z - bz);
+    let r = ar + br;
+    dx * dx + dz * dz < r * r
+}
+
 /// The highest FREE cell resting on ROCK, over a column probe whose first
 /// slot is the support cell UNDER the window — the root rule every giant
 /// stands on, shared so no second derivation can drift from it. A fluid cell
@@ -217,19 +238,38 @@ pub(super) fn standing_giants_over(
     // Competitors of a body-crossing candidate can root up to COMPETE_PAD
     // beyond it horizontally and a full rise beyond it vertically; sweep the
     // padded box so every verdict below sees its whole neighbourhood.
-    let cands = giant_rolls_over(
+    let rolled = giant_rolls_over(
         seed,
         [lo[0] - COMPETE_PAD, lo[1] - MAX_RISE, lo[2] - COMPETE_PAD],
         [hi[0] + COMPETE_PAD, hi[1] + MAX_RISE, hi[2] + COMPETE_PAD],
     );
-    if cands.is_empty() {
+    let primary: Vec<_> = rolled
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| could_reach_box(c, lo, hi).then_some(i))
+        .collect();
+    if primary.is_empty() {
         return Vec::new();
     }
+    // Only a giant that can touch the target box, or can beat one that can,
+    // needs a root verdict. Cap competition is pairwise, so a competitor's
+    // own competitors cannot change the target's result.
+    let cands: Vec<_> = rolled
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| {
+            (primary.contains(&i) || primary.iter().any(|&j| could_beat(c, &rolled[j])))
+                .then_some(c.clone())
+        })
+        .collect();
     let Some(viable) = viable_roots(seed, ours, &cands) else {
         return Vec::new();
     };
     let mut out = Vec::new();
     'next: for &(i, root) in &viable {
+        if !could_reach_box(&cands[i], lo, hi) {
+            continue;
+        }
         for &(j, rj) in &viable {
             if j != i && beats(&cands[j], rj, &cands[i], root) {
                 continue 'next;

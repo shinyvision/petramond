@@ -398,6 +398,14 @@ pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
     }
     state.set("rows", UiValue::List(Arc::new(bound)));
     state.set(
+        "browse_empty",
+        UiValue::Bool(
+            view.shown
+                .iter()
+                .any(|slot| matches!(slot, Slot::NothingInstalled)),
+        ),
+    );
+    state.set(
         "tab_sel",
         UiValue::I32(Tab::ALL.iter().position(|&t| t == view.tab).unwrap_or(0) as i32),
     );
@@ -426,8 +434,20 @@ pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
         UiValue::Bool(!session.pending.is_empty()),
     );
     state.set(
-        "restart_tip",
-        UiValue::Str(rows::restart_tip(session, |dir| {
+        "apply_status",
+        UiValue::Str(
+            if ctx.content_report.deferred && !session.pending.is_empty() {
+                "Close other Petramond windows, then apply".to_owned()
+            } else if !ctx.content_report.failed.is_empty() {
+                "Some changes could not be applied".to_owned()
+            } else {
+                String::new()
+            },
+        ),
+    );
+    state.set(
+        "apply_tip",
+        UiValue::Str(rows::apply_tip(session, |dir| {
             let locals = || view.locals.iter();
             locals()
                 .find(|l| l.dir == dir)
@@ -501,7 +521,11 @@ fn bind_message(row: &mut UiMap, message: &Message, sweep: f32) {
     row.insert("message_progress".into(), UiValue::F32(sweep));
     row.insert(
         "has_message_action".into(),
-        UiValue::Bool(message.action.is_some()),
+        UiValue::Bool(
+            message
+                .action
+                .is_some_and(|action| action != MessageAction::Browse),
+        ),
     );
     row.insert(
         "message_action_text".into(),
@@ -522,7 +546,6 @@ fn bind_tips(state: &mut UiState, entry: Option<&Entry>, selected: bool) {
     let tip = |state: &mut UiState, key: &str, value: String| state.set(key, UiValue::Str(value));
     let Some(entry) = entry else {
         for key in [
-            "get_tip",
             "replace_tip",
             "undo_tip",
             "delete_tip",
@@ -534,17 +557,6 @@ fn bind_tips(state: &mut UiState, entry: Option<&Entry>, selected: bool) {
         return;
     };
     let action = |on: bool| if on { entry.action_tip.as_str() } else { "" };
-    tip(
-        state,
-        "get_tip",
-        hint(
-            action(matches!(
-                entry.action,
-                Action::Get | Action::Update | Action::Retry
-            )),
-            "Enter",
-        ),
-    );
     tip(
         state,
         "replace_tip",
@@ -646,8 +658,13 @@ fn click(ctx: &mut ScreenCtx, id: &str, item: Option<u32>) {
     match id {
         "back" => ctx.request(ShellCommand::CloseContent),
         "account" => ctx.request(ShellCommand::OpenAccount(None)),
+        "browse_empty" => {
+            if let Some(view) = ctx.content.view.as_mut() {
+                view.show_tab(Tab::Browse);
+            }
+        }
         "refresh" => refresh(ctx),
-        "restart" => restart(ctx),
+        "apply" => ctx.request(ShellCommand::ApplyContent),
         "get" | "replace" => primary(ctx),
         "undo" => undo(ctx),
         "delete" | "cancel" => trash(ctx),
@@ -750,13 +767,6 @@ fn refresh(ctx: &mut ScreenCtx) {
         view.rebuild_on_arrival = true;
         view.request_rebuild();
     }
-}
-
-fn restart(ctx: &mut ScreenCtx) {
-    let back = ctx.content.view.as_ref().and_then(|v| v.back.clone());
-    ctx.request(ShellCommand::Exit(crate::app::ExitKind::Restart {
-        route: crate::app::content::StartRoute::content(back),
-    }));
 }
 
 /// The selected entry, as it shows now.

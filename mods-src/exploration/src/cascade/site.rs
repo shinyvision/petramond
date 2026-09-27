@@ -304,27 +304,27 @@ impl Trace {
     /// Probe columns (sorted) with each column's row window — shared by the
     /// plan and the build so the two cannot drift.
     pub(super) fn probe_cols(&self) -> Vec<((i32, i32), (i32, i32))> {
-        let (mut x0, mut x1, mut z0, mut z1) = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
-        for &(x, z, _) in &self.samples {
-            x0 = x0.min(x - PROBE_DILATE);
-            x1 = x1.max(x + PROBE_DILATE);
-            z0 = z0.min(z - PROBE_DILATE);
-            z1 = z1.max(z + PROBE_DILATE);
+        let width = (self.cell.z1 - self.cell.z0 + 1) as usize;
+        let height = (self.cell.x1 - self.cell.x0 + 1) as usize;
+        let mut windows = vec![(i32::MAX, i32::MIN); width * height];
+        let slot =
+            |x: i32, z: i32| (x - self.cell.x0) as usize * width + (z - self.cell.z0) as usize;
+        for &(sx, sz, sh) in &self.samples {
+            for x in (sx - PROBE_DILATE).max(self.cell.x0)..=(sx + PROBE_DILATE).min(self.cell.x1) {
+                for z in
+                    (sz - PROBE_DILATE).max(self.cell.z0)..=(sz + PROBE_DILATE).min(self.cell.z1)
+                {
+                    let (lo, hi) = &mut windows[slot(x, z)];
+                    *lo = (*lo).min(sh);
+                    *hi = (*hi).max(sh);
+                }
+            }
         }
         let mut out = Vec::new();
-        for x in x0.max(self.cell.x0)..=x1.min(self.cell.x1) {
-            for z in z0.max(self.cell.z0)..=z1.min(self.cell.z1) {
-                let mut near = false;
-                let (mut lo, mut hi) = (i32::MAX, i32::MIN);
-                for &(sx, sz, sh) in &self.samples {
-                    let d = (x - sx).abs().max((z - sz).abs());
-                    if d <= PROBE_DILATE {
-                        near = true;
-                        lo = lo.min(sh);
-                        hi = hi.max(sh);
-                    }
-                }
-                if !near {
+        for x in self.cell.x0..=self.cell.x1 {
+            for z in self.cell.z0..=self.cell.z1 {
+                let (lo, hi) = windows[slot(x, z)];
+                if lo > hi {
                     continue;
                 }
                 // Deepest read: a bed band + adopted pit + dam foundation
@@ -353,5 +353,45 @@ impl Trace {
                 f([x, y, z]);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn probe_window_matches_each_samples_square_and_height() {
+        let cell = Cell {
+            lx: 0,
+            ly: 0,
+            lz: -1,
+        };
+        let trace = Trace {
+            samples: vec![(3, -94, 25), (23, -80, 14), (40, -85, 20)],
+            anchor: (3, -94),
+            s0: 25,
+            cell: CellBox::of(&cell),
+        };
+        let mut expected = Vec::new();
+        for x in trace.cell.x0..=trace.cell.x1 {
+            for z in trace.cell.z0..=trace.cell.z1 {
+                let heights: Vec<_> = trace
+                    .samples
+                    .iter()
+                    .filter_map(|&(sx, sz, sh)| {
+                        ((x - sx).abs().max((z - sz).abs()) <= PROBE_DILATE).then_some(sh)
+                    })
+                    .collect();
+                if let (Some(lo), Some(hi)) = (heights.iter().min(), heights.iter().max()) {
+                    let lo = (*lo - (BED_BAND + ADOPT_MAX + DAM_MAX + MAX_STEP)).max(trace.cell.y0);
+                    let hi = (*hi + HEADROOM + 2).min(trace.cell.y1);
+                    if lo <= hi {
+                        expected.push(((x, z), (lo, hi)));
+                    }
+                }
+            }
+        }
+        assert_eq!(trace.probe_cols(), expected);
     }
 }

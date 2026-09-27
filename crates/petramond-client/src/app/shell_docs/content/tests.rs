@@ -191,13 +191,222 @@ fn a_row_shows_its_job_before_its_pending_change_update_or_refusal() {
     });
     let entry = entry_for(&app, "studio");
     assert_eq!(entry.action, Action::Undo);
-    assert_eq!(entry.detail, "Updates on restart");
+    assert_eq!(entry.detail, "Ready to update");
     assert_eq!(entry.action_tip, "Stay on v1.0.0");
 
     app.content.pending.clear();
     let row = listing_row("studio", "Studio", Kind::Addon, 'b', 4096);
     app.content.get(&row).unwrap();
     assert!(matches!(entry_for(&app, "studio").action, Action::Busy(_)));
+}
+
+#[test]
+fn apply_button_requests_a_content_switch_in_the_running_app() {
+    let (_root, mut app) = app_with("apply-button", Vec::new(), false);
+    app.content.pending.push(Pending {
+        dir: "studio".into(),
+        change: PendingKind::Remove,
+    });
+    in_ctx(&mut app, |ctx| click(ctx, "apply", None));
+    assert!(app.take_content_apply_requested());
+    assert!(!app.take_content_apply_requested());
+
+    app.set_content_report(petramond::content::ApplyReport {
+        deferred: true,
+        ..Default::default()
+    });
+    let state = state_of(&mut app);
+    assert!(
+        matches!(state.get("apply_status"), Some(UiValue::Str(text)) if text.contains("Close other Petramond windows"))
+    );
+    assert_fits(GuiKind::Content, &state, None, "deferred apply");
+}
+
+#[test]
+fn entry_text_width_and_action_edge_stay_fixed_across_get_delete_and_undo() {
+    let (_root, mut app) = app_with(
+        "stable-action-width",
+        vec![local("studio", "Studio", Tier::Addon)],
+        false,
+    );
+    let installed = state_of(&mut app);
+    app.content.pending.push(Pending {
+        dir: "studio".into(),
+        change: PendingKind::Remove,
+    });
+    let pending = state_of(&mut app);
+    let (_browse_root, mut browsing) = app_with("get-right", Vec::new(), true);
+    browsing.content.listing_arrived(Ok(vec![listing_row(
+        "studio",
+        "Studio",
+        Kind::Addon,
+        'a',
+        631_856,
+    )]));
+    show(&mut browsing, Tab::Browse);
+    let available = state_of(&mut browsing);
+    let geometry = |state: &UiState, action_id: &str, viewport| {
+        let mut result = None;
+        solve_kind_at(
+            GuiKind::Content,
+            state,
+            None,
+            viewport,
+            |tree, solved, _| {
+                let visible_rect = |id: &str| {
+                    (0..tree.len())
+                        .find(|&i| {
+                            tree.get(i as u32).node.id.as_deref() == Some(id)
+                                && solved.rects[i].w > 0
+                        })
+                        .map(|i| solved.rects[i])
+                        .unwrap()
+                };
+                let detail = visible_rect("detail");
+                let action = visible_rect(action_id);
+                result = Some(((detail.x, detail.w), (action.x, action.w, action.h)));
+            },
+        );
+        result.unwrap()
+    };
+    for viewport in [VIEWPORT, (640, 360)] {
+        let delete = geometry(&installed, "delete", viewport);
+        let undo = geometry(&pending, "undo", viewport);
+        let get = geometry(&available, "get", viewport);
+        assert_eq!(delete, undo, "{viewport:?}");
+        assert_eq!(delete.0, get.0, "description width at {viewport:?}");
+        let (delete_action, get_action) = (delete.1, get.1);
+        assert_eq!(
+            delete_action.0 + delete_action.1,
+            get_action.0 + get_action.1,
+            "action right edge at {viewport:?}"
+        );
+    }
+}
+
+#[test]
+fn content_rows_keep_their_width_when_the_scrollbar_appears() {
+    let (_root, mut app) = app_with(
+        "stable-row-width",
+        vec![
+            local("studio", "Studio", Tier::Addon),
+            local("tweaks", "Tweaks", Tier::Mod),
+        ],
+        false,
+    );
+    let row_width = |state: &UiState| {
+        let mut width = 0;
+        solve_state(state, None, |tree, solved, _| {
+            width = (0..tree.len())
+                .filter(|&i| tree.get(i as u32).node.style.as_deref() == Some("list.row"))
+                .map(|i| solved.rects[i].w)
+                .find(|&w| w > 0)
+                .unwrap();
+        });
+        width
+    };
+    app.content.view.as_mut().unwrap().search = "Studio".into();
+    let one = row_width(&state_of(&mut app));
+    app.content.view.as_mut().unwrap().search.clear();
+    let two = row_width(&state_of(&mut app));
+    assert_eq!(one, two);
+}
+
+#[test]
+fn content_panel_width_is_stable_across_list_and_confirmation_states() {
+    let (_root, mut app) = app_with(
+        "stable-page-width",
+        vec![
+            local("studio", "Studio", Tier::Addon),
+            local("tweaks", "Tweaks", Tier::Mod),
+        ],
+        false,
+    );
+    for viewport in [VIEWPORT, (640, 360)] {
+        let mut widths = Vec::new();
+        for state in [
+            state_of(&mut app),
+            {
+                show(&mut app, Tab::Browse);
+                state_of(&mut app)
+            },
+            {
+                app.content.view.as_mut().unwrap().confirm = Some(confirm::ConfirmPage {
+                    question: "Delete this addon?".into(),
+                    body: "This change cannot be undone.".into(),
+                    variant: confirm::Variant::Destroy,
+                    action_text: "Delete",
+                    now_text: "",
+                    confirmed: confirm::Confirmed::Delete {
+                        dir: "studio".into(),
+                    },
+                });
+                state_of(&mut app)
+            },
+        ] {
+            solve_kind_at(
+                GuiKind::Content,
+                &state,
+                None,
+                viewport,
+                |tree, solved, _| {
+                    let panel = (0..tree.len())
+                        .find(|&i| tree.get(i as u32).node.style.as_deref() == Some("panel.large"))
+                        .map(|i| solved.rects[i])
+                        .unwrap();
+                    let scroll = (0..tree.len())
+                        .find(|&i| {
+                            let id = tree.get(i as u32).node.id.as_deref();
+                            matches!(id, Some("content_scroll" | "confirm_scroll"))
+                                && solved.rects[i].w > 0
+                        })
+                        .map(|i| solved.rects[i])
+                        .unwrap();
+                    widths.push(((panel.x, panel.w), (scroll.x, scroll.w)));
+                },
+            );
+        }
+        assert!(
+            widths.windows(2).all(|pair| pair[0] == pair[1]),
+            "{viewport:?}: {widths:?}"
+        );
+    }
+}
+
+#[test]
+fn empty_installed_browse_fills_the_bottom_action_row() {
+    let (_root, mut app) = app_with("empty-browse", Vec::new(), false);
+    let state = state_of(&mut app);
+    for viewport in [VIEWPORT, (640, 360)] {
+        solve_kind_at(
+            GuiKind::Content,
+            &state,
+            None,
+            viewport,
+            |tree, solved, _| {
+                let rect = |id: &str| {
+                    (0..tree.len())
+                        .find(|&i| tree.get(i as u32).node.id.as_deref() == Some(id))
+                        .map(|i| solved.rects[i])
+                        .unwrap()
+                };
+                let search = rect("search");
+                let scroll = rect("content_scroll");
+                let browse = rect("browse_empty");
+                let back = rect("back");
+                let account = rect("account");
+                assert_eq!((browse.x, browse.w), (search.x, search.w));
+                assert_eq!((browse.x, browse.w), (scroll.x, scroll.w));
+                assert!(
+                    back.y - (browse.y + browse.h) <= 10,
+                    "browse {browse:?} should sit directly above the footer {back:?}"
+                );
+                assert_eq!(account.h, back.h);
+            },
+        );
+    }
+    in_ctx(&mut app, |ctx| click(ctx, "browse_empty", None));
+    assert_eq!(view(&app).tab, Tab::Browse);
 }
 
 #[test]
@@ -226,7 +435,7 @@ fn a_replace_over_a_folder_named_otherwise_shows_as_pending() {
     });
     let entry = entry_for(&app, "lanterns");
     assert_eq!(entry.action, Action::Undo);
-    assert_eq!(entry.detail, "Updates on restart");
+    assert_eq!(entry.detail, "Ready to update");
 }
 
 #[test]
@@ -453,6 +662,16 @@ fn solve_kind(
     kind: GuiKind,
     state: &UiState,
     hover: Option<&str>,
+    f: impl FnMut(&InstTree<'_>, &petramond_ui::Solved, &ThemeEnv<'_>),
+) {
+    solve_kind_at(kind, state, hover, VIEWPORT, f)
+}
+
+fn solve_kind_at(
+    kind: GuiKind,
+    state: &UiState,
+    hover: Option<&str>,
+    viewport: (i32, i32),
     mut f: impl FnMut(&InstTree<'_>, &petramond_ui::Solved, &ThemeEnv<'_>),
 ) {
     let doc = petramond::gui::documents::doc_for(kind).expect("document loads");
@@ -468,7 +687,7 @@ fn solve_kind(
         gui_scale: 1,
         image_size: &|_| None,
     };
-    let solved = solve(&tree, &env, VIEWPORT, &|_| 0);
+    let solved = solve(&tree, &env, viewport, &|_| 0);
     f(&tree, &solved, &env);
 }
 
@@ -688,7 +907,7 @@ fn the_fixed_detail_copy_never_ellipsizes_at_the_smallest_viewport() {
     assert!(notes.contains(&rows::WORLD_NOTE_TOUCHES.to_owned()));
     assert!(notes.contains(&rows::WORLD_NOTE_PRESENTATION.to_owned()));
 
-    // Restart now names three packs however many wait, so its tooltip stays
+    // Apply now names three packs however many wait, so its tooltip stays
     // on the screen.
     for i in 0..20 {
         app.content.pending.push(Pending {
@@ -702,10 +921,10 @@ fn the_fixed_detail_copy_never_ellipsizes_at_the_smallest_viewport() {
         });
     }
     state = state_of(&mut app);
-    solve_state(&state, Some("restart"), |tree, solved, _| {
+    solve_state(&state, Some("apply"), |tree, solved, _| {
         let tip = (0..tree.len())
-            .find(|&i| tree.get(i as u32).node.id.as_deref() == Some("restart_tooltip"))
-            .expect("the restart tooltip");
+            .find(|&i| tree.get(i as u32).node.id.as_deref() == Some("apply_tooltip"))
+            .expect("the apply tooltip");
         assert!(
             solved.rects[tip].h > 0 && solved.rects[tip].h < VIEWPORT.1,
             "{:?}",

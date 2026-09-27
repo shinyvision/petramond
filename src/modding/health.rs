@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex};
 pub(crate) struct ModHealth {
     id: String,
     disabled: AtomicBool,
+    fuel_warned: AtomicBool,
     /// The session's disablement log this flag reports into.
     log: Arc<Mutex<Vec<String>>>,
 }
@@ -37,12 +38,23 @@ impl ModHealth {
         Self {
             id: id.to_owned(),
             disabled: AtomicBool::new(false),
+            fuel_warned: AtomicBool::new(false),
             log,
         }
     }
 
     pub(crate) fn is_disabled(&self) -> bool {
         self.disabled.load(Ordering::Acquire)
+    }
+
+    /// The threshold is diagnostic across all instances of this session mod.
+    pub(crate) fn warn_fuel_once(&self, why: &str) -> bool {
+        if !self.fuel_warned.swap(true, Ordering::AcqRel) {
+            log::warn!("mod '{}': {why}; continuing", self.id);
+            true
+        } else {
+            false
+        }
     }
 
     /// Disable the mod for the rest of the session, on every thread. The
@@ -136,5 +148,18 @@ mod tests {
         lone.disable("fixture");
         assert!(!board.health("alpha").is_disabled());
         assert_eq!(board.disabled_count(), 0);
+    }
+
+    #[test]
+    fn fuel_warning_is_shared_across_instances_for_one_session() {
+        let board = ModHealthBoard::default();
+        assert!(board
+            .health("alpha")
+            .warn_fuel_once("first costly dispatch"));
+        assert!(!board
+            .health("alpha")
+            .warn_fuel_once("another costly dispatch"));
+        assert!(board.health("beta").warn_fuel_once("independent mod"));
+        assert!(!board.health("alpha").is_disabled());
     }
 }

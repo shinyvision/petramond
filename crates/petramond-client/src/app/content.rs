@@ -1,6 +1,6 @@
 //! The content library's state the app keeps for the whole process: the
 //! listing petramond.com last gave, the download queue, the icons, what waits
-//! for a restart, what the startup apply did (shown once — a release build
+//! to be applied, what the last apply did (shown once — a release build
 //! may have no console), and the start route a relaunch came back with.
 //!
 //! It lives on the App, not on the browser screen: downloads outlive the
@@ -53,6 +53,7 @@ impl StartRoute {
     }
 
     /// The browser, with Back leading to `back`.
+    #[cfg(test)]
     pub(super) fn content(back: Option<String>) -> Self {
         Self {
             screen: "content".to_owned(),
@@ -82,7 +83,7 @@ pub(super) enum ListingState {
     Cancelled,
 }
 
-/// A change staged for the next start, as the browser shows it.
+/// A staged change, as the browser shows it before applying.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Pending {
     pub(super) dir: String,
@@ -172,7 +173,7 @@ impl ContentSession {
         session
     }
 
-    /// Re-read what waits for a restart. Called where it can have changed:
+    /// Re-read what waits to be applied. Called where it can have changed:
     /// the browser opening, a job staging, an undo or a delete.
     pub(super) fn reload_pending(&mut self) {
         self.pending = install::pending(&self.dirs)
@@ -349,22 +350,39 @@ impl ContentSession {
 }
 
 /// Whether an installed pack is a Petramond Addon, by the one classifier.
-/// Records only change at startup, so each pack is classified once.
 pub(super) fn is_addon(pack: &petramond_world::assets::Pack) -> bool {
-    use std::sync::OnceLock;
-    static ADDONS: OnceLock<BTreeSet<std::path::PathBuf>> = OnceLock::new();
-    ADDONS
-        .get_or_init(|| {
-            petramond_world::assets::packs()
-                .iter()
-                .filter(|p| petramond::content::tier(p) == petramond::content::Tier::Addon)
-                .map(|p| p.dir.clone())
-                .collect()
-        })
-        .contains(&pack.dir)
+    petramond::content::tier(pack) == petramond::content::Tier::Addon
 }
 
 impl App {
+    pub(super) fn request_content_apply(&mut self) {
+        if self.session.is_none() && self.launched.is_none() && !self.content.pending.is_empty() {
+            self.content_apply_requested = true;
+        }
+    }
+
+    pub fn take_content_apply_requested(&mut self) -> bool {
+        std::mem::take(&mut self.content_apply_requested)
+    }
+
+    pub fn content_applied(&mut self, report: ApplyReport) {
+        let changed = !report.applied.is_empty();
+        self.content_report = report;
+        self.content.reload_pending();
+        for (dir, why) in &self.content_report.failed {
+            self.content.failed.insert(dir.clone(), why.clone());
+        }
+        if changed {
+            self.retained_section_cache = None;
+            if let Some(view) = self.content.view.as_mut() {
+                view.locals = super::shell_docs::content_locals(&self.content.dirs);
+                view.request_rebuild();
+            }
+            self.ui = super::ui_runtime::AppUi::new();
+            self.hud_ui = super::ui_runtime::AppUi::new();
+        }
+    }
+
     /// What the startup apply of pending content changes did.
     pub fn set_content_report(&mut self, report: ApplyReport) {
         self.content_report = report;

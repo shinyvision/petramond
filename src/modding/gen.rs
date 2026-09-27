@@ -23,15 +23,15 @@
 //!
 //! # Failure policy
 //!
-//! Trap / exhausted fuel / deadline / protocol break / invalid ids disable
+//! Trap / emergency deadline / protocol break / invalid ids disable
 //! the MOD — not just the failing thread's instance: every gen instance holds
 //! the mod's session-wide [`ModHealth`] (shared with its tick instance), so
 //! the first failure on any worker stops the mod on every worker before their
 //! next dispatch, and generation cannot keep including a mod on some threads
 //! while others dropped it. A failed FEATURE is skipped, a failed stage
 //! REPLACEMENT falls back to the ENGINE stage (logged loudly, once per
-//! stage). Fuel metering makes the failure itself deterministic: the same
-//! section input exhausts the same budget on every thread and machine.
+//! stage). Fuel is metered for one-time cost warnings; crossing a warning
+//! threshold does not interrupt or disable a mod.
 //!
 //! # Empty-hook cost
 //!

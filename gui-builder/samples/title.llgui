@@ -207,7 +207,7 @@
                     {
                       "id": "browse",
                       "type": "button",
-                      "text": "Browse Content",
+                      "text": "Content",
                       "layout": {
                         "w": 140,
                         "h": "auto",

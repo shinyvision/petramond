@@ -2,13 +2,15 @@
 //! geometry, under the conservative model of the fluid sim the module docs
 //! describe.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
+
+use mod_sdk::FxHashMap;
 
 use super::basin::Basins;
 use super::SIDES;
 
 /// Every cell the water can reach, with the best flow strength it arrives at.
-pub(super) type Reach = BTreeMap<[i32; 3], u8>;
+pub(super) type Reach = FxHashMap<[i32; 3], u8>;
 
 /// The final geometry the flood runs over.
 pub(super) struct Geometry<'a> {
@@ -65,7 +67,7 @@ impl Geometry<'_> {
         terrain: &impl Fn([i32; 3]) -> Option<bool>,
     ) -> Result<Reach, &'static str> {
         let count = self.basins.counts();
-        let mut best: Reach = BTreeMap::new();
+        let mut best: Reach = FxHashMap::default();
         let mut stack: Vec<[i32; 3]> = Vec::new();
         for &p in self.wet {
             best.insert(p, 8);

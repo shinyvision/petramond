@@ -1,8 +1,7 @@
 //! Title screen controller: Start Game → world select; Connect to Server →
-//! the connect screen; Browse Content → the content browser; the corner icon
+//! the connect screen; Content → the content browser; the corner icon
 //! → the Petramond account; Quit. The launcher dock holds one icon button per
-//! pack that declares a `pack.json` launch entry; a click, or the digit its
-//! tooltip names, starts that pack on the shell. One notice line under the
+//! pack that declares a `pack.json` launch entry. One notice line under the
 //! menu says what the content library is doing.
 
 use std::path::PathBuf;
@@ -17,9 +16,6 @@ use petramond_ui::{NavKey, UiEvent, UiMap, UiState, UiValue};
 const LAUNCHERS: &str = "launchers";
 /// Each dock row's button; its click carries the row's item index.
 const LAUNCHER: &str = "launcher";
-
-/// Launch entries the digit keys reach, as many as the dock shows unscrolled.
-const DIGIT_LAUNCHERS: usize = 9;
 
 fn icon_name(pack_id: &str) -> String {
     format!("launch_icon:{pack_id}")
@@ -47,14 +43,8 @@ pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
     let tip = ctx
         .ui
         .hover_item(LAUNCHERS)
-        .and_then(|index| Some((index, launch_entries().nth(index)?.1)))
-        .map(|(index, entry)| {
-            if index < DIGIT_LAUNCHERS {
-                format!("{} ({})", entry.label, index + 1)
-            } else {
-                entry.label.clone()
-            }
-        })
+        .and_then(|index| launch_entries().nth(index).map(|(_, entry)| entry))
+        .map(|entry| entry.label.clone())
         .unwrap_or_default();
     state.set("launch_tip", UiValue::Str(tip));
     let (notice, notice_tip) = notice(ctx.content_report, ctx.content);
@@ -72,7 +62,7 @@ pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
 
 /// The notice line and its full text. First wins: what the last start could
 /// not apply, an apply another window held off, downloads running, changes
-/// waiting for a restart.
+/// waiting to be applied.
 pub(in crate::app) fn notice(
     report: &petramond::content::ApplyReport,
     content: &ContentSession,
@@ -106,7 +96,7 @@ pub(in crate::app) fn notice(
         return (line.clone(), line);
     }
     if !content.pending.is_empty() {
-        let line = "Restart to apply content changes".to_owned();
+        let line = "Apply content changes in Content".to_owned();
         return (line.clone(), line);
     }
     (String::new(), String::new())
@@ -134,16 +124,6 @@ pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
         UiEvent::Key {
             key: NavKey::Enter, ..
         } => start(ctx),
-        UiEvent::Key {
-            key: NavKey::Char(digit @ '1'..='9'),
-            ctrl: false,
-            ..
-        } => {
-            let index = digit as usize - '1' as usize;
-            if index < DIGIT_LAUNCHERS {
-                launch(ctx, index);
-            }
-        }
         _ => {}
     }
 }

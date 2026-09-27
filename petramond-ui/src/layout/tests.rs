@@ -493,6 +493,48 @@ fn fitting_scroll_content_reserves_no_scrollbar_lane() {
 }
 
 #[test]
+fn reserved_scrollbar_keeps_children_at_the_same_width_before_and_after_overflow() {
+    fn child_width(children: usize) -> i32 {
+        let mut nodes = String::new();
+        for i in 0..children {
+            nodes.push_str(&format!(r#"{{"type":"checkbox","id":"item{i}"}},"#));
+        }
+        nodes.pop();
+        let doc = Document::from_json(&format!(
+            r#"{{
+                "format": 1, "kind": "petramond:x", "class": "screen",
+                "root": {{ "type": "scroll", "axis": "vertical",
+                    "layout": {{ "w": 50, "h": 40, "gap": 2, "reserve_scrollbar": true }},
+                    "children": [{nodes}] }}
+            }}"#,
+        ))
+        .unwrap();
+        let tree = InstTree::expand(&doc, &UiState::new());
+        solve(&tree, &MockEnv, (50, 40), &|_| 0).rects[1].w
+    }
+
+    assert_eq!(child_width(2), child_width(5));
+    assert_eq!(child_width(2), 50 - MockEnv.scrollbar_width());
+}
+
+#[test]
+fn reserved_horizontal_scrollbar_is_included_in_auto_height() {
+    let (solved, _) = solve_doc(
+        r#"{
+            "format": 1, "kind": "petramond:x", "class": "screen",
+            "root": { "type": "scroll", "axis": "horizontal",
+                "layout": { "w": 50, "reserve_scrollbar": true },
+                "children": [ { "type": "checkbox" } ] }
+        }"#,
+        (50, 40),
+    );
+    assert_eq!(
+        solved.rects[0].h,
+        solved.rects[1].h + MockEnv.scrollbar_width()
+    );
+}
+
+#[test]
 fn wrapping_label_uses_column_width_hint() {
     let (s, _) = solve_doc(
         r#"{

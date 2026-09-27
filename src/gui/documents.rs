@@ -56,6 +56,11 @@ struct Registry {
 
 static REGISTRY: Mutex<Option<Registry>> = Mutex::new(None);
 
+/// Rebuild the document set after packs are installed or removed.
+pub fn reload() {
+    *REGISTRY.lock().unwrap() = None;
+}
+
 /// The document for `kind`, if one is loaded. A CRAFTING STATION kind
 /// without its own document — a pack workbench, or the engine's furniture
 /// workbench — is backed by the crafting table's: a station runs the

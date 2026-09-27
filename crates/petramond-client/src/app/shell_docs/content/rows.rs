@@ -321,7 +321,7 @@ pub(in crate::app) struct Entry {
 
 pub(in crate::app) const WORLD_NOTE_TOUCHES: &str =
     "New worlds use it. Turn it on for an existing world in World Settings › Mods.";
-pub(in crate::app) const WORLD_NOTE_PRESENTATION: &str = "Ready in every world after a restart.";
+pub(in crate::app) const WORLD_NOTE_PRESENTATION: &str = "Ready in every world after you apply.";
 
 /// A running job's detail line, its tooltip, and the gauge's fraction.
 pub(in crate::app) fn job_detail(
@@ -404,15 +404,11 @@ impl Entry {
             world_note: None,
             detail: size(row.byte_size),
             detail_palette: MUTED,
-            detail_tip: format!(
-                "Download size: {} ({} bytes)",
-                size(row.byte_size),
-                row.byte_size
-            ),
+            detail_tip: String::new(),
             action: Action::Get,
             can_delete: false,
             listed: Some(row.clone()),
-            action_tip: format!("Get {}", cap(&row.name, NAME_CAP)),
+            action_tip: String::new(),
             icon: None,
             touches_world: true,
         }
@@ -445,17 +441,13 @@ pub(in crate::app) fn local_entry(local: &Local, session: &ContentSession, now: 
         if let (
             Action::Undo,
             Some(Pending {
-                change: PendingKind::Install { version, .. },
+                change: PendingKind::Install { .. },
                 ..
             }),
         ) = (entry.action, session.pending_of(&local.dir, &local.key))
         {
             entry.world_note = None;
-            entry.set(
-                "Updates on restart",
-                ACCENT,
-                format!("Updates to {} when you restart", version_badge(version)),
-            );
+            entry.set("Ready to update", ACCENT, "");
             entry.action_tip = match &local.version {
                 Some(old) => format!("Stay on {}", version_badge(old)),
                 None => format!("Don't update {name}"),
@@ -485,7 +477,6 @@ pub(in crate::app) fn local_entry(local: &Local, session: &ContentSession, now: 
             ),
         }
         entry.action = Action::Update;
-        entry.action_tip = format!("Update {name} to {new}");
         entry.listed = Some(row);
         return entry;
     }
@@ -552,11 +543,7 @@ fn overlay(entry: &mut Entry, id: Option<&str>, session: &ContentSession, now: I
         entry.can_delete = false;
         match &pending.change {
             PendingKind::Install { touches_world, .. } => {
-                entry.set(
-                    "Installs on restart",
-                    ACCENT,
-                    "Installs when you restart Petramond",
-                );
+                entry.set("Ready to install", ACCENT, "");
                 entry.action_tip = format!("Don't install {name}");
                 entry.touches_world = *touches_world;
                 entry.world_note = Some(if *touches_world {
@@ -566,11 +553,7 @@ fn overlay(entry: &mut Entry, id: Option<&str>, session: &ContentSession, now: I
                 });
             }
             PendingKind::Remove => {
-                entry.set(
-                    "Removed on restart",
-                    WARN,
-                    "Removed when you restart Petramond",
-                );
+                entry.set("Ready to remove", WARN, "");
                 entry.action_tip = format!("Keep {name}");
             }
         }
@@ -579,15 +562,14 @@ fn overlay(entry: &mut Entry, id: Option<&str>, session: &ContentSession, now: I
     if let Some(why) = id.and_then(|id| session.failed.get(id)) {
         entry.set(format!("Failed: {why}"), DANGER, why.clone());
         entry.action = Action::Retry;
-        entry.action_tip = format!("Try {name} again");
         return true;
     }
     false
 }
 
-/// What Restart now applies, naming at most three packs. `name_of` names
+/// What Apply now changes, naming at most three packs. `name_of` names
 /// the pack installed under a pending change's folder name or pack id.
-pub(in crate::app) fn restart_tip(
+pub(in crate::app) fn apply_tip(
     session: &ContentSession,
     name_of: impl Fn(&str) -> Option<String>,
 ) -> String {
@@ -611,7 +593,7 @@ pub(in crate::app) fn restart_tip(
         return String::new();
     }
     let shown = &phrases[..phrases.len().min(3)];
-    let mut tip = format!("Restart to {}", shown.join(", "));
+    let mut tip = format!("Apply to {}", shown.join(", "));
     if phrases.len() > 3 {
         tip.push_str(&format!(" and {} more", phrases.len() - 3));
     }

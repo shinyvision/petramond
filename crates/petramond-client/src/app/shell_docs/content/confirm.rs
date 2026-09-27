@@ -194,10 +194,10 @@ pub(in crate::app) fn delete_body(
     dependents: &[String],
 ) -> String {
     let mut body = if touches_world {
-        "It is removed when Petramond restarts. Its blocks and items disappear from worlds that use it."
+        "It is removed when you apply. Its blocks and items disappear from worlds that use it."
             .to_owned()
     } else {
-        "It is removed when Petramond restarts. Your worlds are not affected.".to_owned()
+        "It is removed when you apply. Your worlds are not affected.".to_owned()
     };
     if touches_world && !worlds.is_empty() {
         let noun = if worlds.len() == 1 { "world" } else { "worlds" };
@@ -249,7 +249,7 @@ pub(super) fn open_replace(content: &mut ContentSession, entry: &Entry, row: Lis
                 "Replace your copy of {} with the petramond.com version?",
                 cap(&entry.name, NAME_CAP)
             ),
-            body: "Your copy is deleted when Petramond restarts.".to_owned(),
+            body: "Your copy is deleted when you apply.".to_owned(),
             variant: Variant::Destroy,
             action_text: "Replace",
             now_text: "",

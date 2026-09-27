@@ -1,9 +1,9 @@
-//! Staging, pending changes, the startup apply, and the content lock.
+//! Staging, pending changes, applying them, and the content lock.
 //!
 //! A download is unpacked and admitted into `mods/.staging/` (hidden, so
 //! discovery never sees it, and on the same filesystem, so the final rename
-//! is atomic) and a pending change is written. The next startup applies it
-//! BEFORE pack discovery, holding the content lock exclusively, in steps
+//! is atomic) and a pending change is written. Applying it holds the content
+//! lock exclusively, in steps
 //! ordered so a crash anywhere leaves a state the next run finishes and no
 //! failure ever costs the player the version they had.
 
@@ -48,10 +48,12 @@ impl Dirs {
 }
 
 /// `content/lock`: every process that reads packs or writes content state
-/// holds it SHARED for its whole life; the startup apply holds it
+/// holds it SHARED for its whole life; applying changes holds it
 /// exclusively, so no process ever has a pack renamed under it.
 pub struct ContentLock {
     file: File,
+    gate: File,
+    gate_held: bool,
 }
 
 impl ContentLock {
@@ -64,28 +66,109 @@ impl ContentLock {
             .open(dirs.content.join("lock"))
     }
 
+    fn open_gate(dirs: &Dirs) -> std::io::Result<File> {
+        std::fs::create_dir_all(&dirs.content)?;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dirs.content.join("lock-gate"))
+    }
+
     /// Wait for, then hold, the shared lock.
     pub fn shared(dirs: &Dirs) -> std::io::Result<Self> {
+        let gate = Self::open_gate(dirs)?;
+        gate.lock_shared()?;
         let file = Self::open(dirs)?;
-        file.lock_shared()?;
-        Ok(Self { file })
+        let held = file.lock_shared();
+        gate.unlock()?;
+        held?;
+        Ok(Self {
+            file,
+            gate,
+            gate_held: false,
+        })
     }
 
     /// The exclusive lock, or `None` while another process holds it.
     pub fn try_exclusive(dirs: &Dirs) -> std::io::Result<Option<Self>> {
-        let file = Self::open(dirs)?;
-        match file.try_lock() {
-            Ok(()) => Ok(Some(Self { file })),
-            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
-            Err(std::fs::TryLockError::Error(e)) => Err(e),
+        let gate = Self::open_gate(dirs)?;
+        match gate.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => return Ok(None),
+            Err(std::fs::TryLockError::Error(e)) => return Err(e),
         }
+        let file = Self::open(dirs)?;
+        let held = file.try_lock();
+        match held {
+            Ok(()) => Ok(Some(Self {
+                file,
+                gate,
+                gate_held: true,
+            })),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                gate.unlock()?;
+                Ok(None)
+            }
+            Err(std::fs::TryLockError::Error(e)) => {
+                gate.unlock()?;
+                Err(e)
+            }
+        }
+    }
+
+    /// Block new readers while converting the shared lock to exclusive. On
+    /// contention, restore the shared lock before opening the gate again.
+    pub fn try_upgrade(&mut self) -> std::io::Result<bool> {
+        if self.gate_held {
+            return Err(std::io::Error::other("content lock is already exclusive"));
+        }
+        match self.gate.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => return Ok(false),
+            Err(std::fs::TryLockError::Error(e)) => return Err(e),
+        }
+        let held = (|| {
+            self.file.unlock()?;
+            let held = self.file.try_lock();
+            if held.is_err() {
+                self.file.lock_shared()?;
+            }
+            Ok::<_, std::io::Error>(held)
+        })();
+        match held {
+            Ok(Ok(())) => {
+                self.gate_held = true;
+                Ok(true)
+            }
+            Ok(Err(std::fs::TryLockError::WouldBlock)) => {
+                self.gate.unlock()?;
+                Ok(false)
+            }
+            Ok(Err(std::fs::TryLockError::Error(e))) | Err(e) => {
+                self.gate.unlock()?;
+                Err(e)
+            }
+        }
+    }
+
+    /// Return to the shared lock after an in-process apply.
+    pub fn downgrade_in_place(&mut self) -> std::io::Result<()> {
+        if !self.gate_held {
+            return Ok(());
+        }
+        self.file.unlock()?;
+        self.file.lock_shared()?;
+        self.gate.unlock()?;
+        self.gate_held = false;
+        Ok(())
     }
 
     /// Exclusive to shared, for the rest of the process's life.
     pub fn downgrade(self) -> std::io::Result<Self> {
-        self.file.unlock()?;
-        self.file.lock_shared()?;
-        Ok(self)
+        let mut lock = self;
+        lock.downgrade_in_place()?;
+        Ok(lock)
     }
 }
 
@@ -203,7 +286,7 @@ fn stage(
         ));
     }
     if dirs.pending_path(&offer.mod_id).exists() {
-        return Err("A change to this pack is already waiting for a restart".into());
+        return Err("A change to this pack is already waiting to be applied".into());
     }
     let bytes = std::fs::read(zip).map_err(|e| format!("could not read the download: {e}"))?;
     std::fs::create_dir_all(dirs.staging()).map_err(|e| e.to_string())?;
@@ -260,7 +343,7 @@ pub fn stage_remove(dirs: &Dirs, dir: &str) -> Result<(), String> {
         return Err(format!("'{dir}' is not an installed pack"));
     }
     if dirs.pending_path(dir).exists() {
-        return Err("A change to this pack is already waiting for a restart".into());
+        return Err("A change to this pack is already waiting to be applied".into());
     }
     write_pending(
         dirs,
@@ -323,6 +406,31 @@ pub fn apply_pending() -> (ApplyReport, Option<ContentLock>) {
         .map_err(|e| log::warn!("content lock: {e}"))
         .ok();
     (report, lock)
+}
+
+/// Apply staged changes while this process remains open. The caller must
+/// switch to a newly built registry before entering another world session.
+pub fn apply_pending_live(dirs: &Dirs, lock: &mut ContentLock) -> ApplyReport {
+    match lock.try_upgrade() {
+        Ok(true) => {}
+        Ok(false) => {
+            return ApplyReport {
+                deferred: !pending(dirs).is_empty(),
+                ..Default::default()
+            };
+        }
+        Err(e) => {
+            return ApplyReport {
+                failed: vec![("content lock".to_owned(), e.to_string())],
+                ..Default::default()
+            };
+        }
+    }
+    let report = apply_in(dirs, &petramond_world::assets::shipped_pack_ids());
+    if let Err(e) = lock.downgrade_in_place() {
+        log::error!("content lock: could not return to shared access: {e}");
+    }
+    report
 }
 
 /// The apply itself, with the lock already held.

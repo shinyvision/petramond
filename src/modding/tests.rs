@@ -480,31 +480,30 @@ fn host_call_spinning_dispatch_is_disabled_by_the_call_cap() {
     );
 }
 
-/// Contract: a runaway guest loop is stopped by its FUEL budget — the same
-/// instruction count on every machine — with no help from the wall-clock
-/// epoch (nothing advances it here), and the disable names the budget.
+/// A costly but finite dispatch continues past the fuel warning threshold.
 #[test]
-fn runaway_dispatch_is_disabled_by_its_fuel_budget() {
-    let mut runaway =
-        hostile_guest_with_id("fuelled", "(loop $spin (br $spin))\n    (i64.const 0)");
-    runaway.set_fuel_budget(super::FuelBudget {
-        per_dispatch: 1_000_000,
-        per_tick: u64::MAX,
-    });
-    runaway.call_init_detached();
-    assert!(!runaway.disabled());
-    let ret = runaway.call_guest_detached(&mod_api::GuestCall::TickSystem { id: 7 });
-    assert!(
-        ret.is_none() && runaway.disabled(),
-        "the fuel budget trapped the loop"
+fn dispatch_continues_past_its_fuel_warning_threshold() {
+    let mut instance = hostile_guest_with_id(
+        "fuelled",
+        "(drop (call $hd (i32.const 0) (i32.const 6)))\n    \
+         (drop (call $hd (i32.const 0) (i32.const 6)))\n    \
+         (i64.const 2199023255553)",
     );
+    instance.set_fuel_budget(super::FuelBudget {
+        per_dispatch: 1,
+        per_tick: 1,
+    });
+    instance.call_init_detached();
+    assert!(!instance.disabled());
+    assert!(instance
+        .call_guest_detached(&mod_api::GuestCall::TickSystem { id: 7 })
+        .is_some());
+    assert!(!instance.disabled());
 }
 
-/// Contract: the PER-TICK budget spans every dispatch a mod makes in one
-/// tick. Many individually cheap dispatches in the same tick exhaust it; the
-/// same dispatches spread over ticks never do.
+/// Tick fuel remains measurable after a warning and never rejects a dispatch.
 #[test]
-fn many_cheap_dispatches_in_one_tick_exhaust_the_tick_budget() {
+fn many_cheap_dispatches_in_one_tick_continue_past_the_threshold() {
     // A bounded loop: every dispatch burns the same (deterministic) fuel.
     let body = "(local $i i32)\n    \
                 (loop $l (local.set $i (i32.add (local.get $i) (i32.const 1)))\n    \
@@ -543,9 +542,10 @@ fn many_cheap_dispatches_in_one_tick_exhaust_the_tick_budget() {
     super::ai::with_detached_tick(30, || {
         assert!(crowded.call_guest_detached(&call).is_some());
         assert!(crowded.call_guest_detached(&call).is_some());
-        assert!(crowded.call_guest_detached(&call).is_none());
+        assert!(crowded.call_guest_detached(&call).is_some());
     });
-    assert!(crowded.disabled(), "the third dispatch in one tick ran dry");
+    assert!(!crowded.disabled());
+    assert!(crowded.fuel_used_this_tick() > budget.per_tick);
 }
 
 /// Contract: the dispatch watchdog charges GUEST compute only. A host call

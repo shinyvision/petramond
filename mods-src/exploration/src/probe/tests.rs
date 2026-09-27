@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 
 use super::*;
 
@@ -124,7 +125,7 @@ fn reads_are_keyed_by_position_across_asks() {
     // A fluid is neither rock nor room, and it is not solid.
     assert!(!reads.rock([5, 0, 0]) && !reads.free([5, 0, 0]));
     assert_eq!(reads.solid([5, 0, 0]), Some(false));
-    assert!(reads.any_fluid());
+    assert_eq!(reads.space([5, 0, 0]), Some(TerrainSpace::Fluid));
     // Never asked: unknown, not open.
     assert_eq!(reads.space([9, 9, 9]), None);
     assert!(!reads.rock([9, 9, 9]) && !reads.free([9, 9, 9]));

@@ -70,6 +70,12 @@ pub fn prewarm_modules() {
     }
 }
 
+/// Drop compiled instances for paths that an in-process content apply may
+/// have replaced. The disk cache still verifies the source hash.
+pub fn clear_module_cache() {
+    host::module_cache::clear();
+}
+
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 

@@ -10,8 +10,8 @@
 //! Protocol (see `mod-api` docs): requests are postcard bytes written into
 //! guest memory through the guest's own `mod_alloc`; `mod_dispatch(ptr, len)`
 //! consumes the request buffer and returns a packed `ptr << 32 | len` reply
-//! the host reads and then releases with `mod_free`. Any trap, exhausted fuel
-//! budget, deadline, memory fault, or malformed reply DISABLES the mod for the
+//! the host reads and then releases with `mod_free`. Any trap, emergency
+//! deadline, memory fault, or malformed reply DISABLES the mod for the
 //! session with a visible error — the tick always continues without it — and
 //! the disable lands on the mod's shared [`ModHealth`], so every other
 //! instance of it (worldgen workers, bakes) stops too. A
@@ -96,7 +96,7 @@ impl ModInstance {
         store.data_mut().meter.set_budget(budget);
         // Instantiation runs guest code too (data/start sections): same leash.
         store
-            .set_fuel(budget.per_dispatch)
+            .set_fuel(u64::MAX)
             .map_err(|e| format!("arm fuel: {e:#}"))?;
         store.set_epoch_deadline(DISPATCH_DEADLINE_EPOCHS);
         let instance = host::linker()?
@@ -193,12 +193,12 @@ impl ModInstance {
             ),
         );
         self.store.data_mut().phase = Phase::Run;
-        let fuel_note = self.settle_fuel();
+        self.settle_fuel(None);
         match result {
             Ok(()) => self.dispatches += 1,
             Err(e) => {
                 let context = self.dispatch_context(None);
-                self.disable(&format!("mod_init trapped: {e:#}{fuel_note}{context}"));
+                self.disable(&format!("mod_init trapped: {e:#}{context}"));
             }
         }
     }
@@ -273,7 +273,7 @@ impl ModInstance {
         let started = slow_dispatch_logging().then(std::time::Instant::now);
         let result = self.dispatch_protocol(&request[..request_len]);
         self.request_buf = request;
-        let fuel_note = self.settle_fuel();
+        self.settle_fuel(Some(describe));
         match result {
             Ok(GuestRet::Unsupported) => {
                 self.note_declined(kind, describe);
@@ -288,7 +288,7 @@ impl ModInstance {
             }
             Err(e) => {
                 let context = self.dispatch_context(Some(describe));
-                self.disable(&format!("{e}{fuel_note}{context}"));
+                self.disable(&format!("{e}{context}"));
                 None
             }
         }
@@ -344,25 +344,15 @@ impl ModInstance {
         );
     }
 
-    /// Arm one guest entry: its fuel (the per-dispatch budget, capped by
-    /// what is left of this tick's — see [`host::budget`]), the wall-clock
-    /// backstop deadline, and the per-dispatch accounting `host_dispatch`
-    /// charges against. `false` = the mod may not run (this tick's budget is
-    /// spent, so it was just disabled).
+    /// Arm one guest entry with the full meter range, the emergency
+    /// wall-clock backstop, and per-dispatch host-call accounting.
     ///
     /// The tick is the published simulation context's, or the detached AI
-    /// dispatch's; worldgen and client instances have none and are held to
-    /// the per-dispatch budget only.
+    /// dispatch's; worldgen and client instances have no tick counter.
     fn arm_dispatch(&mut self) -> bool {
         let tick = scope::with_active_ref(|ctx| ctx.world.current_tick())
             .or_else(super::ai::detached_tick);
-        let fuel = match self.store.data_mut().meter.arm(tick) {
-            Ok(fuel) => fuel,
-            Err(why) => {
-                self.disable(&why);
-                return false;
-            }
-        };
+        let fuel = self.store.data_mut().meter.arm(tick);
         if let Err(e) = self.store.set_fuel(fuel) {
             self.disable(&format!("arm fuel: {e:#}"));
             return false;
@@ -373,17 +363,22 @@ impl ModInstance {
         true
     }
 
-    /// Charge the finished entry's fuel to this tick's budget. Returns a
-    /// disable-message note naming the budget when the entry ran dry (empty
-    /// otherwise), so a fuel trap says which limit it hit.
-    fn settle_fuel(&mut self) -> String {
+    /// Charge the finished entry and warn once per session mod when a
+    /// diagnostic threshold was crossed.
+    fn settle_fuel(&mut self, call: Option<&dyn std::fmt::Debug>) {
         let remaining = self.store.get_fuel().unwrap_or(0);
+        let used = self.armed_fuel.saturating_sub(remaining);
+        if log::log_enabled!(target: "petramond::modding::fuel", log::Level::Debug) {
+            log::debug!(
+                target: "petramond::modding::fuel",
+                "mod '{}' used {used} fuel for {}",
+                self.id,
+                call.map_or_else(|| "mod_init".to_owned(), |call| host::short_debug(call, 48)),
+            );
+        }
         let meter = &mut self.store.data_mut().meter;
-        meter.charge(self.armed_fuel, remaining);
-        if remaining == 0 {
-            format!(" [{}]", meter.exhaustion(self.armed_fuel))
-        } else {
-            String::new()
+        if let Some(warning) = meter.charge(self.armed_fuel, remaining) {
+            self.health.warn_fuel_once(&warning);
         }
     }
 

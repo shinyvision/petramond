@@ -2,6 +2,7 @@
 //! growing the head basin and the chain of terraces below it, and adopting
 //! the natural pits a basin encloses.
 
+use mod_sdk::{FxHashMap, FxHashSet};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::site::Trace;
@@ -74,25 +75,23 @@ pub(super) enum Mem {
 /// The probed window of one trace, and the columns a basin may grow into.
 pub(super) struct Survey<'t, T> {
     /// Probe column -> its inclusive row window.
-    window: BTreeMap<Col, (i32, i32)>,
+    window: FxHashMap<Col, (i32, i32)>,
     /// Columns within `GROW_DILATE` of a traced sample.
-    growable: BTreeSet<Col>,
+    growable: FxHashSet<Col>,
     terrain: &'t T,
 }
 
 impl<'t, T: Fn([i32; 3]) -> Option<bool>> Survey<'t, T> {
     pub(super) fn new(trace: &Trace, terrain: &'t T) -> Survey<'t, T> {
-        let window: BTreeMap<Col, (i32, i32)> = trace.probe_cols().into_iter().collect();
-        let growable = window
-            .keys()
-            .filter(|&&(x, z)| {
-                trace
-                    .samples
-                    .iter()
-                    .any(|&(sx, sz, _)| (x - sx).abs().max((z - sz).abs()) <= GROW_DILATE)
-            })
-            .copied()
-            .collect();
+        let window: FxHashMap<Col, (i32, i32)> = trace.probe_cols().into_iter().collect();
+        let mut growable = FxHashSet::default();
+        for &(sx, sz, _) in &trace.samples {
+            for x in sx - GROW_DILATE..=sx + GROW_DILATE {
+                for z in sz - GROW_DILATE..=sz + GROW_DILATE {
+                    growable.insert((x, z));
+                }
+            }
+        }
         Survey {
             window,
             growable,

@@ -4,9 +4,8 @@
 //!
 //! Engine config is part of the determinism contract: NaN
 //! canonicalization ON, no threads, no WASI, no relaxed-SIMD, and FUEL
-//! metering ([`budget`]) so a runaway mod traps out at the same instruction on
-//! every machine instead of hanging the tick loop. Epoch interruption, armed
-//! by a background ticker thread, stays only as a wall-clock backstop.
+//! metering ([`budget`]) for cost diagnostics. Epoch interruption, armed by a
+//! background ticker thread, is the emergency backstop for unbounded loops.
 //!
 //! Call handling is split per ABI domain (one submodule per domain enum of
 //! [`HostCall`]); the switchboard in [`handle_host_call`] gates every call on
@@ -52,17 +51,12 @@ mod worldgen;
 const EPOCH_PERIOD: Duration = Duration::from_millis(50);
 
 /// Epochs of GUEST COMPUTE a single dispatch may span before it traps: a
-/// generous ~2 s for work that should take microseconds. This is the
-/// LAST-RESORT hang backstop only — the deterministic limits are the fuel
-/// budgets ([`budget`]), which a runaway guest exhausts long before this
-/// wall-clock deadline, so disablement never depends on machine load in
-/// practice. Time spent inside
+/// one-minute emergency backstop for an unbounded loop. Fuel thresholds are
+/// diagnostics, so legitimate heavy work continues. Time spent inside
 /// re-entrant host calls is NOT charged — `host_dispatch` re-arms the deadline
 /// with the remaining budget when a host call returns, so a host-side stall
-/// (e.g. a slow storage read) cannot get an innocent mod disabled. Hitting
-/// the budget is a mod bug; the mod is disabled for the session and the tick
-/// continues.
-pub(in crate::modding) const DISPATCH_DEADLINE_EPOCHS: u64 = 40;
+/// (e.g. a slow storage read) cannot get an innocent mod disabled.
+pub(in crate::modding) const DISPATCH_DEADLINE_EPOCHS: u64 = 1200;
 
 /// Host calls one dispatch may make — the backstop that keeps the watchdog
 /// meaningful now that host-call time is uncharged: a guest spinning on cheap
@@ -607,14 +601,7 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                 // costs a base plus (deterministic sides) its bytes.
                 let cost = budget::host_call_fuel(caller.data().side, request_len, bytes.len());
                 let fuel = caller.get_fuel()?;
-                if fuel < cost {
-                    // Drained, so the disable message names the budget.
-                    caller.set_fuel(0)?;
-                    return Err(wasmtime::Error::msg(
-                        "dispatch exhausted its fuel budget in host calls",
-                    ));
-                }
-                caller.set_fuel(fuel - cost)?;
+                caller.set_fuel(fuel.saturating_sub(cost).max(1))?;
                 let alloc =
                     caller.data().alloc.clone().ok_or_else(|| {
                         wasmtime::Error::msg("host_dispatch during instantiation")

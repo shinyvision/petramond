@@ -139,6 +139,7 @@
           "grow": 1
          },
          "min_h": 60,
+         "reserve_scrollbar": true,
          "pad": [
           1,
           1,
@@ -206,14 +207,17 @@
                {
                 "type": "row",
                 "layout": {
-                 "justify": "end"
+                 "align": "stretch"
                 },
                 "children": [
                  {
                   "type": "button",
                   "id": "message_action",
+                  "style": "button.success",
                   "layout": {
-                   "w": 72
+                   "w": {
+                    "grow": 1
+                   }
                   },
                   "bind": {
                    "text": "message_action_text",
@@ -395,7 +399,7 @@
                {
                 "type": "column",
                 "layout": {
-                 "w": 64,
+                 "w": 92,
                  "align": "end"
                 },
                 "children": [
@@ -425,18 +429,6 @@
                   }
                  },
                  {
-                  "type": "button",
-                  "id": "undo",
-                  "icon": "icon.undo",
-                  "layout": {
-                   "w": 24,
-                   "h": 24
-                  },
-                  "bind": {
-                   "visible": "can_undo"
-                  }
-                 },
-                 {
                   "type": "gauge",
                   "mode": "grow_lr",
                   "style": "gauge.bar",
@@ -454,16 +446,27 @@
                    "value": "progress",
                    "visible": "busy"
                   }
-                 }
-                ]
-               },
-               {
-                "type": "column",
-                "layout": {
-                 "w": 24,
-                 "justify": "end"
-                },
-                "children": [
+                 },
+                 {
+                  "type": "spacer",
+                  "layout": {
+                   "h": {
+                    "grow": 1
+                   }
+                  }
+                 },
+                 {
+                  "type": "button",
+                  "id": "undo",
+                  "icon": "icon.undo",
+                  "layout": {
+                   "w": 24,
+                   "h": 24
+                  },
+                  "bind": {
+                   "visible": "can_undo"
+                  }
+                 },
                  {
                   "type": "button",
                   "id": "delete",
@@ -500,6 +503,29 @@
         ]
        },
        {
+        "type": "button",
+        "id": "browse_empty",
+        "text": "Browse",
+        "style": "button.success",
+        "layout": {
+         "w": {
+          "grow": 1
+         }
+        },
+        "bind": {
+         "visible": "browse_empty"
+        }
+       },
+       {
+        "type": "label",
+        "style": "label.muted",
+        "small": true,
+        "bind": {
+         "text": "apply_status",
+         "visible": "apply_status"
+        }
+       },
+       {
         "type": "row",
         "layout": {
          "gap": 4,
@@ -517,7 +543,7 @@
           "icon": "icon.account",
           "layout": {
            "w": 24,
-           "h": 24
+           "h": 20
           }
          },
          {
@@ -530,8 +556,8 @@
          },
          {
           "type": "button",
-          "id": "restart",
-          "text": "Restart now",
+          "id": "apply",
+          "text": "Apply now",
           "style": "button.success",
           "bind": {
            "visible": "pending_changes"
@@ -564,6 +590,7 @@
           "grow": 1
          },
          "min_h": 40,
+         "reserve_scrollbar": true,
          "gap": 4,
          "pad": [
           2,
@@ -765,11 +792,11 @@
    },
    {
     "type": "tooltip",
-    "hover": "restart",
-    "id": "restart_tooltip",
+    "hover": "apply",
+    "id": "apply_tooltip",
     "style": "panel.inset",
     "bind": {
-     "visible": "restart_tip"
+     "visible": "apply_tip"
     },
     "layout": {
      "max_w": 200,
@@ -791,7 +818,7 @@
       "small": true,
       "wrap": true,
       "bind": {
-       "text": "restart_tip"
+       "text": "apply_tip"
       }
      }
     ]
@@ -857,39 +884,6 @@
       "small": true,
       "wrap": true,
       "text": "Petramond Addon"
-     }
-    ]
-   },
-   {
-    "type": "tooltip",
-    "hover": "get",
-    "id": "get_tooltip",
-    "style": "panel.inset",
-    "bind": {
-     "visible": "get_tip"
-    },
-    "layout": {
-     "max_w": 200,
-     "abs": {
-      "x": 4,
-      "y": 4
-     },
-     "pad": [
-      3,
-      2,
-      3,
-      3
-     ],
-     "align": "stretch"
-    },
-    "children": [
-     {
-      "type": "label",
-      "small": true,
-      "wrap": true,
-      "bind": {
-       "text": "get_tip"
-      }
      }
     ]
    },

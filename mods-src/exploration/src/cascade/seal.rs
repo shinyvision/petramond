@@ -5,7 +5,9 @@
 //! their basin) and the seal runs again. Optimism lives here — rejection is
 //! reserved for a chain the retreat collapses.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
+
+use mod_sdk::FxHashMap;
 
 use super::basin::{Basins, Col};
 use super::{DAM_MAX, DAM_TALL, DAM_TALL_SHARE_MAX, MIN_POOLS, MIN_POOL_AREA, SIDES};
@@ -125,7 +127,7 @@ fn footing(
 /// between linked basins are legitimately tall, but they are a small share
 /// of the rim, and half the rim running tall is a tank, not a terrace.
 pub(super) fn rim_is_a_wall(silt: &BTreeSet<[i32; 3]>, rim_dam: &BTreeSet<Col>) -> bool {
-    let mut height: BTreeMap<Col, i32> = BTreeMap::new();
+    let mut height: FxHashMap<Col, i32> = FxHashMap::default();
     for p in silt {
         if rim_dam.contains(&(p[0], p[2])) {
             *height.entry((p[0], p[2])).or_insert(0) += 1;

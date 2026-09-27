@@ -1077,6 +1077,9 @@ fn layout_props(ui: &mut Ui, l: &mut LayoutProps, kind: &NodeKind, t: &mut Track
             }
         }
     });
+    if matches!(kind, NodeKind::Scroll { .. }) {
+        t.hit(ui.checkbox(&mut l.reserve_scrollbar, "reserve scrollbar lane"));
+    }
     ui.horizontal(|ui| {
         ui.label("justify");
         for (j, name) in [

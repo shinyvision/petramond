@@ -31,7 +31,7 @@
 //! values are pure functions of the seed and the key, so visit order changes
 //! who computes a fact first, never what it is.
 
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::hash::Hash;
 
 use mod_sdk::*;
@@ -63,7 +63,7 @@ pub(crate) fn ask<T>(positions: Vec<[i32; 3]>, call: Query<T>) -> Option<Vec<T>>
 /// were open.
 pub(crate) struct TerrainReads {
     query: Query<TerrainSpace>,
-    answers: HashMap<[i32; 3], TerrainSpace>,
+    answers: FxHashMap<[i32; 3], TerrainSpace>,
     failed: bool,
 }
 
@@ -78,7 +78,7 @@ impl TerrainReads {
     pub(crate) fn with_query(query: Query<TerrainSpace>) -> TerrainReads {
         TerrainReads {
             query,
-            answers: HashMap::new(),
+            answers: FxHashMap::default(),
             failed: false,
         }
     }
@@ -90,11 +90,10 @@ impl TerrainReads {
         if self.failed {
             return false;
         }
+        let mut seen = FxHashSet::default();
         let fresh: Vec<[i32; 3]> = cells
             .into_iter()
-            .filter(|c| !self.answers.contains_key(c))
-            .collect::<BTreeSet<_>>()
-            .into_iter()
+            .filter(|c| !self.answers.contains_key(c) && seen.insert(*c))
             .collect();
         if fresh.is_empty() {
             return true;
@@ -130,6 +129,7 @@ impl TerrainReads {
     }
 
     /// Solid (`Some(true)`), open or fluid (`Some(false)`), or unknown.
+    #[cfg(test)]
     pub(crate) fn solid(&self, c: [i32; 3]) -> Option<bool> {
         self.space(c).map(|s| s == TerrainSpace::Solid)
     }
@@ -142,11 +142,6 @@ impl TerrainReads {
     /// Known free ROOM. A fluid cell is neither rock nor room.
     pub(crate) fn free(&self, c: [i32; 3]) -> bool {
         self.space(c) == Some(TerrainSpace::Air)
-    }
-
-    /// Whether any answered cell is a fluid.
-    pub(crate) fn any_fluid(&self) -> bool {
-        self.answers.values().any(|&s| s == TerrainSpace::Fluid)
     }
 }
 
@@ -272,7 +267,7 @@ pub(crate) fn lookup_many(get_many: MemoBatchLookup, keys: Vec<Vec<u8>>) -> Vec<
 /// Eviction changes cost, never content: every value is a pure function of
 /// its key.
 pub(crate) struct Settled<K, V> {
-    entries: HashMap<K, V>,
+    entries: FxHashMap<K, V>,
     order: VecDeque<K>,
     capacity: usize,
 }
@@ -280,7 +275,7 @@ pub(crate) struct Settled<K, V> {
 impl<K: Copy + Eq + Hash, V: Clone> Settled<K, V> {
     pub(crate) fn new(capacity: usize) -> Settled<K, V> {
         Settled {
-            entries: HashMap::new(),
+            entries: FxHashMap::default(),
             order: VecDeque::new(),
             capacity: capacity.max(1),
         }

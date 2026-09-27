@@ -1,5 +1,5 @@
 use super::dress::{patch_at, vine_at, Dress, STRAY_PER_MILLE};
-use super::giants::{beats, Candidate, COMPETE_PAD};
+use super::giants::{beats, could_beat, could_reach_box, roll_giant, Candidate, COMPETE_PAD};
 use super::*;
 use crate::cascade;
 use crate::shroom::{self, Giant, Part};
@@ -136,6 +136,30 @@ fn cap_competition_is_deterministic_and_one_sided() {
     assert!(!beats(&a, ra, &c, [10, -30, 0]));
     // Vertically separated caps never compete however close in plan.
     assert!(!beats(&a, ra, &b, [8, 30, 0]));
+}
+
+#[test]
+fn giant_prefilter_keeps_every_body_cell_and_possible_winner() {
+    let candidates: Vec<_> = (-5..=5)
+        .flat_map(|lz| {
+            (-5..=5).flat_map(move |lx| {
+                (-2..=2).filter_map(move |ly| roll_giant(0x84713c32, lx, ly, lz))
+            })
+        })
+        .collect();
+    for a in &candidates {
+        let root = [a.x, a.cell_floor_y + 3, a.z];
+        a.giant.emit(|dx, dy, dz, _| {
+            let p = [root[0] + dx, root[1] + dy, root[2] + dz];
+            assert!(could_reach_box(a, p, p));
+        });
+        for b in &candidates {
+            let other = [b.x, b.cell_floor_y + 3, b.z];
+            if beats(a, root, b, other) {
+                assert!(could_beat(a, b));
+            }
+        }
+    }
 }
 
 /// One dispatch's terrain probe is SPLIT at the ABI cap rather than

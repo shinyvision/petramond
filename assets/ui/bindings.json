@@ -21,7 +21,7 @@
     },
     "notice": {
      "type": "str",
-     "doc": "one line under the menu: content apply failures, a deferred apply, download progress, or changes waiting for a restart"
+     "doc": "one line under the menu: content apply failures, a deferred apply, download progress, or changes waiting to be applied"
     },
     "has_notice": {
      "type": "bool",
@@ -1182,7 +1182,7 @@
       "progress": "f32",
       "can_delete": "bool"
      },
-     "doc": "the one content list in display order: section headers (Installed, Available on petramond.com, Part of Petramond), message stamps (sign in, loading, errors, empty, filters) and pack entries. Exactly one of is_header/is_message/is_entry is set. An entry's action column shows one of can_get/can_replace/can_undo/busy; its trash column can_delete or busy (cancel)"
+     "doc": "the one content list in display order: message stamps (sign in, loading, errors, empty, filters) and pack entries. Each entry reserves a fixed action rail so text width stays stable; Get, Replace, and progress sit at its upper right, while Undo, Delete, and Cancel sit at its lower right"
     },
     "row_sel": {
      "type": "i32",
@@ -1203,10 +1203,6 @@
     "account_tip": {
      "type": "str",
      "doc": "the footer account button's tooltip: 'Account: <username>' or 'Sign in'"
-    },
-    "get_tip": {
-     "type": "str",
-     "doc": "tooltip for the hovered row's Get/Update/Retry button; '(Enter)' only on the selected row"
     },
     "replace_tip": {
      "type": "str",
@@ -1234,11 +1230,19 @@
     },
     "pending_changes": {
      "type": "bool",
-     "doc": "a change waits for a restart (shows Restart now)"
+     "doc": "a change waits to be applied (shows Apply now)"
     },
-    "restart_tip": {
+    "browse_empty": {
+     "type": "bool",
+     "doc": "the Installed tab has no packs and shows its bottom Browse action"
+    },
+    "apply_status": {
      "type": "str",
-     "doc": "what Restart now applies, naming at most three packs"
+     "doc": "a visible reason a pending change could not be applied yet"
+    },
+    "apply_tip": {
+     "type": "str",
+     "doc": "what Apply now changes, naming at most three packs"
     },
     "confirm_question": {
      "type": "str",
@@ -1288,12 +1292,13 @@
     "get": "click (row): Get / Update / Retry (Enter on the selected row)",
     "replace": "click (row): confirm replacing a hand-installed copy with the petramond.com version",
     "undo": "click (row): withdraw the row's pending change (Ctrl+Z)",
-    "delete": "click (row): confirm removing an installed pack at the next restart (Delete)",
+    "delete": "click (row): confirm removing an installed pack when changes are applied (Delete)",
     "cancel": "click (row): cancel the row's download (Delete)",
-    "message_action": "click (message row): Sign In / Cancel / Retry / Show all",
+    "message_action": "click (message row): Sign In / Cancel / Retry / Browse / Show all",
+    "browse_empty": "click: switch an empty Installed tab to Browse",
     "back": "click: leave the browser (Escape); downloads keep running",
     "account": "click: open the Account screen; its Back returns here",
-    "restart": "click: restart Petramond to apply the waiting changes (asks first while downloads run)",
+    "apply": "click: apply the waiting changes in the running Petramond window",
     "confirm_cancel": "click: close the confirm page (Escape)",
     "confirm_danger": "click: do the destructive action (Enter)",
     "confirm_go": "click: do the benign action (Enter)",

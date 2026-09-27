@@ -10,7 +10,7 @@ use serde_json::json;
 
 use super::api::{self, DownloadError, ListingRow, Progress};
 use super::archive::{self, Archive};
-use super::install::{self, Dirs, Offer, Op};
+use super::install::{self, ContentLock, Dirs, Offer, Op};
 use super::{records, Kind};
 use crate::service::ServiceError;
 
@@ -373,6 +373,42 @@ fn a_staged_install_lands_on_apply_and_an_update_replaces_it_whole() {
 }
 
 #[test]
+fn in_process_apply_waits_for_other_readers_then_changes_the_installed_set() {
+    let (_root, dirs) = dirs("live-apply-lock");
+    stage(&dirs, "sample_pack", "1");
+    let mut owner = ContentLock::shared(&dirs).unwrap();
+    let other = ContentLock::shared(&dirs).unwrap();
+    let deferred = install::apply_pending_live(&dirs, &mut owner);
+    assert!(deferred.deferred);
+    assert!(deferred.applied.is_empty());
+    assert!(!dirs.mods.join("sample_pack").exists());
+
+    drop(other);
+    assert!(owner.try_upgrade().unwrap());
+    let outsider = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(dirs.content.join("lock-gate"))
+        .unwrap();
+    assert!(matches!(
+        outsider.try_lock_shared(),
+        Err(std::fs::TryLockError::WouldBlock)
+    ));
+    owner.downgrade_in_place().unwrap();
+    outsider.try_lock_shared().unwrap();
+    outsider.unlock().unwrap();
+
+    let applied = install::apply_pending_live(&dirs, &mut owner);
+    assert_eq!(applied.applied, ["sample_pack"]);
+    assert_eq!(notes(&dirs, "sample_pack"), "1");
+
+    install::stage_remove(&dirs, "sample_pack").unwrap();
+    let removed = install::apply_pending_live(&dirs, &mut owner);
+    assert_eq!(removed.applied, ["sample_pack"]);
+    assert!(!dirs.mods.join("sample_pack").exists());
+}
+
+#[test]
 fn an_apply_cut_short_never_costs_the_player_their_pack() {
     let (_root, dirs) = dirs("interrupted");
     stage(&dirs, "sample_pack", "1");
@@ -622,7 +658,7 @@ fn check_refuses_what_the_website_refuses() {
 #[test]
 #[ignore = "needs a running website with an uploaded addon and mod"]
 fn live_download_installs_by_tier_and_uninstall_removes_it() {
-    use super::{install::ContentLock, Tier};
+    use super::Tier;
     let env = |key: &str| std::env::var(key).unwrap_or_else(|_| panic!("set {key}"));
     let scratch = PathBuf::from(env("PETRAMOND_DATA_DIR"));
     let (addon, third_party) = (env("PETRAMOND_TEST_ADDON"), env("PETRAMOND_TEST_MOD"));

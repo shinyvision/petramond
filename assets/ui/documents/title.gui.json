@@ -88,7 +88,7 @@
          {
           "type": "button",
           "id": "browse",
-          "text": "Browse Content",
+          "text": "Content",
           "layout": {
            "w": 140
           }

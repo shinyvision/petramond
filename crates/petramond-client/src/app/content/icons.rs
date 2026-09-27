@@ -1,13 +1,13 @@
 //! Pack icons for the content lists, all through `content::icon::normalize`
 //! so every icon reaches the UI square: the installed packs' own icons (read
-//! once per process: packs never change under a running game), and the
+//! once per content registry), and the
 //! site's icons, cached on disk under the version they belong to and fetched
 //! one at a time by a worker when the cache misses.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use petramond::content::ListingRow;
 use petramond::modding::ClientImageData;
@@ -36,8 +36,15 @@ fn image(key: String, rgba: image::RgbaImage) -> ClientImageData {
 /// Every discovered or refused pack's own icon, normalized, keyed by pack id
 /// (or directory name for a pack without one).
 pub(in crate::app) fn pack_icons() -> &'static [ClientImageData] {
-    static ICONS: OnceLock<Vec<ClientImageData>> = OnceLock::new();
-    ICONS.get_or_init(|| {
+    static ICONS: Mutex<Option<(u64, &'static [ClientImageData])>> = Mutex::new(None);
+    let serial = petramond_world::content::current().serial();
+    let mut icons = ICONS.lock().unwrap();
+    if let Some((loaded, values)) = *icons {
+        if loaded == serial {
+            return values;
+        }
+    }
+    let values: Vec<ClientImageData> = {
         let packs = petramond_world::assets::packs().iter().map(|p| {
             (
                 p.id.clone().unwrap_or_else(|| dir_name(&p.dir)),
@@ -65,7 +72,10 @@ pub(in crate::app) fn pack_icons() -> &'static [ClientImageData] {
                 }
             })
             .collect()
-    })
+    };
+    let values: &'static [ClientImageData] = Box::leak(values.into_boxed_slice());
+    *icons = Some((serial, values));
+    values
 }
 
 pub(in crate::app) fn dir_name(dir: &std::path::Path) -> String {

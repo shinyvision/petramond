@@ -24,7 +24,105 @@ use super::giants::{standing_giants_over, Candidate};
 use super::CLAIM_ROWS;
 use crate::cascade;
 use crate::content::Content;
-use crate::probe::{self, Deferred, Memo, Settled, TerrainReads};
+use crate::probe::{self, Deferred, Memo, Settled};
+
+/// A cascade's terrain probes stay inside its own lattice cell. A flat grid
+/// makes both overlapping trace reads and the basin's many point lookups cheap.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProbeCell {
+    Unknown,
+    Queued,
+    Solid,
+    Air,
+    Fluid,
+}
+
+struct CellTerrain {
+    origin: [i32; 3],
+    cells: Vec<ProbeCell>,
+    query: probe::Query<TerrainSpace>,
+    failed: bool,
+}
+
+impl CellTerrain {
+    fn new(cell: &cascade::Cell) -> Self {
+        Self::with_query(cell, terrain_space_at)
+    }
+
+    fn with_query(cell: &cascade::Cell, query: probe::Query<TerrainSpace>) -> Self {
+        let side = cascade::LATTICE as usize;
+        let height = cascade::LATTICE_Y as usize;
+        Self {
+            origin: [
+                cell.lx * cascade::LATTICE,
+                cell.ly * cascade::LATTICE_Y,
+                cell.lz * cascade::LATTICE,
+            ],
+            cells: vec![ProbeCell::Unknown; side * height * side],
+            query,
+            failed: false,
+        }
+    }
+
+    fn slot(&self, p: [i32; 3]) -> Option<usize> {
+        let x = p[0].wrapping_sub(self.origin[0]) as u32;
+        let y = p[1].wrapping_sub(self.origin[1]) as u32;
+        let z = p[2].wrapping_sub(self.origin[2]) as u32;
+        if x >= cascade::LATTICE as u32
+            || y >= cascade::LATTICE_Y as u32
+            || z >= cascade::LATTICE as u32
+        {
+            return None;
+        }
+        let side = cascade::LATTICE as usize;
+        Some(((y as usize * side + x as usize) * side) + z as usize)
+    }
+
+    fn ask(&mut self, positions: impl IntoIterator<Item = [i32; 3]>) -> bool {
+        if self.failed {
+            return false;
+        }
+        let mut fresh = Vec::new();
+        let mut slots = Vec::new();
+        for p in positions {
+            let Some(slot) = self.slot(p) else {
+                self.failed = true;
+                return false;
+            };
+            if self.cells[slot] == ProbeCell::Unknown {
+                self.cells[slot] = ProbeCell::Queued;
+                fresh.push(p);
+                slots.push(slot);
+            }
+        }
+        let Some(reply) = probe::ask(fresh, self.query) else {
+            self.failed = true;
+            return false;
+        };
+        for (slot, space) in slots.into_iter().zip(reply) {
+            self.cells[slot] = match space {
+                TerrainSpace::Solid => ProbeCell::Solid,
+                TerrainSpace::Air => ProbeCell::Air,
+                TerrainSpace::Fluid => ProbeCell::Fluid,
+            };
+        }
+        true
+    }
+
+    fn space(&self, p: [i32; 3]) -> Option<TerrainSpace> {
+        let slot = self.slot(p)?;
+        match self.cells[slot] {
+            ProbeCell::Solid => Some(TerrainSpace::Solid),
+            ProbeCell::Air => Some(TerrainSpace::Air),
+            ProbeCell::Fluid => Some(TerrainSpace::Fluid),
+            _ => None,
+        }
+    }
+
+    fn solid(&self, p: [i32; 3]) -> Option<bool> {
+        self.space(p).map(|space| space == TerrainSpace::Solid)
+    }
+}
 
 /// `(seed, cell x, y, z)`.
 type Key = (u32, i32, i32, i32);
@@ -155,19 +253,22 @@ fn compute_cascade_cell(
         .map(|t| [t.anchor.0, t.s0, t.anchor.1])
         .collect();
     let anchor_biomes = probe::ask(anchors, underground_biome_at)?;
+    let mut reads = CellTerrain::new(&c);
     for (t, &b) in traces.iter().zip(&anchor_biomes) {
         if b != ours {
             continue;
         }
         let mut plan: Vec<[i32; 3]> = Vec::new();
         t.plan(|p| plan.push(p));
-        let mut reads = TerrainReads::new();
-        if !reads.ask(plan) {
+        if !reads.ask(plan.iter().copied()) {
             return None;
         }
         // The containment proof models rock and room only, so a basin
         // meeting a fluid is not sited.
-        if reads.any_fluid() {
+        if plan
+            .iter()
+            .any(|&p| reads.space(p) == Some(TerrainSpace::Fluid))
+        {
             continue;
         }
         let terrain = |p: [i32; 3]| reads.solid(p);
@@ -216,4 +317,51 @@ fn intruders_over(seed: u32, ours: u8, built: &cascade::Built) -> Vec<cascade::I
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::*;
+
+    thread_local! {
+        static REQUESTS: RefCell<Vec<Vec<[i32; 3]>>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn terrain(positions: Vec<[i32; 3]>) -> Vec<TerrainSpace> {
+        REQUESTS.with(|requests| requests.borrow_mut().push(positions.clone()));
+        positions
+            .iter()
+            .map(|p| match p[0] {
+                -190 => TerrainSpace::Solid,
+                -188 => TerrainSpace::Fluid,
+                _ => TerrainSpace::Air,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn cascade_reads_reuse_overlapping_cells_without_shifting_answers() {
+        REQUESTS.with(|requests| requests.borrow_mut().clear());
+        let cell = cascade::Cell {
+            lx: -2,
+            ly: -1,
+            lz: 3,
+        };
+        let mut reads = CellTerrain::with_query(&cell, terrain);
+        let rock = [-190, -31, 290];
+        let air = [-189, -31, 290];
+        let fluid = [-188, -31, 291];
+        assert!(reads.ask([rock, air, rock]));
+        assert!(reads.ask([air, fluid]));
+        assert_eq!(
+            REQUESTS.with(|requests| requests.borrow().clone()),
+            vec![vec![rock, air], vec![fluid]]
+        );
+        assert_eq!(reads.solid(rock), Some(true));
+        assert_eq!(reads.space(air), Some(TerrainSpace::Air));
+        assert_eq!(reads.space(fluid), Some(TerrainSpace::Fluid));
+        assert_eq!(reads.space([0, 0, 0]), None);
+    }
 }

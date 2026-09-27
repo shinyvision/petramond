@@ -69,6 +69,12 @@ pub(in crate::modding) fn module_for(path: &Path) -> Result<Module, String> {
     result
 }
 
+/// Forget compiled modules whose source paths may have been replaced by a
+/// content apply. Existing instances retain their own module handles.
+pub(in crate::modding) fn clear() {
+    CACHE.lock().unwrap().clear();
+}
+
 /// Warm the module cache for `paths` on background threads. Returns
 /// immediately; a later [`module_for`] for one of these paths blocks on its
 /// in-flight slot instead of duplicating work, so callers about to load a
