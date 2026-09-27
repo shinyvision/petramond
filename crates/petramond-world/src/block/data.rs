@@ -199,11 +199,7 @@ pub(super) fn all() -> &'static [Block] {
 /// bounds test alone is the whole function.
 #[inline]
 pub(super) fn from_id(id: u16) -> Block {
-    if (id as usize) < registry().defs.len() {
-        Block(id)
-    } else {
-        Block::Air
-    }
+    BlockTable::current().block(id)
 }
 
 /// Read a dense per-id table at a RAW id.
@@ -262,7 +258,12 @@ pub fn state_key_declared(key: &str) -> bool {
 /// registry reads `false`, matching the `Air` its `Block::from_id` resolves to.
 #[inline]
 pub(super) fn shape_refines(id: u16) -> bool {
-    row(&registry().shape_refines, id)
+    BlockTable::current().refines_shape(id)
+}
+
+#[inline]
+pub(super) fn shape_custom(id: u16) -> bool {
+    BlockTable::current().custom_shape(id)
 }
 
 /// The dense per-id tables DERIVED from a registry's block rows through the
@@ -409,16 +410,81 @@ pub(super) fn nav_reads_solid(id: u16) -> bool {
 /// Dense per-id tag membership; see [`load::Registry::tag_bits`].
 #[inline]
 pub(super) fn has_tag(id: u16, tag: super::BlockTag) -> bool {
-    if tag.id() <= load::TAG_BITS_MAX {
-        row(&registry().tag_bits, id) & (1u128 << tag.id()) != 0
-    } else {
-        def(Block(id)).tags.contains(&tag)
-    }
+    BlockTable::current().has_tag(id, tag)
 }
 
 #[inline]
 pub(super) fn flags(id: u16) -> BlockFlags {
-    row(&registry().flags, id)
+    BlockTable::current().flags(id)
+}
+
+/// The current registry's dense per-id block tables, resolved ONCE. Every
+/// `Block` accessor resolves the thread's registry per call; a loop over
+/// thousands of cells (a mesh pad, a light flood) takes one of these first
+/// and indexes the tables directly. Ids past the registry read as air, like
+/// [`Block::from_id`].
+#[derive(Clone, Copy)]
+pub struct BlockTable(&'static load::Registry);
+
+impl BlockTable {
+    #[inline]
+    pub fn current() -> BlockTable {
+        BlockTable(registry())
+    }
+
+    #[inline]
+    pub fn block(self, id: u16) -> Block {
+        if (id as usize) < self.0.defs.len() {
+            Block(id)
+        } else {
+            Block::Air
+        }
+    }
+
+    #[inline]
+    pub fn flags(self, id: u16) -> BlockFlags {
+        row(&self.0.flags, id)
+    }
+
+    #[inline]
+    fn def(self, id: u16) -> &'static BlockDef {
+        let defs = &self.0.defs;
+        defs.get(id as usize).unwrap_or(&defs[0])
+    }
+
+    /// See [`Block::id_refines_shape`].
+    #[inline]
+    pub fn refines_shape(self, id: u16) -> bool {
+        row(&self.0.shape_refines, id)
+    }
+
+    /// See [`Block::is_custom_shape`].
+    #[inline]
+    pub fn custom_shape(self, id: u16) -> bool {
+        row(&self.0.shape_custom, id)
+    }
+
+    /// See [`Block::fluid`].
+    #[inline]
+    pub fn fluid(self, id: u16) -> Option<Block> {
+        let flags = self.flags(id);
+        if flags.fluid() {
+            Some(self.block(id))
+        } else if flags.contains_fluid() {
+            self.def(id).contained_fluid
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub fn has_tag(self, id: u16, tag: super::BlockTag) -> bool {
+        if tag.id() <= load::TAG_BITS_MAX {
+            row(&self.0.tag_bits, id) & (1u128 << tag.id()) != 0
+        } else {
+            self.def(id).tags.contains(&tag)
+        }
+    }
 }
 
 /// Dense per-id copy of every block's light `emission`, same rationale as

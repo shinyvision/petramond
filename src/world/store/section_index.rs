@@ -4,14 +4,14 @@ use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY};
 
 /// The bit of section `cy` in a per-column `cy` bitset.
 #[inline]
-pub(in crate::world) fn column_cy_bit(cy: i32) -> u32 {
+pub(crate) fn column_cy_bit(cy: i32) -> u32 {
     debug_assert!(WorldData::column_section_range().contains(&cy));
     1u32 << (cy - SECTION_MIN_CY) as u32
 }
 
 /// Iterate set bits of a per-column `cy` bitset.
 #[inline]
-pub(in crate::world) fn for_each_column_cy(bits: u32, mut f: impl FnMut(i32)) {
+pub(crate) fn for_each_column_cy(bits: u32, mut f: impl FnMut(i32)) {
     let mut b = bits;
     while b != 0 {
         let i = b.trailing_zeros() as i32;

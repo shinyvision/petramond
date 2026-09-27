@@ -97,6 +97,25 @@ impl BlockCube {
         }
     }
 
+    /// Call `f` with the index of every cell whose id satisfies `pred`, in
+    /// cell order — one pass over the backing store, with no per-cell width
+    /// dispatch.
+    #[inline]
+    pub fn cells_where(&self, mut pred: impl FnMut(u16) -> bool, mut f: impl FnMut(usize)) {
+        match &self.repr {
+            Repr::Narrow(b) => b.iter().enumerate().for_each(|(i, &id)| {
+                if pred(u16::from(id)) {
+                    f(i)
+                }
+            }),
+            Repr::Wide(b) => b.iter().enumerate().for_each(|(i, &id)| {
+                if pred(id) {
+                    f(i)
+                }
+            }),
+        }
+    }
+
     /// Ids in cell order.
     pub fn iter(&self) -> impl Iterator<Item = u16> + '_ {
         (0..self.len()).map(move |i| self.get(i))

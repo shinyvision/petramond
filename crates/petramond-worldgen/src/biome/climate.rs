@@ -190,6 +190,8 @@ const AXIS_BIN_COUNT: usize = 64;
 #[derive(Clone, Debug)]
 pub struct BiomeClimateIndex {
     rects: Vec<IndexedRect>,
+    /// Per row, the bounds its containment test reads (parallel to `rects`).
+    containment: Vec<Containment>,
     /// Ordered row indices whose VARIANCE range intersects each bin of the
     /// normalized `[-1, 1]` variance axis. A containing rect must contain the
     /// query's variance value, so it provably appears in the query's bin — the
@@ -268,8 +270,10 @@ impl BiomeClimateIndex {
                 }
             }
         }
+        let containment = rects.iter().map(|r| Containment::of(r.rect)).collect();
         Self {
             rects,
+            containment,
             variance_bins,
         }
     }
@@ -304,9 +308,8 @@ impl BiomeClimateIndex {
         // distance-0 hit the global tie-break winner.
         let bin = &self.variance_bins[axis_bin(climate.axes[SURFACE_AXIS_COUNT - 1])];
         for &i in bin {
-            let rect = &self.rects[i as usize];
-            if rect.rect.distance_squared(climate) == 0.0 {
-                return Some(rect.biome);
+            if self.containment[i as usize].contains(&climate.axes) {
+                return Some(self.rects[i as usize].biome);
             }
         }
         // No containing rect anywhere: exhaustive nearest scan (rare — the
@@ -325,6 +328,31 @@ impl BiomeClimateIndex {
             best.consider(rect, rect.rect.distance_squared(climate));
         }
         best.biome
+    }
+}
+
+/// `rect.distance_squared(climate) == 0.0` without the distance: every axis
+/// holds the value (a NaN value counts as held, as the distance reads it) and
+/// the row carries no offset penalty.
+#[derive(Copy, Clone, Debug)]
+struct Containment {
+    lo: [f32; SURFACE_AXIS_COUNT],
+    hi: [f32; SURFACE_AXIS_COUNT],
+    unbiased: bool,
+}
+
+impl Containment {
+    fn of(rect: ClimateRect) -> Self {
+        Self {
+            lo: rect.axes.map(|r| r.min.min(r.max)),
+            hi: rect.axes.map(|r| r.min.max(r.max)),
+            unbiased: rect.offset == 0.0,
+        }
+    }
+
+    #[inline]
+    fn contains(&self, v: &[f32; SURFACE_AXIS_COUNT]) -> bool {
+        self.unbiased && (0..SURFACE_AXIS_COUNT).all(|a| !(v[a] < self.lo[a] || v[a] > self.hi[a]))
     }
 }
 

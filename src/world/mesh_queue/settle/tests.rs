@@ -11,10 +11,10 @@ fn recurring_arrivals_cannot_postpone_a_mesh_forever_and_nearby_work_does_not_wa
     world.data.last_load_target = Some(LoadTarget::new(0, 0, 0, 16));
     world.defer_stream_mesh(pos);
     assert!(world.stream_mesh_waiting(pos));
-    world.side.terrain.mesh_pump_frame += 3;
+    world.side.terrain.mesh_pump_now += DEADLINE - QUIET / 2;
     world.defer_stream_mesh(pos);
     assert!(world.stream_mesh_waiting(pos));
-    world.side.terrain.mesh_pump_frame += 1;
+    world.side.terrain.mesh_pump_now += QUIET / 2;
     assert!(!world.stream_mesh_waiting(pos));
     world.defer_stream_mesh(pos);
     world.data.last_load_target = Some(LoadTarget::new(pos.cx, pos.cy, pos.cz, 16));

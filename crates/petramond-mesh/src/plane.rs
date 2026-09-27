@@ -26,24 +26,45 @@ pub fn cell_uv(face: Face, p: [f32; 3]) -> [f32; 2] {
 /// an authored tile rect (`ShapeFace::uv_rect`) is stretched by. Shared by
 /// the chunk mesher and the item cube, so a subtraction remainder in the
 /// world and the whole face in the hand map the same part of the rect.
-pub fn face_fraction(face: Face, min: [f32; 3], max: [f32; 3], (u, v): (f32, f32)) -> (f32, f32) {
-    let (mut u0, mut v0) = (f32::INFINITY, f32::INFINITY);
-    let (mut u1, mut v1) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
-    for c in face.quad_box(min, max) {
-        let [cu, cv] = cell_uv(face, c);
-        u0 = u0.min(cu);
-        v0 = v0.min(cv);
-        u1 = u1.max(cu);
-        v1 = v1.max(cv);
-    }
-    let frac = |x: f32, lo: f32, hi: f32| {
-        if hi - lo <= 1e-6 {
-            0.0
-        } else {
-            ((x - lo) / (hi - lo)).clamp(0.0, 1.0)
+pub fn face_fraction(face: Face, min: [f32; 3], max: [f32; 3], uv: (f32, f32)) -> (f32, f32) {
+    FaceUvSpan::of(face, min, max).fraction(uv)
+}
+
+/// A box face's carve-UV extent: [`face_fraction`] split so an emitter
+/// sampling many points of one face measures the face once.
+#[derive(Clone, Copy)]
+pub(super) struct FaceUvSpan {
+    u0: f32,
+    v0: f32,
+    u1: f32,
+    v1: f32,
+}
+
+impl FaceUvSpan {
+    pub(super) fn of(face: Face, min: [f32; 3], max: [f32; 3]) -> Self {
+        let (mut u0, mut v0) = (f32::INFINITY, f32::INFINITY);
+        let (mut u1, mut v1) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+        for c in face.quad_box(min, max) {
+            let [cu, cv] = cell_uv(face, c);
+            u0 = u0.min(cu);
+            v0 = v0.min(cv);
+            u1 = u1.max(cu);
+            v1 = v1.max(cv);
         }
-    };
-    (frac(u, u0, u1), frac(v, v0, v1))
+        Self { u0, v0, u1, v1 }
+    }
+
+    #[inline]
+    pub(super) fn fraction(&self, (u, v): (f32, f32)) -> (f32, f32) {
+        let frac = |x: f32, lo: f32, hi: f32| {
+            if hi - lo <= 1e-6 {
+                0.0
+            } else {
+                ((x - lo) / (hi - lo)).clamp(0.0, 1.0)
+            }
+        };
+        (frac(u, self.u0, self.u1), frac(v, self.v0, self.v1))
+    }
 }
 
 /// One plane's four face-corner lighting samples, in `Face::quad_box` corner
@@ -60,16 +81,23 @@ impl PlaneLight {
     pub(super) fn sample(&self, u: f32, v: f32) -> (u32, u32, petramond_world::light::BlockLight6) {
         // Corner UVs: 0=(0,1) 1=(1,1) 2=(1,0) 3=(0,0).
         let w = [(1.0 - u) * v, u * v, u * (1.0 - v), (1.0 - u) * (1.0 - v)];
+        // Spelled out: the iterator form of this sum stayed an out-of-line
+        // call per channel, and this runs for every box-set vertex.
         let blend = |c: [u32; 4]| -> u32 {
-            let f: f32 = c.iter().zip(w).map(|(&x, wi)| x as f32 * wi).sum();
+            let f =
+                c[0] as f32 * w[0] + c[1] as f32 * w[1] + c[2] as f32 * w[2] + c[3] as f32 * w[3];
             (f + 0.5) as u32
         };
         // Block light interpolates PER CHANNEL, in the linear light space —
         // interpolating a hue between two differently-coloured corners is
         // meaningless, and the shader's per-channel curve wants linear input.
-        let ch = self
-            .block
-            .map(petramond_world::light::BlockLight6::channels);
+        let b = &self.block;
+        let ch = [
+            b[0].channels(),
+            b[1].channels(),
+            b[2].channels(),
+            b[3].channels(),
+        ];
         let block = petramond_world::light::BlockLight6::new(
             blend([ch[0][0], ch[1][0], ch[2][0], ch[3][0]]),
             blend([ch[0][1], ch[1][1], ch[2][1], ch[3][1]]),

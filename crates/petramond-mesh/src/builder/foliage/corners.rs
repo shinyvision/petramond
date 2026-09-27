@@ -160,14 +160,9 @@ impl CrownCorners {
 }
 
 fn sample(corners: &[Vertex; 4], weights: [u32; 4], pos: Vec3, u: u32, v: u32) -> Vertex {
-    let blend = |values: [u32; 4]| {
-        (values
-            .into_iter()
-            .zip(weights)
-            .map(|(a, w)| a * w)
-            .sum::<u32>()
-            + 2)
-            / 4
+    let blend = |v: [u32; 4]| {
+        let w = weights;
+        (v[0] * w[0] + v[1] * w[1] + v[2] * w[2] + v[3] * w[3] + 2) / 4
     };
     let lights = corners.map(|c| vertex::decode_vertex_light(&c).channels());
     let light = BlockLight6::new(

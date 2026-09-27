@@ -8,6 +8,8 @@ use super::neighbourhood::Neighbourhood;
 use super::pad::{mesh_pad_idx, SECTION_PAD};
 
 const FACE_MASK_WORDS: usize = SECTION_VOLUME / u64::BITS as usize;
+// Whole X rows are written as one shifted word OR (see `set_face_row`).
+const _: () = assert!((u64::BITS as usize).is_multiple_of(SECTION_SIZE));
 
 /// Per-face exposure bitsets plus the derived WORK bitset the cell scan
 /// iterates.
@@ -39,12 +41,6 @@ fn mask_bit(i: usize) -> (usize, u64) {
 }
 
 #[inline]
-fn mask_set(masks: &mut ExposedMasks, face: Face, cell: usize) {
-    let (word, bit) = mask_bit(cell);
-    masks.faces[face_index(face)][word] |= bit;
-}
-
-#[inline]
 pub(super) fn mask_has(masks: &ExposedMasks, face: Face, cell: usize) -> bool {
     let (word, bit) = mask_bit(cell);
     masks.faces[face_index(face)][word] & bit != 0
@@ -71,14 +67,13 @@ pub(super) fn build_exposed_masks(nb: &Neighbourhood<'_>) -> ExposedMasks {
         face: Face,
         ly: usize,
         lz: usize,
-        mut bits: u32,
+        bits: u32,
     ) {
         *exposed |= bits;
-        while bits != 0 {
-            let lx = bits.trailing_zeros() as usize;
-            mask_set(masks, face, section_idx(lx, ly, lz));
-            bits &= bits - 1;
-        }
+        // A row's sixteen X cells are contiguous in `section_idx` order and
+        // sixteen divides the word, so the row lands as one shifted OR.
+        let (word, bit) = mask_bit(section_idx(0, ly, lz));
+        masks.faces[face_index(face)][word] |= u64::from(bits) * bit;
     }
 
     let registry = nb.registry();
@@ -109,7 +104,7 @@ pub(super) fn build_exposed_masks(nb: &Neighbourhood<'_>) -> ExposedMasks {
                             px as i32 - 1,
                             py as i32 - 1,
                             pz as i32 - 1,
-                            petramond_world::block::Block::from_id(pad.blocks[i]),
+                            pad.table.block(pad.blocks[i]),
                         ))
                 {
                     row |= 1u32 << px;

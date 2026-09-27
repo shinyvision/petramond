@@ -187,6 +187,8 @@ pub(in crate::world) struct TerrainRenderState {
     pub(in crate::world) repack_forced: FxHashSet<SectionPos>,
     /// Monotonic mesh-pump frame counter (drives `mesh_release_after`).
     pub(in crate::world) mesh_pump_frame: u64,
+    /// The current mesh pump's start time (the settle windows' clock).
+    pub(in crate::world) mesh_pump_now: std::time::Instant,
     pub(in crate::world) mesh_settle: FxHashMap<SectionPos, super::mesh_queue::settle::MeshSettle>,
     /// Ordinary off-thread section meshing: dirty sections are submitted as owned
     /// snapshots and finished meshes drained back. Local prediction deliberately
@@ -233,6 +235,7 @@ impl TerrainRenderState {
             mesh_release_after: FxHashMap::default(),
             repack_forced: FxHashSet::default(),
             mesh_pump_frame: 0,
+            mesh_pump_now: std::time::Instant::now(),
             mesh_settle: FxHashMap::default(),
             mesh_pool: super::mesh_pool::MeshPool::new(jobs.clone()),
             mesh_jobs_in_flight: 0,
@@ -313,9 +316,6 @@ pub(in crate::world) struct WorldgenJobs {
     /// A wanted section could not be admitted under the in-flight limit. The
     /// next poll retries the globally nearest missing sections after draining.
     pub(in crate::world) section_requests_unsettled: bool,
-    /// Section admissions left in this load/poll phase. A burst of landed
-    /// columns cannot monopolize the shared generation queue in one pump.
-    pub(in crate::world) section_submit_budget: usize,
     /// Saved (player-modified) sections read back from disk whose generated column has
     /// not arrived yet — disk I/O usually beats noise-gen. Held here until the column
     /// lands, then overlaid over the generated terrain (see `world::stream::poll`).
@@ -357,7 +357,6 @@ impl WorldgenJobs {
             pending_section_columns: FxHashMap::default(),
             pending_section_jobs: FxHashMap::default(),
             section_requests_unsettled: false,
-            section_submit_budget: super::stream::MAX_SECTION_GEN_SUBMITS_PER_PHASE,
             pending_overlays: FxHashMap::default(),
             awaited_overlays: FxHashSet::default(),
             disk_primary_sections: FxHashSet::default(),

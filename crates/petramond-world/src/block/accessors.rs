@@ -61,7 +61,7 @@ impl Block {
     /// collided from its pack's WASM bake.
     #[inline]
     pub fn is_custom_shape(self) -> bool {
-        self.shape_kind_def().params.custom().is_some()
+        data::shape_custom(self.id())
     }
 
     /// The row's animated block model — drawn outside the chunk mesh and
@@ -351,11 +351,7 @@ impl Block {
     /// The fluid present in this cell, including the gaps in a submerged shape.
     #[inline]
     pub fn fluid(self) -> Option<Block> {
-        if self.is_fluid() {
-            Some(self)
-        } else {
-            self.contained_fluid()
-        }
+        data::BlockTable::current().fluid(self.id())
     }
 
     /// The resolved properties of a fluid block; contained-fluid hosts use `fluid()` first.

@@ -1,8 +1,9 @@
 use crate::world::ServerWorld;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::world::store::{LoadAnchor, LoadTarget};
-use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY};
+use crate::world::store::{for_each_column_cy, LoadAnchor, LoadTarget};
+use crate::world::SentSections;
+use petramond_world::chunk::{ChunkPos, SectionPos};
 
 impl ServerWorld {
     /// Whether `sp`'s light is presentable: baked (possibly stale — a pending
@@ -75,10 +76,7 @@ impl ServerWorld {
         &self,
         anchor: LoadAnchor,
         sent_columns: &FxHashSet<ChunkPos>,
-        sent_sections: &FxHashSet<SectionPos>,
-        // Per-column index over `sent_sections` (the cys sent for each column).
-        // Drop planning walks this instead of every sent section.
-        sent_by_column: &FxHashMap<ChunkPos, Vec<i32>>,
+        sent: &SentSections,
         budget: usize,
     ) -> TerrainSendPlan {
         let target = self.send_target(anchor);
@@ -118,7 +116,8 @@ impl ServerWorld {
             let band_lo = band_lo_of(self, cp);
             let near_xz =
                 (cp.cx - target.center.cx).abs() <= 2 && (cp.cz - target.center.cz).abs() <= 2;
-            let mut b = bits;
+            // Whole-column skip: every loaded section of it already sent.
+            let mut b = bits & !sent.column_bits(cp);
             while b != 0 {
                 let cy = petramond_world::chunk::SECTION_MIN_CY + b.trailing_zeros() as i32;
                 b &= b - 1;
@@ -129,10 +128,7 @@ impl ServerWorld {
                     }
                 }
                 let sp = SectionPos::new(cp.cx, cy, cp.cz);
-                if sent_sections.contains(&sp)
-                    || !self.data.stream_writable(sp)
-                    || !self.section_light_final(sp)
-                {
+                if !self.data.stream_writable(sp) || !self.section_light_final(sp) {
                     continue;
                 }
                 sections.push((
@@ -155,21 +151,18 @@ impl ServerWorld {
             .collect();
         let dropped_cols: FxHashSet<ChunkPos> = drop_columns.iter().copied().collect();
         let mut drop_sections = Vec::new();
-        for (&cp, cys) in sent_by_column {
+        for (cp, held) in sent.columns() {
             if dropped_cols.contains(&cp) {
                 continue;
             }
-            let column_gone = !Self::column_kept(target, cp);
-            for &cy in cys {
-                let sp = SectionPos::new(cp.cx, cy, cp.cz);
-                debug_assert!(
-                    (SECTION_MIN_CY..=petramond_world::chunk::SECTION_MAX_CY).contains(&cy),
-                    "sent_by_column cy out of world range"
-                );
-                if column_gone || !self.data.sections.contains_key(&sp) {
-                    drop_sections.push(sp);
-                }
-            }
+            let gone = if Self::column_kept(target, cp) {
+                held & !self.data.section_column_cys.get(&cp).copied().unwrap_or(0)
+            } else {
+                held
+            };
+            for_each_column_cy(gone, |cy| {
+                drop_sections.push(SectionPos::new(cp.cx, cy, cp.cz))
+            });
         }
 
         TerrainSendPlan {

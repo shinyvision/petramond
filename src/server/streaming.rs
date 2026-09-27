@@ -14,7 +14,7 @@
 //! or while a previous plan hit the per-pump budget.
 
 use crate::net::protocol::{SectionCacheClaim, ServerToClient, SECTION_CACHE_CAP};
-use crate::world::LoadAnchor;
+use crate::world::{LoadAnchor, SentSections};
 use petramond_math::math::IVec3;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -92,13 +92,7 @@ fn terrain_budget(allowance: usize) -> usize {
 pub struct TerrainSync {
     sent_columns: FxHashSet<ChunkPos>,
     sent_column_revisions: FxHashMap<ChunkPos, u64>,
-    sent_sections: FxHashSet<SectionPos>,
-    /// Per-column index over `sent_sections` (the cys sent for each column).
-    /// Column unloads used to scan the WHOLE sent set twice per dropped column
-    /// — at RD32 flight that is hundreds of drops/s over ~36k entries, real
-    /// server-thread time. Maintained only through `sent_insert`/`sent_remove`/
-    /// `sent_take_column`.
-    sent_by_column: FxHashMap<ChunkPos, Vec<i32>>,
+    sent: SentSections,
     /// Sent sections whose fresh server bake is still unshipped — the
     /// per-connection carryover when a pump's allowance ran out (the ship log
     /// itself is drained once, globally). Payloads are fetched at SHIP time,
@@ -152,8 +146,7 @@ impl Default for TerrainSync {
         TerrainSync {
             sent_columns: FxHashSet::default(),
             sent_column_revisions: FxHashMap::default(),
-            sent_sections: FxHashSet::default(),
-            sent_by_column: FxHashMap::default(),
+            sent: SentSections::default(),
             pending_light: FxHashSet::default(),
             last_send_key: None,
             backlog: false,
@@ -177,44 +170,7 @@ impl TerrainSync {
     /// Whether the cell's owning section was sent to this connection — the
     /// per-recipient block-delta filter.
     pub fn covers(&self, pos: IVec3) -> bool {
-        SectionPos::from_world(pos.x, pos.y, pos.z)
-            .is_some_and(|sp| self.sent_sections.contains(&sp))
-    }
-
-    fn sent_insert(&mut self, sp: SectionPos) {
-        if self.sent_sections.insert(sp) {
-            self.sent_by_column
-                .entry(sp.chunk_pos())
-                .or_default()
-                .push(sp.cy);
-        }
-    }
-
-    fn sent_remove(&mut self, sp: SectionPos) -> bool {
-        if !self.sent_sections.remove(&sp) {
-            return false;
-        }
-        if let Some(cys) = self.sent_by_column.get_mut(&sp.chunk_pos()) {
-            cys.retain(|&cy| cy != sp.cy);
-            if cys.is_empty() {
-                self.sent_by_column.remove(&sp.chunk_pos());
-            }
-        }
-        true
-    }
-
-    /// Remove and return every sent section of `cp`, cy-ascending — the order
-    /// the client parks unloads in.
-    fn sent_take_column(&mut self, cp: ChunkPos) -> Vec<SectionPos> {
-        let mut cys = self.sent_by_column.remove(&cp).unwrap_or_default();
-        cys.sort_unstable();
-        cys.iter().for_each(|&cy| {
-            self.sent_sections
-                .remove(&SectionPos::new(cp.cx, cy, cp.cz));
-        });
-        cys.into_iter()
-            .map(|cy| SectionPos::new(cp.cx, cy, cp.cz))
-            .collect()
+        SectionPos::from_world(pos.x, pos.y, pos.z).is_some_and(|sp| self.sent.contains(sp))
     }
 
     /// Apply one `StreamBatchAck`: retire a batch from the window, widen it to
@@ -266,7 +222,7 @@ impl TerrainSync {
     /// send on the next pump.
     pub fn handle_cache_miss(&mut self, pos: SectionPos) {
         self.client_cache.remove(&pos);
-        if self.sent_remove(pos) {
+        if self.sent.remove(pos) {
             self.pending_light.remove(&pos);
             self.planned_sections.push_back(pos);
         }
@@ -294,7 +250,8 @@ impl ServerGame {
         self.sessions[session]
             .transport
             .terrain
-            .sent_insert(section);
+            .sent
+            .insert(section);
     }
 
     /// Every session's streaming anchor: the player's eye section.
@@ -420,7 +377,7 @@ impl ServerGame {
     fn bank_light_refreshes(&mut self, s: usize, relit: &[SectionPos]) {
         let sync = &mut self.sessions[s].transport.terrain;
         for &sp in relit {
-            if sync.sent_sections.contains(&sp) {
+            if sync.sent.contains(sp) {
                 sync.pending_light.insert(sp);
             }
         }
@@ -484,13 +441,9 @@ impl ServerGame {
             && sync.planned_drop_columns.is_empty();
         let target_changed = sync.planned_target_key != Some(target_key);
         if target_changed || (plan_empty && (sync.last_send_key != Some(key) || sync.backlog)) {
-            let plan = self.world.plan_terrain_send(
-                anchor,
-                &sync.sent_columns,
-                &sync.sent_sections,
-                &sync.sent_by_column,
-                usize::MAX,
-            );
+            let plan =
+                self.world
+                    .plan_terrain_send(anchor, &sync.sent_columns, &sync.sent, usize::MAX);
             sync.planned_sections = plan.sections.into();
             sync.planned_drop_sections = plan.drop_sections.into();
             sync.planned_drop_columns = plan.drop_columns.into();
@@ -519,7 +472,7 @@ impl ServerGame {
             // section the server world already evicted (nothing to hash) or
             // with an unshipped rebake in `pending_light` (the client's
             // light is stale; a re-promotion would resurrect it as current).
-            let dropped = sync.sent_take_column(cp);
+            let dropped = sync.sent.take_column(cp);
             let mut cache_hashes = Vec::new();
             for sp in dropped {
                 if sync.pending_light.contains(&sp) {
@@ -557,7 +510,7 @@ impl ServerGame {
             }
             sync.planned_drop_sections.pop_front();
             *allowance -= 1;
-            sync.sent_remove(sp);
+            sync.sent.remove(sp);
             // Same vouching rules as the column-drop loop above.
             let cache_hash = (!sync.pending_light.remove(&sp))
                 .then(|| self.world.section_payload(sp).map(|p| p.content_hash()))
@@ -595,7 +548,7 @@ impl ServerGame {
             let Some(section) = self.world.section_payload(sp) else {
                 continue;
             };
-            sync.sent_insert(sp);
+            sync.sent.insert(sp);
             *allowance -= 1;
             // A section the client holds cached with unmoved content ships
             // as a tiny re-promotion instead of the full payload. Either

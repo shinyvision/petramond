@@ -395,16 +395,19 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
         (q.cmpge(glam::IVec3::ZERO).all() && q.cmplt(pad_side).all())
             .then(|| pad_idx(q.x as usize, q.y as usize, q.z as usize))
     };
+    let table = petramond_world::block::BlockTable::current();
     let block_at = |p: glam::IVec3| -> Option<petramond_world::block::Block> {
         if let Some(i) = pad_index(p) {
-            return loaded[i].then(|| petramond_world::block::Block::from_id(blocks[i]));
+            return loaded[i].then(|| table.block(blocks[i]));
         }
         let d = p.div_euclid(section);
         let l = p.rem_euclid(section);
         nbhd[nbhd_idx27(d.x, d.y, d.z)].as_ref().map(|s| {
-            petramond_world::block::Block::from_id(s.blocks.get(
-                petramond_world::chunk::section_idx(l.x as usize, l.y as usize, l.z as usize),
-            ))
+            table.block(s.blocks.get(petramond_world::chunk::section_idx(
+                l.x as usize,
+                l.y as usize,
+                l.z as usize,
+            )))
         })
     };
     let cover_step = glam::IVec3::new(0, petramond_world::block::SNOW_COVER_REACH, 0);
@@ -417,15 +420,27 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
     };
     // Every cell that could be a blanket for the cell beneath it: the pad,
     // then the layer just above it.
+    use petramond_world::block::BlockTag;
+    let blanket = |id: u16| {
+        table.has_tag(id, BlockTag::SNOW_COVER) || table.has_tag(id, BlockTag::SNOW_BEDDED)
+    };
     for py in 0..=PAD {
         for pz in 0..PAD {
             for px in 0..PAD {
                 let p = glam::IVec3::new(px as i32 - 1, py as i32 - 1, pz as i32 - 1);
-                let Some(block) = block_at(p) else {
+                // Pad cells read the pad directly; only the layer above it
+                // needs the neighbour lookup.
+                let id = if py < PAD {
+                    let i = pad_idx(px, py, pz);
+                    loaded[i].then_some(blocks[i])
+                } else {
+                    block_at(p).map(|b| b.id())
+                };
+                let Some(id) = id else {
                     exclude_below(p);
                     continue;
                 };
-                if (block.is_snow_cover() || block.is_snow_bedded())
+                if blanket(id)
                     && petramond_world::block::snow_cover_at(p, |q| {
                         block_at(q).unwrap_or(petramond_world::block::Block::Air)
                     })
@@ -489,6 +504,7 @@ fn build(job: MeshJob, cancel: &crate::worker::JobCancel) -> Option<ChunkMesh> {
             &center,
             pos,
             SectionMeshPad {
+                table: petramond_world::block::BlockTable::current(),
                 blocks: &pad.blocks,
                 fluid: &pad.fluid,
                 skylight: &pad.skylight,

@@ -35,7 +35,11 @@ impl SectionPayloadExt for Section {
 
         SectionPayload {
             pos: SectionPos::new(self.cx, self.cy, self.cz),
-            blocks: SectionBlocks(self.blocks_iter().collect()),
+            blocks: SectionBlocks({
+                let mut ids = vec![0u16; petramond_world::chunk::SECTION_VOLUME];
+                self.blocks().copy_ids(&mut ids);
+                ids.into()
+            }),
             metrics: self.stream_metrics(),
             fluid: self.fluid_arc().map(SectionBytes),
             skylight: self.skylight_arc().map(SectionBytes),

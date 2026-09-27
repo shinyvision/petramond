@@ -96,7 +96,7 @@ serde_json = "1"
 # WASM runtime for mod logic. Deliberately minimal features: core modules only —
 # no wasi, no component model, no async, no gc, no wat parsing, no parallel
 # compilation — to keep compile time and binary size down.
-wasmtime = { version = "46", default-features = false, features = ["cranelift", "runtime"] }
+wasmtime = { version = "46", default-features = false, features = ["cranelift", "runtime", "parallel-compilation"] }
 # The graphics stack moves as one: naga is the shader compiler wgpu embeds (the
 # same major version), and winit is the windowing version wgpu's surfaces take.
 wgpu = "27"

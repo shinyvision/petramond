@@ -57,13 +57,30 @@ pub struct TerrainVertex {
     pub packed2: u32,
 }
 
+/// `x.round() as i32` (half away from zero; NaN is 0; saturating past
+/// ±2^30) without the libm call `f32::round` lowers to on the baseline
+/// x86-64 target — the vertex quantisers run it for every vertex.
+#[inline]
+pub(crate) fn round_i32(x: f32) -> i32 {
+    const LIMIT: f32 = (1 << 30) as f32;
+    let x = x.clamp(-LIMIT, LIMIT);
+    let t = x as i32;
+    // Exact: `x` and its truncation share an exponent range below 2^30.
+    let frac = x - t as f32;
+    if frac >= 0.5 {
+        t + 1
+    } else if frac <= -0.5 {
+        t - 1
+    } else {
+        t
+    }
+}
+
 impl TerrainVertex {
     #[inline]
     pub fn from_mesh(v: &Vertex) -> Self {
         let q = |p: f32| {
-            (p * TERRAIN_POS_SCALE)
-                .round()
-                .clamp(i16::MIN as f32, i16::MAX as f32) as i16
+            round_i32(p * TERRAIN_POS_SCALE).clamp(i16::MIN as i32, i16::MAX as i32) as i16
         };
         Self {
             pos: v.pos.map(q),
@@ -84,6 +101,31 @@ impl TerrainVertex {
 #[cfg(test)]
 mod terrain_vertex_tests {
     use super::*;
+
+    #[test]
+    fn round_i32_matches_f32_round() {
+        let mut x = -70_000.0f32;
+        while x < 70_000.0 {
+            for v in [
+                x,
+                x + 0.5,
+                x - 0.5,
+                x + 0.49999997,
+                x.next_up(),
+                x.next_down(),
+            ] {
+                assert_eq!(round_i32(v), v.round() as i32, "{v}");
+            }
+            x += 0.37;
+        }
+        for v in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.5, -0.5, -0.0] {
+            assert_eq!(
+                round_i32(v),
+                (v.round() as i32).clamp(-(1 << 30), 1 << 30),
+                "{v}"
+            );
+        }
+    }
 
     #[test]
     fn terrain_pos_quantizes_within_half_unit() {

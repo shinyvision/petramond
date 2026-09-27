@@ -117,7 +117,6 @@ impl ServerWorld {
     /// sections for column-map refresh + light + mesh. Returns the number of
     /// columns whose shared data was installed this call.
     pub fn poll(&mut self) -> usize {
-        self.side.gen.section_submit_budget = super::MAX_SECTION_GEN_SUBMITS_PER_PHASE;
         // Any change to what is loaded / stream-final re-keys the per-connection
         // terrain senders (their wanted-vs-sent rescan gates on this).
         let before = self.stream_finality_fingerprint();

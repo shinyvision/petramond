@@ -12,9 +12,6 @@ use crate::world::store::{LoadAnchor, LoadTarget};
 /// when the anchors move.
 pub(super) const MAX_PENDING_COLUMN_GEN_JOBS: usize = 192;
 const MAX_COLUMN_GEN_SUBMITS_PER_TARGET: usize = 64;
-/// Includes worker generation and disk-primary loads. Keeping the whole stage
-/// below this ceiling also bounds the worldgen closures retained by JobPool.
-pub(super) const MAX_PENDING_SECTION_JOBS: usize = 512;
 
 impl ServerWorld {
     /// Update the streamed region around the player's SECTION `(cam_chunk_x, cam_chunk_y,
@@ -26,7 +23,6 @@ impl ServerWorld {
     /// caves below y=0). Scans are gated to player-section / render-distance changes; call
     /// `poll` every frame to keep ingesting worker results.
     pub fn update_load(&mut self, cam_chunk_x: i32, cam_chunk_y: i32, cam_chunk_z: i32) {
-        self.side.gen.section_submit_budget = super::MAX_SECTION_GEN_SUBMITS_PER_PHASE;
         let target = LoadTarget::new(cam_chunk_x, cam_chunk_y, cam_chunk_z, self.data.render_dist);
         self.update_load_target(target);
     }
@@ -84,7 +80,6 @@ impl ServerWorld {
     /// trades those delta scans for a plain full scan on anchor-set change (bounded by
     /// the anchors' discs, and it runs only on change).
     pub fn update_load_multi(&mut self, anchors: &[LoadAnchor]) {
-        self.side.gen.section_submit_budget = super::MAX_SECTION_GEN_SUBMITS_PER_PHASE;
         // Each anchor streams at ITS connection's radius (view distance),
         // never wider than this world's own `render_dist` budget.
         let radius = |a: &LoadAnchor| a.radius.clamp(1, self.data.render_dist);
@@ -455,35 +450,20 @@ impl ServerWorld {
         );
     }
 
-    /// Admit the nearest missing section requests under both the in-flight cap
-    /// and this pump's section quota. Remaining positions are not marked
-    /// pending: a later poll re-derives them from the loaded column data after
-    /// existing jobs drain, so no unbounded deferred queue is retained.
+    /// Submit every missing wanted section. The job pool runs them nearest
+    /// first by key and drops the ones a move makes unwanted, so nothing is
+    /// held back here.
     fn admit_section_candidates(&mut self, mut wanted: Vec<(i64, SectionPos, Arc<ColumnGen>)>) {
-        if wanted.is_empty() {
-            return;
-        }
         wanted.sort_unstable_by_key(|(key, sp, _)| (*key, sp.cx, sp.cz, sp.cy));
-        let room = MAX_PENDING_SECTION_JOBS
-            .saturating_sub(self.side.gen.pending_sections.len())
-            .min(self.side.gen.section_submit_budget);
-        if wanted.len() > room {
-            self.side.gen.section_requests_unsettled = true;
-        }
-        for (key, sp, col) in wanted.into_iter().take(room) {
+        for (key, sp, col) in wanted {
             self.submit_section_job(key, sp, col);
-            self.side.gen.section_submit_budget -= 1;
         }
     }
 
-    /// Refill after a bounded pass omitted sections or a section job failed.
-    /// This full scan runs only while the stage is unsettled and has room; it
-    /// restores nearest-first ordering across every already landed column.
+    /// Re-request after a section job failed: the failed position is no
+    /// longer pending, so a rescan of the landed columns finds it again.
     pub(super) fn refill_section_requests(&mut self) {
-        if !self.side.gen.section_requests_unsettled
-            || self.side.gen.pending_sections.len() >= MAX_PENDING_SECTION_JOBS
-            || self.side.gen.section_submit_budget == 0
-        {
+        if !self.side.gen.section_requests_unsettled {
             return;
         }
         self.side.gen.section_requests_unsettled = false;
@@ -553,7 +533,7 @@ mod tests {
     use petramond_worldgen::driver::ChunkGenerator;
 
     #[test]
-    fn section_admission_stops_at_the_cap_and_retains_refill_intent() {
+    fn every_wanted_section_is_submitted_at_once() {
         let pool = Arc::new(JobPool::new(1));
         let (release, held) = std::sync::mpsc::channel();
         pool.submit(i64::MIN, move || {
@@ -561,22 +541,16 @@ mod tests {
         });
         let mut world = ServerWorld::with_pool(7, 4, pool);
         let col = Arc::new(ChunkGenerator::new(7).generate_column_gen(0, 0));
-        let wanted: Vec<_> = (0..=MAX_PENDING_SECTION_JOBS)
+        let wanted: Vec<_> = (0..2048)
             .map(|i| {
-                let sp = SectionPos::new((i / 16) as i32, (i % 16) as i32, 0);
-                (i as i64, sp, col.clone())
+                let sp = SectionPos::new(i / 16, i % 16, 0);
+                (i64::from(i), sp, col.clone())
             })
             .collect();
 
-        world.side.gen.section_submit_budget = MAX_PENDING_SECTION_JOBS;
         world.admit_section_candidates(wanted.clone());
-        assert_eq!(
-            world.side.gen.pending_sections.len(),
-            MAX_PENDING_SECTION_JOBS
-        );
-        assert!(world.side.gen.section_requests_unsettled);
-        let last = wanted.last().unwrap().1;
-        assert!(!world.side.gen.pending_sections.contains(&last));
+        assert_eq!(world.side.gen.pending_sections.len(), wanted.len());
+        assert!(!world.side.gen.section_requests_unsettled);
 
         for job in world.side.gen.pending_section_jobs.values() {
             job.cancel();
@@ -585,7 +559,7 @@ mod tests {
     }
 
     #[test]
-    fn omitted_sections_refill_without_an_anchor_move() {
+    fn a_failed_section_is_requested_again() {
         let pool = Arc::new(JobPool::new(1));
         let (release, held) = std::sync::mpsc::channel();
         pool.submit(i64::MIN, move || {
@@ -598,15 +572,22 @@ mod tests {
             target.center,
             Arc::new(ChunkGenerator::new(7).generate_column_gen(0, 0)),
         );
-
-        world.side.gen.section_submit_budget = 1;
         world.request_wanted_sections(target);
-        assert_eq!(world.side.gen.pending_sections.len(), 1);
-        assert!(world.side.gen.section_requests_unsettled);
+        let failed = *world
+            .side
+            .gen
+            .pending_sections
+            .iter()
+            .next()
+            .expect("a wanted section");
+        if let Some(job) = world.side.gen.pending_section_jobs.remove(&failed) {
+            job.cancel();
+        }
+        world.remove_pending_section(failed);
+        world.side.gen.section_requests_unsettled = true;
 
-        world.side.gen.section_submit_budget = super::super::MAX_SECTION_GEN_SUBMITS_PER_PHASE;
         world.refill_section_requests();
-        assert!(world.side.gen.pending_sections.len() > 1);
+        assert!(world.side.gen.pending_sections.contains(&failed));
         assert!(!world.side.gen.section_requests_unsettled);
 
         for job in world.side.gen.pending_section_jobs.values() {

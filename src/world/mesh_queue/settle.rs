@@ -1,22 +1,27 @@
 //! Replica-side mesh settling: a freshly ingested section whose neighbours
 //! are still arriving is meshed once they have, not once per arrival.
 
+use std::time::{Duration, Instant};
+
 use crate::world::ReplicaWorld;
 use petramond_world::chunk::SectionPos;
 
-/// Pump frames a section waits after its latest arrival before meshing with
-/// an incomplete neighbourhood — long enough for the rest of a batch to land.
-const QUIET_FRAMES: u64 = 2;
-/// Pump frames after the FIRST arrival past which the section meshes no
-/// matter what keeps arriving, so a busy seam cannot starve it.
-const DEADLINE_FRAMES: u64 = 4;
+/// How long a section waits after the latest arrival in its neighbourhood
+/// before meshing an incomplete one. Streaming lands a section's outward
+/// neighbours about one ring after it, so a window shorter than that meshes
+/// nearly every section twice — and a section that turns out sealed or
+/// hidden once they land never needed meshing at all.
+const QUIET: Duration = Duration::from_millis(500);
+/// How long after the FIRST arrival a section meshes no matter what keeps
+/// arriving, so a busy seam cannot starve it.
+const DEADLINE: Duration = Duration::from_millis(1000);
 /// Sections this close to the player (in sections, per axis) never wait:
 /// their pop-in is what the player is looking at.
 const NEAR_RADIUS: i32 = 2;
 
 pub(in crate::world) struct MeshSettle {
-    quiet_after: u64,
-    deadline: u64,
+    quiet_after: Instant,
+    deadline: Instant,
 }
 
 impl ReplicaWorld {
@@ -24,17 +29,17 @@ impl ReplicaWorld {
         if !self.data.sections.contains_key(&pos) {
             return;
         }
-        let frame = self.side.terrain.mesh_pump_frame;
+        let now = self.side.terrain.mesh_pump_now;
         let entry = self
             .side
             .terrain
             .mesh_settle
             .entry(pos)
             .or_insert(MeshSettle {
-                quiet_after: frame + QUIET_FRAMES,
-                deadline: frame + DEADLINE_FRAMES,
+                quiet_after: now + QUIET,
+                deadline: now + DEADLINE,
             });
-        entry.quiet_after = frame + QUIET_FRAMES;
+        entry.quiet_after = now + QUIET;
     }
 
     /// Whether `pos` should keep waiting for its neighbourhood. Answers false
@@ -44,7 +49,7 @@ impl ReplicaWorld {
         let Some(pending) = self.side.terrain.mesh_settle.get(&pos) else {
             return false;
         };
-        let frame = self.side.terrain.mesh_pump_frame;
+        let now = self.side.terrain.mesh_pump_now;
         let near = self.data.last_load_target.is_none_or(|t| {
             (pos.cx - t.center.cx).abs() <= NEAR_RADIUS
                 && (pos.cz - t.center.cz).abs() <= NEAR_RADIUS
@@ -61,7 +66,7 @@ impl ReplicaWorld {
                 })
             })
         });
-        if !near && !complete && frame < pending.quiet_after && frame < pending.deadline {
+        if !near && !complete && now < pending.quiet_after && now < pending.deadline {
             return true;
         }
         self.side.terrain.mesh_settle.remove(&pos);

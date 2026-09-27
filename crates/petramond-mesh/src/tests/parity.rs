@@ -440,6 +440,7 @@ fn closure_front_end_meshes_the_pad_the_mesh_pool_would_assemble() {
         &section,
         pos,
         SectionMeshPad {
+            table: petramond_world::block::BlockTable::current(),
             blocks: &blocks,
             fluid: &fluid,
             skylight: &skylight,

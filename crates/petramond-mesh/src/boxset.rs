@@ -55,7 +55,7 @@ use petramond_world::block::Block;
 
 use super::builder::{boundary_plane, face_axes, CornerLight};
 use super::face::{quad_ao, should_flip, Face, FaceShading, FACES};
-use super::plane::{cell_uv, face_fraction, PlaneLight};
+use super::plane::{cell_uv, FaceUvSpan, PlaneLight};
 use super::vertex::{pack_cell_uv, pack_normal_code, pack_vertex, Vertex, UV_MODE_CELL_LOCAL};
 use super::UV_MODE_SHIFT;
 
@@ -305,6 +305,7 @@ pub(super) fn emit_box_set(
                 .find(|(pd, _)| (pd - d).abs() <= T)
                 .expect("just filled")
                 .1;
+            let span = FaceUvSpan::of(face, b.aabb.min, b.aabb.max);
 
             for r_idx in 0..scratch.rects.len() {
                 let r = scratch.rects[r_idx];
@@ -339,8 +340,7 @@ pub(super) fn emit_box_set(
                     quad_ao[ci] = ao;
                     sky[ci] = sky6;
                     light[ci] = block;
-                    let (uu, vv) =
-                        style.texel_uv((u, v), face_fraction(face, b.aabb.min, b.aabb.max, (u, v)));
+                    let (uu, vv) = style.texel_uv((u, v), span.fraction((u, v)));
                     uvs[ci] = (quant_uv(uu), quant_uv(vv));
                 }
                 let start = vbuf.len() as u32;
@@ -380,7 +380,7 @@ pub(super) fn emit_box_set(
 /// A cell-local UV quantized to the vertex's 1/16 lanes.
 #[inline]
 fn quant_uv(x: f32) -> u32 {
-    ((x * 16.0).round() as i32).clamp(0, 16) as u32
+    super::vertex::round_i32(x * 16.0).clamp(0, 16) as u32
 }
 
 /// One face of a POSED box: its four authored corners carried through the
@@ -428,6 +428,7 @@ fn emit_posed_face(
     let mut sky = [0u32; 4];
     let mut light = [petramond_world::light::BlockLight6::DARK; 4];
     let mut uvs = [(0u32, 0u32); 4];
+    let span = FaceUvSpan::of(face, b.aabb.min, b.aabb.max);
     for ci in 0..4 {
         // Light: the posed corner projected onto the lit plane.
         let proj = posed[ci].map(|c| c.clamp(0.0, 1.0));
@@ -442,7 +443,7 @@ fn emit_posed_face(
         light[ci] = block;
         // Art: carved in the box's own frame.
         let [u, v] = cell_uv(face, local[ci]);
-        let (uu, vv) = style.texel_uv((u, v), face_fraction(face, b.aabb.min, b.aabb.max, (u, v)));
+        let (uu, vv) = style.texel_uv((u, v), span.fraction((u, v)));
         uvs[ci] = (quant_uv(uu), quant_uv(vv));
     }
     let start = vbuf.len() as u32;

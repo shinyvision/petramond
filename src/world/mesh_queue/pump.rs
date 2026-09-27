@@ -14,6 +14,7 @@ impl ReplicaWorld {
     /// streaming frame can't stall it.
     pub fn tick_mesh_budget(&mut self, max_per_frame: usize) {
         self.side.terrain.mesh_pump_frame += 1;
+        self.side.terrain.mesh_pump_now = std::time::Instant::now();
         self.drain_prediction_terrain();
         self.pump_light_bakes();
         self.drain_finished_meshes();

@@ -19,6 +19,7 @@ image = { workspace = true }
 log = { workspace = true }
 directories = { workspace = true }
 rustc-hash = { workspace = true }
+rayon = { workspace = true }
 glam = { workspace = true }
 bincode = { workspace = true }
 bytemuck = { workspace = true }

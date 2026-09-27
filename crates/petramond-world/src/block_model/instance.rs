@@ -604,8 +604,24 @@ static INSTANCES: crate::content::Slot<Vec<ModelInstance>> = crate::content::Slo
     build_instances,
 );
 
-fn build_instances(_: &crate::content::ContentRegistry) -> Result<Vec<ModelInstance>, String> {
-    Ok(all().iter().map(|&k| ModelInstance::build(k)).collect())
+fn build_instances(
+    registry: &crate::content::ContentRegistry,
+) -> Result<Vec<ModelInstance>, String> {
+    use rayon::prelude::*;
+    // Each model's AO bake ray-casts its own faces and reads no other
+    // instance, so the models build independently. Workers pin the registry
+    // being built, since a pool thread's own current registry may differ.
+    let content = crate::content::Content::current();
+    if !std::ptr::eq(content.registry(), registry) {
+        return Ok(all().iter().map(|&k| ModelInstance::build(k)).collect());
+    }
+    Ok(all()
+        .par_iter()
+        .map(|&k| {
+            let _pin = crate::content::pin(content);
+            ModelInstance::build(k)
+        })
+        .collect())
 }
 
 /// This kind's runtime instance (footprint + per-cell geometry/collision/selection).

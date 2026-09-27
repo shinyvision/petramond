@@ -219,8 +219,8 @@ impl PerlinOctave {
     fn sample(&self, x: f64, y: f64, z: f64) -> f64 {
         let mut d1 = x + self.a;
         let mut d3 = z + self.c;
-        let i1 = d1.floor();
-        let i3 = d3.floor();
+        let i1 = floor(d1);
+        let i3 = floor(d3);
         d1 -= i1;
         d3 -= i3;
         let h1 = i1 as i64 as u8;
@@ -235,7 +235,7 @@ impl PerlinOctave {
             (self.d2_y0, self.h2_y0, self.t2_y0)
         } else {
             let raw = y + self.b;
-            let i2 = raw.floor();
+            let i2 = floor(raw);
             let frac = raw - i2;
             (frac, i2 as i64 as u8, fade(frac))
         };
@@ -502,12 +502,54 @@ fn rlerp(part: f64, from: f64, to: f64) -> f64 {
     from + part * (to - from)
 }
 
+/// `x.floor()`, bit for bit, without the libm call baseline x86-64 lowers it
+/// to — the Perlin cell lookup runs it twice per octave sample.
+#[inline]
+fn floor(x: f64) -> f64 {
+    // At and past 2^52 every finite f64 is an integer; NaN and the
+    // infinities take the libm answer too.
+    if x.is_nan() || x.abs() >= 4_503_599_627_370_496.0 {
+        return x.floor();
+    }
+    let t = x as i64 as f64;
+    // `copysign` keeps -0.0 for -0.0 (every other in-range result is exact).
+    if t > x {
+        t - 1.0
+    } else {
+        t.copysign(x)
+    }
+}
+
 fn fade(t: f64) -> f64 {
     t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn floor_matches_libm_bit_for_bit() {
+        let mut x = -1.0e6f64;
+        while x < 1.0e6 {
+            for v in [x, x.next_up(), x.next_down(), x.trunc(), -x.trunc()] {
+                assert_eq!(super::floor(v).to_bits(), v.floor().to_bits(), "{v}");
+            }
+            x += 0.371;
+        }
+        for v in [
+            0.0,
+            -0.0,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            4.5e15,
+            -4.5e15,
+            1e300,
+            -1e-300,
+        ] {
+            assert_eq!(super::floor(v).to_bits(), v.floor().to_bits(), "{v}");
+        }
+    }
+
     use super::*;
 
     #[test]

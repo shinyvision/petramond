@@ -439,6 +439,10 @@ pub(crate) struct Registry {
     /// `def()`→`shape_kind`→table chain per byte (same rationale as
     /// [`flags`](Self::flags)).
     pub shape_refines: Box<[bool]>,
+    /// Dense per-id "resolves through a custom (baked) shape" — the section
+    /// install sweep's per-cell gate, same rationale as
+    /// [`shape_refines`](Self::shape_refines).
+    pub shape_custom: Box<[bool]>,
     /// Dense per-id TAG BITSET (bit `tag.0`). `Block::has_tag` is asked
     /// several times per cell by the mesher (`is_log`, `is_leaves`,
     /// `merges_with_self`, `is_snow_cover`) and once per neighbour by the
@@ -563,6 +567,7 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
     let mut emission = vec![0u8; n].into_boxed_slice();
     let mut emission_rgb = vec![[0u8; 3]; n].into_boxed_slice();
     let mut shape_refines = vec![false; n].into_boxed_slice();
+    let mut shape_custom = vec![false; n].into_boxed_slice();
     let mut tag_bits = vec![0u128; n].into_boxed_slice();
     for d in defs {
         for t in d.tags {
@@ -575,6 +580,7 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
         emission_rgb[d.block.id() as usize] = d.emission_rgb;
         let kind = &shape_kinds[d.shape_kind.0 as usize];
         shape_refines[d.block.id() as usize] = kind.refines;
+        shape_custom[d.block.id() as usize] = kind.params.custom().is_some();
     }
     Ok(Registry {
         defs,
@@ -584,6 +590,7 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
         emission,
         emission_rgb,
         shape_refines,
+        shape_custom,
         tag_bits,
     })
 }

@@ -3,7 +3,7 @@
 //! per-corner `(ao, sky light, block light)` from [`face_lighting`].
 
 use glam::IVec3;
-use petramond_world::block::{Block, CellView};
+use petramond_world::block::CellView;
 use petramond_world::block_state::SlabState;
 use petramond_world::chunk::SKY_FULL;
 use petramond_world::light::{BlockLight6, LightRgb};
@@ -15,16 +15,6 @@ use super::pad::SECTION_PAD;
 
 /// Per-corner `(ao, sky6, block light)` of one face, in quad corner order.
 pub(crate) type CornerLight = ([u32; 4], [u32; 4], [BlockLight6; 4]);
-
-/// Whether a NON-occluding ring cell still deserves a sub-cell AO cast probe:
-/// a box-shaped cell occupies only part of itself, so a corner pocket inside
-/// it can be solid even though the whole cell is not. Reads the loader-derived
-/// dense flag rather than listing families, so a new box family — engine or
-/// mod — casts sub-cell AO the moment it resolves to boxes.
-#[inline]
-fn probe_worthy(block: Block) -> bool {
-    block.has_box_shape()
-}
 
 /// The four sub-cell AO cast probe POCKETS of one face corner — the
 /// side-u / side-v / diagonal / interior quadrants of a
@@ -184,7 +174,7 @@ pub(super) fn face_lighting(
     // Whether the FRONT cell itself holds sub-cell matter: its interior
     // quadrant then joins the corner occlusion (the exposed ring of a face
     // something box-shaped stands on).
-    let front_probe = probe_worthy(Block::from_id(pad.blocks[fi]));
+    let front_probe = pad.table.flags(pad.blocks[fi]).has_box_shape();
 
     let mut occ = [[false; 3]; 3];
     let mut probe_cell = [[false; 3]; 3];
@@ -198,10 +188,9 @@ pub(super) fn face_lighting(
                 continue;
             }
             let i = (fi as isize + a as isize * ustride + b as isize * vstride) as usize;
-            let cell = Block::from_id(pad.blocks[i]);
             // ONE dense flag word per ring cell: the shape questions below are
             // bit tests off it, not separate table lookups.
-            let cf = cell.flags();
+            let cf = pad.table.flags(pad.blocks[i]);
             let (ia, ib) = ((a + 1) as usize, (b + 1) as usize);
             // A full slab stack occludes AO and carries no light, exactly like
             // an opaque cube — without this it darkens corners twice (it blocks
@@ -210,7 +199,7 @@ pub(super) fn face_lighting(
             // octant gate below. The dense `is_slab` flag gates the state read.
             let slab_state = cf.is_slab().then(|| {
                 let stored = SlabState::from_cell(pad.cell_states[i]);
-                petramond_world::slab::normalize_state(cell, stored)
+                petramond_world::slab::normalize_state(pad.table.block(pad.blocks[i]), stored)
             });
             let full_stack = slab_state.is_some_and(|s| s.is_full());
             occ[ia][ib] = cf.occludes_ao() || full_stack;

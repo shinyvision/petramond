@@ -201,7 +201,7 @@ fn unload_bursts_clip_to_the_allowance_and_all_arrive() {
         .map(|i| SectionPos::new(1000 + i, 0, 1000))
         .collect();
     for sp in awaiting.iter().copied() {
-        server.sessions[s].transport.terrain.sent_insert(sp);
+        server.sessions[s].transport.terrain.sent.insert(sp);
     }
     server.sessions[s].transport.terrain.backlog = true;
 

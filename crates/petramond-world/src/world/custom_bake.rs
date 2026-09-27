@@ -143,13 +143,15 @@ impl WorldData {
         // The overwhelmingly common non-empty section still holds no custom
         // shape; the scan is a tight LUT loop over the id buffer.
         let (ox, oy, oz) = pos.origin_world();
+        let table = crate::block::BlockTable::current();
         let mut dirty: Vec<IVec3> = Vec::new();
-        for (idx, id) in section.blocks_iter().enumerate() {
-            if Block::from_id(id).is_custom_shape() {
+        section.blocks().cells_where(
+            |id| table.custom_shape(id),
+            |idx| {
                 let (lx, ly, lz) = crate::chunk::section_local(idx);
                 dirty.push(IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32));
-            }
-        }
+            },
+        );
         for p in dirty {
             self.content.custom_bake_dirty.insert(p);
         }

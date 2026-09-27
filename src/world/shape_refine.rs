@@ -159,16 +159,20 @@ impl<S: WorldSide> World<S> {
         }
         let blocks = section.blocks();
         let (ox, oy, oz) = pos.origin_world();
+        let table = petramond_world::block::BlockTable::current();
         let mut push = |lx: usize, ly: usize, lz: usize, id: u16| {
-            if Block::id_refines_shape(id) {
+            if table.refines_shape(id) {
                 out.push(IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32));
             }
         };
         let Some(d) = facing else {
-            for (idx, id) in blocks.iter().enumerate() {
-                let (lx, ly, lz) = section_local(idx);
-                push(lx, ly, lz, id);
-            }
+            blocks.cells_where(
+                |id| table.refines_shape(id),
+                |idx| {
+                    let (lx, ly, lz) = section_local(idx);
+                    out.push(IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32));
+                },
+            );
             return;
         };
         // The neighbour lies at `+d`, so the layer of it touching `pos` is its

@@ -1,4 +1,4 @@
-use petramond_world::block::{Block, ShapeState};
+use petramond_world::block::{Block, BlockTable, ShapeState};
 use petramond_world::chunk::SECTION_SIZE;
 use petramond_world::fluid_math;
 
@@ -24,6 +24,8 @@ pub(super) fn biome_pad_idx(x: usize, z: usize) -> usize {
 /// a one-cell border, indexed by `mesh_pad_idx`) plus a 20×20 biome window.
 /// Reads beyond the pad answer air / no state / open sky / not loaded.
 pub struct SectionMeshPad<'a> {
+    /// The registry `blocks` ids resolve against, taken once per mesh job.
+    pub table: BlockTable,
     pub blocks: &'a [u16],
     pub fluid: &'a [u8],
     /// Baked skylight. Cells above the world must hold `SKY_FULL` and cells
@@ -70,7 +72,7 @@ impl SectionMeshPad<'_> {
     #[inline]
     fn block_above_local(&self, px: usize, py: usize, pz: usize) -> Block {
         if py + 1 < SECTION_PAD {
-            Block::from_id(self.blocks[mesh_pad_idx(px, py + 1, pz)])
+            self.table.block(self.blocks[mesh_pad_idx(px, py + 1, pz)])
         } else {
             Block::Air
         }
@@ -82,7 +84,7 @@ impl SectionMeshPad<'_> {
             return false;
         };
         let i = mesh_pad_idx(px, py, pz);
-        if Block::from_id(self.blocks[i]).fluid() != Some(fluid) {
+        if self.table.fluid(self.blocks[i]) != Some(fluid) {
             return false;
         }
         fluid_math::fills_cell(self.fluid[i], self.block_above_local(px, py, pz), fluid)
@@ -98,7 +100,7 @@ impl SectionMeshPad<'_> {
     ) -> Option<f32> {
         let (px, py, pz) = Self::local_pad_xyz(lx, ly, lz)?;
         let i = mesh_pad_idx(px, py, pz);
-        if Block::from_id(self.blocks[i]).fluid() != Some(fluid) {
+        if self.table.fluid(self.blocks[i]) != Some(fluid) {
             return None;
         }
         Some(fluid_math::fluid_height(
@@ -114,7 +116,7 @@ impl SectionMeshPad<'_> {
             return false;
         };
         let i = mesh_pad_idx(px, py, pz);
-        Block::from_id(self.blocks[i]).fluid() == Some(fluid)
+        self.table.fluid(self.blocks[i]) == Some(fluid)
             && fluid_math::is_still_source(self.fluid[i])
     }
 
@@ -124,7 +126,6 @@ impl SectionMeshPad<'_> {
             return false;
         };
         let i = mesh_pad_idx(px, py, pz);
-        Block::from_id(self.blocks[i]).fluid() == Some(fluid)
-            && fluid_math::is_falling(self.fluid[i])
+        self.table.fluid(self.blocks[i]) == Some(fluid) && fluid_math::is_falling(self.fluid[i])
     }
 }

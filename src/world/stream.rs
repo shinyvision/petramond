@@ -11,9 +11,6 @@ mod settle;
 mod shape;
 mod unload;
 
-/// Maximum fresh section requests admitted in one load or poll phase.
-pub(in crate::world) const MAX_SECTION_GEN_SUBMITS_PER_PHASE: usize = 64;
-
 #[cfg(any(test, feature = "test-support"))]
 #[cfg(test)]
 mod tests;

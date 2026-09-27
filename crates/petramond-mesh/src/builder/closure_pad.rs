@@ -95,6 +95,7 @@ impl ClosurePad {
 
     pub(super) fn view(&self) -> SectionMeshPad<'_> {
         SectionMeshPad {
+            table: petramond_world::block::BlockTable::current(),
             blocks: &self.blocks,
             fluid: &self.fluid,
             skylight: &self.skylight,

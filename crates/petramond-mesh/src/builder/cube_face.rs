@@ -86,7 +86,7 @@ pub(super) fn cube_face_uv_turn(
 
 #[inline]
 fn uv_16ths(value: f32) -> u32 {
-    (value.clamp(0.0, 1.0) * 16.0).round() as u32
+    crate::vertex::round_i32(value.clamp(0.0, 1.0) * 16.0) as u32
 }
 
 /// Whether a log's side cell-local UVs apply to this face — exactly

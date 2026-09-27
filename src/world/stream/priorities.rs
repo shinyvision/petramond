@@ -92,7 +92,6 @@ impl ServerWorld {
             if removed.contains(&ticket) {
                 self.side.gen.pending_section_jobs.remove(&sp);
                 self.remove_pending_section(sp);
-                self.side.gen.section_requests_unsettled = true;
             }
         }
     }

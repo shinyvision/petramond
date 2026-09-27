@@ -97,7 +97,7 @@ pub(super) fn slab_corner_open(
     sv: i32,
     front_half: usize,
 ) -> bool {
-    if state == SlabState::EMPTY {
+    if state.is_empty() {
         return true;
     }
     // The touching octant: along the normal, the half in front of the face

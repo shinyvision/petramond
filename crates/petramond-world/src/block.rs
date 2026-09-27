@@ -19,6 +19,7 @@ mod tags;
 mod tests;
 
 pub use behavior::BlockBehavior;
+pub use data::BlockTable;
 pub use data::ENGINE_BLOCK_NAMES;
 pub use data::{shape_kind_id_by_key, state_key_declared};
 pub(crate) use data::{warm_views, BlockViews};

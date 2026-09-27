@@ -23,8 +23,21 @@ impl WorldData {
         let mut raised_surface = [NO_SURFACE; SECTION_SIZE * SECTION_SIZE];
         let mut raised_sky = [NO_SURFACE; SECTION_SIZE * SECTION_SIZE];
         let section = self.sections.get(&pos)?;
+        // Air neither raises the surface nor covers the sky.
+        if section.is_empty_air() {
+            return None;
+        }
         let column = self.columns.get(&cpos)?;
         let blocks = section.blocks();
+        let light_cells = crate::block::light_cells();
+        let covers_sky = |id: u16| {
+            light_cells
+                .get(id as usize)
+                .copied()
+                .unwrap_or(light_cells[0])
+                & crate::block::LIGHT_CELL_DIRECT_SKY
+                == 0
+        };
         let mut any = false;
         for lz in 0..SECTION_SIZE {
             for lx in 0..SECTION_SIZE {
@@ -51,8 +64,7 @@ impl WorldData {
                         if wy <= sky_cover {
                             break;
                         }
-                        let block = Block::from_id(blocks.get(section_idx(lx, ly, lz)));
-                        if !block.transmits_direct_skylight() {
+                        if covers_sky(blocks.get(section_idx(lx, ly, lz))) {
                             raised_sky[i] = wy;
                             any = true;
                             break;

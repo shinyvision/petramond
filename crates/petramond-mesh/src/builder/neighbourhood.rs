@@ -10,7 +10,7 @@
 //! live world's accessors do: air, no state, open sky, not loaded.
 
 use glam::IVec3;
-use petramond_world::block::{Block, CellView, ShapeState};
+use petramond_world::block::{Block, BlockFlags, CellView, ShapeState};
 use petramond_world::block_state::SlabState;
 use petramond_world::chunk::{section_idx, SECTION_SIZE, SKY_FULL, WORLD_MAX_Y, WORLD_MIN_Y};
 use petramond_world::light::LightRgb;
@@ -82,7 +82,12 @@ impl<'a> Neighbourhood<'a> {
 
     #[inline]
     pub(super) fn block(&self, p: IVec3) -> Block {
-        Block::from_id(self.block_id(p))
+        self.pad.table.block(self.block_id(p))
+    }
+
+    #[inline]
+    fn flags(&self, p: IVec3) -> BlockFlags {
+        self.pad.table.flags(self.block_id(p))
     }
 
     #[inline]
@@ -134,8 +139,8 @@ impl<'a> Neighbourhood<'a> {
     /// classic whole-face cull.
     #[inline]
     pub(super) fn solid(&self, p: IVec3) -> bool {
-        let b = self.block(p);
-        b.is_opaque() || (b.is_slab() && self.full_slab(p))
+        let f = self.flags(p);
+        f.is_opaque() || (f.is_slab() && self.full_slab(p))
     }
 
     // --- Fluid probes -------------------------------------------------------
@@ -193,8 +198,9 @@ impl<'a> Neighbourhood<'a> {
     /// walls of a lava sea are never meshed. See-through fluids cover nothing.
     pub(super) fn covers_face(&self, p: IVec3, face: Face) -> bool {
         let b = self.block(p);
-        b.is_opaque()
-            || (b.is_slab() && self.full_slab(p))
+        let f = self.pad.table.flags(b.id());
+        f.is_opaque()
+            || (f.is_slab() && self.full_slab(p))
             || (self.registry.pad_class(b.id()) & PAD_OPAQUE_FLUID != 0 && self.fluid_fills(p, b))
             || (matches!(face, Face::PosY) && self.seals_floor(p))
     }
@@ -265,7 +271,7 @@ impl<'a> Neighbourhood<'a> {
     /// rule.
     pub(super) fn matter(&self, p: IVec3, lo: [f32; 3], hi: [f32; 3]) -> bool {
         let b = self.block(p);
-        if b.occludes_ao() {
+        if self.pad.table.flags(b.id()).occludes_ao() {
             return true;
         }
         let k = b.shape_kind_def();
