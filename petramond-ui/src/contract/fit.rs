@@ -14,7 +14,7 @@
 //! `abs` children (deliberately out of flow) and zero-height instances.
 
 use crate::doc::{Document, Node, NodeKind};
-use crate::layout::{solve, LayoutEnv, RectI};
+use crate::layout::{solve, LayoutEnv, RectI, Solved};
 use crate::state::UiState;
 use crate::theme::{Theme, ThemeEnv};
 use crate::tree::{InstTree, ROOT};
@@ -45,10 +45,40 @@ pub fn viewport_overflow(
         image_size,
     };
     let solved = solve(&tree, &env, viewport, &|_| 0);
+    overflows(&tree, &solved, &env)
+        .into_iter()
+        .map(|o| DocIssue {
+            path: inst_path(&tree, o.inst),
+            message: format!(
+                "at gui scale {scale} lays out at {} outside its parent's content box {} \
+                 in the smallest {}x{} viewport",
+                fmt_rect(o.rect),
+                fmt_rect(o.content),
+                viewport.0,
+                viewport.1
+            ),
+        })
+        .collect()
+}
+
+/// One instance laid out outside its parent's content box.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Overflow {
+    /// The instance's index in its tree.
+    pub inst: u32,
+    pub rect: RectI,
+    /// Its parent's content box (the parent's rect less padding and border).
+    pub content: RectI,
+}
+
+/// The fit rule itself, over a tree already expanded (in whatever form and
+/// hover state) and solved (in whatever viewport and scale): every instance
+/// outside its parent's content box, less the exemptions in the module docs.
+pub fn overflows(tree: &InstTree<'_>, solved: &Solved, env: &dyn LayoutEnv) -> Vec<Overflow> {
     // Parents precede children in the arena, so one forward pass inherits
     // the scroll exemption.
     let mut scrolled = vec![false; tree.len()];
-    let mut issues = Vec::new();
+    let mut out = Vec::new();
     for (i, inst) in tree.insts.iter().enumerate() {
         let Some(p) = inst.parent else { continue };
         scrolled[i] =
@@ -66,20 +96,14 @@ pub fn viewport_overflow(
             || rect.x < content.x
             || rect.x + rect.w > content.x + content.w
         {
-            issues.push(DocIssue {
-                path: inst_path(&tree, i as u32),
-                message: format!(
-                    "at gui scale {scale} lays out at {} outside its parent's content box {} \
-                     in the smallest {}x{} viewport",
-                    fmt_rect(rect),
-                    fmt_rect(content),
-                    viewport.0,
-                    viewport.1
-                ),
+            out.push(Overflow {
+                inst: i as u32,
+                rect,
+                content,
             });
         }
     }
-    issues
+    out
 }
 
 /// The document path of instance `i` (`root/2/0(button#go)`), found by

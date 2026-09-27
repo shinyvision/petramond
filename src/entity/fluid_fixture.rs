@@ -3,8 +3,7 @@
 //! mods root and loaded into a registry of its own ([`with_content`]), pinned
 //! on the test's thread — the process registry never sees it.
 
-use std::path::PathBuf;
-
+use petramond_util::test_dirs::TestScratchDir;
 use petramond_world::block::Block;
 use petramond_world::chunk::{Chunk, ChunkPos, SectionPos};
 use petramond_world::section::Section;
@@ -24,7 +23,7 @@ pub const FLOOR_Y: i32 = 64;
 /// Stage the `bodyfluid` pack (the two fluids, the hazardous floor, one
 /// humanoid-sized body per buoyancy mode plus two tolerant species) in a
 /// fresh mods root.
-pub fn stage(tag: &str) -> PathBuf {
+pub fn stage(tag: &str) -> TestScratchDir {
     let root = crate::modding::tests::stage_mods_fixture(tag, &[]).expect("fixture root");
     let pack = root.join("mods/bodyfluid");
     std::fs::create_dir_all(&pack).unwrap();

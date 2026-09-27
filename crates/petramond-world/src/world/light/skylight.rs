@@ -43,7 +43,10 @@ pub enum SkyClass {
 }
 
 /// Decide how `pos`'s skylight resolves from the 3x3 column sky-cover maps alone.
-pub fn classify(pos: SectionPos, columns: &FxHashMap<ChunkPos, Column>) -> SkyClass {
+pub fn classify(
+    pos: SectionPos,
+    columns: &FxHashMap<ChunkPos, std::sync::Arc<Column>>,
+) -> SkyClass {
     let (hmin, hmax) = cover_range(pos, columns);
     let oy = pos.origin_world().1;
     let top = oy + SECTION_SIZE as i32 - 1;
@@ -56,7 +59,7 @@ pub fn classify(pos: SectionPos, columns: &FxHashMap<ChunkPos, Column>) -> SkyCl
     }
 }
 
-pub fn plan(pos: SectionPos, columns: &FxHashMap<ChunkPos, Column>) -> SkyPlan {
+pub fn plan(pos: SectionPos, columns: &FxHashMap<ChunkPos, std::sync::Arc<Column>>) -> SkyPlan {
     match classify(pos, columns) {
         SkyClass::Full => SkyPlan::Full,
         SkyClass::Dark => SkyPlan::Dark,
@@ -66,7 +69,10 @@ pub fn plan(pos: SectionPos, columns: &FxHashMap<ChunkPos, Column>) -> SkyPlan {
     }
 }
 
-fn cover_range(pos: SectionPos, columns: &FxHashMap<ChunkPos, Column>) -> (i32, i32) {
+fn cover_range(
+    pos: SectionPos,
+    columns: &FxHashMap<ChunkPos, std::sync::Arc<Column>>,
+) -> (i32, i32) {
     let (mut hmin, mut hmax) = (i32::MAX, i32::MIN);
     for dcz in -1..=1 {
         for dcx in -1..=1 {
@@ -85,7 +91,10 @@ fn cover_range(pos: SectionPos, columns: &FxHashMap<ChunkPos, Column>) -> (i32, 
     }
 }
 
-fn gather_surface(pos: SectionPos, columns: &FxHashMap<ChunkPos, Column>) -> Box<[i32]> {
+fn gather_surface(
+    pos: SectionPos,
+    columns: &FxHashMap<ChunkPos, std::sync::Arc<Column>>,
+) -> Box<[i32]> {
     let surface = gather_surface_span(ChunkPos::new(pos.cx - 1, pos.cz - 1), 3, columns);
     debug_assert_eq!(surface.len(), NBHD_AREA);
     surface
@@ -97,7 +106,7 @@ fn gather_surface(pos: SectionPos, columns: &FxHashMap<ChunkPos, Column>) -> Box
 pub fn gather_surface_span(
     base: ChunkPos,
     span: usize,
-    columns: &FxHashMap<ChunkPos, Column>,
+    columns: &FxHashMap<ChunkPos, std::sync::Arc<Column>>,
 ) -> Box<[i32]> {
     let dim = span * SECTION_SIZE;
     let mut surface = vec![COVERED; dim * dim].into_boxed_slice();
@@ -136,7 +145,7 @@ mod tests {
                         column.set_sky_cover_y(x, z, 64);
                     }
                 }
-                columns.insert(ChunkPos::new(cx, cz), column);
+                columns.insert(ChunkPos::new(cx, cz), std::sync::Arc::new(column));
             }
         }
 
@@ -144,9 +153,7 @@ mod tests {
         // this one-cell shaft is down at y=0. Section cy=2 sits far enough below
         // the surrounding terrain that the visible surface map used to classify
         // the entire section as dark at its y=48 boundary.
-        columns
-            .get_mut(&ChunkPos::new(0, 0))
-            .unwrap()
+        std::sync::Arc::make_mut(columns.get_mut(&ChunkPos::new(0, 0)).unwrap())
             .set_sky_cover_y(8, 8, 0);
 
         assert!(

@@ -98,10 +98,30 @@ impl PackIndex {
         index
     }
 
+    /// Include a pack outside the bundled mod workspace.
+    pub fn with_pack_dir(mut self, pack_dir: &Path) -> Self {
+        self.add_dir(pack_dir);
+        self
+    }
+
     /// Whether the shipped data declares `key`.
     pub fn declares(&self, key: &PackKey) -> bool {
         self.entries
             .contains(&(label(key.kind), canonical(key.kind, key.key)))
+    }
+
+    pub fn assert_declared(&self, groups: &[&[PackKey]]) {
+        let missing: Vec<String> = groups
+            .iter()
+            .flat_map(|g| g.iter())
+            .filter(|k| !self.declares(k))
+            .map(|k| format!("{:?} {:?}", k.kind, k.key))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "ids declared in code but missing from the shipped pack data:\n  {}",
+            missing.join("\n  ")
+        );
     }
 
     fn add_dir(&mut self, dir: &Path) {
@@ -271,18 +291,7 @@ fn widget_label(doc_kind: &str) -> String {
 /// Assert that every key in every group names a shipped declaration of its
 /// kind; the panic lists every missing key at once.
 pub fn assert_declared(groups: &[&[PackKey]]) {
-    let index = PackIndex::shipped();
-    let missing: Vec<String> = groups
-        .iter()
-        .flat_map(|g| g.iter())
-        .filter(|k| !index.declares(k))
-        .map(|k| format!("{:?} {:?}", k.kind, k.key))
-        .collect();
-    assert!(
-        missing.is_empty(),
-        "ids declared in code but missing from the shipped pack data:\n  {}",
-        missing.join("\n  ")
-    );
+    PackIndex::shipped().assert_declared(groups);
 }
 
 #[cfg(test)]

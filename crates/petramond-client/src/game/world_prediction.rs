@@ -353,7 +353,7 @@ impl Game {
                     // Initial prediction blocks on the complete exact light ->
                     // mesh footprint so the click exposes no stale shading.
                     self.replica.world.present_predicted_edit(&cells);
-                    self.replica.events.world.push(WorldEvent::BlockBroken {
+                    self.present_predicted_world_event(WorldEvent::BlockBroken {
                         pos,
                         block,
                         normal,
@@ -626,7 +626,7 @@ impl Game {
         }
         self.hand.latch_place(block, hand);
         self.prediction.mark_presented(place_pos);
-        self.replica.events.world.push(WorldEvent::BlockPlaced {
+        self.present_predicted_world_event(WorldEvent::BlockPlaced {
             pos: place_pos,
             block,
         });
@@ -775,7 +775,7 @@ impl Game {
         }
         self.hand.latch_place(write_block, hand);
         self.prediction.mark_presented(anchor);
-        self.replica.events.world.push(WorldEvent::BlockPlaced {
+        self.present_predicted_world_event(WorldEvent::BlockPlaced {
             pos: anchor,
             block: write_block,
         });

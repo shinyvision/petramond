@@ -85,6 +85,14 @@ impl Interact<'_> {
                 InputEvent::PointerMove { x, y } => {
                     fs.cursor = (x, y);
                     self.pointer_drag(fs, events);
+                    if fs.drag.is_none() {
+                        if let Some(i) = self.surface_hit(fs) {
+                            if let Some(key) = self.key_of(i) {
+                                let (lx, ly) = self.surface_local(fs, i);
+                                fs.surface_move = Some((key, lx, ly, None));
+                            }
+                        }
+                    }
                 }
                 InputEvent::PointerDown {
                     x,
@@ -100,7 +108,7 @@ impl Interact<'_> {
                     fs.cursor = (x, y);
                     self.pointer_up(fs, button, events);
                 }
-                InputEvent::Scroll { delta } => self.wheel(fs, delta),
+                InputEvent::Scroll { delta } => self.wheel(fs, delta, events),
                 InputEvent::Key { key, shift, ctrl } => {
                     self.key(fs, key, shift, ctrl, clipboard.as_deref_mut(), events);
                 }
@@ -109,7 +117,66 @@ impl Interact<'_> {
                     fs.active = None;
                     fs.drag = None;
                 }
+                InputEvent::Modifiers(mods) => fs.mods = mods,
             }
+        }
+        self.flush_surface_move(fs, events);
+        self.surface_hover(fs, events);
+    }
+
+    /// The interactive surface (canvas/viewport) under the cursor, if any is
+    /// the topmost pointer target there.
+    fn surface_hit(&self, fs: &FrameState) -> Option<u32> {
+        self.hit(fs)
+            .filter(|&i| self.tree.get(i).enabled && self.tree.get(i).node.kind.is_surface())
+    }
+
+    fn surface_local(&self, fs: &FrameState, i: u32) -> (f32, f32) {
+        let (x, y) = self.cur(fs);
+        let rect = self.solved.rects[i as usize];
+        (x - rect.x as f32, y - rect.y as f32)
+    }
+
+    fn flush_surface_move(&self, fs: &mut FrameState, events: &mut Vec<UiEvent>) {
+        if let Some((key, x, y, button)) = fs.surface_move.take() {
+            events.push(UiEvent::SurfacePointer {
+                id: key.id,
+                item: key.item,
+                phase: PointerPhase::Move,
+                x,
+                y,
+                button,
+                mods: fs.mods,
+                clicks: 0,
+            });
+        }
+    }
+
+    /// Uncaptured hover: a surface the pointer entered is tracked, one it
+    /// left hears `Leave`. Moves over it were queued by `pointer_move`.
+    fn surface_hover(&self, fs: &mut FrameState, events: &mut Vec<UiEvent>) {
+        if matches!(fs.drag, Some(Drag::Surface { .. })) {
+            return;
+        }
+        let now = self.surface_hit(fs).and_then(|i| self.key_of(i));
+        if fs.surface_hover != now {
+            if let Some(left) = fs.surface_hover.take() {
+                let (x, y) = self
+                    .tree
+                    .find(&left.id, left.item)
+                    .map_or((0.0, 0.0), |i| self.surface_local(fs, i));
+                events.push(UiEvent::SurfacePointer {
+                    id: left.id,
+                    item: left.item,
+                    phase: PointerPhase::Leave,
+                    x,
+                    y,
+                    button: None,
+                    mods: fs.mods,
+                    clicks: 0,
+                });
+            }
+            fs.surface_hover = now;
         }
     }
 
@@ -245,6 +312,9 @@ impl Interact<'_> {
         if let Some(i) = self.hit(fs) {
             let inst = self.tree.get(i);
             let rect = self.solved.rects[i as usize];
+            if let Some(key) = &inst.key {
+                fs.last_pressed.insert(key.id.clone(), key.clone());
+            }
             match &inst.node.kind {
                 NodeKind::Slot { .. } | NodeKind::SlotGrid { .. } => {
                     if let Some((role, index)) = self.slot_hit(fs) {
@@ -303,6 +373,39 @@ impl Interact<'_> {
                             fs.drag = Some(Drag::TextSelect { key, anchor });
                         }
                     }
+                }
+                NodeKind::Canvas { interactive: true }
+                | NodeKind::Viewport { interactive: true }
+                    if inst.enabled =>
+                {
+                    if let Some(key) = self.key_of(i) {
+                        self.flush_surface_move(fs, events);
+                        let (lx, ly) = self.surface_local(fs, i);
+                        let clicks = match &fs.surface_press {
+                            Some((k, t, at, n))
+                                if *k == key
+                                    && fs.now - t < ROW_ACTIVATE_SECS
+                                    && (at.0 - fs.cursor.0).abs() <= 4.0
+                                    && (at.1 - fs.cursor.1).abs() <= 4.0 =>
+                            {
+                                n.saturating_add(1)
+                            }
+                            _ => 1,
+                        };
+                        fs.surface_press = Some((key.clone(), fs.now, fs.cursor, clicks));
+                        events.push(UiEvent::SurfacePointer {
+                            id: key.id.clone(),
+                            item: key.item,
+                            phase: PointerPhase::Down,
+                            x: lx,
+                            y: ly,
+                            button: Some(button),
+                            mods: fs.mods,
+                            clicks,
+                        });
+                        fs.drag = Some(Drag::Surface { key, button });
+                    }
+                    self.blur_editor(fs);
                 }
                 NodeKind::Image {
                     interactive: true, ..
@@ -419,6 +522,12 @@ impl Interact<'_> {
                     });
                 }
             }
+            Some(Drag::Surface { key, button }) => {
+                if let Some(i) = self.tree.find(&key.id, key.item) {
+                    let (lx, ly) = self.surface_local(fs, i);
+                    fs.surface_move = Some((key, lx, ly, Some(button)));
+                }
+            }
             Some(Drag::Slots {
                 button,
                 shift,
@@ -440,6 +549,31 @@ impl Interact<'_> {
     }
 
     fn pointer_up(&self, fs: &mut FrameState, button: PointerButton, events: &mut Vec<UiEvent>) {
+        if let Some(Drag::Surface {
+            key,
+            button: drag_button,
+        }) = fs.drag.clone()
+        {
+            if drag_button == button {
+                self.flush_surface_move(fs, events);
+                fs.drag = None;
+                let (x, y) = self
+                    .tree
+                    .find(&key.id, key.item)
+                    .map_or((0.0, 0.0), |i| self.surface_local(fs, i));
+                events.push(UiEvent::SurfacePointer {
+                    id: key.id,
+                    item: key.item,
+                    phase: PointerPhase::Up,
+                    x,
+                    y,
+                    button: Some(button),
+                    mods: fs.mods,
+                    clicks: 0,
+                });
+            }
+            return;
+        }
         if let Some(Drag::Slots {
             button: drag_button,
             shift,
@@ -540,7 +674,21 @@ impl Interact<'_> {
         }
     }
 
-    fn wheel(&self, fs: &mut FrameState, delta: i32) {
+    fn wheel(&self, fs: &mut FrameState, delta: i32, events: &mut Vec<UiEvent>) {
+        if let Some(i) = self.surface_hit(fs) {
+            if let Some(key) = self.key_of(i) {
+                let (x, y) = self.surface_local(fs, i);
+                events.push(UiEvent::SurfaceScroll {
+                    id: key.id,
+                    item: key.item,
+                    x,
+                    y,
+                    delta,
+                    mods: fs.mods,
+                });
+            }
+            return;
+        }
         let Some(i) = self.scroll_hit(fs) else {
             return;
         };
@@ -703,6 +851,13 @@ impl Interact<'_> {
 
     fn chr(&self, fs: &mut FrameState, ch: char, events: &mut Vec<UiEvent>) {
         let Some(focus) = fs.focus.clone() else {
+            if ch.is_ascii_alphanumeric() {
+                events.push(UiEvent::Key {
+                    key: NavKey::Char(ch.to_ascii_lowercase()),
+                    shift: ch.is_ascii_uppercase(),
+                    ctrl: false,
+                });
+            }
             return;
         };
         let Some(i) = self.tree.find(&focus.id, focus.item) else {

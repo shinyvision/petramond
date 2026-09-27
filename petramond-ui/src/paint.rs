@@ -426,7 +426,10 @@ impl Painter<'_> {
         self.ellipsized_at(s, rect, k, color, clip);
     }
 
-    fn ellipsized_at(
+    /// [`Self::text_ellipsized`] at an explicit `k` physical px per font
+    /// pixel, for a host placing text in its own pixel space (a painter at
+    /// scale 1) at a glyph size it chose.
+    pub fn ellipsized_at(
         &mut self,
         s: &str,
         rect: RectI,
@@ -566,6 +569,48 @@ impl Painter<'_> {
                 );
             }
             cx += glyph.advance() * k;
+        }
+    }
+
+    /// Word-wrapped text that stops after `max_lines`, the last kept line
+    /// carrying the rest of the text ellipsized; `small` draws one gui-scale
+    /// step down. Breaks are computed in FONT pixels at the drawn step, so the
+    /// lines the layout reserved room for are the lines drawn.
+    #[allow(clippy::too_many_arguments)]
+    pub fn text_wrapped_lines(
+        &mut self,
+        s: &str,
+        r: RectI,
+        small: bool,
+        max_lines: Option<u32>,
+        color: [f32; 4],
+        clip: Option<RectI>,
+    ) {
+        let k = if small {
+            self.small_text_step()
+        } else {
+            self.scale
+        };
+        let room_font_px = r.w * self.scale / k.max(1);
+        let advance = self.font.line_advance() * k / self.scale.max(1);
+        let lines = self.font.wrap(s, room_font_px);
+        let cap = max_lines.map_or(lines.len(), |m| (m.max(1) as usize).min(lines.len()));
+        let line_h = (self.font.line_h() * k + self.scale - 1) / self.scale.max(1);
+        let mut y = r.y;
+        for (n, line) in lines.iter().take(cap).enumerate() {
+            if n + 1 == cap && cap < lines.len() {
+                let rest = &s[line.start..];
+                let row = RectI {
+                    x: r.x,
+                    y,
+                    w: r.w,
+                    h: line_h,
+                };
+                self.ellipsized_at(rest, row, k, color, clip);
+            } else {
+                self.text_at(&s[line.clone()], r.x, y, k, color, clip);
+            }
+            y += advance;
         }
     }
 

@@ -206,6 +206,11 @@ impl ParticleSystem {
         }
     }
 
+    /// Drop every live particle.
+    pub fn clear(&mut self) {
+        self.particles.clear();
+    }
+
     pub fn set_count_scale(&mut self, scale: f32) {
         self.count_scale = scale.clamp(0.0, 1.0);
     }

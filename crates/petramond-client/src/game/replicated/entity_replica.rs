@@ -47,6 +47,8 @@ pub struct EntityReplica {
     /// Bounded FIFO of batches waiting for crossed render-time segment
     /// boundaries.
     staged: VecDeque<StagedRows>,
+    /// The tick of the rows the interpolation window closes on.
+    committed_tick: u64,
     /// The latest replicated tick number — the client's notion of game time
     /// for presentation scheduling.
     tick: u64,
@@ -70,6 +72,7 @@ impl EntityReplica {
             own_mount: None,
             clock: Default::default(),
             staged: VecDeque::new(),
+            committed_tick: 0,
             tick: 0,
             sleep_tally: Default::default(),
             self_id,
@@ -117,6 +120,12 @@ impl EntityReplica {
     #[inline]
     pub fn alpha(&self) -> f32 {
         self.clock.alpha()
+    }
+
+    /// The tick of the rows the interpolation window closes on.
+    #[inline]
+    pub fn committed_tick(&self) -> u64 {
+        self.committed_tick
     }
 
     /// Advance render time by one frame's `dt`.
@@ -174,6 +183,27 @@ impl EntityReplica {
         Some(committed)
     }
 
+    /// A presentation's window: commit the next staged batch its position
+    /// `at` (in ticks) has reached, the pair around `at` being the one to
+    /// close on; once nothing more is due, place render time at `at`'s
+    /// fraction. The presentation's position is the clock — it never runs
+    /// one of its own.
+    pub fn commit_presented(&mut self, at: f64) -> Option<Committed> {
+        let through = at.floor() as u64 + 1;
+        let due = self
+            .staged
+            .front()
+            .is_some_and(|rows| rows.windows().last().is_some_and(|w| w.tick <= through));
+        if due {
+            let staged = self.staged.pop_front().expect("checked above");
+            return Some(self.commit(staged));
+        }
+        if self.clock.started() {
+            self.clock.place((at - at.floor()) as f32);
+        }
+        None
+    }
+
     /// One frame of entity animation after the batches applied: named-mob
     /// blend weights ease toward their committed targets, and remote bodies
     /// advance their pose / hand / hurt state at this frame's alpha.
@@ -198,6 +228,7 @@ impl EntityReplica {
         // ends on its newest row; a resync's rows seed the pair in place
         // rather than interpolate across the dropped gap.
         for window in staged.windows() {
+            self.committed_tick = window.tick;
             // The own row always rides (a session tracks itself); a window
             // that leaves it out left it unchanged.
             if let Some(own) = window.players.iter().find(|row| row.id == self.self_id) {

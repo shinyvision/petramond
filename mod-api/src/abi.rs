@@ -61,7 +61,12 @@ impl fmt::Display for AbiVersion {
 /// echoing payloads the engine never reads back.
 ///
 /// 2.1 appends batched scripted AI node calls and replies.
-pub const ABI_VERSION: AbiVersion = AbiVersion { major: 2, minor: 1 };
+///
+/// 3.0 reshaped client calls (storage buckets and deletes, overlay HUD
+/// membership, key chords and contexts, the client frame's facts) and added
+/// the shell side, the view claims, world marks, and the mod-file, capture,
+/// presentation and media domains.
+pub const ABI_VERSION: AbiVersion = AbiVersion { major: 3, minor: 0 };
 
 /// A set of optional host feature domains. A guest declares the ones it cannot
 /// run without (`Mod::REQUIRES` in the SDK); the host refuses a guest whose

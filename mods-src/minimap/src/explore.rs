@@ -152,6 +152,10 @@ type Undecoded = ((i32, i32), RegionKind, bool, Option<Vec<u8>>);
 /// The tile/mip caches plus the async region loader.
 #[derive(Default)]
 pub(crate) struct TileStore {
+    /// A store of a world whose exploration is not this session's to keep
+    /// (a presentation): it neither loads from storage nor writes to it,
+    /// and forgets what it trims.
+    pub(crate) ephemeral: bool,
     /// Base tiles by 16-block tile coord (one cell per block).
     pub(crate) tiles: HashMap<(i32, i32), CachedTile>,
     /// Mip tiles by MIP-tile coord (16×16 cells of 2×2 blocks = 32×32
@@ -196,6 +200,13 @@ pub(crate) fn region_block_rect(kind: RegionKind, (rx, rz): (i32, i32)) -> [i32;
 }
 
 impl TileStore {
+    pub(crate) fn ephemeral() -> Self {
+        Self {
+            ephemeral: true,
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn begin_frame(&mut self, frame: u64) {
         self.frame = frame;
     }
@@ -240,6 +251,13 @@ impl TileStore {
         if self.region_resident(kind, coord) {
             self.touch_region(kind, coord);
             return;
+        }
+        if self.ephemeral {
+            // Storage holds another world's exploration: nothing to load.
+            match kind {
+                RegionKind::Base => self.base_absent.insert(coord),
+                RegionKind::Mip => self.mip_absent.insert(coord),
+            };
         }
         let materialize = tier == LoadTier::Sample;
         if self.region_absent(kind, coord) {
@@ -333,7 +351,7 @@ impl TileStore {
     pub(crate) fn pump_loads(&mut self) -> Vec<RegionArrival> {
         let mut still_in_flight = Vec::new();
         for load in std::mem::take(&mut self.in_flight) {
-            match client_storage_read_poll(load.ticket) {
+            match client_storage_read_poll(ClientStorageScope::World, load.ticket) {
                 None => still_in_flight.push(load),
                 Some(values) => {
                     for ((coord, kind, materialize, tier), value) in
@@ -389,7 +407,7 @@ impl TileStore {
                     region_key(kind, coord)
                 })
                 .collect();
-            let ticket = client_storage_read_begin(keys);
+            let ticket = client_storage_read_begin(ClientStorageScope::World, keys);
             self.in_flight.push(InFlightLoad {
                 ticket,
                 urgent,
@@ -494,7 +512,8 @@ impl TileStore {
     /// Write every dirty tile's region (and its recomputed mip region) as one
     /// storage batch. A base region whose mip region is not yet resident
     /// keeps its dirty flags and retries next interval — mip values never go
-    /// stale relative to committed base values.
+    /// stale relative to committed base values. An ephemeral store merges its
+    /// mips the same way and writes nothing.
     pub(crate) fn flush_dirty(&mut self) {
         let dirty_tiles: Vec<(i32, i32)> = self
             .tiles
@@ -534,10 +553,12 @@ impl TileStore {
                     }
                 }
             }
-            entries.push((
-                region_key(RegionKind::Base, region),
-                self.encode_resident_region(RegionKind::Base, region),
-            ));
+            if !self.ephemeral {
+                entries.push((
+                    region_key(RegionKind::Base, region),
+                    self.encode_resident_region(RegionKind::Base, region),
+                ));
+            }
             self.base_absent.remove(&region);
             for tz in 0..codec::REGION_TILES {
                 for tx in 0..codec::REGION_TILES {
@@ -553,10 +574,12 @@ impl TileStore {
             flushed_mip_regions.insert(mip_region);
         }
         for mip_region in flushed_mip_regions {
-            entries.push((
-                region_key(RegionKind::Mip, mip_region),
-                self.encode_resident_region(RegionKind::Mip, mip_region),
-            ));
+            if !self.ephemeral {
+                entries.push((
+                    region_key(RegionKind::Mip, mip_region),
+                    self.encode_resident_region(RegionKind::Mip, mip_region),
+                ));
+            }
             self.mip_absent.remove(&mip_region);
             for tz in 0..codec::REGION_TILES {
                 for tx in 0..codec::REGION_TILES {
@@ -571,7 +594,10 @@ impl TileStore {
             }
         }
         if !entries.is_empty() {
-            client_storage_set_many(entries);
+            let entries = entries.into_iter().map(|(k, v)| (k, Some(v))).collect();
+            if let Err(why) = client_storage_set_many(ClientStorageScope::World, entries) {
+                log(&format!("minimap: explored map not saved: {why}"));
+            }
         }
     }
 
@@ -940,6 +966,64 @@ mod tests {
         let mut store = TileStore::default();
         store.materialize_region(kind, region);
         store
+    }
+
+    /// Every storage call the stores under test make on this thread, by kind,
+    /// while the returned guard lives.
+    fn storage_calls() -> (
+        mod_sdk::testing::HostGuard,
+        std::rc::Rc<std::cell::RefCell<Vec<&'static str>>>,
+    ) {
+        let calls = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let seen = std::rc::Rc::clone(&calls);
+        let guard = mod_sdk::testing::install_host(move |call| {
+            let (kind, ret) = match call {
+                HostCall::Client(ClientCall::ClientStorageSetMany { .. }) => {
+                    ("write", HostRet::ClientStorageWrite(1))
+                }
+                HostCall::Client(ClientCall::ClientStorageReadBegin { .. }) => {
+                    ("read", HostRet::U64(1))
+                }
+                HostCall::Client(ClientCall::ClientStorageReadPoll { .. }) => {
+                    ("read", HostRet::ClientStorageRead(None))
+                }
+                other => panic!("unexpected host call {other:?}"),
+            };
+            seen.borrow_mut().push(kind);
+            ret
+        });
+        (guard, calls)
+    }
+
+    /// What a presentation shows is explored, merged into its mips and trimmed
+    /// like the session's own world, and never read from or written to the
+    /// session's storage; the session's own store still writes.
+    #[test]
+    fn an_ephemeral_store_explores_without_touching_storage() {
+        let (_host, calls) = storage_calls();
+        let mut store = TileStore::ephemeral();
+        store.request_region(RegionKind::Base, (0, 0), LoadTier::Sample);
+        assert!(store.region_resident(RegionKind::Base, (0, 0)));
+        store.tiles.get_mut(&(0, 0)).unwrap().tile.cells[0] = Cell {
+            height: 64,
+            rgb: [10, 200, 10],
+        };
+        store.tiles.get_mut(&(0, 0)).unwrap().dirty = true;
+        for _ in 0..2 {
+            let _ = store.pump_loads();
+            store.flush_dirty();
+        }
+        assert!(!store.tiles[&(0, 0)].dirty, "flushed, so it can trim");
+        assert!(store.mips[&(0, 0)].tile.cells[0].height != UNKNOWN_HEIGHT);
+        assert!(!calls.borrow().contains(&"write"));
+        assert!(!calls.borrow().contains(&"read"));
+
+        let mut own = store_with_region(RegionKind::Base, (0, 0));
+        own.materialize_region(RegionKind::Mip, (0, 0));
+        own.tiles.get_mut(&(0, 0)).unwrap().tile.cells[0].height = 64;
+        own.tiles.get_mut(&(0, 0)).unwrap().dirty = true;
+        own.flush_dirty();
+        assert!(calls.borrow().contains(&"write"));
     }
 
     #[test]

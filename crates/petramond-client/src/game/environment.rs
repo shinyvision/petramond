@@ -36,7 +36,7 @@ impl Game {
         GameEnvironment {
             fog,
             eye_fluid,
-            time: (now % 3600.0) as f32,
+            time: (self.world_clock(now) % 3600.0) as f32,
             shader_params: self
                 .replica
                 .world

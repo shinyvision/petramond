@@ -1,10 +1,10 @@
 use super::*;
 
-/// The per-process test data root the app tests also use — set, never
-/// removed, identical value from every setter, so parallel tests can't race
-/// each other onto the real user dir.
+/// The per-process test data root the app tests also use: an identical value
+/// from every setter, so parallel tests can't race each other onto the real
+/// user dir.
 fn isolated_data_dir() -> PathBuf {
-    let data = std::env::temp_dir().join(format!("petramond-test-data-{}", std::process::id()));
+    let data = petramond_util::test_dirs::test_process_data_dir();
     std::env::set_var("PETRAMOND_DATA_DIR", &data);
     std::fs::create_dir_all(&data).unwrap();
     data

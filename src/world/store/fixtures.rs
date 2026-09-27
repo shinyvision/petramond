@@ -53,7 +53,7 @@ impl<S: WorldSide> World<S> {
     pub fn insert_chunk_for_test(&mut self, pos: ChunkPos, chunk: petramond_world::chunk::Chunk) {
         debug_assert_eq!((pos.cx, pos.cz), (chunk.cx, chunk.cz));
         let (column, sections) = crate::world::stream::split_generated_column(&chunk);
-        self.data.columns.insert(pos, column);
+        self.data.columns.insert(pos, std::sync::Arc::new(column));
         // A test chunk is fully known, so record per-section summaries: its
         // absent sections are genuinely empty sky, and probes that consult
         // `section_summary` (sapling growth validation, physics) read them as

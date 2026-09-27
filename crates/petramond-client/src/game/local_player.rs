@@ -394,7 +394,8 @@ impl Game {
     }
 
     pub(super) fn apply_hotbar_input(&mut self, input: &GameInput) {
-        if input.gameplay_enabled && input.hotbar_scroll != 0 {
+        // A presentation is watched: the viewer holds nothing to select.
+        if input.gameplay_enabled && input.hotbar_scroll != 0 && !self.in_presentation() {
             let slot = self.local.scroll_hotbar(input.hotbar_scroll);
             // Mirror into the replicated view (selection is client-owned;
             // the server never echoes it back).

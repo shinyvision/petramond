@@ -369,7 +369,7 @@ impl IdRemap {
     }
 
     /// An optional item id: an unknown one reads as absent (an empty hand).
-    fn optional_item(&self, slot: &mut Option<u16>) {
+    pub(crate) fn optional_item(&self, slot: &mut Option<u16>) {
         *slot = slot.and_then(|id| self.item(id));
     }
 
@@ -390,7 +390,7 @@ impl IdRemap {
     }
 
     /// Rewrite one fired graph event in place; `false` = unknown here.
-    fn remap_animator_event(&self, rig: &mut RigId, event: &mut u16) -> bool {
+    pub(crate) fn remap_animator_event(&self, rig: &mut RigId, event: &mut u16) -> bool {
         match self.animator_event(*rig, *event) {
             Some((local_rig, local)) => {
                 *rig = local_rig;
@@ -407,6 +407,12 @@ impl IdRemap {
             return;
         }
         msg.remap(self);
+    }
+
+    /// Rewrite one value carried outside a message; `false` = drop it,
+    /// exactly as inside a message.
+    pub fn apply<T: Remap>(&self, value: &mut T) -> bool {
+        self.identity || value.remap(self)
     }
 
     /// Rewrite an outbound client message to server-local ids.

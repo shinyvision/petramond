@@ -1,0 +1,2264 @@
+{
+  "version": 2,
+  "document": {
+    "format": 1,
+    "kind": "petramond:content",
+    "class": "screen",
+    "root": {
+      "type": "frame",
+      "layout": {
+        "w": {
+          "grow": 1
+        },
+        "h": {
+          "grow": 1
+        },
+        "pad": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "gap": 0,
+        "dir": "column",
+        "align": "center",
+        "justify": "center"
+      },
+      "children": [
+        {
+          "type": "image",
+          "image": "../../textures/gui/screenshot.png",
+          "fit": "cover",
+          "layout": {
+            "w": {
+              "grow": 1
+            },
+            "h": {
+              "grow": 1
+            },
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start",
+            "abs": {
+              "x": 0,
+              "y": 0
+            }
+          }
+        },
+        {
+          "type": "column",
+          "layout": {
+            "w": {
+              "grow": 1
+            },
+            "h": {
+              "grow": 1
+            },
+            "pad": [
+              0,
+              2,
+              0,
+              4
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 4,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start",
+            "max_w": 440,
+            "max_h": 300
+          },
+          "style": "panel.large",
+          "children": [
+            {
+              "type": "column",
+              "layout": {
+                "w": "auto",
+                "h": {
+                  "grow": 1
+                },
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 4,
+                "dir": "column",
+                "align": "stretch",
+                "justify": "start"
+              },
+              "bind": {
+                "visible": "list_page"
+              },
+              "children": [
+                {
+                  "type": "row",
+                  "layout": {
+                    "w": "auto",
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 4,
+                    "dir": "column",
+                    "align": "center",
+                    "justify": "start"
+                  },
+                  "children": [
+                    {
+                      "type": "label",
+                      "text": "Content",
+                      "scale": 2
+                    },
+                    {
+                      "type": "spacer",
+                      "layout": {
+                        "w": {
+                          "grow": 1
+                        },
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "justify": "start"
+                      }
+                    },
+                    {
+                      "id": "refresh",
+                      "type": "button",
+                      "icon": "icon.refresh",
+                      "layout": {
+                        "w": 24,
+                        "h": 24,
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "justify": "start"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "id": "search",
+                  "type": "text_input",
+                  "placeholder": "Search content… (Ctrl+F)",
+                  "max_chars": 64,
+                  "layout": {
+                    "w": {
+                      "grow": 1
+                    },
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  },
+                  "bind": {
+                    "text": "search"
+                  }
+                },
+                {
+                  "id": "content_scroll",
+                  "type": "scroll",
+                  "axis": "vertical",
+                  "layout": {
+                    "w": "auto",
+                    "h": {
+                      "grow": 1
+                    },
+                    "pad": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start",
+                    "min_h": 60
+                  },
+                  "style": "panel.inset",
+                  "children": [
+                    {
+                      "id": "content",
+                      "type": "list",
+                      "layout": {
+                        "w": "auto",
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "align": "stretch",
+                        "justify": "start"
+                      },
+                      "bind": {
+                        "items": "rows",
+                        "selected": "row_sel"
+                      },
+                      "children": [
+                        {
+                          "type": "column",
+                          "layout": {
+                            "w": "auto",
+                            "h": "auto",
+                            "pad": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "margin": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "gap": 0,
+                            "dir": "column",
+                            "align": "stretch",
+                            "justify": "start"
+                          },
+                          "children": [
+                            {
+                              "type": "row",
+                              "layout": {
+                                "w": "auto",
+                                "h": "auto",
+                                "pad": [
+                                  2,
+                                  4,
+                                  2,
+                                  2
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 5,
+                                "dir": "column",
+                                "align": "center",
+                                "justify": "start"
+                              },
+                              "bind": {
+                                "visible": "is_header"
+                              },
+                              "children": [
+                                {
+                                  "type": "image",
+                                  "image": "pixel.png",
+                                  "layout": {
+                                    "w": 6,
+                                    "h": 1,
+                                    "pad": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "margin": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "gap": 0,
+                                    "dir": "column",
+                                    "justify": "start"
+                                  }
+                                },
+                                {
+                                  "type": "label",
+                                  "style": "label.muted",
+                                  "bind": {
+                                    "text": "header"
+                                  }
+                                },
+                                {
+                                  "type": "image",
+                                  "image": "pixel.png",
+                                  "layout": {
+                                    "w": {
+                                      "grow": 1
+                                    },
+                                    "h": 1,
+                                    "pad": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "margin": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "gap": 0,
+                                    "dir": "column",
+                                    "justify": "start"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "type": "column",
+                              "layout": {
+                                "w": "auto",
+                                "h": "auto",
+                                "pad": [
+                                  4,
+                                  3,
+                                  4,
+                                  3
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 3,
+                                "dir": "column",
+                                "align": "stretch",
+                                "justify": "start"
+                              },
+                              "bind": {
+                                "visible": "is_message"
+                              },
+                              "children": [
+                                {
+                                  "type": "label",
+                                  "wrap": true,
+                                  "bind": {
+                                    "text": "message",
+                                    "palette": "message_palette"
+                                  }
+                                },
+                                {
+                                  "type": "gauge",
+                                  "mode": "grow_lr",
+                                  "layout": {
+                                    "w": {
+                                      "grow": 1
+                                    },
+                                    "h": 6,
+                                    "pad": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "margin": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "gap": 0,
+                                    "dir": "column",
+                                    "justify": "start"
+                                  },
+                                  "style": "gauge.bar",
+                                  "bind": {
+                                    "value": "message_progress",
+                                    "visible": "message_busy"
+                                  }
+                                },
+                                {
+                                  "type": "row",
+                                  "layout": {
+                                    "w": "auto",
+                                    "h": "auto",
+                                    "pad": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "margin": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "gap": 0,
+                                    "dir": "column",
+                                    "justify": "end"
+                                  },
+                                  "children": [
+                                    {
+                                      "id": "message_action",
+                                      "type": "button",
+                                      "layout": {
+                                        "w": 72,
+                                        "h": "auto",
+                                        "pad": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "margin": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "gap": 0,
+                                        "dir": "column",
+                                        "justify": "start"
+                                      },
+                                      "bind": {
+                                        "text": "message_action_text",
+                                        "visible": "has_message_action"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "layout": {
+                                "w": "auto",
+                                "h": "auto",
+                                "pad": [
+                                  3,
+                                  3,
+                                  3,
+                                  3
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 4,
+                                "dir": "row",
+                                "align": "stretch",
+                                "justify": "start",
+                                "min_h": 64
+                              },
+                              "style": "list.row",
+                              "bind": {
+                                "visible": "is_entry"
+                              },
+                              "children": [
+                                {
+                                  "type": "column",
+                                  "layout": {
+                                    "w": 32,
+                                    "h": "auto",
+                                    "pad": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "margin": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "gap": 0,
+                                    "dir": "column",
+                                    "justify": "start"
+                                  },
+                                  "children": [
+                                    {
+                                      "type": "image",
+                                      "image": "",
+                                      "layout": {
+                                        "w": 32,
+                                        "h": 32,
+                                        "pad": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "margin": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "gap": 0,
+                                        "dir": "column",
+                                        "justify": "start"
+                                      },
+                                      "bind": {
+                                        "visible": "has_icon",
+                                        "image": "icon"
+                                      }
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "layout": {
+                                        "w": 32,
+                                        "h": 32,
+                                        "pad": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "margin": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "gap": 0,
+                                        "dir": "column",
+                                        "justify": "start"
+                                      },
+                                      "style": "panel.inset",
+                                      "bind": {
+                                        "visible": "no_icon"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "column",
+                                  "layout": {
+                                    "w": {
+                                      "grow": 1
+                                    },
+                                    "h": "auto",
+                                    "pad": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "margin": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "gap": 2,
+                                    "dir": "column",
+                                    "align": "stretch",
+                                    "justify": "start",
+                                    "min_w": 0
+                                  },
+                                  "children": [
+                                    {
+                                      "type": "row",
+                                      "layout": {
+                                        "w": "auto",
+                                        "h": "auto",
+                                        "pad": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "margin": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "gap": 4,
+                                        "dir": "column",
+                                        "align": "center",
+                                        "justify": "start"
+                                      },
+                                      "children": [
+                                        {
+                                          "type": "label",
+                                          "layout": {
+                                            "w": {
+                                              "grow": 1
+                                            },
+                                            "h": "auto",
+                                            "pad": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "margin": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "gap": 0,
+                                            "dir": "column",
+                                            "justify": "start",
+                                            "min_w": 0
+                                          },
+                                          "bind": {
+                                            "text": "name",
+                                            "visible": "collapsed"
+                                          }
+                                        },
+                                        {
+                                          "type": "label",
+                                          "wrap": true,
+                                          "layout": {
+                                            "w": {
+                                              "grow": 1
+                                            },
+                                            "h": "auto",
+                                            "pad": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "margin": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "gap": 0,
+                                            "dir": "column",
+                                            "justify": "start",
+                                            "min_w": 0
+                                          },
+                                          "bind": {
+                                            "text": "name",
+                                            "visible": "expanded"
+                                          }
+                                        },
+                                        {
+                                          "id": "addon_badge",
+                                          "type": "frame",
+                                          "layout": {
+                                            "w": 12,
+                                            "h": 12,
+                                            "pad": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "margin": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "gap": 0,
+                                            "dir": "column",
+                                            "justify": "start"
+                                          },
+                                          "style": "icon.sheep_head",
+                                          "bind": {
+                                            "visible": "is_addon"
+                                          }
+                                        },
+                                        {
+                                          "type": "badge",
+                                          "bind": {
+                                            "text": "version",
+                                            "visible": "has_version"
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "label",
+                                      "wrap": true,
+                                      "max_lines": 2,
+                                      "style": "label.muted",
+                                      "bind": {
+                                        "text": "summary",
+                                        "visible": "collapsed"
+                                      }
+                                    },
+                                    {
+                                      "type": "label",
+                                      "wrap": true,
+                                      "bind": {
+                                        "text": "description",
+                                        "visible": "expanded"
+                                      }
+                                    },
+                                    {
+                                      "type": "label",
+                                      "wrap": true,
+                                      "style": "label.muted",
+                                      "bind": {
+                                        "text": "world_note",
+                                        "visible": "has_world_note"
+                                      }
+                                    },
+                                    {
+                                      "type": "spacer",
+                                      "layout": {
+                                        "w": "auto",
+                                        "h": {
+                                          "grow": 1
+                                        },
+                                        "pad": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "margin": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "gap": 0,
+                                        "dir": "column",
+                                        "justify": "start"
+                                      }
+                                    },
+                                    {
+                                      "id": "detail",
+                                      "type": "label",
+                                      "small": true,
+                                      "layout": {
+                                        "w": {
+                                          "grow": 1
+                                        },
+                                        "h": "auto",
+                                        "pad": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "margin": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "gap": 0,
+                                        "dir": "column",
+                                        "justify": "start",
+                                        "min_w": 0
+                                      },
+                                      "bind": {
+                                        "text": "detail",
+                                        "palette": "detail_palette"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "column",
+                                  "layout": {
+                                    "w": 64,
+                                    "h": "auto",
+                                    "pad": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "margin": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "gap": 0,
+                                    "dir": "column",
+                                    "align": "end",
+                                    "justify": "start"
+                                  },
+                                  "children": [
+                                    {
+                                      "id": "get",
+                                      "type": "button",
+                                      "layout": {
+                                        "w": 64,
+                                        "h": 24,
+                                        "pad": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "margin": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "gap": 0,
+                                        "dir": "column",
+                                        "justify": "start"
+                                      },
+                                      "style": "button.success",
+                                      "bind": {
+                                        "text": "action_text",
+                                        "visible": "can_get"
+                                      }
+                                    },
+                                    {
+                                      "id": "replace",
+                                      "type": "button",
+                                      "text": "Replace",
+                                      "layout": {
+                                        "w": 64,
+                                        "h": 24,
+                                        "pad": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "margin": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "gap": 0,
+                                        "dir": "column",
+                                        "justify": "start"
+                                      },
+                                      "bind": {
+                                        "visible": "can_replace"
+                                      }
+                                    },
+                                    {
+                                      "id": "undo",
+                                      "type": "button",
+                                      "icon": "icon.undo",
+                                      "layout": {
+                                        "w": 24,
+                                        "h": 24,
+                                        "pad": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "margin": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "gap": 0,
+                                        "dir": "column",
+                                        "justify": "start"
+                                      },
+                                      "bind": {
+                                        "visible": "can_undo"
+                                      }
+                                    },
+                                    {
+                                      "type": "gauge",
+                                      "mode": "grow_lr",
+                                      "layout": {
+                                        "w": 64,
+                                        "h": 6,
+                                        "pad": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "margin": [
+                                          0,
+                                          9,
+                                          0,
+                                          0
+                                        ],
+                                        "gap": 0,
+                                        "dir": "column",
+                                        "justify": "start"
+                                      },
+                                      "style": "gauge.bar",
+                                      "bind": {
+                                        "value": "progress",
+                                        "visible": "busy"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "column",
+                                  "layout": {
+                                    "w": 24,
+                                    "h": "auto",
+                                    "pad": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "margin": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "gap": 0,
+                                    "dir": "column",
+                                    "justify": "end"
+                                  },
+                                  "children": [
+                                    {
+                                      "id": "delete",
+                                      "type": "button",
+                                      "icon": "icon.trash",
+                                      "layout": {
+                                        "w": 24,
+                                        "h": 24,
+                                        "pad": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "margin": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "gap": 0,
+                                        "dir": "column",
+                                        "justify": "start"
+                                      },
+                                      "style": "button.danger",
+                                      "bind": {
+                                        "visible": "can_delete"
+                                      }
+                                    },
+                                    {
+                                      "id": "cancel",
+                                      "type": "button",
+                                      "icon": "icon.cancel",
+                                      "layout": {
+                                        "w": 24,
+                                        "h": 24,
+                                        "pad": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "margin": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "gap": 0,
+                                        "dir": "column",
+                                        "justify": "start"
+                                      },
+                                      "bind": {
+                                        "visible": "busy"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "row",
+                  "layout": {
+                    "w": "auto",
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 4,
+                    "dir": "column",
+                    "align": "center",
+                    "justify": "start"
+                  },
+                  "children": [
+                    {
+                      "id": "back",
+                      "type": "button",
+                      "text": "Back"
+                    },
+                    {
+                      "id": "account",
+                      "type": "button",
+                      "icon": "icon.account",
+                      "layout": {
+                        "w": 24,
+                        "h": 24,
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "justify": "start"
+                      }
+                    },
+                    {
+                      "type": "spacer",
+                      "layout": {
+                        "w": {
+                          "grow": 1
+                        },
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "justify": "start"
+                      }
+                    },
+                    {
+                      "id": "restart",
+                      "type": "button",
+                      "text": "Restart now",
+                      "style": "button.success",
+                      "bind": {
+                        "visible": "pending_changes"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "confirm",
+              "type": "column",
+              "layout": {
+                "w": "auto",
+                "h": {
+                  "grow": 1
+                },
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 4,
+                "dir": "column",
+                "align": "stretch",
+                "justify": "start"
+              },
+              "bind": {
+                "visible": "confirm_page"
+              },
+              "children": [
+                {
+                  "id": "confirm_scroll",
+                  "type": "scroll",
+                  "axis": "vertical",
+                  "layout": {
+                    "w": "auto",
+                    "h": {
+                      "grow": 1
+                    },
+                    "pad": [
+                      2,
+                      4,
+                      2,
+                      2
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 4,
+                    "dir": "column",
+                    "justify": "start",
+                    "min_h": 40
+                  },
+                  "children": [
+                    {
+                      "type": "label",
+                      "wrap": true,
+                      "bind": {
+                        "text": "confirm_question"
+                      }
+                    },
+                    {
+                      "type": "label",
+                      "wrap": true,
+                      "style": "label.muted",
+                      "bind": {
+                        "text": "confirm_body"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "row",
+                  "layout": {
+                    "w": "auto",
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 4,
+                    "dir": "column",
+                    "align": "center",
+                    "justify": "start"
+                  },
+                  "children": [
+                    {
+                      "id": "confirm_now",
+                      "type": "button",
+                      "layout": {
+                        "w": 90,
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "justify": "start"
+                      },
+                      "style": "button.danger",
+                      "bind": {
+                        "text": "confirm_now_text",
+                        "visible": "confirming_exit"
+                      }
+                    },
+                    {
+                      "type": "spacer",
+                      "layout": {
+                        "w": {
+                          "grow": 1
+                        },
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "justify": "start"
+                      },
+                      "bind": {
+                        "visible": "confirming_exit"
+                      }
+                    },
+                    {
+                      "id": "confirm_cancel",
+                      "type": "button",
+                      "text": "Cancel"
+                    },
+                    {
+                      "type": "spacer",
+                      "layout": {
+                        "w": {
+                          "grow": 1
+                        },
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "justify": "start"
+                      },
+                      "bind": {
+                        "visible": "cancel_left"
+                      }
+                    },
+                    {
+                      "id": "confirm_danger",
+                      "type": "button",
+                      "layout": {
+                        "w": 104,
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "justify": "start"
+                      },
+                      "style": "button.danger",
+                      "bind": {
+                        "text": "confirm_action_text",
+                        "visible": "confirming_destroy"
+                      }
+                    },
+                    {
+                      "id": "confirm_go",
+                      "type": "button",
+                      "layout": {
+                        "w": 132,
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "justify": "start"
+                      },
+                      "style": "button.success",
+                      "bind": {
+                        "text": "confirm_go_text",
+                        "visible": "shows_go"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "refresh_tooltip",
+          "type": "tooltip",
+          "hover": "refresh",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              3,
+              2,
+              3,
+              3
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start",
+            "max_w": 200,
+            "abs": {
+              "x": 4,
+              "y": 4
+            }
+          },
+          "style": "panel.inset",
+          "bind": {
+            "visible": "list_page"
+          },
+          "children": [
+            {
+              "type": "label",
+              "text": "Refresh the list (F5)",
+              "wrap": true,
+              "small": true
+            }
+          ]
+        },
+        {
+          "id": "account_tooltip",
+          "type": "tooltip",
+          "hover": "account",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              3,
+              2,
+              3,
+              3
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start",
+            "max_w": 200,
+            "abs": {
+              "x": 4,
+              "y": 4
+            }
+          },
+          "style": "panel.inset",
+          "bind": {
+            "visible": "account_tip"
+          },
+          "children": [
+            {
+              "type": "label",
+              "wrap": true,
+              "small": true,
+              "bind": {
+                "text": "account_tip"
+              }
+            }
+          ]
+        },
+        {
+          "id": "restart_tooltip",
+          "type": "tooltip",
+          "hover": "restart",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              3,
+              2,
+              3,
+              3
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start",
+            "max_w": 200,
+            "abs": {
+              "x": 4,
+              "y": 4
+            }
+          },
+          "style": "panel.inset",
+          "bind": {
+            "visible": "restart_tip"
+          },
+          "children": [
+            {
+              "type": "label",
+              "wrap": true,
+              "small": true,
+              "bind": {
+                "text": "restart_tip"
+              }
+            }
+          ]
+        },
+        {
+          "id": "message_action_tooltip",
+          "type": "tooltip",
+          "hover": "message_action",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              3,
+              2,
+              3,
+              3
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start",
+            "max_w": 200,
+            "abs": {
+              "x": 4,
+              "y": 4
+            }
+          },
+          "style": "panel.inset",
+          "bind": {
+            "visible": "message_tip"
+          },
+          "children": [
+            {
+              "type": "label",
+              "wrap": true,
+              "small": true,
+              "bind": {
+                "text": "message_tip"
+              }
+            }
+          ]
+        },
+        {
+          "id": "addon_badge_tooltip",
+          "type": "tooltip",
+          "hover": "addon_badge",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              3,
+              2,
+              3,
+              3
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start",
+            "max_w": 200,
+            "abs": {
+              "x": 4,
+              "y": 4
+            }
+          },
+          "style": "panel.inset",
+          "bind": {
+            "visible": "list_page"
+          },
+          "children": [
+            {
+              "type": "label",
+              "text": "Petramond Addon",
+              "wrap": true,
+              "small": true
+            }
+          ]
+        },
+        {
+          "id": "get_tooltip",
+          "type": "tooltip",
+          "hover": "get",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              3,
+              2,
+              3,
+              3
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start",
+            "max_w": 200,
+            "abs": {
+              "x": 4,
+              "y": 4
+            }
+          },
+          "style": "panel.inset",
+          "bind": {
+            "visible": "get_tip"
+          },
+          "children": [
+            {
+              "type": "label",
+              "wrap": true,
+              "small": true,
+              "bind": {
+                "text": "get_tip"
+              }
+            }
+          ]
+        },
+        {
+          "id": "replace_tooltip",
+          "type": "tooltip",
+          "hover": "replace",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              3,
+              2,
+              3,
+              3
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start",
+            "max_w": 200,
+            "abs": {
+              "x": 4,
+              "y": 4
+            }
+          },
+          "style": "panel.inset",
+          "bind": {
+            "visible": "replace_tip"
+          },
+          "children": [
+            {
+              "type": "label",
+              "wrap": true,
+              "small": true,
+              "bind": {
+                "text": "replace_tip"
+              }
+            }
+          ]
+        },
+        {
+          "id": "undo_tooltip",
+          "type": "tooltip",
+          "hover": "undo",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              3,
+              2,
+              3,
+              3
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start",
+            "max_w": 200,
+            "abs": {
+              "x": 4,
+              "y": 4
+            }
+          },
+          "style": "panel.inset",
+          "bind": {
+            "visible": "undo_tip"
+          },
+          "children": [
+            {
+              "type": "label",
+              "wrap": true,
+              "small": true,
+              "bind": {
+                "text": "undo_tip"
+              }
+            }
+          ]
+        },
+        {
+          "id": "delete_tooltip",
+          "type": "tooltip",
+          "hover": "delete",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              3,
+              2,
+              3,
+              3
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start",
+            "max_w": 200,
+            "abs": {
+              "x": 4,
+              "y": 4
+            }
+          },
+          "style": "panel.inset",
+          "bind": {
+            "visible": "delete_tip"
+          },
+          "children": [
+            {
+              "type": "label",
+              "wrap": true,
+              "small": true,
+              "bind": {
+                "text": "delete_tip"
+              }
+            }
+          ]
+        },
+        {
+          "id": "cancel_tooltip",
+          "type": "tooltip",
+          "hover": "cancel",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              3,
+              2,
+              3,
+              3
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start",
+            "max_w": 200,
+            "abs": {
+              "x": 4,
+              "y": 4
+            }
+          },
+          "style": "panel.inset",
+          "bind": {
+            "visible": "cancel_tip"
+          },
+          "children": [
+            {
+              "type": "label",
+              "wrap": true,
+              "small": true,
+              "bind": {
+                "text": "cancel_tip"
+              }
+            }
+          ]
+        },
+        {
+          "id": "detail_tooltip",
+          "type": "tooltip",
+          "hover": "detail",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              3,
+              2,
+              3,
+              3
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start",
+            "max_w": 200,
+            "abs": {
+              "x": 4,
+              "y": 4
+            }
+          },
+          "style": "panel.inset",
+          "bind": {
+            "visible": "detail_tip"
+          },
+          "children": [
+            {
+              "type": "label",
+              "wrap": true,
+              "small": true,
+              "bind": {
+                "text": "detail_tip"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "editor": {
+    "sample_state": {
+      "account_tip": {
+        "str": "Sample text"
+      },
+      "cancel_left": {
+        "bool": true
+      },
+      "cancel_tip": {
+        "str": "Sample text"
+      },
+      "confirm_action_text": {
+        "str": "Sample text"
+      },
+      "confirm_body": {
+        "str": "Sample text"
+      },
+      "confirm_go_text": {
+        "str": "Sample text"
+      },
+      "confirm_now_text": {
+        "str": "Sample text"
+      },
+      "confirm_page": {
+        "bool": true
+      },
+      "confirm_question": {
+        "str": "Sample text"
+      },
+      "confirming_destroy": {
+        "bool": true
+      },
+      "confirming_exit": {
+        "bool": true
+      },
+      "confirming_go": {
+        "bool": true
+      },
+      "delete_tip": {
+        "str": "Sample text"
+      },
+      "detail_tip": {
+        "str": "Sample text"
+      },
+      "get_tip": {
+        "str": "Sample text"
+      },
+      "list_page": {
+        "bool": true
+      },
+      "message_tip": {
+        "str": "Sample text"
+      },
+      "pending_changes": {
+        "bool": true
+      },
+      "replace_tip": {
+        "str": "Sample text"
+      },
+      "restart_tip": {
+        "str": "Sample text"
+      },
+      "row_sel": {
+        "i32": 0
+      },
+      "rows": {
+        "list": [
+          {
+            "action_text": {
+              "str": "First item"
+            },
+            "busy": {
+              "bool": true
+            },
+            "can_delete": {
+              "bool": true
+            },
+            "can_get": {
+              "bool": true
+            },
+            "can_replace": {
+              "bool": true
+            },
+            "can_undo": {
+              "bool": true
+            },
+            "collapsed": {
+              "bool": true
+            },
+            "description": {
+              "str": "First item"
+            },
+            "detail": {
+              "str": "First item"
+            },
+            "detail_palette": {
+              "str": "First item"
+            },
+            "expanded": {
+              "bool": true
+            },
+            "has_icon": {
+              "bool": true
+            },
+            "has_message_action": {
+              "bool": true
+            },
+            "has_version": {
+              "bool": true
+            },
+            "has_world_note": {
+              "bool": true
+            },
+            "header": {
+              "str": "First item"
+            },
+            "icon": {
+              "str": "First item"
+            },
+            "is_addon": {
+              "bool": true
+            },
+            "is_entry": {
+              "bool": true
+            },
+            "is_header": {
+              "bool": true
+            },
+            "is_message": {
+              "bool": true
+            },
+            "message": {
+              "str": "First item"
+            },
+            "message_action_text": {
+              "str": "First item"
+            },
+            "message_busy": {
+              "bool": true
+            },
+            "message_palette": {
+              "str": "First item"
+            },
+            "message_progress": {
+              "f32": 0.5
+            },
+            "name": {
+              "str": "First item"
+            },
+            "no_icon": {
+              "bool": true
+            },
+            "progress": {
+              "f32": 0.5
+            },
+            "summary": {
+              "str": "First item"
+            },
+            "version": {
+              "str": "First item"
+            },
+            "world_note": {
+              "str": "First item"
+            }
+          },
+          {
+            "action_text": {
+              "str": "Second item"
+            },
+            "busy": {
+              "bool": true
+            },
+            "can_delete": {
+              "bool": true
+            },
+            "can_get": {
+              "bool": true
+            },
+            "can_replace": {
+              "bool": true
+            },
+            "can_undo": {
+              "bool": true
+            },
+            "collapsed": {
+              "bool": true
+            },
+            "description": {
+              "str": "Second item"
+            },
+            "detail": {
+              "str": "Second item"
+            },
+            "detail_palette": {
+              "str": "Second item"
+            },
+            "expanded": {
+              "bool": true
+            },
+            "has_icon": {
+              "bool": true
+            },
+            "has_message_action": {
+              "bool": true
+            },
+            "has_version": {
+              "bool": true
+            },
+            "has_world_note": {
+              "bool": true
+            },
+            "header": {
+              "str": "Second item"
+            },
+            "icon": {
+              "str": "Second item"
+            },
+            "is_addon": {
+              "bool": true
+            },
+            "is_entry": {
+              "bool": true
+            },
+            "is_header": {
+              "bool": true
+            },
+            "is_message": {
+              "bool": true
+            },
+            "message": {
+              "str": "Second item"
+            },
+            "message_action_text": {
+              "str": "Second item"
+            },
+            "message_busy": {
+              "bool": true
+            },
+            "message_palette": {
+              "str": "Second item"
+            },
+            "message_progress": {
+              "f32": 0.5
+            },
+            "name": {
+              "str": "Second item"
+            },
+            "no_icon": {
+              "bool": true
+            },
+            "progress": {
+              "f32": 0.5
+            },
+            "summary": {
+              "str": "Second item"
+            },
+            "version": {
+              "str": "Second item"
+            },
+            "world_note": {
+              "str": "Second item"
+            }
+          },
+          {
+            "action_text": {
+              "str": "Third item"
+            },
+            "busy": {
+              "bool": true
+            },
+            "can_delete": {
+              "bool": true
+            },
+            "can_get": {
+              "bool": true
+            },
+            "can_replace": {
+              "bool": true
+            },
+            "can_undo": {
+              "bool": true
+            },
+            "collapsed": {
+              "bool": true
+            },
+            "description": {
+              "str": "Third item"
+            },
+            "detail": {
+              "str": "Third item"
+            },
+            "detail_palette": {
+              "str": "Third item"
+            },
+            "expanded": {
+              "bool": true
+            },
+            "has_icon": {
+              "bool": true
+            },
+            "has_message_action": {
+              "bool": true
+            },
+            "has_version": {
+              "bool": true
+            },
+            "has_world_note": {
+              "bool": true
+            },
+            "header": {
+              "str": "Third item"
+            },
+            "icon": {
+              "str": "Third item"
+            },
+            "is_addon": {
+              "bool": true
+            },
+            "is_entry": {
+              "bool": true
+            },
+            "is_header": {
+              "bool": true
+            },
+            "is_message": {
+              "bool": true
+            },
+            "message": {
+              "str": "Third item"
+            },
+            "message_action_text": {
+              "str": "Third item"
+            },
+            "message_busy": {
+              "bool": true
+            },
+            "message_palette": {
+              "str": "Third item"
+            },
+            "message_progress": {
+              "f32": 0.5
+            },
+            "name": {
+              "str": "Third item"
+            },
+            "no_icon": {
+              "bool": true
+            },
+            "progress": {
+              "f32": 0.5
+            },
+            "summary": {
+              "str": "Third item"
+            },
+            "version": {
+              "str": "Third item"
+            },
+            "world_note": {
+              "str": "Third item"
+            }
+          }
+        ]
+      },
+      "search": {
+        "str": "Sample text"
+      },
+      "shows_go": {
+        "bool": true
+      },
+      "undo_tip": {
+        "str": "Sample text"
+      }
+    },
+    "zoom": 1.0,
+    "preview_scale": 2,
+    "screen": [
+      1280,
+      720
+    ],
+    "pixel_grid": false
+  }
+}

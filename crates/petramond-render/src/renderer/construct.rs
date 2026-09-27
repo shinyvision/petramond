@@ -98,6 +98,9 @@ pub(super) async fn request_device(
     adapter: &wgpu::Adapter,
 ) -> Result<(wgpu::Device, wgpu::Queue), RenderInitError> {
     let mut required_limits = wgpu::Limits::default().using_alignment(adapter.limits());
+    // A captured frame may be as large as the adapter allows.
+    required_limits.max_texture_dimension_2d = adapter.limits().max_texture_dimension_2d;
+    required_limits.max_buffer_size = adapter.limits().max_buffer_size;
     required_limits.max_texture_array_layers = (2 * petramond_world::tile::Tile::count() as u32)
         .max(required_limits.max_texture_array_layers)
         .min(adapter.limits().max_texture_array_layers);
@@ -270,7 +273,6 @@ pub(super) fn new_renderer_inner(
         &queue,
         pipelines.ui_pipe,
         &pipelines.atlas_bgl,
-        pipelines.ui_vbuf,
         icon_atlas,
     );
     let chrome = ChromePass::new(
@@ -316,6 +318,10 @@ pub(super) fn new_renderer_inner(
         queue,
         config,
         offscreen_target: None,
+        sized_frames: None,
+        frame_destination: None,
+        captures: Default::default(),
+        world_marks: Default::default(),
         suboptimal_retried: false,
         health,
         graph,
@@ -399,8 +405,20 @@ impl Renderer {
         (self.config.width, self.config.height)
     }
 
-    pub fn ui_viewport(&self) -> UiViewport {
-        UiViewport::new(self.screen_size(), self.ui.viewport_generation)
+    /// The viewport of the SCENE's UI: the frame's size.
+    pub fn scene_ui_viewport(&self) -> UiViewport {
+        if self.sized_frames.is_some() {
+            UiViewport::for_frame(self.screen_size(), self.ui.scene_generation)
+        } else {
+            UiViewport::new(self.screen_size(), self.ui.scene_generation)
+        }
+    }
+
+    /// The viewport of the WINDOW's UI: the window's size, which is the
+    /// frame's except while frames are rendered at another size.
+    pub fn window_ui_viewport(&self) -> UiViewport {
+        let config = self.surface_config();
+        UiViewport::new((config.width, config.height), self.ui.window_generation)
     }
 }
 

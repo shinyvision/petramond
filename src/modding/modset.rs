@@ -26,6 +26,15 @@ pub struct ModSetEntry {
     /// The pack's declared version string (`""` when the pack declares none).
     #[serde(default)]
     pub version: String,
+    /// The pack can change a world (`PackHeader::touches_world`). A record
+    /// written before this was known reads `true`: a missing pack of unknown
+    /// kind is treated as one that mattered.
+    #[serde(default = "affects_world_unknown")]
+    pub affects_world: bool,
+}
+
+fn affects_world_unknown() -> bool {
+    true
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -46,6 +55,7 @@ pub fn active(disabled: &BTreeSet<String>) -> Vec<ModSetEntry> {
             Some(ModSetEntry {
                 id,
                 version: p.version.clone().unwrap_or_default(),
+                affects_world: p.touches_world,
             })
         })
         .collect();
@@ -64,47 +74,72 @@ fn encode(mods: Vec<ModSetEntry>) -> Vec<u8> {
 
 /// Compare the save's recorded mod set against the ENABLED one, warn loudly
 /// on any difference, and return the recorded mods that are MISSING now. A
-/// missing `mods.json` (a fresh world, or one last saved before mod-set
-/// recording existed) compares silently — the first save writes it. Both
-/// sides exclude the world's deliberately disabled mods (the record was
-/// written that way too), so per-world disables never warn. Called at world
-/// open (`save::open_at`).
+/// missing `mods.json` (a fresh world, or one last saved before saves kept
+/// their mod set) compares silently — the first save writes it. Both sides
+/// exclude the world's deliberately disabled mods (the record was written
+/// that way too), so per-world disables never warn. Called at world open
+/// (`save::open_at`).
 pub fn check_at_open(save_dir: &Path, disabled: &BTreeSet<String>) -> Vec<ModSetEntry> {
-    let Ok(bytes) = std::fs::read(save_dir.join("mods.json")) else {
+    let Some(recorded) = recorded_enabled(save_dir, disabled) else {
         return Vec::new();
     };
+    for line in diff(&recorded, &active(disabled)) {
+        log::warn!("{line}");
+    }
+    absent(recorded, &active(&BTreeSet::new()))
+}
+
+/// Every id the save's `mods.json` records, `None` when it has none (a
+/// legacy save, or a file nobody can read).
+pub fn recorded_ids(save_dir: &Path) -> Option<BTreeSet<String>> {
+    let bytes = std::fs::read(save_dir.join("mods.json")).ok()?;
+    let file = serde_json::from_slice::<ModsFile>(&bytes).ok()?;
+    Some(file.mods.into_iter().map(|m| m.id).collect())
+}
+
+/// The save's recorded mod set minus what the world disables, `None` when
+/// there is no readable record.
+fn recorded_enabled(save_dir: &Path, disabled: &BTreeSet<String>) -> Option<Vec<ModSetEntry>> {
+    let bytes = std::fs::read(save_dir.join("mods.json")).ok()?;
     let recorded = match serde_json::from_slice::<ModsFile>(&bytes) {
         Ok(f) => f.mods,
         Err(e) => {
             log::warn!("save mods.json is unreadable ({e}); mod-set check skipped");
-            return Vec::new();
+            return None;
         }
     };
     // A record written before the mod was disabled would otherwise report it
     // MISSING every open; the player switched it off on purpose.
-    let recorded: Vec<ModSetEntry> = recorded
-        .into_iter()
-        .filter(|r| !disabled.contains(&r.id))
-        .collect();
-    let active = active(disabled);
-    for line in diff(&recorded, &active) {
-        log::warn!("{line}");
-    }
-    missing(&recorded, &active)
+    Some(
+        recorded
+            .into_iter()
+            .filter(|r| !disabled.contains(&r.id))
+            .collect(),
+    )
 }
 
-/// The recorded mods the active set lacks. Pure, for the unit test.
-fn missing(recorded: &[ModSetEntry], active: &[ModSetEntry]) -> Vec<ModSetEntry> {
+/// The packs the save recorded as enabled that no installed pack provides
+/// now — the ONE comparison of a world's record against what is installed.
+/// A pack the world disables is never missing; a record without
+/// `affects_world` counts as world-affecting.
+pub fn missing(save_dir: &Path, disabled: &BTreeSet<String>) -> Vec<ModSetEntry> {
+    match recorded_enabled(save_dir, disabled) {
+        Some(recorded) => absent(recorded, &active(&BTreeSet::new())),
+        None => Vec::new(),
+    }
+}
+
+/// The recorded mods no installed pack provides. Pure, for the unit test.
+fn absent(recorded: Vec<ModSetEntry>, installed: &[ModSetEntry]) -> Vec<ModSetEntry> {
     recorded
-        .iter()
-        .filter(|r| !active.iter().any(|a| a.id == r.id))
-        .cloned()
+        .into_iter()
+        .filter(|r| !installed.iter().any(|a| a.id == r.id))
         .collect()
 }
 
-/// One human-readable warning line per difference between the save's recorded
-/// mod set and the active one. Pure, for the unit test.
-fn diff(recorded: &[ModSetEntry], active: &[ModSetEntry]) -> Vec<String> {
+/// One human-readable warning line per difference between the save's
+/// recorded mod set and the active one.
+pub fn diff(recorded: &[ModSetEntry], active: &[ModSetEntry]) -> Vec<String> {
     let mut lines = Vec::new();
     for r in recorded {
         match active.iter().find(|a| a.id == r.id) {
@@ -140,7 +175,25 @@ mod tests {
         ModSetEntry {
             id: id.into(),
             version: version.into(),
+            affects_world: true,
         }
+    }
+
+    /// A record from before `affects_world` existed counts a missing pack as
+    /// one that mattered; a world's disabled pack is never missing.
+    #[test]
+    fn missing_packs_default_to_world_affecting_and_skip_the_disabled() {
+        let dir = petramond_util::test_dirs::TestScratchDir::new("modset-missing");
+        std::fs::write(
+            dir.join("mods.json"),
+            r#"{"mods": [{"id": "gone", "version": "1"}, {"id": "off", "version": "2"}]}"#,
+        )
+        .unwrap();
+        let disabled: BTreeSet<String> = ["off".to_owned()].into();
+        let missing = missing(&dir, &disabled);
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0].id, "gone");
+        assert!(missing[0].affects_world);
     }
 
     #[test]
@@ -174,22 +227,22 @@ mod tests {
     }
 
     #[test]
-    fn only_mods_absent_from_the_active_set_are_missing() {
-        let recorded = [entry("daynight", "1.0"), entry("wheel", "0.2")];
-        let active = [entry("daynight", "1.1"), entry("zombies", "0.1")];
-        assert_eq!(
-            missing(&recorded, &active),
-            [entry("wheel", "0.2")],
-            "a version change is not a removal"
-        );
-        assert!(missing(&recorded, &recorded).is_empty());
-    }
-
-    #[test]
     fn mods_file_roundtrips_through_json() {
         let mods = vec![entry("a_mod", ""), entry("b_mod", "2.3")];
         let bytes = encode(mods.clone());
         let back: ModsFile = serde_json::from_slice(&bytes).expect("parses");
         assert_eq!(back.mods, mods);
+    }
+
+    #[test]
+    fn only_mods_absent_from_the_active_set_are_missing() {
+        let recorded = vec![entry("daynight", "1.0"), entry("wheel", "0.2")];
+        let active = [entry("daynight", "1.1"), entry("zombies", "0.1")];
+        assert_eq!(
+            absent(recorded.clone(), &active),
+            [entry("wheel", "0.2")],
+            "a version change is not a removal"
+        );
+        assert!(absent(recorded.clone(), &recorded).is_empty());
     }
 }

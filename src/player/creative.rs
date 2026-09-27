@@ -43,7 +43,7 @@ impl Player {
             input.wishdir.z,
         )
         .normalize_or_zero();
-        let target = wish * creative_flight_speed(input.sprint);
+        let target = wish * creative_flight_speed(input.sprint) * self.fly_scale();
         let rate = if wish == Vec3::ZERO { 5.0 } else { 12.0 };
         let retain = (-rate * dt).exp();
         // Integrate the exponential exactly so a low frame rate coasts the

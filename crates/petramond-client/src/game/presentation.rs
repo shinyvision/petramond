@@ -294,7 +294,7 @@ impl GamePresentationScratch {
         }
         self.ambient.collect(
             &game.replica.world,
-            game.listener_position(),
+            game.render_camera().pos,
             now,
             game.fx.particles.count_scale(),
             &mut self.particles,
@@ -563,10 +563,11 @@ impl GamePresentationScratch {
     /// light client-sampled from the replica at the interpolated body.
     fn collect_remote_players(&mut self, game: &Game, tick_alpha: f32, view: &ViewVolume) {
         let world = &game.replica.world;
-        for p in game.replica.entities.players().iter() {
+        let hidden = game.hidden_remote_body();
+        for (id, p) in game.replica.entities.players().iter_with_ids() {
             // Spectators and the dead ship rows (flags/actions keep flowing)
-            // but draw no body.
-            if !p.curr.visible {
+            // but draw no body; nor does a body whose own eye is the view.
+            if !p.curr.visible || hidden == Some(id) {
                 continue;
             }
             let (mut pos, yaw, pitch) = remote_players::interpolate(&p.prev, &p.curr, tick_alpha);
@@ -829,9 +830,9 @@ fn collect_player(
     emitters: &BodyEmitters,
     frame: &mut BodyFrame,
 ) -> Option<BodyInput> {
-    // The body draws only once the boom camera is actually placed — never on a
-    // frame whose render camera is still the first-person eye (inside the head).
-    if !game.third_person_enabled() || game.local.third_person.cam.is_none() {
+    // The body draws only when the render camera is not the first-person eye
+    // (inside the head): the placed boom, or a claimed camera.
+    if !game.presents_local_body() {
         return None;
     }
     let (skylight, blocklight) = game.held_item_light();

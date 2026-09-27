@@ -12,7 +12,7 @@
 
 use super::schematic_library::LibraryPage;
 use super::screen::Escape;
-use super::{now_seconds, App, AppScreen};
+use super::{App, AppScreen};
 
 impl App {
     /// Switch to `next`, leaving the current screen and everything stacked
@@ -80,8 +80,16 @@ impl App {
                 self.shell.connect.cancel();
                 self.set_screen(AppScreen::Title);
             }
-            // Back to the connect screen, attempted address preserved.
-            Escape::ReopenConnect => self.reopen_connect_server(),
+            Escape::LeaveModsMissing => self.leave_mods_missing(),
+            Escape::LeaveAccount => self.leave_account(),
+            Escape::LeaveAccountSignIn => self.leave_account_sign_in(),
+            Escape::LeaveContent => self.content_escape(),
+            Escape::LeaveClientUi => {
+                if !self.dismiss_client_doc() {
+                    self.leave_client_screen();
+                    self.settle_shell();
+                }
+            }
             Escape::CloseMenu => self.close_menu(),
             Escape::CancelSleep => self.cancel_sleep(),
             Escape::PauseGame => {
@@ -102,15 +110,12 @@ impl App {
     fn leave_screen(&mut self, screen: AppScreen) {
         match screen {
             AppScreen::Chat => {
+                let now = self.now();
                 if let Some(session) = self.session.as_mut() {
-                    session.chat.clear_draft(now_seconds());
+                    session.chat.clear_draft(now);
                 }
             }
-            AppScreen::ClientCanvas => {
-                if let Some(session) = self.session.as_mut() {
-                    session.client_canvas = None;
-                }
-            }
+            AppScreen::ClientCanvas => self.client_canvas = None,
             // A stale LAN error must not greet the next open.
             AppScreen::Pause => {
                 if let Some(session) = self.session.as_mut() {
@@ -126,6 +131,8 @@ impl App {
             AppScreen::WorldSettings | AppScreen::CreateWorld | AppScreen::DeleteWorld => {
                 self.shell.close_page();
             }
+            // A local world held at the door belongs to the screen asking.
+            AppScreen::ModsMissing => self.shell.missing_world = None,
             _ => {}
         }
     }
@@ -144,11 +151,12 @@ impl App {
         // No phantom double-click across screens.
         self.gui_router.reset_click_streak();
         self.crafting_browser.reset();
+        let now = self.now();
         if let Some(session) = self.session.as_mut() {
             // A delete confirmation is captured for the screen that asked.
             session.library_form.pending_delete = None;
             match next {
-                AppScreen::Chat => session.chat.clear_draft(now_seconds()),
+                AppScreen::Chat => session.chat.clear_draft(now),
                 AppScreen::Schematics => session.library_form.page = LibraryPage::Library,
                 _ => {}
             }

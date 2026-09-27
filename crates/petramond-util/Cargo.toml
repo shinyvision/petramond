@@ -4,10 +4,10 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "User data paths and optional shared test deadlines."
+description = "User data paths, OS hand-offs (reveal, relaunch), and optional shared test deadlines and scratch dirs."
 
 [features]
-# Shared wall-clock test deadlines, for dependents' test suites only.
+# Shared wall-clock test deadlines and temp-dir scratch dirs, for dependents' test suites only.
 test-support = []
 
 [lints]

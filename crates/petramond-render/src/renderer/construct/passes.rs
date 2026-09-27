@@ -272,41 +272,32 @@ impl HandPass {
 
 impl UiPass {
     /// `texture_bgl` is the texture+sampler layout every UI texture binds
-    /// with; `solid_vbuf` the pipeline build's stack-count buffer.
+    /// with. The scene and window layers each get their own HUD layer
+    /// buffers over the same art.
     pub(super) fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         pipe: wgpu::RenderPipeline,
         texture_bgl: &wgpu::BindGroupLayout,
-        solid_vbuf: wgpu::Buffer,
         icon_atlas: IconAtlas,
     ) -> Self {
+        let hud_layers = build_hud_layers(device, queue, texture_bgl);
+        let window = UiLayer::new(
+            device,
+            hud_layers
+                .iter()
+                .map(|layer| layer.another(device))
+                .collect(),
+        );
         Self {
-            viewport_generation: 1,
-            prepared_viewport: UiViewport::default(),
             pipe,
             texture_bgl: texture_bgl.clone(),
-            doc_ui: super::super::doc_ui::DocUi::default(),
-            client_overlays: super::super::client_overlay::ClientOverlays::default(),
-            solid_vbuf,
-            solid_verts: Vec::new(),
-            count_vertex_count: 0,
-            overlay_count_vertex_count: 0,
-            drag_count_vertex_count: 0,
-            hud_layers: build_hud_layers(device, queue, texture_bgl),
+            theme: None,
             icon_atlas,
-            // Reusable dynamic vbuf for the per-frame icon quads (6 UiVertex
-            // per filled slot), grown to fit.
-            icon_quad_vbuf: dynamic_draw::new_buffer(
-                device,
-                wgpu::BufferUsages::VERTEX,
-                "icon quad vbuf",
-            ),
-            icon_quad_verts: Vec::new(),
-            icon_quad_vertex_count: 0,
-            overlay_icon_quad_vertex_count: 0,
-            drag_icon_quad_vertex_count: 0,
-            build: UiBuild::default(),
+            scene: UiLayer::new(device, hud_layers),
+            window,
+            scene_generation: 1,
+            window_generation: 1,
         }
     }
 }

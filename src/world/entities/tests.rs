@@ -627,10 +627,9 @@ fn stale_requests_release_when_the_requester_is_gone() {
 #[test]
 fn a_drop_waits_for_the_section_under_it_to_arrive() {
     use petramond_world::chunk::ChunkPos;
-    let dir = std::env::temp_dir().join(format!("petramond-drop-freeze-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = petramond_util::test_dirs::TestScratchDir::new("drop-freeze");
     let mut w = ServerWorld::new(0, 0);
-    let opened = crate::save::open_at(dir.clone()).expect("temp save opens");
+    let opened = crate::save::open_at(dir.to_path_buf()).expect("temp save opens");
     w.attach_save(opened.save, opened.saved);
     let column = ChunkPos::new(0, 0);
     w.data.ensure_column(column);
@@ -659,7 +658,6 @@ fn a_drop_waits_for_the_section_under_it_to_arrive() {
         w.item_entities()[0].pos.y < start.y,
         "simulates again once the floor section is final"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

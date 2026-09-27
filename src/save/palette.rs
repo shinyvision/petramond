@@ -402,12 +402,8 @@ pub fn load_or_create(dir: &Path, disabled: &BTreeSet<String>) -> std::io::Resul
 mod tests {
     use super::*;
 
-    fn temp_dir(tag: &str) -> std::path::PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("petramond-palette-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp_dir(tag: &str) -> petramond_util::test_dirs::TestScratchDir {
+        petramond_util::test_dirs::TestScratchDir::new(&format!("palette-{tag}"))
     }
 
     fn no_disabled() -> BTreeSet<String> {
@@ -426,7 +422,6 @@ mod tests {
             dir.join("palette.json").exists(),
             "palette pinned on creation"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -442,7 +437,6 @@ mod tests {
             b"{ not json",
             "the file is left as found"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -470,7 +464,6 @@ mod tests {
             std::fs::read_to_string(dir.join("palette.json")).unwrap(),
             text
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -501,7 +494,6 @@ mod tests {
             remapped_any |= disk != b.id();
         }
         assert!(remapped_any, "rotation must produce non-identity ids");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -535,7 +527,6 @@ mod tests {
         for &b in Block::all() {
             assert_eq!(p.block_from_disk(p.block_to_disk(b.id())), b.id());
         }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -558,7 +549,6 @@ mod tests {
         }
         let text = std::fs::read_to_string(dir.join("palette.json")).unwrap();
         assert!(text.contains("\"mobs\""), "the mob list is pinned on load");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -592,7 +582,6 @@ mod tests {
             remapped_any |= disk != m.id();
         }
         assert!(remapped_any, "the stranger shifts every known disk id");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The per-world disabled-mod palette contract (per-world
@@ -603,8 +592,7 @@ mod tests {
     /// dynamic name without changing content seen by other tests.
     #[test]
     fn disabled_mod_content_gets_the_unknown_treatment_and_reenabling_restores() {
-        let root = std::env::temp_dir().join(format!("petramond-paldis-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = petramond_util::test_dirs::TestScratchDir::new("paldis");
         let pack = root.join("mods/palmod");
         std::fs::create_dir_all(&pack).unwrap();
         std::fs::write(

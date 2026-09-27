@@ -2,12 +2,18 @@
 //! `Read + Write` stream so it unit-tests over an in-memory transcript.
 //!
 //! Exact sequence:
-//! `Hello{protocol}` → `HelloAck{challenge}` (or `HelloReject` = protocol
-//! mismatch) → `ModQuery` → `ModList{mods}` → compare ids against the
-//! installed packs (missing = CLOSE the socket, no farewell frame — the caller
-//! drops the stream) → `Join{player_name, key, proof, view_distance,
-//! cached_sections}`, `proof` being the identity key's signature over the
-//! challenge (`net::identity`) → `JoinAccept(JoinData)` (or `JoinReject`).
+//! `Hello{protocol}` → `HelloAck{challenge, requires_account, server_id}` (or
+//! `HelloReject` = protocol mismatch) → `ModQuery` → `ModList{mods}` → compare
+//! ids against the installed packs (missing = CLOSE the socket, no farewell
+//! frame — the caller drops the stream) → `Join{credential, key, proof,
+//! view_distance, cached_sections}`, `proof` being the identity key's
+//! signature over the challenge (`net::identity`) → `JoinAccept(JoinData)`
+//! (or `JoinReject`).
+//!
+//! The credential is resolved by a CALLBACK, after `HelloAck`: only then does
+//! the client know whether this server wants a Petramond account ticket or a
+//! plain name, and minting a ticket is itself a blocking network call that must
+//! not happen for a server that did not ask for one.
 //!
 //! The function is I/O-agnostic: the caller sets per-read deadlines on the
 //! raw `TcpStream` (`set_read_timeout`, ~5 s) before calling; timeouts
@@ -20,7 +26,8 @@ use std::io::{self, Read, Write};
 use super::framing::{read_msg, write_msg};
 use super::identity::PlayerIdentity;
 use super::protocol::{
-    ClientToServer, JoinData, JoinRejectReason, ModEntry, SectionCacheClaim, ServerToClient,
+    ClientToServer, JoinCredential, JoinData, JoinRejectReason, ModEntry, SectionCacheClaim,
+    ServerToClient,
 };
 use super::PROTOCOL_VERSION;
 
@@ -35,8 +42,16 @@ pub enum HandshakeError {
     },
     /// The server runs mods this client does not have installed.
     MissingMods(Vec<ModEntry>),
-    /// The server refused the join (bad identity proof, invalid name, …).
+    /// The server refused the join (bad identity proof, invalid name, its
+    /// account check failed, …).
     Rejected(JoinRejectReason),
+    /// The client could not produce the credential this server asked for. Set
+    /// `sign_in_required` when the player must sign in again before retrying —
+    /// the caller shows the account screen rather than the same error twice.
+    Credential {
+        message: String,
+        sign_in_required: bool,
+    },
     /// The server closed the connection mid-handshake.
     Closed,
     /// The server answered with something unparseable / out of sequence.
@@ -76,6 +91,23 @@ impl std::fmt::Display for HandshakeError {
             HandshakeError::Rejected(JoinRejectReason::ServerFull) => {
                 write!(f, "The server is full")
             }
+            HandshakeError::Rejected(JoinRejectReason::AccountRequired) => {
+                write!(f, "This server requires a Petramond account")
+            }
+            HandshakeError::Rejected(JoinRejectReason::AccountNotAccepted) => {
+                write!(f, "This server does not use Petramond accounts")
+            }
+            HandshakeError::Rejected(JoinRejectReason::AccountAlreadyOnline) => {
+                write!(
+                    f,
+                    "Your Petramond account is already playing on this server"
+                )
+            }
+            HandshakeError::Rejected(JoinRejectReason::AccountRejected(why)) => write!(f, "{why}"),
+            HandshakeError::Rejected(JoinRejectReason::AccountUnavailable(why)) => {
+                write!(f, "{why}")
+            }
+            HandshakeError::Credential { message, .. } => write!(f, "{message}"),
             HandshakeError::Closed => write!(f, "The server closed the connection"),
             HandshakeError::BadFrame => write!(f, "The server sent an invalid reply"),
         }
@@ -122,8 +154,18 @@ pub struct HandshakeJoin {
     pub server_mods: BTreeSet<String>,
 }
 
+/// What the server said about itself in `HelloAck` — everything the credential
+/// callback needs to decide what to offer.
+pub struct ServerOffer<'a> {
+    /// This server checks players against their Petramond account.
+    pub requires_account: bool,
+    /// The id a join ticket for this server must be minted for.
+    pub server_id: &'a str,
+}
+
 /// Run the full client-side join handshake over `stream`, proving `identity`
-/// to the server (see the module docs). On `Ok` the stream
+/// to the server and offering what `credential` resolves (see the module
+/// docs). On `Ok` the stream
 /// is positioned exactly after `JoinAccept` — hand it to
 /// [`super::connection::TcpClientConn::spawn`] with
 /// `IdRemap::build(&join.tables)`. On ANY `Err` the caller drops the stream
@@ -131,7 +173,7 @@ pub struct HandshakeJoin {
 pub fn client_handshake<S: Read + Write>(
     stream: &mut S,
     identity: &PlayerIdentity,
-    player_name: &str,
+    credential: impl FnOnce(&ServerOffer) -> Result<JoinCredential, HandshakeError>,
     view_distance: i32,
     installed_mod_ids: &BTreeSet<String>,
     cached_sections: Vec<SectionCacheClaim>,
@@ -142,8 +184,13 @@ pub fn client_handshake<S: Read + Write>(
             protocol: PROTOCOL_VERSION,
         },
     )?;
-    let challenge = match reply(stream)? {
-        ServerToClient::HelloAck { challenge, .. } => challenge,
+    let (challenge, requires_account, server_id) = match reply(stream)? {
+        ServerToClient::HelloAck {
+            challenge,
+            requires_account,
+            server_id,
+            ..
+        } => (challenge, requires_account, server_id),
         ServerToClient::HelloReject { server_protocol } => {
             return Err(HandshakeError::ProtocolMismatch {
                 server: server_protocol,
@@ -167,10 +214,17 @@ pub fn client_handshake<S: Read + Write>(
     }
     let server_mods: BTreeSet<String> = mods.into_iter().map(|m| m.id).collect();
 
+    // Minting a ticket costs a round trip to the account service; it happens
+    // only after the mod check, so a join that was going to be refused anyway
+    // never spends one.
+    let credential = credential(&ServerOffer {
+        requires_account,
+        server_id: &server_id,
+    })?;
     send(
         stream,
         &ClientToServer::Join {
-            player_name: player_name.to_string(),
+            credential,
             key: identity.key(),
             proof: identity.sign_join(&challenge),
             view_distance: view_distance.clamp(4, 64) as u8,
@@ -249,6 +303,7 @@ mod tests {
     fn join_data() -> Box<JoinData> {
         Box::new(JoinData {
             player_id: PlayerId(3),
+            player_name: "Joiner".into(),
             seed: 9,
             clock: 6000,
             tables: NameTables::default(),
@@ -270,6 +325,7 @@ mod tests {
             },
             crafting_recipes: Vec::new(),
             players: vec![(PlayerId(0), "Host".to_string())],
+            client_policy: Default::default(),
         })
     }
 
@@ -292,13 +348,25 @@ mod tests {
         PlayerIdentity::generate().expect("os randomness")
     }
 
+    /// A `HelloAck` from an OFFLINE server: the tests exercise the frame
+    /// sequence, not the account service.
+    fn ack() -> ServerToClient {
+        ServerToClient::HelloAck {
+            protocol: PROTOCOL_VERSION,
+            challenge: CHALLENGE,
+            requires_account: false,
+            server_id: "test-server".to_string(),
+        }
+    }
+
+    fn offers_name(_: &ServerOffer) -> Result<JoinCredential, HandshakeError> {
+        Ok(JoinCredential::Name("Rachel".to_string()))
+    }
+
     #[test]
     fn happy_path_sends_exactly_hello_modquery_join_in_order() {
         let mut s = Scripted::new(&[
-            ServerToClient::HelloAck {
-                protocol: PROTOCOL_VERSION,
-                challenge: CHALLENGE,
-            },
+            ack(),
             ServerToClient::ModList {
                 mods: mods(&["kitchen"]),
             },
@@ -308,7 +376,7 @@ mod tests {
         let data = client_handshake(
             &mut s,
             &me,
-            "Rachel",
+            offers_name,
             16,
             &installed(&["kitchen", "extra"]),
             Vec::new(),
@@ -326,14 +394,12 @@ mod tests {
             [ClientToServer::Hello {
                 protocol: PROTOCOL_VERSION,
             }, ClientToServer::ModQuery, ClientToServer::Join {
-                player_name,
+                credential: JoinCredential::Name(name),
                 key,
                 proof,
                 view_distance: 16,
                 cached_sections,
-            }] if player_name == "Rachel" && *key == me.key() && cached_sections.is_empty() => {
-                proof
-            }
+            }] if name == "Rachel" && *key == me.key() && cached_sections.is_empty() => proof,
             other => panic!("the exact frame sequence, nothing more; got {other:?}"),
         };
         assert!(
@@ -348,7 +414,7 @@ mod tests {
         match client_handshake(
             &mut s,
             &identity(),
-            "Rachel",
+            offers_name,
             16,
             &installed(&[]),
             Vec::new(),
@@ -367,10 +433,7 @@ mod tests {
     #[test]
     fn missing_mods_close_the_connection_before_any_join_frame() {
         let mut s = Scripted::new(&[
-            ServerToClient::HelloAck {
-                protocol: PROTOCOL_VERSION,
-                challenge: CHALLENGE,
-            },
+            ack(),
             ServerToClient::ModList {
                 mods: mods(&["kitchen", "ghost_mod"]),
             },
@@ -378,7 +441,7 @@ mod tests {
         match client_handshake(
             &mut s,
             &identity(),
-            "Rachel",
+            offers_name,
             16,
             &installed(&["kitchen"]),
             Vec::new(),
@@ -403,10 +466,7 @@ mod tests {
     #[test]
     fn a_join_reject_surfaces_the_reason() {
         let mut s = Scripted::new(&[
-            ServerToClient::HelloAck {
-                protocol: PROTOCOL_VERSION,
-                challenge: CHALLENGE,
-            },
+            ack(),
             ServerToClient::ModList { mods: Vec::new() },
             ServerToClient::JoinReject {
                 reason: JoinRejectReason::BadProof,
@@ -415,7 +475,7 @@ mod tests {
         match client_handshake(
             &mut s,
             &identity(),
-            "Rachel",
+            offers_name,
             16,
             &installed(&[]),
             Vec::new(),
@@ -427,14 +487,11 @@ mod tests {
 
     #[test]
     fn a_server_that_hangs_up_mid_handshake_reads_as_closed_not_a_panic() {
-        let mut s = Scripted::new(&[ServerToClient::HelloAck {
-            protocol: PROTOCOL_VERSION,
-            challenge: CHALLENGE,
-        }]);
+        let mut s = Scripted::new(&[ack()]);
         match client_handshake(
             &mut s,
             &identity(),
-            "Rachel",
+            offers_name,
             16,
             &installed(&[]),
             Vec::new(),
@@ -451,7 +508,7 @@ mod tests {
         match client_handshake(
             &mut s,
             &identity(),
-            "Rachel",
+            offers_name,
             16,
             &installed(&[]),
             Vec::new(),
@@ -469,10 +526,7 @@ mod tests {
     fn keepalives_between_replies_are_skipped_not_bad_frames() {
         let mut s = Scripted::new(&[
             ServerToClient::KeepAlive,
-            ServerToClient::HelloAck {
-                protocol: PROTOCOL_VERSION,
-                challenge: CHALLENGE,
-            },
+            ack(),
             ServerToClient::KeepAlive,
             ServerToClient::KeepAlive,
             ServerToClient::ModList { mods: Vec::new() },
@@ -482,7 +536,7 @@ mod tests {
         let data = client_handshake(
             &mut s,
             &identity(),
-            "Rachel",
+            offers_name,
             16,
             &installed(&[]),
             Vec::new(),

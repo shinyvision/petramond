@@ -74,6 +74,10 @@ pub use entities::{ImpactTarget, ItemImpact, ItemStep, ITEM_MERGE_INTERVAL_TICKS
 pub use entities::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
 pub use petramond_world::world::custom_bake::CustomBakeCell;
 pub use petramond_world::world::shape_bake_validate::ingest_shape_boxes;
+pub use remote::{
+    column_key, decode_section_payload, section_key, Cached, Changes, DetachedFold, FrameChanges,
+    PieceRange, Resident, SectionContent, TerrainEdit,
+};
 #[cfg(any(test, feature = "test-support"))]
 pub use stream::split_generated_column;
 
@@ -81,6 +85,7 @@ pub use mirror::ReplicaMirror;
 pub use particle_emitters::{emitter_envelope, PlacedEmitter};
 pub use petramond_world::world::ladder::Climb;
 pub use petramond_world::world::query::CollisionShapeClass;
+pub(crate) use remote::{detached_column_payload, detached_section_payload};
 pub use render_handoff::TerrainRenderHandoff;
 pub use side::{ReplicaSide, ServerSide, WorldSide};
 pub use store::LoadAnchor;

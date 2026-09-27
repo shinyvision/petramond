@@ -245,6 +245,7 @@ impl ServerGame {
         crate::server::progression::catch_up(&mut player, self.catalog.unlocks());
         let data = Box::new(JoinData {
             player_id: flight.id,
+            player_name: flight.name.clone(),
             seed: self.world.data().seed,
             clock: crate::server::daynight::current_clock(&self.world),
             tables: crate::net::remap::local_name_tables(),
@@ -255,6 +256,7 @@ impl ServerGame {
                 .iter()
                 .map(|s| (s.id, s.name.clone()))
                 .collect(),
+            client_policy: self.client_policy,
         });
         let mut session = ConnectedPlayer::new(
             flight.id,

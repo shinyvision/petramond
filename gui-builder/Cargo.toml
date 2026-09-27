@@ -25,3 +25,6 @@ serde_json = { workspace = true }
 # Native file dialogs without a GTK build dependency: use the xdg-desktop-portal
 # backend (works on Wayland) with an async-std executor for the sync API.
 rfd = { version = "0.14", default-features = false, features = ["xdg-portal", "async-std"] }
+
+[dev-dependencies]
+petramond-util = { workspace = true, features = ["test-support"] }

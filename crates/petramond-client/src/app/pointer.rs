@@ -191,8 +191,9 @@ impl App {
     pub fn set_cursor_position(&mut self, x: f32, y: f32) {
         self.controls.pointer.set_cursor_position(x, y);
         if self.screen == super::AppScreen::Chat {
+            let now = self.now();
             if let Some(session) = self.session.as_mut() {
-                session.chat.pointer_move(x, y, super::now_seconds());
+                session.chat.pointer_move(x, y, now);
             }
             return;
         }
@@ -209,13 +210,14 @@ impl App {
     pub fn set_pointer_button(&mut self, button: PointerButton, down: bool) {
         if self.screen == super::AppScreen::Chat {
             let (x, y) = self.controls.pointer.cursor();
+            let now = self.now();
             if let Some(session) = self
                 .session
                 .as_mut()
                 .filter(|_| button == PointerButton::Primary)
             {
                 if down {
-                    session.chat.pointer_down(x, y, super::now_seconds());
+                    session.chat.pointer_down(x, y, now);
                 } else {
                     session.chat.pointer_up();
                 }
@@ -292,7 +294,7 @@ impl App {
         if self.doc_ui_kind().is_some() {
             // One wheel notch scrolls ~20 logical px, natural direction.
             self.ui.push_input(petramond_ui::InputEvent::Scroll {
-                delta: (delta * 20.0) as i32,
+                delta: (delta * WHEEL_NOTCH_PX) as i32,
             });
             return;
         }
@@ -315,7 +317,7 @@ impl App {
         if let Some(session) = self.session.as_mut() {
             session.chat.pointer_up();
         }
-        self.sound.stop_mining_loop(super::now_seconds());
+        self.sound.stop_mining_loop(self.now());
     }
 
     pub(super) fn recenter_pointer_if_pending(&mut self, screen_size: (u32, u32)) {
@@ -331,3 +333,6 @@ impl App {
 
 #[cfg(test)]
 mod tests;
+
+/// Logical px one wheel notch scrolls a document.
+pub(super) const WHEEL_NOTCH_PX: f32 = 20.0;

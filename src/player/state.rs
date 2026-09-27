@@ -358,6 +358,12 @@ impl Player {
         self.claims.attribute(mod_api::PlayerAttribute::MoveSpeed)
     }
 
+    /// The flight-speed scale: the resolved product over every claim.
+    #[inline]
+    pub fn fly_scale(&self) -> f32 {
+        self.claims.attribute(mod_api::PlayerAttribute::FlySpeed)
+    }
+
     /// The engine's `base` ticks for `attribute`, scaled by the resolved
     /// claims — how a consulting site reads a claimed engine constant.
     #[inline]
@@ -387,9 +393,19 @@ impl Player {
     /// carries the engine's own claim too, worked out from state it holds
     /// (see [`refresh_engine_claims`](Self::refresh_engine_claims)), and
     /// clearing would drop it until the next frame re-stated it.
-    pub fn adopt_resolved_body(&mut self, scale: f32, denied: super::DeniedActions) {
+    pub fn adopt_resolved_body(
+        &mut self,
+        scale: f32,
+        fly_scale: f32,
+        denied: super::DeniedActions,
+    ) {
         self.claims
             .set_attribute(MIRRORED_CLAIM, mod_api::PlayerAttribute::MoveSpeed, scale);
+        self.claims.set_attribute(
+            MIRRORED_CLAIM,
+            mod_api::PlayerAttribute::FlySpeed,
+            fly_scale,
+        );
         self.claims.set_denied_actions(MIRRORED_CLAIM, denied);
     }
 

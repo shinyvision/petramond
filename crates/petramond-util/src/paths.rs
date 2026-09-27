@@ -16,3 +16,10 @@ pub fn base_data_dir() -> PathBuf {
         .map(|d| d.data_dir().to_path_buf())
         .unwrap_or_else(|| PathBuf::from(".petramond"))
 }
+
+/// The one root packs are INSTALLED into (`<data>/mods`): what the content
+/// browser writes and discovery reads as its installed root. Shipped packs
+/// live elsewhere and are never written by the game.
+pub fn installed_mods_dir() -> PathBuf {
+    base_data_dir().join("mods")
+}

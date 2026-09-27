@@ -1,8 +1,10 @@
 //! Client (per-machine) settings: `client.json` in the base data dir.
 //!
-//! Graphics/host knobs and the player identity that belong to the machine
+//! Graphics/host knobs and the local player name that belong to the machine
 //! running the game, not to a world: render distance, frame caps, render
-//! scale, player name. Distinct from the per-world `settings.json`
+//! scale, player name. The signed-in Petramond account is NOT here — a
+//! credential belongs in its own owner-only file (`account::store`).
+//! Distinct from the per-world `settings.json`
 //! (`save::settings`), which holds world state like disabled mods. An absent
 //! file means defaults; unknown fields are ignored so hand-edited files
 //! survive version drift. `PETRAMOND_*` env vars override the file for
@@ -40,10 +42,12 @@ pub struct ClientSettings {
     pub grade: bool,
     /// Scene supersampling (Options → Graphics); UI stays unfiltered.
     pub anti_aliasing: AntiAliasing,
-    /// The local player's display name. Identity (save files, operator
+    /// The local player's display name for a machine with NO Petramond
+    /// account signed in: a signed-in account's username outranks it
+    /// everywhere ([`resolve_player_name`]). Identity (save files, operator
     /// rights) is the separate keypair in `<data>/identity.key`
-    /// (`net::identity`). `None` = unset; [`resolve_player_name`] falls back
-    /// to the OS username.
+    /// (`net::identity`). `None` = unset; resolution then falls back to the OS
+    /// username.
     pub player_name: Option<String>,
     /// The address last joined via "Connect to server", as a convenience
     /// prefill for the connect screen. `None` until a first join.
@@ -118,12 +122,30 @@ impl Default for ClientSettings {
     }
 }
 
-/// The local player's effective name: `PETRAMOND_PLAYER_NAME` env >
-/// client.json `player_name` > OS `$USER`/`$USERNAME` > `"Player"`.
-/// Candidates are trimmed; blank ones fall through to the next.
+/// The local player's effective name — the ONE answer to "who am I" this
+/// machine gives, in singleplayer and out.
+///
+/// The signed-in Petramond account wins over anything configured locally: a
+/// player who signed in expects to BE that account, in their own world's chat
+/// as much as on a server. Only `PETRAMOND_PLAYER_NAME` outranks it, because
+/// that is the deliberate per-run override (two clients from one checkout).
+///
+/// The name is display-only: player saves and operator rights key on the
+/// identity key (`net::identity`) or, on an online server, the verified
+/// account's key, so signing in or renaming never changes which character
+/// a world restores.
 pub fn resolve_player_name(s: &ClientSettings) -> String {
+    let account = crate::account::store::load().map(|saved| saved.username);
+    player_name_from(s, account)
+}
+
+/// [`resolve_player_name`]'s rule, with the signed-in account passed in: the
+/// precedence is the testable half, the credential file read is not.
+/// Candidates are trimmed; blank ones fall through to the next.
+fn player_name_from(s: &ClientSettings, account: Option<String>) -> String {
     first_nonempty([
         std::env::var("PETRAMOND_PLAYER_NAME").ok(),
+        account,
         s.player_name.clone(),
         std::env::var("USER").ok(),
         std::env::var("USERNAME").ok(),

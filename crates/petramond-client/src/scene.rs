@@ -116,6 +116,10 @@ impl SceneCapture {
                 seed,
                 &petramond::modding::client::local_session_key("harness"),
                 &enabled,
+                mod_api::ClientContext::Local {
+                    name: "harness".into(),
+                    shared: false,
+                },
             ),
         };
         // Without sky params the shaders fall back to their zero state, which is

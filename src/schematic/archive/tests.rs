@@ -1,6 +1,6 @@
 use super::*;
 use crate::schematic::{library, CellData, SavedStack, SchematicCell};
-use std::{collections::BTreeMap, path::PathBuf};
+use std::collections::BTreeMap;
 
 fn png() -> Vec<u8> {
     petramond_world::assets::read_bytes("textures/schematic_wand.png")
@@ -62,17 +62,8 @@ fn fixture() -> Schematic {
     )
     .unwrap()
 }
-fn dir() -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
-        "llschematic-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&path).unwrap();
-    path
+fn dir() -> petramond_util::test_dirs::TestScratchDir {
+    petramond_util::test_dirs::TestScratchDir::new("llschematic")
 }
 
 #[test]
@@ -182,7 +173,6 @@ fn indexing_and_preview_do_not_inflate_the_voxel_payload() {
     assert_eq!(library::list(&d).unwrap().len(), 1);
     assert!(library::thumbnail(&entry).is_ok());
     assert!(library::read(&path).is_err());
-    std::fs::remove_dir_all(d).unwrap();
 }
 
 #[test]
@@ -199,7 +189,6 @@ fn archive_publish_never_overwrites_or_leaves_partial_files() {
     assert_eq!(std::fs::read_dir(&d).unwrap().count(), 1);
     assert!(library::save(&d, &replacement, b"not a PNG").is_err());
     assert_eq!(std::fs::read_dir(&d).unwrap().count(), 1);
-    std::fs::remove_dir_all(d).unwrap();
 }
 
 #[test]
@@ -273,7 +262,6 @@ fn large_multisection_archive_streams_without_the_old_cell_side_or_byte_caps() {
     let path = library::save(&directory, &schematic, &png()).unwrap();
     assert_eq!(library::read(&path).unwrap(), schematic);
     assert_eq!(library::inspect(&path).unwrap().metadata.cell_count, 81920);
-    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

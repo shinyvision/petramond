@@ -5,6 +5,37 @@ use super::{default_style_key, FaceState, Theme};
 use crate::doc::{Node, NodeKind};
 use crate::layout::{LayoutEnv, SlotMetrics};
 
+/// The logical size of a wrapped label capped at `max_lines` — the same
+/// breaks [`crate::Painter::text_wrapped_lines`] draws.
+fn wrapped_lines_size(
+    font: &crate::text::Font,
+    text: &str,
+    avail_w: i32,
+    small: bool,
+    max_lines: u32,
+    gui_scale: i32,
+) -> (i32, i32) {
+    let (step, full) = if small {
+        ((gui_scale - 1).max(1), gui_scale.max(1))
+    } else {
+        (1, 1)
+    };
+    let down = |v: i32| (v * step + full - 1) / full;
+    let lines = font.wrap(text, avail_w * full / step);
+    let kept = lines.len().min(max_lines.max(1) as usize);
+    let cut = kept < lines.len();
+    let w = lines
+        .iter()
+        .take(kept)
+        .map(|r| font.width(&text[r.clone()]))
+        .max()
+        .unwrap_or(0);
+    let h = font.line_h() + (kept as i32 - 1).max(0) * font.line_advance();
+    // A cut label's last line ellipsizes into the whole available width.
+    let w = if cut { avail_w } else { down(w) };
+    (w, down(h))
+}
+
 /// The solver's window into the theme + the host's document-image registry
 /// (image natural sizes live outside the theme).
 pub struct ThemeEnv<'a> {
@@ -36,10 +67,24 @@ impl LayoutEnv for ThemeEnv<'_> {
         };
         match &node.kind {
             NodeKind::Label {
-                wrap, scale, small, ..
+                wrap,
+                scale,
+                small,
+                max_lines,
+                ..
             } => {
                 let text = text.unwrap_or("");
                 let font = self.theme.ui_font();
+                if let (true, Some(max_lines), Some(avail_w)) = (*wrap, *max_lines, avail_w) {
+                    return wrapped_lines_size(
+                        font,
+                        text,
+                        avail_w,
+                        *small,
+                        max_lines,
+                        self.gui_scale(),
+                    );
+                }
                 if *scale > 1 {
                     let (w, h) = font.measure(text, None);
                     (w * *scale as i32, h * *scale as i32)
@@ -66,8 +111,12 @@ impl LayoutEnv for ThemeEnv<'_> {
                 }
                 let icon_w = icon
                     .as_deref()
-                    .and_then(|k| self.theme.part(k))
-                    .map(|p| p.natural().0)
+                    .and_then(|k| {
+                        self.theme
+                            .part(k)
+                            .map(|p| p.natural().0)
+                            .or_else(|| (self.image_size)(k).map(|(w, _)| w))
+                    })
                     .unwrap_or(0);
                 let text_w = self.theme.ui_font().width(text.unwrap_or(""));
                 let gap = if icon_w > 0 && text_w > 0 { 4 } else { 0 };

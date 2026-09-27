@@ -261,11 +261,9 @@ mod tests {
                 "sample '{stem}' does not match the shipped document — \
                  re-run `gui-builder --make-samples` after editing shipped documents"
             );
-            let out_dir = std::env::temp_dir().join(format!(
-                "petramond-gui-builder-export-{}-{stem}",
-                std::process::id()
+            let out_dir = petramond_util::test_dirs::TestScratchDir::new(&format!(
+                "gui-builder-export-{stem}"
             ));
-            std::fs::create_dir_all(&out_dir).unwrap();
             let out = out_dir.join(format!("{stem}.gui.json"));
             export_document(&out, &sample.document, sample_path.parent()).unwrap();
             let exported = Document::from_json(&std::fs::read_to_string(&out).unwrap()).unwrap();
@@ -279,8 +277,6 @@ mod tests {
                     "sample '{stem}' image '{image}' must resolve for preview"
                 );
             }
-            let _ = std::fs::remove_file(out);
-            let _ = std::fs::remove_dir(out_dir);
         }
     }
 

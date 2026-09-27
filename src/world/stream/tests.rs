@@ -525,9 +525,8 @@ fn horizontal_move_requests_sections_for_newly_wanted_loaded_columns() {
 fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
     use std::time::Instant;
 
-    let dir = std::env::temp_dir().join(format!("petramond-cubic-e2e-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    let opened = crate::save::open_at(dir.clone()).expect("open save");
+    let dir = petramond_util::test_dirs::TestScratchDir::new("cubic-e2e");
+    let opened = crate::save::open_at(dir.to_path_buf()).expect("open save");
     let pool = Arc::new(crate::worker::JobPool::new(
         crate::worker::JobPool::default_threads(),
     ));
@@ -612,8 +611,6 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
         Block::Stone.id(),
         "the saved edit overlaid back on after reload"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Explored-terrain persistence end to end: a first visit persists every
@@ -622,9 +619,7 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
 /// none `Generated` — with content identical to the first visit.
 #[test]
 fn explored_terrain_reloads_from_disk_without_generating() {
-    let dir =
-        std::env::temp_dir().join(format!("petramond-explored-terrain-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = petramond_util::test_dirs::TestScratchDir::new("explored-terrain");
 
     // Settled = OBSERVABLE state (nothing pending), never a quiet window: a
     // tight no-sleep loop passes any fixed iteration count in microseconds
@@ -671,7 +666,7 @@ fn explored_terrain_reloads_from_disk_without_generating() {
 
     // First visit: generate, then flush (autosave path) — the flag persists
     // every explored section and the column-gen cache.
-    let opened = crate::save::open_at(dir.clone()).expect("open save");
+    let opened = crate::save::open_at(dir.to_path_buf()).expect("open save");
     let mut world = ServerWorld::new(0x51EED, 2);
     world.attach_save(opened.save, opened.saved);
     stream_settled(&mut world);
@@ -704,7 +699,7 @@ fn explored_terrain_reloads_from_disk_without_generating() {
     drop(world); // joins the save thread: everything is on disk.
 
     // Reload: same area must come back entirely from disk.
-    let opened = crate::save::open_at(dir.clone()).expect("reopen save");
+    let opened = crate::save::open_at(dir.to_path_buf()).expect("reopen save");
     let mut world = ServerWorld::new(0x51EED, 2);
     world.attach_save(opened.save, opened.saved);
     world.set_stream_event_capture(true);
@@ -751,8 +746,6 @@ fn explored_terrain_reloads_from_disk_without_generating() {
         relit, 0,
         "reloaded sections must keep their persisted light without re-baking"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The defining S3 behaviour: worldgen runs per section, CLOSEST TO THE PLAYER. A

@@ -16,7 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 pub use super::guest::GuestCall;
-use crate::client::ClientSurfaceColumn;
+use crate::client::{ClientContext, ClientEntityData, ClientSurfaceColumn, ClientViewStateData};
 use crate::data::{
     BlockInfoData, CollisionShape, EffectStateData, GuiValue, GuiViewerData, ItemEntityData,
     ItemInfoData, ItemStackData, LightData, MobAnimStateData, MobRidersData, MobSnapshot,
@@ -83,6 +83,10 @@ mod actors;
 mod blocks;
 mod body;
 mod client;
+mod client_capture;
+mod client_files;
+mod client_media;
+mod client_presentation;
 mod conditions;
 mod construction;
 mod containers;
@@ -104,6 +108,10 @@ pub use actors::ActorCall;
 pub use blocks::BlockCall;
 pub use body::BodyCall;
 pub use client::ClientCall;
+pub use client_capture::ClientCaptureCall;
+pub use client_files::ClientFileCall;
+pub use client_media::ClientMediaCall;
+pub use client_presentation::ClientPresentationCall;
 pub use conditions::ConditionCall;
 pub use construction::ConstructionCall;
 pub use containers::ContainerCall;
@@ -312,6 +320,16 @@ host_calls! {
         Actor(ActorCall),
         /// Schematics: catalog reads, cell lists, player choices and positioning, ghosts.
         Schematic(SchematicCall),
+        /// A client mod's own files in its storage buckets: writes, sync, rename,
+        /// delete, reads, listings and stats, all ticketed.
+        ClientFile(ClientFileCall),
+        /// The presented world's state and events, copied into mod files.
+        ClientCapture(ClientCaptureCall),
+        /// A world presented from mod-file byte ranges, opened from the shell.
+        ClientPresentation(ClientPresentationCall),
+        /// Rendered frames, the stepped clock, taps on the world's sound, and
+        /// media files encoded into mod storage.
+        ClientMedia(ClientMediaCall),
     }
 }
 
@@ -528,12 +546,60 @@ pub enum HostRet {
     /// [`EntityCall::MobRidersMany`], parallel to the request ids (each entry
     /// as [`HostRet::Riders`]'s payload).
     RidersMany(Vec<Option<MobRidersData>>),
+    /// [`ClientCall::ClientViewState`].
+    ClientViewState(ClientViewStateData),
+    /// [`ClientCall::ClientContext`].
+    ClientContext(ClientContext),
+    /// [`ClientCall::ClientStorageSetMany`]: the write's ticket. A refusal is
+    /// [`HostRet::Err`] with [`ErrorCode::Refused`].
+    ClientStorageWrite(u64),
+    /// [`ClientCall::ClientStorageWritePoll`]: `true` = on disk, `false` =
+    /// still queued. A write the disk refused answers [`ErrorCode::Refused`].
+    ClientStorageWritten(bool),
+    /// [`ClientCall::ClientEntities`].
+    ClientEntities(Vec<ClientEntityData>),
+    /// A ticketed call, accepted: its id. A refusal, with a reason a player
+    /// can read, is [`HostRet::Err`] with [`ErrorCode::Refused`] — an answer,
+    /// never a trap.
+    Ticket(u64),
+    /// [`ClientCaptureCall::ClientWorldStateWrite`], accepted.
+    ClientStateTicket(crate::ClientStateTicketData),
+    /// [`ClientFileCall::ClientFilePoll`]: `None` = not finished. A ticket
+    /// that ended in failure answers [`ErrorCode::Refused`] with its reason.
+    ClientFilePolled(Option<crate::ClientFileAnswer>),
+    /// [`ClientFileCall::ClientFileStat`]: `None` = no such file.
+    ClientFileStat(Option<crate::ClientFileInfo>),
+    /// [`ClientCaptureCall::ClientWorldEventsPoll`]: `None` = no such log.
+    ClientEvents(Option<crate::ClientEventsReport>),
+    /// [`ClientPresentationCall::ClientPresentationState`]. Boxed only to keep
+    /// `HostRet` small; the wire is the same.
+    ClientPresentationState(Box<crate::ClientPresentationStateData>),
+    /// [`ClientMediaCall::ClientFrameCapturePoll`].
+    ClientCaptureStatus(crate::ClientCaptureStatus),
+    /// [`ClientMediaCall::ClientAudioTapState`]: `None` = no such tap.
+    ClientAudioTapState(Option<crate::ClientAudioTapData>),
+    /// [`ClientMediaCall::ClientMediaEncoders`]: `None` = still asking.
+    ClientMediaEncoders(Option<crate::ClientMediaCapabilities>),
+    /// [`ClientMediaCall::ClientMediaState`]: `None` = no such media file.
+    /// Boxed only to keep `HostRet` small.
+    ClientMediaState(Option<Box<crate::ClientMediaStateData>>),
+    /// [`ClientCall::ClientEngineFacts`].
+    ClientEngineFacts(crate::ClientEngineFactsData),
+    /// [`ClientCall::ClientPacks`].
+    ClientPacks(Vec<crate::ClientPackInfo>),
+    /// [`ClientCall::ClientWallClock`].
+    ClientWallClock(crate::ClientWallTime),
 }
 
 impl HostRet {
     /// A refusal: [`HostRet::Err`] with `code` and a human-readable `detail`.
     pub fn error(code: ErrorCode, detail: String) -> Self {
         Self::Err(HostError { code, detail })
+    }
+
+    /// A refusal a player can read ([`ErrorCode::Refused`]).
+    pub fn refused(detail: impl Into<String>) -> Self {
+        Self::error(ErrorCode::Refused, detail.into())
     }
 
     /// A refusal for a malformed argument ([`ErrorCode::InvalidArgument`]) —

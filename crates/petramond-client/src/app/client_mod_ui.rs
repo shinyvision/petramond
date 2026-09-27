@@ -6,6 +6,7 @@ use super::{App, AppScreen};
 use petramond::gui::{documents, DocImageSource};
 use petramond_world::gui_state::GuiKind;
 
+#[derive(Clone)]
 pub(super) struct ClientCanvasState {
     owner: String,
     canvas_key: String,
@@ -18,26 +19,55 @@ pub(super) struct ClientCanvasState {
     pending_scroll: f32,
 }
 
+impl ClientCanvasState {
+    pub(super) fn key(&self) -> &str {
+        &self.canvas_key
+    }
+}
+
 impl App {
-    pub(super) fn drive_client_mod_frame(&mut self, dt: f32, screen: (u32, u32)) {
+    pub(super) fn drive_client_mod_frame(
+        &mut self,
+        dt: f32,
+        wall_dt: f32,
+        viewport: petramond::gui::UiViewport,
+        frozen: bool,
+    ) {
+        let screen = viewport.size;
+        let gui_scale = viewport.scale.clamp(1, 255) as u8;
+        self.publish_client_screen();
         self.flush_client_canvas_move();
         self.flush_client_canvas_scroll();
         let open = match self.screen {
             AppScreen::ClientModGui(kind) => petramond_world::gui_state::kind_key(kind),
             _ => None,
         };
-        let canvas_open = self.screen == AppScreen::ClientCanvas;
+        let open_canvas = self
+            .client_canvas
+            .as_ref()
+            .filter(|_| self.screen == AppScreen::ClientCanvas)
+            .map(|canvas| canvas.canvas_key.as_str());
+        // The player fields stay zero on the shell; a world's game fills them.
+        let frame = mod_api::ClientFrameData {
+            dt: dt.max(0.0),
+            player_pos: [0.0; 3],
+            yaw: 0.0,
+            pitch: 0.0,
+            screen: [screen.0, screen.1],
+            open_gui: open.map(str::to_owned),
+            open_canvas: open_canvas.map(str::to_owned),
+            gui_scale,
+            frozen,
+            wall_dt: wall_dt.max(0.0),
+        };
+        let presented = self.presented_view;
         if let Some(session) = self.session.as_mut() {
-            let open_canvas = session
-                .client_canvas
-                .as_ref()
-                .filter(|_| canvas_open)
-                .map(|canvas| canvas.canvas_key.as_str());
-            session
-                .game
-                .drive_client_mods(dt, screen, open, open_canvas);
+            session.game.drive_client_mods(frame, presented);
+        } else if let Some(runtime) = self.shell_mods_mut() {
+            runtime.frame_detached(frame);
         }
         self.apply_client_mod_commands();
+        self.drive_shell_presentation();
     }
 
     pub fn release_client_mod_keys(&mut self) {
@@ -51,68 +81,96 @@ impl App {
         let Some(kind_key) = petramond_world::gui_state::kind_key(kind) else {
             return;
         };
-        let Some(view) = self
-            .session
-            .as_ref()
-            .and_then(|session| session.game.client_mod_view(kind_key))
-        else {
+        let Some(view) = self.client_mod_view(kind_key) else {
             return;
         };
         self.ui.ensure_active(kind);
         self.ui.replace_client_state(&view.state);
         self.ui.set_dynamic_images(view.images);
-        self.ui
-            .frame(kind, screen, now, Some([0.0, 0.0, 0.0, 0.55]));
+        self.ui.set_scenes(&view.scenes);
+        let dim = (!Self::doc_presents_world(kind)).then_some([0.0, 0.0, 0.0, 0.55]);
+        self.ui.frame(kind, screen, now, dim);
 
-        for event in self.ui.take_events() {
-            let event = match event {
-                petramond_ui::UiEvent::Click {
-                    id,
-                    button: petramond_ui::PointerButton::Primary,
-                    ..
-                } => Some(mod_api::ClientUiEvent::Click { id }),
-                petramond_ui::UiEvent::TextChanged { id, text } => {
-                    Some(mod_api::ClientUiEvent::TextChanged { id, text })
-                }
-                petramond_ui::UiEvent::Submit { id, text } => {
-                    Some(mod_api::ClientUiEvent::Submit { id, text })
-                }
-                petramond_ui::UiEvent::ImagePointer {
-                    id,
-                    phase,
-                    x,
-                    y,
-                    button,
-                } => Some(mod_api::ClientUiEvent::ImagePointer {
-                    id,
-                    phase: match phase {
-                        petramond_ui::PointerPhase::Down => mod_api::ClientPointerPhase::Down,
-                        petramond_ui::PointerPhase::Move => mod_api::ClientPointerPhase::Move,
-                        petramond_ui::PointerPhase::Up => mod_api::ClientPointerPhase::Up,
-                    },
-                    x,
-                    y,
-                    button: match button {
-                        petramond_ui::PointerButton::Primary => {
-                            mod_api::ClientPointerButton::Primary
-                        }
-                        petramond_ui::PointerButton::Secondary => {
-                            mod_api::ClientPointerButton::Secondary
-                        }
-                    },
-                }),
-                _ => None,
-            };
-            if let Some(event) = event {
-                if let Some(session) = self.session.as_mut() {
-                    session.game.client_mod_ui_event(kind_key, event);
-                }
-                self.apply_client_mod_commands();
-                if self.screen != AppScreen::ClientModGui(kind) {
-                    break;
-                }
+        let mut events: Vec<_> = self
+            .ui
+            .take_events()
+            .into_iter()
+            .filter_map(super::client_doc_events::client_ui_event)
+            .collect();
+        events.extend(self.client_doc_watch.changes(kind, self.ui.out()));
+        for event in events {
+            self.client_mod_ui_event(kind_key, event);
+            self.apply_client_mod_commands();
+            if self.screen != AppScreen::ClientModGui(kind) {
+                break;
             }
         }
+    }
+
+    /// Tell every client-mod runtime the rendering device's frame limits,
+    /// which a frame capture and a frame-size claim meet. Called once, before
+    /// the first runtime starts.
+    pub fn publish_device_frame_limits(renderer: &petramond_render::Renderer) {
+        let (max_side, max_bytes) = renderer.frame_limits();
+        petramond::modding::client::presented::FrameLimits {
+            max_side,
+            max_bytes,
+        }
+        .publish();
+    }
+
+    /// Tell the client mods which of their screens is up, and which of its
+    /// text inputs could take focus — as of the last drawn frame.
+    fn publish_client_screen(&mut self) {
+        let screen = match self.screen {
+            AppScreen::ClientModGui(kind) => {
+                petramond_world::gui_state::kind_key(kind).map(str::to_owned)
+            }
+            _ => self.client_canvas_key().map(str::to_owned),
+        };
+        let text_inputs = match self.screen {
+            AppScreen::ClientModGui(_) => self
+                .ui
+                .out()
+                .text_inputs
+                .iter()
+                .map(|k| (k.id.clone(), k.item))
+                .collect(),
+            _ => Vec::new(),
+        };
+        if screen.is_none() {
+            self.client_doc_watch.forget();
+        }
+        if let Some(runtime) = self.client_mods_now() {
+            let mut presented = runtime.presented().lock();
+            presented.screen = screen;
+            presented.text_inputs = text_inputs;
+        }
+    }
+
+    /// Escape over a client document that unwinds its own layers: its owner
+    /// hears `Dismiss` and the document stays. `false` = Escape closes it.
+    pub(super) fn dismiss_client_doc(&mut self) -> bool {
+        let AppScreen::ClientModGui(kind) = self.screen else {
+            return false;
+        };
+        let asks = documents::doc_for(kind)
+            .is_some_and(|doc| doc.doc.dismiss == petramond_ui::Dismiss::Event);
+        asks && self.send_client_doc_dismiss()
+    }
+
+    /// Tell the client document on screen that Escape was pressed over it;
+    /// it stays open. `false` = no client document is up.
+    pub(super) fn send_client_doc_dismiss(&mut self) -> bool {
+        let AppScreen::ClientModGui(kind) = self.screen else {
+            return false;
+        };
+        let Some(kind_key) = petramond_world::gui_state::kind_key(kind) else {
+            return false;
+        };
+        self.client_mod_ui_event(kind_key, mod_api::ClientUiEvent::Dismiss);
+        self.apply_client_mod_commands();
+        true
     }
 
     pub(super) fn dispatch_client_canvas_pointer(
@@ -122,7 +180,11 @@ impl App {
         x: f32,
         y: f32,
     ) {
-        let Some(canvas) = self.open_canvas_mut() else {
+        let Some(canvas) = self
+            .client_canvas
+            .as_mut()
+            .filter(|_| self.screen == AppScreen::ClientCanvas)
+        else {
             return;
         };
         let Some([left, top, width, height]) = canvas.rect else {
@@ -149,33 +211,25 @@ impl App {
             y: (y - top) * canvas.source_size.1 as f32 / height,
             button,
         };
-        if let Some(session) = self.session.as_mut() {
-            session.game.client_mod_canvas_event(&canvas_key, event);
-        }
+        self.client_mod_canvas_event(&canvas_key, event);
         self.apply_client_mod_commands();
     }
 
-    /// The open canvas, while its screen is up.
-    fn open_canvas_mut(&mut self) -> Option<&mut ClientCanvasState> {
-        let open = self.screen == AppScreen::ClientCanvas;
-        self.session
-            .as_mut()
-            .filter(|_| open)
-            .and_then(|session| session.client_canvas.as_mut())
-    }
-
     pub(super) fn queue_client_canvas_scroll(&mut self, delta: f32) {
-        if let Some(canvas) = self.open_canvas_mut() {
+        if let Some(canvas) = self
+            .client_canvas
+            .as_mut()
+            .filter(|_| self.screen == AppScreen::ClientCanvas)
+        {
             canvas.pending_scroll += delta;
         }
     }
 
     pub(super) fn flush_client_canvas_scroll(&mut self) {
         let (x, y) = self.controls.pointer.cursor();
-        let Some(canvas) = self
-            .open_canvas_mut()
-            .filter(|canvas| canvas.pending_scroll != 0.0)
-        else {
+        let Some(canvas) = self.client_canvas.as_mut().filter(|canvas| {
+            self.screen == AppScreen::ClientCanvas && canvas.pending_scroll != 0.0
+        }) else {
             return;
         };
         let delta = std::mem::take(&mut canvas.pending_scroll);
@@ -190,18 +244,15 @@ impl App {
         let canvas_key = canvas.canvas_key.clone();
         let local_x = (x - left) * canvas.source_size.0 as f32 / width;
         let local_y = (y - top) * canvas.source_size.1 as f32 / height;
-        if let Some(session) = self.session.as_mut() {
-            session
-                .game
-                .client_mod_canvas_scroll(&canvas_key, local_x, local_y, delta);
-        }
+        self.client_mod_canvas_scroll(&canvas_key, local_x, local_y, delta);
         self.apply_client_mod_commands();
     }
 
     pub(super) fn queue_client_canvas_move(&mut self, x: f32, y: f32) {
         if let Some(canvas) = self
-            .open_canvas_mut()
-            .filter(|canvas| canvas.pointer_captured)
+            .client_canvas
+            .as_mut()
+            .filter(|canvas| self.screen == AppScreen::ClientCanvas && canvas.pointer_captured)
         {
             canvas.pending_move = Some((x, y));
         }
@@ -209,9 +260,8 @@ impl App {
 
     pub(super) fn flush_client_canvas_move(&mut self) {
         let Some((x, y)) = self
-            .session
+            .client_canvas
             .as_mut()
-            .and_then(|session| session.client_canvas.as_mut())
             .and_then(|canvas| canvas.pending_move.take())
         else {
             return;
@@ -225,19 +275,18 @@ impl App {
     }
 
     pub(super) fn apply_client_mod_commands(&mut self) {
-        let commands = self
-            .session
-            .as_mut()
-            .map(|session| session.game.take_client_mod_commands())
-            .unwrap_or_default();
+        let commands = self.take_client_mod_commands();
+        // A client mod's UI replaces the world's view, or on the shell the
+        // title it was launched from.
+        let base = if self.session.is_some() {
+            AppScreen::Game
+        } else {
+            AppScreen::Title
+        };
         for command in commands {
-            let canvas = self
-                .session
-                .as_ref()
-                .and_then(|session| session.client_canvas.as_ref());
             match command {
                 petramond::modding::ClientCommand::OpenGui { owner, kind: key } => {
-                    if !client_gui_open_permitted(self.screen, &owner, canvas) {
+                    if !client_ui_open_permitted(self.screen, base, &owner, &self.client_canvas) {
                         log::warn!(
                             "client mod '{owner}' cannot open '{key}' over {:?}",
                             self.screen
@@ -261,7 +310,7 @@ impl App {
                 }
                 petramond::modding::ClientCommand::CloseGui { owner } => {
                     if client_gui_owned_by(self.screen, &owner) {
-                        self.set_screen(AppScreen::Game);
+                        self.leave_client_screen();
                     }
                 }
                 petramond::modding::ClientCommand::OpenCanvas {
@@ -269,7 +318,7 @@ impl App {
                     canvas_key,
                     size,
                 } => {
-                    if !client_canvas_open_permitted(self.screen, &owner, canvas) {
+                    if !client_ui_open_permitted(self.screen, base, &owner, &self.client_canvas) {
                         log::warn!(
                             "client mod '{owner}' cannot open canvas '{canvas_key}' over {:?}",
                             self.screen
@@ -279,26 +328,38 @@ impl App {
                     // Enter the screen FIRST: leaving a previous canvas
                     // screen drops that canvas, never this one.
                     self.set_screen(AppScreen::ClientCanvas);
-                    if let Some(session) = self.session.as_mut() {
-                        session.client_canvas = Some(ClientCanvasState {
-                            owner,
-                            canvas_key,
-                            source_size: (size[0], size[1]),
-                            rect: None,
-                            pointer_captured: false,
-                            pending_move: None,
-                            pending_scroll: 0.0,
-                        });
-                    }
+                    self.client_canvas = Some(ClientCanvasState {
+                        owner,
+                        canvas_key,
+                        source_size: (size[0], size[1]),
+                        rect: None,
+                        pointer_captured: false,
+                        pending_move: None,
+                        pending_scroll: 0.0,
+                    });
                 }
                 petramond::modding::ClientCommand::CloseCanvas { owner } => {
-                    if client_canvas_owned_by(self.screen, &owner, canvas) {
-                        // Leaving the canvas screen drops the canvas.
-                        self.set_screen(AppScreen::Game);
+                    if client_canvas_owned_by(self.screen, &owner, &self.client_canvas) {
+                        self.leave_client_screen();
+                    }
+                }
+                petramond::modding::ClientCommand::FocusInput { owner, id, item } => {
+                    if client_gui_owned_by(self.screen, &owner) {
+                        self.ui.request_focus(petramond_ui::InstKey { id, item });
+                    }
+                }
+                petramond::modding::ClientCommand::OpenPause { owner } => {
+                    let own = client_gui_owned_by(self.screen, &owner)
+                        || client_canvas_owned_by(self.screen, &owner, &self.client_canvas);
+                    if own && self.session.is_some() {
+                        let back = (self.screen, self.client_canvas.clone());
+                        self.open_pause();
+                        self.pause_return = Some(back);
                     }
                 }
             }
         }
+        self.settle_shell();
     }
 
     pub(super) fn compose_document_ui(&mut self, include_main: bool) {
@@ -315,15 +376,19 @@ impl App {
     }
 
     pub(super) fn compose_client_overlays(&mut self, screen: (u32, u32)) {
-        self.client_overlay_images.clear();
+        self.client_overlays.clear();
+        // A HUD overlay follows the HUD (a hidden HUD hides it with the
+        // rest); a tool's own overlay does not. Both draw on the window only,
+        // like every mod surface.
         let on_game = matches!(self.screen, AppScreen::Game | AppScreen::Chat);
+        let hud = self.hud_claim_allows();
         if let Some(game) = self
             .session
             .as_ref()
             .filter(|_| on_game)
             .map(|session| &session.game)
         {
-            for overlay in game.client_mod_overlays() {
+            for overlay in game.client_mod_overlays().iter().filter(|o| hud || !o.hud) {
                 let Some(image) = game.client_mod_image(&overlay.image_key) else {
                     continue;
                 };
@@ -333,84 +398,189 @@ impl App {
                     overlay.anchor,
                     overlay.margin,
                 );
-                self.client_overlay_images
-                    .push(render_image(image, rect, [0.0, 0.0, 1.0, 1.0]));
+                self.client_overlays
+                    .push_image(render_image(image, rect, [0.0, 0.0, 1.0, 1.0]));
             }
         }
 
-        let canvas_open = self.screen == AppScreen::ClientCanvas;
-        let Some(session) = self.session.as_mut().filter(|_| canvas_open) else {
-            return;
-        };
-        if let Some(canvas) = session.client_canvas.as_mut() {
-            let rect = canvas_rect(screen, canvas.source_size);
-            canvas.rect = Some(rect);
-            let source_size = canvas.source_size;
-            if let Some(view) = session.game.client_mod_canvas_view(&canvas.canvas_key) {
-                for element in view.elements {
-                    let element_rect = match element.element {
-                        mod_api::ClientCanvasElement::Image {
-                            rect: source_rect, ..
-                        } => canvas_image_rect(rect, source_size, source_rect, view.offset),
-                        mod_api::ClientCanvasElement::Sprite { center, .. } => canvas_sprite_rect(
-                            rect,
-                            source_size,
-                            center,
-                            view.offset,
-                            (element.image.width, element.image.height),
-                        ),
-                    };
-                    if let Some((element_rect, uv)) = clip_rect_uv(element_rect, rect) {
-                        self.client_overlay_images.push(render_image(
-                            element.image,
-                            element_rect,
-                            uv,
-                        ));
-                    }
-                }
+        let canvas = self
+            .client_canvas
+            .as_ref()
+            .filter(|_| self.screen == AppScreen::ClientCanvas)
+            .map(|canvas| (canvas.canvas_key.clone(), canvas.source_size));
+        if let Some((canvas_key, source_size)) = canvas {
+            let rect = canvas_rect(screen, source_size);
+            if let Some(canvas) = self.client_canvas.as_mut() {
+                canvas.rect = Some(rect);
+            }
+            if let Some(view) = self.client_mod_canvas_view(&canvas_key) {
+                let placement = CanvasPlacement {
+                    rect,
+                    source_size,
+                    offset: view.offset,
+                    gui_scale: petramond::gui::gui_scale(screen) as i32,
+                };
+                compose_canvas(&mut self.client_overlays, &placement, view.elements);
             }
         }
     }
 }
 
-fn client_gui_open_permitted(
+/// Where a canvas sits on screen: its display rect, its logical size, the
+/// scene's view offset, and the host's GUI scale (the glyph size of its text).
+pub(super) struct CanvasPlacement {
+    pub(super) rect: [f32; 4],
+    pub(super) source_size: (u16, u16),
+    pub(super) offset: [f32; 2],
+    pub(super) gui_scale: i32,
+}
+
+/// Append a canvas scene to the overlay layer in its retained order, every
+/// element clipped to the canvas rect.
+pub(super) fn compose_canvas(
+    layer: &mut petramond_render::ClientOverlayLayer,
+    at: &CanvasPlacement,
+    elements: Vec<petramond::modding::client::ClientCanvasElementView>,
+) {
+    let theme = petramond::gui::doc_theme::theme();
+    for row in elements {
+        let (image_rect, image) = match (&row.element, row.image) {
+            (mod_api::ClientCanvasElement::Image { rect, .. }, Some(image)) => (
+                canvas_image_rect(at.rect, at.source_size, *rect, at.offset),
+                image,
+            ),
+            (mod_api::ClientCanvasElement::Sprite { center, .. }, Some(image)) => (
+                canvas_sprite_rect(
+                    at.rect,
+                    at.source_size,
+                    *center,
+                    at.offset,
+                    (image.width, image.height),
+                ),
+                image,
+            ),
+            (element, _) => {
+                layer.paint(|list| {
+                    let mut painter = petramond_ui::Painter {
+                        list,
+                        scale: 1,
+                        font: theme.ui_font(),
+                    };
+                    paint_canvas_element(&mut painter, at, element);
+                });
+                continue;
+            }
+        };
+        if let Some((image_rect, uv)) = clip_rect_uv(image_rect, at.rect) {
+            layer.push_image(render_image(image, image_rect, uv));
+        }
+    }
+}
+
+/// Paint one geometry or glyph row. The painter works in physical px
+/// (scale 1): the canvas transform places the row, and the canvas rect
+/// clips it — solids exactly, glyph runs by ellipsis plus scissor, the way
+/// document labels are fitted.
+fn paint_canvas_element(
+    painter: &mut petramond_ui::Painter<'_>,
+    at: &CanvasPlacement,
+    element: &mod_api::ClientCanvasElement,
+) {
+    let clip = pixel_rect(at.rect);
+    let rgba = |c: [u8; 4]| c.map(|v| f32::from(v) / 255.0);
+    match element {
+        mod_api::ClientCanvasElement::Rect {
+            rect,
+            color,
+            filled,
+        } => {
+            let r = pixel_rect(canvas_image_rect(at.rect, at.source_size, *rect, at.offset));
+            let color = rgba(*color);
+            let strips = if *filled || r.w <= 2 || r.h <= 2 {
+                vec![r]
+            } else {
+                let edge = |x, y, w, h| petramond_ui::RectI { x, y, w, h };
+                vec![
+                    edge(r.x, r.y, r.w, 1),
+                    edge(r.x, r.y + r.h - 1, r.w, 1),
+                    edge(r.x, r.y + 1, 1, r.h - 2),
+                    edge(r.x + r.w - 1, r.y + 1, 1, r.h - 2),
+                ]
+            };
+            for strip in strips {
+                let strip = strip.intersect(clip);
+                if strip.w > 0 && strip.h > 0 {
+                    painter.solid(strip, color, Some(clip));
+                }
+            }
+        }
+        mod_api::ClientCanvasElement::Text {
+            pos,
+            text,
+            color,
+            small,
+            max_w,
+        } => {
+            let scale = at.gui_scale.max(1);
+            let k = if *small { (scale - 1).max(1) } else { scale };
+            let [x, y, ..] = canvas_image_rect(
+                at.rect,
+                at.source_size,
+                [pos[0], pos[1], 0.0, 0.0],
+                at.offset,
+            );
+            let (x, y) = (x.round() as i32, y.round() as i32);
+            let right = match max_w {
+                Some(w) => {
+                    let scaled = w * at.rect[2] / f32::from(at.source_size.0.max(1));
+                    (x + scaled.round() as i32).min(clip.x + clip.w)
+                }
+                None => clip.x + clip.w,
+            };
+            let line = petramond_ui::RectI {
+                x,
+                y,
+                w: (right - x).max(0),
+                h: painter.font.line_h() * k,
+            };
+            painter.ellipsized_at(text, line, k, rgba(*color), Some(clip));
+        }
+        mod_api::ClientCanvasElement::Image { .. }
+        | mod_api::ClientCanvasElement::Sprite { .. } => {}
+    }
+}
+
+/// A float screen rect snapped to whole pixels by its edges.
+fn pixel_rect(r: [f32; 4]) -> petramond_ui::RectI {
+    let (x0, y0) = (r[0].round() as i32, r[1].round() as i32);
+    let (x1, y1) = ((r[0] + r[2]).round() as i32, (r[1] + r[3]).round() as i32);
+    petramond_ui::RectI {
+        x: x0,
+        y: y0,
+        w: (x1 - x0).max(0),
+        h: (y1 - y0).max(0),
+    }
+}
+
+/// Whether `owner` may open a document or canvas over `screen`: over `base`
+/// (the world, or on the shell the title), or in place of its own.
+fn client_ui_open_permitted(
     screen: AppScreen,
+    base: AppScreen,
     owner: &str,
-    canvas: Option<&ClientCanvasState>,
+    canvas: &Option<ClientCanvasState>,
 ) -> bool {
-    screen == AppScreen::Game
+    screen == base
         || client_gui_owned_by(screen, owner)
         || client_canvas_owned_by(screen, owner, canvas)
 }
 
-pub(super) fn client_key_dispatch_permitted(
-    pressed: bool,
-    screen: AppScreen,
-    text_focused: bool,
-) -> bool {
-    !pressed
-        || (!text_focused
-            && (screen.gameplay_enabled()
-                || screen.client_ui_open()
-                || screen.client_canvas_open()))
-}
-
-fn client_canvas_open_permitted(
+pub(super) fn client_canvas_owned_by(
     screen: AppScreen,
     owner: &str,
-    canvas: Option<&ClientCanvasState>,
+    canvas: &Option<ClientCanvasState>,
 ) -> bool {
-    screen == AppScreen::Game
-        || client_gui_owned_by(screen, owner)
-        || client_canvas_owned_by(screen, owner, canvas)
-}
-
-fn client_canvas_owned_by(
-    screen: AppScreen,
-    owner: &str,
-    canvas: Option<&ClientCanvasState>,
-) -> bool {
-    screen == AppScreen::ClientCanvas && canvas.is_some_and(|canvas| canvas.owner == owner)
+    screen == AppScreen::ClientCanvas && canvas.as_ref().is_some_and(|canvas| canvas.owner == owner)
 }
 
 fn overlay_rect(
@@ -523,7 +693,7 @@ fn render_image(
     }
 }
 
-fn client_gui_owned_by(screen: AppScreen, owner: &str) -> bool {
+pub(super) fn client_gui_owned_by(screen: AppScreen, owner: &str) -> bool {
     let AppScreen::ClientModGui(kind) = screen else {
         return false;
     };
@@ -532,7 +702,7 @@ fn client_gui_owned_by(screen: AppScreen, owner: &str) -> bool {
         .is_some_and(|(namespace, _)| namespace == owner)
 }
 
-fn append_layer(
+pub(super) fn append_layer(
     dst: &mut petramond_ui::DrawList,
     dst_images: &mut Vec<DocImageSource>,
     src: &petramond_ui::DrawList,
@@ -540,8 +710,8 @@ fn append_layer(
 ) {
     // Overlay-tier batches must stay last in the composed list, so a layer can
     // only be appended while nothing has contributed an overlay tier yet. One
-    // layer is composed today; a second would have to splice its base tier in
-    // ahead of the first's overlay tier.
+    // document is composed per list; a second would have to splice its base
+    // tier in ahead of the first's overlay tier.
     debug_assert_eq!(
         dst.overlay_start,
         dst.batches.len(),
@@ -582,26 +752,48 @@ mod tests {
             pending_scroll: 0.0,
         });
 
-        assert!(client_gui_open_permitted(AppScreen::Game, "map", no_canvas));
-        assert!(client_gui_open_permitted(
+        assert!(client_ui_open_permitted(
+            AppScreen::Game,
+            AppScreen::Game,
+            "map",
+            &no_canvas
+        ));
+        // On the shell a launched mod opens over the title, and only there.
+        assert!(client_ui_open_permitted(
+            AppScreen::Title,
+            AppScreen::Title,
+            "map",
+            &no_canvas
+        ));
+        assert!(!client_ui_open_permitted(
+            AppScreen::WorldSelect,
+            AppScreen::Title,
+            "map",
+            &no_canvas
+        ));
+        assert!(client_ui_open_permitted(
             AppScreen::ClientModGui(map),
+            AppScreen::Game,
             "map",
-            no_canvas,
+            &no_canvas,
         ));
-        assert!(!client_gui_open_permitted(
+        assert!(!client_ui_open_permitted(
             AppScreen::ClientModGui(other),
+            AppScreen::Game,
             "map",
-            no_canvas,
+            &no_canvas,
         ));
-        assert!(client_gui_open_permitted(
+        assert!(client_ui_open_permitted(
             AppScreen::ClientCanvas,
+            AppScreen::Game,
             "map",
-            canvas.as_ref(),
+            &canvas,
         ));
-        assert!(!client_gui_open_permitted(
+        assert!(!client_ui_open_permitted(
             AppScreen::ClientCanvas,
+            AppScreen::Game,
             "other",
-            canvas.as_ref(),
+            &canvas,
         ));
         for screen in [
             AppScreen::Pause,
@@ -610,31 +802,12 @@ mod tests {
             AppScreen::Dead,
         ] {
             assert!(
-                !client_gui_open_permitted(screen, "map", no_canvas),
+                !client_ui_open_permitted(screen, AppScreen::Game, "map", &no_canvas),
                 "{screen:?}"
             );
         }
         assert!(client_gui_owned_by(AppScreen::ClientModGui(map), "map"));
         assert!(!client_gui_owned_by(AppScreen::ClientModGui(map), "other"));
-
-        assert!(client_key_dispatch_permitted(
-            false,
-            AppScreen::Pause,
-            false
-        ));
-        assert!(client_key_dispatch_permitted(false, AppScreen::Pause, true));
-        assert!(!client_key_dispatch_permitted(
-            true,
-            AppScreen::Pause,
-            false
-        ));
-        assert!(!client_key_dispatch_permitted(true, AppScreen::Game, true));
-        assert!(client_key_dispatch_permitted(true, AppScreen::Game, false));
-        assert!(client_key_dispatch_permitted(
-            true,
-            AppScreen::ClientCanvas,
-            false
-        ));
     }
 
     #[test]

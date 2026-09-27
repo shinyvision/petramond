@@ -98,6 +98,10 @@ Mods are part of the game's identity, not an afterthought. Sample packs live in
 models, and custom interfaces. After `make mods`, the installed local packs live
 in `mods/`.
 
+First-party downloadable addons, including Studio, live in the separate
+`petramond-addons` repository. `make addons` builds publishable ZIPs in
+`output/addons/`; `make addons INSTALL=1` also stages them locally.
+
 ## Source Extras
 
 Build the game without running it:

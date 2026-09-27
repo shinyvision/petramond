@@ -229,11 +229,17 @@ fn abi_roundtrip_host_and_guest_calls() {
         anchor: ClientOverlayAnchor::TopRight,
         margin: [8, 8],
         display_size: [256, 256],
+        hud: true,
     }));
     roundtrip(HostCall::from(calls::ClientRegisterKey {
         id: "open_map".into(),
         label: "Open World Map".into(),
         key: "key_m".into(),
+        mods: ClientKeyMods::default(),
+        contexts: ClientKeyContexts {
+            gameplay: true,
+            screens: Vec::new(),
+        },
         action_id: 1,
     }));
     roundtrip(HostCall::from(calls::ClientSurfaceColumns {
@@ -307,9 +313,13 @@ fn abi_roundtrip_host_and_guest_calls() {
         offset: [-80.0, 24.0],
     }));
     roundtrip(HostCall::from(calls::ClientStorageReadBegin {
+        scope: crate::ClientStorageScope::World,
         keys: vec!["minimap:tile:0:0".into(), "minimap:tile:1:0".into()],
     }));
-    roundtrip(HostCall::from(calls::ClientStorageReadPoll { ticket: 7 }));
+    roundtrip(HostCall::from(calls::ClientStorageReadPoll {
+        scope: crate::ClientStorageScope::Pack,
+        ticket: 7,
+    }));
     roundtrip(HostCall::from(calls::ReplaceHeldOne {
         item: ItemId(3),
         replacement: "petramond:water_bucket".into(),
@@ -320,10 +330,18 @@ fn abi_roundtrip_host_and_guest_calls() {
         None,
     ])));
     roundtrip(HostCall::from(calls::ClientStorageGetMany {
+        scope: crate::ClientStorageScope::World,
         keys: vec!["minimap:tile/-1/2".into(), "minimap:waypoints".into()],
     }));
     roundtrip(HostCall::from(calls::ClientStorageSetMany {
-        entries: vec![("minimap:tile/-1/2".into(), ByteBuf::from(vec![7, 8, 9]))],
+        scope: crate::ClientStorageScope::Pack,
+        entries: vec![
+            (
+                "minimap:tile/-1/2".into(),
+                Some(ByteBuf::from(vec![7, 8, 9])),
+            ),
+            ("minimap:gone".into(), None),
+        ],
     }));
     roundtrip(HostRet::RuntimeSide(RuntimeSide::Client));
     roundtrip(HostRet::ClientSurfaceColumns(vec![
@@ -350,6 +368,9 @@ fn abi_roundtrip_host_and_guest_calls() {
             screen: [1920, 1080],
             open_gui: None,
             open_canvas: Some("minimap:full_map".into()),
+            gui_scale: 3,
+            frozen: false,
+            wall_dt: 0.016,
         },
     });
     roundtrip(GuestCall::ClientKey {
@@ -641,7 +662,9 @@ fn player_attribute_all_is_the_declaration_order() {
     for (at, attribute) in PlayerAttribute::ALL.into_iter().enumerate() {
         assert_eq!(attribute.index(), at);
         match attribute {
-            PlayerAttribute::MoveSpeed | PlayerAttribute::AttackCooldown => {}
+            PlayerAttribute::MoveSpeed
+            | PlayerAttribute::AttackCooldown
+            | PlayerAttribute::FlySpeed => {}
         }
     }
 }

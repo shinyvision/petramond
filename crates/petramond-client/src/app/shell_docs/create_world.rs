@@ -117,6 +117,11 @@ fn create(ctx: &mut ScreenCtx) {
         if let Err(e) = petramond::save::write_world_settings(&dir_name, &session.settings) {
             log::warn!("could not write settings.json for new world '{name}': {e}");
         }
+        if let Err(e) =
+            petramond::save::write_world_mod_baseline(&dir_name, &session.settings.disabled_mods)
+        {
+            log::warn!("could not write mods.json for new world '{name}': {e}");
+        }
     }
     let seed = if seed_text.is_empty() {
         petramond::save::random_seed()

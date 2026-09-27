@@ -437,6 +437,18 @@ pub fn text_key_from_named(key: &winit::keyboard::NamedKey) -> Option<TextKey> {
         NamedKey::ArrowDown => Some(TextKey::ArrowDown),
         NamedKey::Home => Some(TextKey::Home),
         NamedKey::End => Some(TextKey::End),
+        NamedKey::F1 => Some(TextKey::F(1)),
+        NamedKey::F2 => Some(TextKey::F(2)),
+        NamedKey::F3 => Some(TextKey::F(3)),
+        NamedKey::F4 => Some(TextKey::F(4)),
+        NamedKey::F5 => Some(TextKey::F(5)),
+        NamedKey::F6 => Some(TextKey::F(6)),
+        NamedKey::F7 => Some(TextKey::F(7)),
+        NamedKey::F8 => Some(TextKey::F(8)),
+        NamedKey::F9 => Some(TextKey::F(9)),
+        NamedKey::F10 => Some(TextKey::F(10)),
+        NamedKey::F11 => Some(TextKey::F(11)),
+        NamedKey::F12 => Some(TextKey::F(12)),
         _ => None,
     }
 }

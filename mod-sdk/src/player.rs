@@ -398,8 +398,8 @@ host_fn! {
     /// non-finite is a hard error. Transient: re-state it on your own
     /// cadence. `false` = no such reachable session.
     ///
-    /// SERVER only — every attribute is simulation the server enforces, so
-    /// the answers are mirrored rather than predicted.
+    /// Every attribute is simulation the server enforces, so this is a
+    /// server call; a client instance is refused.
     pub fn set_player_attribute(player: PlayerId, attribute: PlayerAttribute, scale: f32) -> bool
         => SetPlayerAttribute { player, attribute, scale } => Bool
 }

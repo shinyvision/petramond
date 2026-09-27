@@ -1,5 +1,5 @@
 use super::screen::ScreenRole;
-use super::{now_seconds, App, AppScreen};
+use super::{App, AppScreen};
 use petramond_render::Renderer;
 
 impl App {
@@ -8,8 +8,8 @@ impl App {
     /// that holds the world at 20 TPS (`src/server/handle.rs`) —
     /// [`Game::tick`](crate::game::Game::tick) only ships this frame's messages and
     /// drains what the server produced.
-    pub fn update(&mut self, renderer: &Renderer) {
-        self.update_in_viewport(renderer.ui_viewport());
+    pub fn update(&mut self, renderer: &mut Renderer) {
+        self.update_in_viewport(renderer.window_ui_viewport(), Some(renderer));
     }
 
     /// Whether a document-backed GAME menu is up with a live session behind
@@ -48,19 +48,28 @@ impl App {
     /// headlessly.
     #[cfg(test)]
     pub fn update_frame(&mut self, screen_size: (u32, u32)) {
-        self.update_in_viewport(petramond::gui::UiViewport::unversioned(screen_size));
+        self.update_in_viewport(petramond::gui::UiViewport::unversioned(screen_size), None);
     }
 
-    fn update_in_viewport(&mut self, viewport: petramond::gui::UiViewport) {
+    fn update_in_viewport(
+        &mut self,
+        viewport: petramond::gui::UiViewport,
+        renderer: Option<&mut Renderer>,
+    ) {
         let screen_size = viewport.size;
         self.ui.set_viewport_generation(viewport.generation);
-        let now = now_seconds();
-        let dt = (now - self.last) as f32;
+        // Stepped, the clock says how far this frame moves time: its queued
+        // advances, or nothing for a held frame.
+        let step = self.step_media_clock();
+        let wall = super::now_seconds();
+        let now = self.media.clock.now(wall);
+        let dt = step.unwrap_or(now - self.last) as f32;
         self.last = now;
+        let wall_dt = (wall - self.last_wall) as f32;
+        self.last_wall = wall;
 
         self.recenter_pointer_if_pending(screen_size);
-
-        self.drive_client_mod_frame(dt, screen_size);
+        self.poll_content();
 
         // Shell screens freeze the world — unless the pause is ineffective
         // (a multiplayer pause menu runs the sim on, so the cart that passes
@@ -68,6 +77,16 @@ impl App {
         let pause_runs_sim = self.multiplayer_pause_runs_sim();
         let world_frozen =
             self.session.is_some() && !pause_runs_sim && !self.screen.role().runs_sim();
+        self.drive_client_mod_frame(
+            dt,
+            wall_dt,
+            viewport,
+            world_frozen || self.session.is_none(),
+        );
+        if let Some(renderer) = renderer {
+            self.drive_media(renderer, f64::from(wall_dt));
+            self.drive_frame_size(renderer);
+        }
         // The soundtrack is driven HERE, above every screen's early return:
         // music belongs to the SESSION, not to whatever screen is open over
         // it — an inventory or a chest must never stop it. A frozen world lets
@@ -155,6 +174,27 @@ impl App {
             .expect("session exists after shell/no-session guard")
             .game
             .tick(dt, &game_input);
+        if self
+            .session
+            .as_mut()
+            .is_some_and(|session| session.game.take_presentation_closed())
+        {
+            self.end_presentation();
+            return;
+        }
+        if events.presented_world_replaced {
+            // A presentation swapped the presented world: what the
+            // renderer holds and every playing spatial sound belong to the
+            // world that left.
+            self.renderer_world_clear_pending = true;
+            self.sound.clear_spatial();
+        } else if events.presented_time_jumped {
+            // A seek: the terrain on screen stays, but what sounds and moves
+            // belongs to the moment that was left. The loops still playing at
+            // the target restart with this frame's events.
+            self.renderer_moment_clear_pending = true;
+            self.sound.clear_spatial();
+        }
         self.adopt_chat_lines(now);
         self.handle_open_screen_events(&events);
         self.open_requested_schematic_library();
@@ -167,13 +207,14 @@ impl App {
         if let Some(kind) = self.game_menu_kind() {
             self.drive_doc_menu(kind, screen_size, now);
         }
-        // Only the mined block feeds the dig loop: read it alone rather than
+        // Only the dug block feeds the dig loop: read it alone rather than
         // assembling a whole client frame.
         let mining_block = self
             .session
             .as_ref()
-            .filter(|_| self.screen.gameplay_enabled() && game_input.break_held)
-            .and_then(|session| session.game.mining_block());
+            .expect("session exists after shell/no-session guard")
+            .game
+            .dig_loop_block(self.screen.gameplay_enabled() && game_input.break_held);
         self.play_game_event_sounds(&events, mining_block, now);
         self.controls.pointer.clear_edges();
         self.latch_game_event_hand_triggers(&events);
@@ -207,7 +248,7 @@ impl App {
         } else {
             None
         };
-        self.adopt_chat_lines(now_seconds());
+        self.adopt_chat_lines(self.now());
         if let Some(reason) = lost {
             self.enter_connection_lost(reason);
         }

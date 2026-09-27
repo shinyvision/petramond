@@ -100,11 +100,12 @@ pub enum ClientToServer {
     /// the mod-handshake contract.
     ModQuery,
     Join {
-        /// The requested display name; the server validates it and may
-        /// suffix it to keep names unique.
-        player_name: String,
-        /// The joining player's identity: saves and operator rights key on
-        /// it, never on the display name.
+        /// The identity this client offers — a redeemable account ticket, or a
+        /// plain name when the server said it wants no account.
+        credential: JoinCredential,
+        /// The joining client's own identity key. On an offline server it IS
+        /// the player (saves and operator rights key on it, never on the
+        /// name); an online server keys the verified account instead.
         key: crate::net::identity::PlayerKey,
         /// `key`'s signature over this connection's `HelloAck` challenge
         /// (`net::identity::join_proof_message`) — proof of possession.
@@ -180,11 +181,6 @@ pub enum ClientToServer {
     StreamBatchAck {
         messages_per_second: f32,
     },
-    /// Presentation pressure, refreshed independently of receipt acknowledgements.
-    TerrainBacklog {
-        mesh_sections: u32,
-        upload_columns: u32,
-    },
     /// The server sent [`ServerToClient::SectionCached`] for a section this
     /// client no longer holds (cap eviction, declined cache, hash drift). The
     /// server forgets its belief and re-streams the full payload — the
@@ -217,6 +213,13 @@ pub enum ServerToClient {
         /// This connection's fresh join challenge: the client signs it with
         /// its identity key in `Join` (see `net::identity`).
         challenge: crate::net::identity::JoinChallenge,
+        /// This server checks joining players against their Petramond account.
+        /// The client answers `Join` with a ticket, not a name.
+        requires_account: bool,
+        /// The opaque per-run id a client's join ticket is minted for, so the
+        /// ticket it hands over is worthless at any other server. Fresh each
+        /// time the server starts — a ticket only has to outlive its own join.
+        server_id: String,
     },
     HelloReject {
         server_protocol: u16,

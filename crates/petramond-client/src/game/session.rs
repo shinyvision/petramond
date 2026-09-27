@@ -32,6 +32,8 @@ pub struct ClientBootstrap {
     crafting: CraftingCatalog,
     /// Whether the server is REMOTE (joined over TCP) rather than in-process.
     remote: bool,
+    /// Who this session is and which packs shape it, for what captures it.
+    identity: super::capture::SessionIdentity,
 }
 
 impl ClientBootstrap {
@@ -41,16 +43,25 @@ impl ClientBootstrap {
     /// generates), the locally-simulated player restored from the join's
     /// `SelfRestore`, and the replicated self view seeded from the same
     /// restore so the HUD is right before the first tick's batch arrives.
+    /// `enabled` is the pack set the session's client mods activate for.
     fn from_join(
         join: JoinData,
         jobs: Arc<JobPool>,
         render_dist: i32,
         fallback_world: SurfaceDensitySystem,
         client_mods: petramond::modding::client::ClientModRuntime,
+        enabled: &BTreeSet<String>,
         remote: bool,
     ) -> Self {
         let replica = ReplicaWorld::with_pool(join.seed, render_dist, jobs.clone());
         let client_player = player_from_restore(&join.self_restore);
+        let identity = super::capture::SessionIdentity {
+            player_name: join.player_name.clone(),
+            mods: petramond::modding::modset::active(&BTreeSet::new())
+                .into_iter()
+                .filter(|entry| enabled.contains(&entry.id))
+                .collect(),
+        };
         ClientBootstrap {
             replica,
             jobs,
@@ -62,6 +73,33 @@ impl ClientBootstrap {
             client_mods,
             crafting: CraftingCatalog::from_data(join.crafting_recipes),
             remote,
+            identity,
+        }
+    }
+
+    /// A presented world's client half: no server stands behind it, so its
+    /// player is a viewer no capture names and its session has no identity.
+    pub(super) fn presented(
+        replica: ReplicaWorld,
+        jobs: Arc<JobPool>,
+        viewer: Player,
+        self_id: PlayerId,
+        fallback_world: SurfaceDensitySystem,
+        client_mods: petramond::modding::client::ClientModRuntime,
+        crafting: CraftingCatalog,
+    ) -> Self {
+        Self {
+            replica,
+            jobs,
+            self_view: crate::game::replicated::SelfView::seed_from(&viewer),
+            client_player: viewer,
+            self_id,
+            players: Vec::new(),
+            fallback_world,
+            client_mods,
+            crafting,
+            remote: false,
+            identity: Default::default(),
         }
     }
 
@@ -75,6 +113,10 @@ impl ClientBootstrap {
             join.seed,
             &petramond::modding::client::local_session_key(world_name),
             &session.enabled_mods,
+            mod_api::ClientContext::Local {
+                name: world_name.to_owned(),
+                shared: false,
+            },
         );
         let bootstrap = Self::from_join(
             join,
@@ -82,6 +124,7 @@ impl ClientBootstrap {
             render_dist,
             session.fallback_world,
             client_mods,
+            &session.enabled_mods,
             false,
         );
         log::debug!(
@@ -148,17 +191,33 @@ impl Game {
         // no server world in this process to share one with.
         let pool = Arc::new(JobPool::new(JobPool::default_threads()));
         // Client mods are gated by the SERVER's mod set (the handshake's
-        // ModList): a locally installed client mod the server does not run —
-        // e.g. the minimap against a server without it — must not activate
-        // for this session.
+        // ModList): a client mod that changes what a world holds, and the
+        // server does not run, must not activate. A presentation-only pack
+        // loads regardless where the server consents to it.
+        let policy = join.client_policy;
+        let mut enabled = server_mods.clone();
+        if policy.presentation_packs {
+            enabled.extend(petramond::modding::client::presentation_only_packs());
+        }
         let client_mods = petramond::modding::client::ClientModRuntime::load(
             join.seed,
             &petramond::modding::client::remote_session_key(server_identity),
-            server_mods,
+            &enabled,
+            mod_api::ClientContext::Remote {
+                name: server_identity.to_owned(),
+                presentation_packs: policy.presentation_packs,
+            },
         );
         let fallback_world = SurfaceDensitySystem::new(join.seed);
-        let bootstrap =
-            ClientBootstrap::from_join(join, pool, render_dist, fallback_world, client_mods, true);
+        let bootstrap = ClientBootstrap::from_join(
+            join,
+            pool,
+            render_dist,
+            fallback_world,
+            client_mods,
+            &enabled,
+            true,
+        );
         let mut game = Self::assemble(cam, handle, bootstrap);
         // A cache retained from an earlier session re-promotes only under
         // the same id vocabulary — its blocks are client-local ids whose
@@ -198,6 +257,11 @@ impl Game {
             prediction: super::prediction::PredictionLedger::new(),
             hand: Default::default(),
             fx: Default::default(),
+            presented_entities_cache: Vec::new(),
+            last_anchor_feet: None,
+            anchor_missing: false,
+            presenting: Default::default(),
+            world_capture: super::capture::WorldCapture::new(&bootstrap.identity),
         }
     }
 }

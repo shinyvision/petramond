@@ -58,8 +58,5 @@ impl Game {
         // admission-limited RD32 flight meshing while the workers sat idle.
         const MESH_BUDGET: usize = 256;
         self.replica.world.tick_mesh_budget(MESH_BUDGET);
-        let replica = &self.replica.world;
-        self.net
-            .report_terrain_backlog(|| replica.terrain_presentation_backlog());
     }
 }

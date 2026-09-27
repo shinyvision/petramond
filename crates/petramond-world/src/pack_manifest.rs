@@ -185,6 +185,10 @@ struct CatalogSpec {
     row_filter: Option<RowFilter>,
     /// Loader-owned extra validation over the raw file text.
     extra_validate: Option<ExtraValidate>,
+    /// Rows of this catalog change what a world holds or does — its blocks,
+    /// items, creatures, recipes, generation — rather than how it looks or
+    /// sounds. A pack stating any such row TOUCHES the world.
+    affects_world: bool,
 }
 
 /// A `(field, value)` pair a catalog's rows must match to be taken.
@@ -194,42 +198,53 @@ type RowFilter = (&'static str, &'static str);
 type ExtraValidate = fn(&str) -> Result<(), String>;
 
 const CATALOGS: [CatalogSpec; 18] = {
-    const fn plain(rel: &'static str, array: &'static str, key_field: &'static str) -> CatalogSpec {
+    const fn world(rel: &'static str, array: &'static str, key_field: &'static str) -> CatalogSpec {
         CatalogSpec {
             rel,
             array,
             key_field,
             row_filter: None,
             extra_validate: None,
+            affects_world: true,
+        }
+    }
+    const fn presentation(
+        rel: &'static str,
+        array: &'static str,
+        key_field: &'static str,
+    ) -> CatalogSpec {
+        CatalogSpec {
+            affects_world: false,
+            ..world(rel, array, key_field)
         }
     }
     [
-        plain("blocks.json", "blocks", "block"),
-        plain("items.json", "items", "item"),
-        plain("sounds.json", "sounds", "sound"),
-        plain("music.json", "tracks", "track"),
-        plain("models.json", "models", "key"),
-        plain("animated_models.json", "animated_models", "model"),
+        world("blocks.json", "blocks", "block"),
+        world("items.json", "items", "item"),
+        presentation("sounds.json", "sounds", "sound"),
+        presentation("music.json", "tracks", "track"),
+        presentation("models.json", "models", "key"),
+        presentation("animated_models.json", "animated_models", "model"),
         CatalogSpec {
             // `brain_extensions` register nothing but must fail admission
             // when malformed — the loader owns that check.
             extra_validate: Some(crate::ai_vocab::validate_brain_extensions),
-            ..plain("mobs.json", "mobs", "mob")
+            ..world("mobs.json", "mobs", "mob")
         },
-        plain("effects.json", "effects", "effect"),
-        plain("conditions.json", "conditions", "condition"),
-        plain("particle_emitters.json", "emitters", "emitter"),
-        plain("textures/atlas.json", "tiles", "name"),
+        world("effects.json", "effects", "effect"),
+        world("conditions.json", "conditions", "condition"),
+        presentation("particle_emitters.json", "emitters", "emitter"),
+        presentation("textures/atlas.json", "tiles", "name"),
         // EVERY recipe row — crafting and processing alike — carries a
         // namespaced `recipe` id, so both are ownership-checked here.
-        plain("recipes.json", "recipes", "recipe"),
+        world("recipes.json", "recipes", "recipe"),
         // Custom shape declarations (WASM-baked geometry).
-        plain("shapes.json", "shapes", "key"),
-        plain("features.json", "features", "feature"),
-        plain("excavations.json", "excavations", "excavation"),
-        plain("structures.json", "structures", "structure"),
-        plain("loot_tables.json", "loot_tables", "loot"),
-        plain(
+        world("shapes.json", "shapes", "key"),
+        world("features.json", "features", "feature"),
+        world("excavations.json", "excavations", "excavation"),
+        world("structures.json", "structures", "structure"),
+        world("loot_tables.json", "loot_tables", "loot"),
+        world(
             "underground_biomes.json",
             "underground_biomes",
             "underground_biome",
@@ -306,6 +321,28 @@ pub fn registration_keys_by_catalog(
         out.push((rel, keys));
     }
     Ok(out)
+}
+
+/// Whether the catalogs in `dir` state any row that changes a world — a
+/// registered row or a `patch` row alike, in any catalog whose rows affect a
+/// world (see [`CatalogSpec::affects_world`]). A malformed catalog is an
+/// error, as at admission.
+pub fn states_world_rows(dir: &std::path::Path) -> Result<bool, String> {
+    for spec in CATALOGS.iter().filter(|spec| spec.affects_world) {
+        let Ok(text) = std::fs::read_to_string(dir.join(spec.rel)) else {
+            continue;
+        };
+        let value: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| format!("{}: invalid JSON: {e}", spec.rel))?;
+        if value
+            .get(spec.array)
+            .and_then(|v| v.as_array())
+            .is_some_and(|rows| !rows.is_empty())
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Which packs (indices into `costs`, in the given LOAD order) must be dropped
@@ -474,14 +511,7 @@ mod tests {
 
     #[test]
     fn crafting_recipe_ids_join_pack_namespace_validation() {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "petramond-recipe-manifest-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).expect("create fixture");
+        let dir = petramond_util::test_dirs::TestScratchDir::new("recipe-manifest");
         std::fs::write(
             dir.join("recipes.json"),
             r#"{"recipes":[
@@ -492,7 +522,6 @@ mod tests {
         .expect("write fixture");
 
         let keys = registration_keys(&dir).expect("catalog parses");
-        let _ = std::fs::remove_dir_all(&dir);
 
         // Both row kinds register: a processing row is a recipe a pack owns
         // and another pack may retire, so it is namespace-checked too.
@@ -544,14 +573,7 @@ mod tests {
     /// extension pre-pass would panic the registry bootstrap.
     #[test]
     fn malformed_brain_extensions_fail_pack_admission() {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "petramond-brainext-manifest-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).expect("create fixture");
+        let dir = petramond_util::test_dirs::TestScratchDir::new("brainext-manifest");
 
         let write = |json: &str| std::fs::write(dir.join("mobs.json"), json).expect("write");
         write(
@@ -574,6 +596,5 @@ mod tests {
             let err = registration_keys(&dir).expect_err("malformed extension fails admission");
             assert!(err.contains("brain_extensions"), "{err}");
         }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -105,7 +105,7 @@ impl PredictionLedger {
     }
 
     /// Cells covered by pending World snapshots.
-    fn predicted_cells(&self) -> impl Iterator<Item = IVec3> + '_ {
+    pub(super) fn predicted_cells(&self) -> impl Iterator<Item = IVec3> + '_ {
         self.pending.iter().flat_map(|p| match &p.snapshot {
             PredictionSnapshot::World { cells, .. } => {
                 cells.iter().map(|(c, _)| *c).collect::<Vec<_>>()

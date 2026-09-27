@@ -12,10 +12,14 @@
 //!   no longer each stay under a generous per-dispatch limit and together
 //!   stall the tick loop.
 //!
-//! Host calls are charged too ([`host_call_fuel`]): a fixed cost per call
-//! plus a per-byte cost over the request and the reply, so host-side
-//! per-element work (a maximal `GetBlocks`) is metered in the same currency
-//! and just as deterministically.
+//! Host calls are charged too ([`host_call_fuel`]): a fixed cost per call,
+//! plus, on the deterministic sides (server, worldgen), a per-byte cost over
+//! the request and the reply, so host-side per-element work (a maximal
+//! `GetBlocks`) is metered in the same currency and just as
+//! deterministically. A client instance pays the fixed cost only: nothing
+//! there must disable identically on every machine, its element queries are
+//! capped per call, and its large payloads (a file read, a pushed video
+//! frame) are copies whose only bound is what the guest can address.
 //!
 //! Running out of either budget disables the mod for the session with a
 //! reason naming the budget. Because fuel is deterministic, a world that
@@ -25,6 +29,8 @@
 //!
 //! Instances with no simulation tick (worldgen workers, client presentation)
 //! are held to the per-dispatch budget only.
+
+use mod_api::RuntimeSide;
 
 /// A session's fuel budgets (see the module docs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,8 +64,15 @@ pub(in crate::modding) const HOST_CALL_BASE_FUEL: u64 = 1_000;
 /// deterministic proxy for the host's per-element work.
 pub(in crate::modding) const HOST_CALL_FUEL_PER_BYTE: u64 = 4;
 
-/// The fuel one host call costs the guest that made it.
-pub(in crate::modding) fn host_call_fuel(request_len: usize, reply_len: usize) -> u64 {
+/// The fuel one host call costs a guest on `side`.
+pub(in crate::modding) fn host_call_fuel(
+    side: RuntimeSide,
+    request_len: usize,
+    reply_len: usize,
+) -> u64 {
+    if side == RuntimeSide::Client {
+        return HOST_CALL_BASE_FUEL;
+    }
     let bytes = (request_len as u64).saturating_add(reply_len as u64);
     HOST_CALL_BASE_FUEL.saturating_add(bytes.saturating_mul(HOST_CALL_FUEL_PER_BYTE))
 }
@@ -181,11 +194,26 @@ mod tests {
 
     #[test]
     fn host_calls_cost_a_base_plus_their_bytes() {
-        assert_eq!(host_call_fuel(0, 0), HOST_CALL_BASE_FUEL);
+        let server = RuntimeSide::Server;
+        assert_eq!(host_call_fuel(server, 0, 0), HOST_CALL_BASE_FUEL);
         assert_eq!(
-            host_call_fuel(10, 6),
+            host_call_fuel(server, 10, 6),
             HOST_CALL_BASE_FUEL + 16 * HOST_CALL_FUEL_PER_BYTE
         );
-        assert_eq!(host_call_fuel(usize::MAX, usize::MAX), u64::MAX);
+        assert_eq!(host_call_fuel(server, usize::MAX, usize::MAX), u64::MAX);
+    }
+
+    /// A client's bulk reply (a whole recording read in one answer) is not a
+    /// size cap in disguise: it costs what an empty call costs.
+    #[test]
+    fn a_client_read_larger_than_the_dispatch_budget_costs_the_base() {
+        let reply = (FuelBudget::DEFAULT.per_dispatch as usize) * 2;
+        assert_eq!(
+            host_call_fuel(RuntimeSide::Client, 64, reply),
+            HOST_CALL_BASE_FUEL
+        );
+        assert!(
+            host_call_fuel(RuntimeSide::Worldgen, 64, reply) > FuelBudget::DEFAULT.per_dispatch
+        );
     }
 }

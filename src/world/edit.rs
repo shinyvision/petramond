@@ -291,11 +291,12 @@ impl<S: WorldSide> World<S> {
 
         let sky_cover_change = SkyCoverChange::between(old_sky_cover, new_sky_cover);
         if new_surface != old_surface || sky_cover_change.is_some() {
-            let col = self
-                .data
-                .columns
-                .get_mut(&cpos)
-                .expect("column was read above");
+            let col = std::sync::Arc::make_mut(
+                self.data
+                    .columns
+                    .get_mut(&cpos)
+                    .expect("column was read above"),
+            );
             col.set_surface_y(lx, lz, new_surface);
             col.set_sky_cover_y(lx, lz, new_sky_cover);
         }

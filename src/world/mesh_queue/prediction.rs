@@ -17,6 +17,7 @@ impl ReplicaWorld {
         if previous.is_empty() {
             return;
         }
+        self.stamp_cells_written(previous.iter().map(|&(cell, _)| cell));
         let Some(work) = self.prepare_prediction_terrain(previous) else {
             return;
         };
@@ -34,6 +35,7 @@ impl ReplicaWorld {
         if previous.is_empty() {
             return;
         }
+        self.stamp_cells_written(previous.iter().map(|&(cell, _)| cell));
         let Some(work) = self.prepare_prediction_terrain(previous) else {
             return;
         };

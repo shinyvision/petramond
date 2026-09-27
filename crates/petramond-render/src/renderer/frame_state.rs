@@ -72,7 +72,7 @@ fn relative_view_proj(
     let local_pos = cam.pos.relative_to(render_origin);
     cam.proj()
         * view_offset
-        * glam::Mat4::look_at_rh(local_pos, local_pos + cam.forward(), glam::Vec3::Y)
+        * glam::Mat4::look_at_rh(local_pos, local_pos + cam.forward(), cam.up())
 }
 
 impl Renderer {
@@ -356,9 +356,16 @@ impl Renderer {
     }
 
     pub fn clear_world_state(&mut self) {
+        self.terrain.clear_world();
+        self.clear_presented_moment();
+    }
+
+    /// Drop everything that presents the world's CURRENT MOMENT — bodies and
+    /// their animators, particles, items, animated blocks, the selection —
+    /// and keep its terrain: the presented world jumped in time, not place.
+    pub fn clear_presented_moment(&mut self) {
         self.ghosts.clear_world();
         self.selection.clear_world();
-        self.terrain.clear_world();
         self.chrome.clear_world();
         // Each pass drops its own world-scoped state, so leaving a world
         // cannot forget one the way the hand-written reset did (it had lost
@@ -492,5 +499,80 @@ impl Renderer {
         }
         upload_batch.submit(queue);
         uploads.finish(drain, priority);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use petramond_math::world_pos::WorldPos;
+
+    /// A view camera can be anywhere inside the 2^30 border: the render origin
+    /// keeps its offset inside one grid cell, so the matrix it draws with is
+    /// the one the same look has at that offset near the world origin — a
+    /// rolled look included, and one straight down, where world up is
+    /// degenerate.
+    #[test]
+    fn a_view_far_out_draws_with_the_matrix_it_has_near_the_origin() {
+        let edge = f64::from(petramond_world::border::WORLD_BORDER - 1);
+        for (pitch, roll) in [(0.2, 0.0), (-0.4, 0.7), (-std::f32::consts::FRAC_PI_2, 0.0)] {
+            let look = |pos| {
+                let mut cam = Camera::new(pos, 16.0 / 9.0);
+                cam.yaw = 2.1;
+                cam.pitch = pitch;
+                cam.roll = roll;
+                cam
+            };
+            let far = look(WorldPos::new(edge - 0.75, -edge + 5.5, -edge + 3.25));
+            let origin = render_origin_for_camera(far.pos);
+            let offset = far.pos.relative_to(origin);
+            assert!(
+                offset.cmpge(glam::Vec3::ZERO).all()
+                    && offset
+                        .cmplt(glam::Vec3::splat(RENDER_ORIGIN_GRID as f32))
+                        .all(),
+                "offset {offset} left its grid cell"
+            );
+            let far_vp = relative_view_proj(&far, origin, glam::Mat4::IDENTITY);
+            let near = look(WorldPos::new(
+                f64::from(offset.x),
+                f64::from(offset.y),
+                f64::from(offset.z),
+            ));
+            let near_vp = relative_view_proj(
+                &near,
+                render_origin_for_camera(near.pos),
+                glam::Mat4::IDENTITY,
+            );
+            assert!(far_vp.is_finite(), "pitch {pitch} roll {roll}");
+            assert!(
+                far_vp.abs_diff_eq(near_vp, 1e-5),
+                "pitch {pitch} roll {roll}"
+            );
+        }
+    }
+
+    /// Spatial audio places its ears along `Camera::right`, so if the view ever
+    /// stops drawing that direction on the right of the screen, stereo mirrors
+    /// with no audio change at all.
+    #[test]
+    fn camera_right_is_drawn_on_the_right_of_the_screen() {
+        for (yaw, pitch) in [(0.0f32, 0.0f32), (0.7, 0.3), (2.5, -0.4), (-1.9, 0.9)] {
+            let mut cam = Camera::new(
+                petramond_math::world_pos::WorldPos::new(100.5, 70.0, -40.25),
+                16.0 / 9.0,
+            );
+            cam.yaw = yaw;
+            cam.pitch = pitch;
+            let origin = render_origin_for_camera(cam.pos);
+            let view_proj = relative_view_proj(&cam, origin, glam::Mat4::IDENTITY);
+            let ahead_right =
+                cam.pos.relative_to(origin) + cam.forward() * 10.0 + cam.right() * 3.0;
+            let clip = view_proj * ahead_right.extend(1.0);
+            assert!(
+                clip.x / clip.w > 0.0,
+                "yaw {yaw} pitch {pitch}: camera right drew left of centre"
+            );
+        }
     }
 }

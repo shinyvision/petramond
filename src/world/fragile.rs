@@ -352,8 +352,7 @@ mod tests {
     /// Deterministic regardless of test order.
     #[test]
     fn a_hanging_row_breaks_downward_and_never_upward() {
-        let root = std::env::temp_dir().join(format!("petramond-hangpack-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = petramond_util::test_dirs::TestScratchDir::new("hangpack");
         let pack = root.join("mods/hangtest");
         std::fs::create_dir_all(&pack).unwrap();
         std::fs::write(
@@ -384,7 +383,6 @@ mod tests {
             "world::fragile::tests::hanging_support_inner",
             [("PETRAMOND_MODS", root.join("mods"))],
         );
-        let _ = std::fs::remove_dir_all(&root);
         run.assert_passed();
     }
 

@@ -141,6 +141,9 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
     if let NodeKind::TabBar { .. } = node.kind {
         node.bind.selected = Some("tab_sel".into());
     }
+    if let NodeKind::Canvas { .. } = node.kind {
+        node.bind.scene = Some("scene".into());
+    }
     if let NodeKind::Tooltip { .. } = node.kind {
         node.bind.visible = Some("show_tooltip".into());
         node.children.push(Node::leaf(NodeKind::Label {
@@ -148,6 +151,7 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
             wrap: false,
             scale: 1,
             small: false,
+            max_lines: None,
         }));
     }
     if let NodeKind::List { .. } = node.kind {
@@ -157,6 +161,7 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
             wrap: false,
             scale: 1,
             small: false,
+            max_lines: None,
         }));
     }
     Some(node)

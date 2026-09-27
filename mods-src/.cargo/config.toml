@@ -5,3 +5,8 @@
 # config in src/modding/host/mod.rs accepts it (and refuses relaxed SIMD).
 [target.wasm32-unknown-unknown]
 rustflags = ["-Ctarget-feature=+simd128"]
+
+# Build into the root workspace's target dir, so a plain `cargo test` in here
+# reuses the engine-side crates already compiled there.
+[build]
+target-dir = "../target"

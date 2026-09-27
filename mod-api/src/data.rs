@@ -544,12 +544,16 @@ pub enum PlayerAttribute {
     /// mid-arc), so the ANIMATION becomes the attack pace instead of a
     /// constant the animation has to chase.
     AttackCooldown,
+    /// The flight-speed multiplier: scales spectator and creative flight
+    /// alike (walking untouched). Its own ceiling, since a body that flies
+    /// has its own ways to outrun the terrain.
+    FlySpeed,
 }
 
 impl PlayerAttribute {
     /// Every attribute, in declaration order — the index space claim
     /// storage sizes itself on. A new variant is appended here too.
-    pub const ALL: [PlayerAttribute; 2] = [Self::MoveSpeed, Self::AttackCooldown];
+    pub const ALL: [PlayerAttribute; 3] = [Self::MoveSpeed, Self::AttackCooldown, Self::FlySpeed];
 
     /// This attribute's slot in [`Self::ALL`]: the declaration order, which
     /// is also its wire discriminant.

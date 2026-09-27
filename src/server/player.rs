@@ -106,10 +106,13 @@ pub struct ConnectedPlayer {
     pub(in crate::server) id: PlayerId,
     /// The player's authenticated identity: keys the save file
     /// (`players/<key>.dat`) and operator rights. The local session's is the
-    /// host client's own identity.
+    /// host client's own identity; a verified Petramond account's is derived
+    /// from its stable account id, so a website rename keeps the record.
     pub(in crate::server) key: crate::net::identity::PlayerKey,
     /// Display name, unique among the world's identities
-    /// (`server::accounts`). Never a save or permission key.
+    /// (`server::accounts`): a verified account's username, else the name the
+    /// player asked for. It may change under the same person — never a save
+    /// or permission key.
     pub(in crate::server) name: String,
     /// The authoritative player body.
     pub(in crate::server) player: Player,

@@ -1,11 +1,7 @@
 use super::*;
-use std::path::PathBuf;
 
-fn temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("petramond-journal-{}-{tag}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+fn temp_dir(tag: &str) -> petramond_util::test_dirs::TestScratchDir {
+    petramond_util::test_dirs::TestScratchDir::new(&format!("journal-{tag}"))
 }
 
 fn batch(generation: u8) -> Vec<Entry> {
@@ -60,7 +56,6 @@ fn a_committed_batch_is_replayed_whole_after_any_crash_past_the_commit() {
         assert!(recover(&dir).unwrap(), "{crash:?}");
         assert_eq!(generation(&dir), Some(2), "{crash:?}");
         assert!(!dir.join(NAME).exists());
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
 
@@ -72,7 +67,6 @@ fn a_torn_journal_leaves_the_previous_save() {
     assert!(!recover(&dir).unwrap());
     assert_eq!(generation(&dir), Some(1));
     assert!(!dir.join(NAME).exists());
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -85,7 +79,6 @@ fn a_failed_apply_keeps_the_batch_for_the_next_open() {
     block_player_file(&dir, false);
     assert!(recover(&dir).unwrap());
     assert_eq!(generation(&dir), Some(2));
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// Make the player file of [`batch`] unwritable / writable again.
@@ -132,7 +125,6 @@ fn nothing_is_committed_over_a_batch_that_has_not_landed() {
         Some(vec![2; 6]),
         "the held batch landed too"
     );
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -149,7 +141,6 @@ fn replay_never_empties_a_region_it_cannot_read() {
         b"rotten",
         "the bytes that could not be read are kept"
     );
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]

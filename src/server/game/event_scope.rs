@@ -24,7 +24,7 @@ use crate::net::protocol::{SpatialSoundMsg, WorldEventMsg};
 use petramond_math::math::IVec3;
 use petramond_math::world_pos::WorldPos;
 
-use super::spatial_loops::LiveSpatialLoops;
+use crate::net::spatial_loops::{is_looped, LiveSpatialLoops};
 
 /// Slack on every hearing range: the listener's ears sit above the feet
 /// position a recipient is measured from.
@@ -72,12 +72,6 @@ fn loudest_sound_range() -> f64 {
                 f64::max,
             )
     })
-}
-
-fn is_looped(sound_id: u8) -> bool {
-    petramond_world::sound_registry::Sound(sound_id)
-        .def()
-        .looped
 }
 
 /// Who can perceive `ev`. Exhaustive: a new event kind states its reach here.

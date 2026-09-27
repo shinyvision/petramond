@@ -14,7 +14,7 @@
 
 mod fit;
 
-pub use fit::{viewport_overflow, SMALLEST_VIEWPORT};
+pub use fit::{overflows, viewport_overflow, Overflow, SMALLEST_VIEWPORT};
 
 use crate::doc::DocClass::{Container, Hud, Screen};
 use crate::doc::{Accept, DocClass, Document, Node, NodeKind};
@@ -133,6 +133,9 @@ pub const ENGINE_KINDS: &[EngineKind] = &[
     kind("petramond:creative", Container, &[("hotbar", HOTBAR_SLOTS)]),
     kind("petramond:schematics", Screen, &[]),
     kind("petramond:chiseling_station", Container, &[]),
+    kind("petramond:account", Screen, &[]),
+    kind("petramond:account_sign_in", Screen, &[]),
+    kind("petramond:content", Screen, &[]),
 ];
 
 /// The engine kind named `key`, if it is one.
@@ -343,8 +346,9 @@ pub struct ImageRef {
     pub path: String,
 }
 
-/// Every image a document statically names — on `image`, `rotimage`, and
-/// image-backed `button` nodes alike — in first-reference order (the order
+/// Every image a document statically names — on `image`, `rotimage`,
+/// image-backed `button` nodes and `.png` button/toggle icons alike — in
+/// first-reference order (the order
 /// that feeds `TexId::DocImage`). The first SEEN frames grid is kept, so an
 /// unframed reference cannot hide a framed one from the sheet check. An
 /// empty name is the runtime-bound pattern (`bind.image` supplies the art)
@@ -359,6 +363,14 @@ pub fn image_refs(doc: &Document) -> Vec<ImageRef> {
                 frames,
                 ..
             } => Some((image.as_str(), *frames)),
+            NodeKind::Button {
+                icon: Some(icon), ..
+            }
+            | NodeKind::Toggle { icon: Some(icon) }
+                if crate::is_doc_image_icon(icon) =>
+            {
+                Some((icon.as_str(), None))
+            }
             _ => None,
         };
         if let Some((name, frames)) = named.filter(|(name, _)| !name.is_empty()) {

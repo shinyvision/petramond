@@ -42,14 +42,17 @@
 
 mod abi;
 pub mod biome;
+pub mod capture;
 mod client;
 mod data;
 mod error;
 mod events;
+mod files;
 mod ids;
 pub mod json;
 mod legality;
 mod limits;
+mod media;
 mod protocol;
 mod sched;
 mod shape;
@@ -60,13 +63,22 @@ mod worldgen;
 mod wire_pin;
 
 pub use abi::*;
+pub use capture::{
+    ClientCapturedClock, ClientCapturedEnv, ClientCapturedMod, ClientCapturedSession,
+    ClientCapturedView, ClientColumnPresence, ClientEnvelope, ClientEnvelopeEntry,
+    ClientEventsPhase, ClientEventsReport, ClientFrameEnvelope, ClientPieceInfo, ClientPieceKind,
+    ClientPopulation, ClientPose, ClientPresence, ClientPresentationStateData, ClientRosterEntry,
+    ClientStateEnvelope, ClientStateKey, ClientStateSelect, ClientStateTicketData,
+};
 pub use client::*;
 pub use data::*;
 pub use error::*;
 pub use events::*;
+pub use files::*;
 pub use ids::*;
 pub use legality::*;
 pub use limits::*;
+pub use media::*;
 pub use protocol::*;
 pub use sched::*;
 /// Bulk byte payloads ride the wire as postcard bytes either way; this

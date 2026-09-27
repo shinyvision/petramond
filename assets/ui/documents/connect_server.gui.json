@@ -1,177 +1,184 @@
 {
-    "format": 1,
-    "kind": "petramond:connect_server",
-    "class": "screen",
-    "root": {
-        "type": "frame",
-        "layout": {
-            "w": {
-                "grow": 1
-            },
-            "h": {
-                "grow": 1
-            },
-            "align": "center",
-            "justify": "center"
-        },
-        "children": [
-            {
-                "type": "image",
-                "image": "../../textures/gui/screenshot.png",
-                "fit": "cover",
-                "layout": {
-                    "w": {
-                        "grow": 1
-                    },
-                    "h": {
-                        "grow": 1
-                    },
-                    "abs": {
-                        "x": 0,
-                        "y": 0
-                    }
-                }
-            },
-            {
-                "type": "frame",
-                "style": "panel.large",
-                "layout": {
-                    "w": 280,
-                    "pad": [
-                        4,
-                        2,
-                        4,
-                        4
-                    ],
-                    "gap": 6,
-                    "align": "stretch"
-                },
-                "children": [
-                    {
-                        "type": "label",
-                        "text": "Connect to Server",
-                        "scale": 2
-                    },
-                    {
-                        "type": "spacer",
-                        "layout": {
-                            "h": 2
-                        }
-                    },
-                    {
-                        "type": "label",
-                        "text": "Server Address",
-                        "style": "label.muted"
-                    },
-                    {
-                        "type": "text_input",
-                        "id": "server_addr",
-                        "placeholder": "host or host:port",
-                        "max_chars": 64,
-                        "bind": {
-                            "text": "server_addr"
-                        }
-                    },
-                    {
-                        "type": "label",
-                        "text": "Player Name",
-                        "style": "label.muted"
-                    },
-                    {
-                        "type": "text_input",
-                        "id": "player_name",
-                        "placeholder": "Player",
-                        "max_chars": 32,
-                        "bind": {
-                            "text": "player_name"
-                        }
-                    },
-                    {
-                        "type": "scroll",
-                        "id": "status_scroll",
-                        "layout": {
-                            "h": {
-                                "grow": 1
-                            },
-                            "min_h": 14,
-                            "max_h": 56
-                        },
-                        "bind": {
-                            "visible": "has_status"
-                        },
-                        "children": [
-                            {
-                                "type": "label",
-                                "wrap": true,
-                                "style": "label.danger",
-                                "bind": {
-                                    "text": "status_text"
-                                }
-                            }
-                        ]
-                    },
-                    {
-                        "type": "label",
-                        "style": "label.muted",
-                        "bind": {
-                            "text": "connect_phase",
-                            "visible": "connecting"
-                        }
-                    },
-                    {
-                        "type": "spacer",
-                        "layout": {
-                            "h": 4
-                        }
-                    },
-                    {
-                        "type": "row",
-                        "layout": {
-                            "gap": 5,
-                            "align": "stretch"
-                        },
-                        "children": [
-                            {
-                                "type": "button",
-                                "id": "connect",
-                                "text": "Connect",
-                                "style": "button.success",
-                                "layout": {
-                                    "w": {
-                                        "grow": 1
-                                    }
-                                },
-                                "bind": {
-                                    "enabled": "can_connect"
-                                }
-                            },
-                            {
-                                "type": "button",
-                                "id": "cancel",
-                                "text": "Cancel",
-                                "layout": {
-                                    "w": {
-                                        "grow": 1
-                                    }
-                                },
-                                "bind": {
-                                    "visible": "connecting"
-                                }
-                            },
-                            {
-                                "type": "button",
-                                "id": "back",
-                                "text": "Back",
-                                "layout": {
-                                    "w": {
-                                        "grow": 1
-                                    }
-                                }
-                            }
-                        ]
-                    }
-                ]
-            }
-        ]
+ "format": 1,
+ "kind": "petramond:connect_server",
+ "class": "screen",
+ "root": {
+  "type": "frame",
+  "layout": {
+   "w": {
+    "grow": 1
+   },
+   "h": {
+    "grow": 1
+   },
+   "align": "center",
+   "justify": "center"
+  },
+  "children": [
+   {
+    "type": "image",
+    "image": "../../textures/gui/screenshot.png",
+    "fit": "cover",
+    "layout": {
+     "w": {
+      "grow": 1
+     },
+     "h": {
+      "grow": 1
+     },
+     "abs": {
+      "x": 0,
+      "y": 0
+     }
     }
+   },
+   {
+    "type": "frame",
+    "style": "panel.large",
+    "layout": {
+     "w": 280,
+     "pad": [
+      4,
+      2,
+      4,
+      4
+     ],
+     "gap": 6,
+     "align": "stretch"
+    },
+    "children": [
+     {
+      "type": "label",
+      "text": "Connect to Server",
+      "scale": 2
+     },
+     {
+      "type": "spacer",
+      "layout": {
+       "h": 2
+      }
+     },
+     {
+      "type": "label",
+      "text": "Server Address",
+      "style": "label.muted"
+     },
+     {
+      "type": "text_input",
+      "id": "server_addr",
+      "placeholder": "host or host:port",
+      "max_chars": 64,
+      "bind": {
+       "text": "server_addr"
+      }
+     },
+     {
+      "type": "label",
+      "style": "label.muted",
+      "wrap": true,
+      "bind": {
+       "text": "signed_in_as"
+      }
+     },
+     {
+      "type": "scroll",
+      "id": "status_scroll",
+      "layout": {
+       "h": {
+        "grow": 1
+       },
+       "min_h": 14,
+       "max_h": 56
+      },
+      "bind": {
+       "visible": "has_status"
+      },
+      "children": [
+       {
+        "type": "label",
+        "wrap": true,
+        "style": "label.danger",
+        "bind": {
+         "text": "status_text"
+        }
+       }
+      ]
+     },
+     {
+      "type": "label",
+      "style": "label.muted",
+      "bind": {
+       "text": "connect_phase",
+       "visible": "connecting"
+      }
+     },
+     {
+      "type": "spacer",
+      "layout": {
+       "h": 4
+      }
+     },
+     {
+      "type": "row",
+      "layout": {
+       "gap": 5,
+       "align": "stretch"
+      },
+      "children": [
+       {
+        "type": "button",
+        "id": "account",
+        "text": "Account",
+        "layout": {
+         "w": {
+          "grow": 1
+         }
+        },
+        "bind": {
+         "visible": "signed_out"
+        }
+       },
+       {
+        "type": "button",
+        "id": "connect",
+        "text": "Connect",
+        "style": "button.success",
+        "layout": {
+         "w": {
+          "grow": 1
+         }
+        },
+        "bind": {
+         "enabled": "can_connect"
+        }
+       },
+       {
+        "type": "button",
+        "id": "cancel",
+        "text": "Cancel",
+        "layout": {
+         "w": {
+          "grow": 1
+         }
+        },
+        "bind": {
+         "visible": "connecting"
+        }
+       },
+       {
+        "type": "button",
+        "id": "back",
+        "text": "Back",
+        "layout": {
+         "w": {
+          "grow": 1
+         }
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
 }

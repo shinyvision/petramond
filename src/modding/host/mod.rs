@@ -15,16 +15,12 @@
 //! [`super::client`].
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use mod_api::{Decoded, ErrorCode, HostCall, HostRet, RuntimeSide, Scope};
-use wasmtime::{
-    AsContextMut, Caller, Config, Engine, Linker, Memory, StoreLimits, StoreLimitsBuilder,
-    TypedFunc,
-};
+use wasmtime::{AsContextMut, Caller, Config, Engine, Linker, Memory, TypedFunc};
 
 use super::client::ClientStoreData;
 
@@ -35,7 +31,7 @@ pub(in crate::modding) mod module_cache;
 pub(in crate::modding) use module_cache::module_for;
 
 mod actors;
-mod blocks;
+pub(in crate::modding) mod blocks;
 mod conditions;
 mod construction;
 mod containers;
@@ -79,9 +75,8 @@ pub(in crate::modding) const DISPATCH_HOST_CALL_MAX: u32 = 65_536;
 /// diagnostics.
 pub(in crate::modding) const DIAG_DEBUG_CAP: usize = 160;
 
-/// Linear-memory cap per mod instance (64 MiB) — a leaky mod fails its own
-/// allocations (and traps out) instead of eating the game's address space.
-const GUEST_MEMORY_CAP: usize = 64 << 20;
+/// The most linear memory a wasm32 guest can address.
+pub(in crate::modding) const WASM32_MEMORY_MAX: u64 = 1 << 32;
 
 /// Mirror of the engine's epoch counter (wasmtime does not expose a getter),
 /// advanced in lockstep by the ticker so the host can measure how many epochs
@@ -233,7 +228,9 @@ pub(in crate::modding) struct ModStoreData {
     /// Cached handles into the guest, set right after instantiation.
     pub memory: Option<Memory>,
     pub alloc: Option<TypedFunc<u32, u32>>,
-    pub limits: StoreLimits,
+    /// How far this instance's linear memory can grow: its module's declared
+    /// maximum, else what wasm32 addresses. A fact of the guest, never a cap.
+    pub guest_memory_max: u64,
     pub stats: HostStats,
     pub side: RuntimeSide,
     pub client: Option<ClientStoreData>,
@@ -267,7 +264,7 @@ impl ModStoreData {
         mod_id: &str,
         world_seed: u32,
         side: RuntimeSide,
-        client_storage_dir: Option<PathBuf>,
+        client_buckets: Option<super::client::ClientBuckets>,
     ) -> Self {
         Self {
             mod_id: mod_id.to_owned(),
@@ -277,12 +274,10 @@ impl ModStoreData {
             rng: HashMap::new(),
             memory: None,
             alloc: None,
-            limits: StoreLimitsBuilder::new()
-                .memory_size(GUEST_MEMORY_CAP)
-                .build(),
+            guest_memory_max: WASM32_MEMORY_MAX,
             stats: HostStats::default(),
             side,
-            client: client_storage_dir.map(ClientStoreData::new),
+            client: client_buckets.map(ClientStoreData::new),
             deadline_budget: DISPATCH_DEADLINE_EPOCHS,
             deadline_armed_at: epoch_now(),
             dispatch_host_calls: 0,
@@ -318,6 +313,12 @@ impl ModStoreData {
     /// positional worldgen queries need on a detached (`SimCtx`-less) instance.
     pub(super) fn world_seed(&self) -> u32 {
         self.world_seed
+    }
+
+    /// Move this store beside another world (a launched client instance
+    /// entering or leaving a presentation). RNG streams already drawn keep going.
+    pub(in crate::modding) fn set_world_seed(&mut self, seed: u32) {
+        self.world_seed = seed;
     }
 
     /// Record a registration. The `mod_init` window itself is enforced by
@@ -448,6 +449,14 @@ pub(in crate::modding) fn handle_host_call(
     let client = data.side == RuntimeSide::Client;
     match call {
         HostCall::Core(call) => core::handle_core_call(data, call),
+        // The ray a sim instance casts, cast against the replica on a client
+        // instance: aim, a camera kept out of walls, what the view points at.
+        HostCall::Block(mod_api::BlockCall::Raycast {
+            from,
+            dir,
+            max,
+            filter,
+        }) if client => super::client::raycast(from, dir, max, filter),
         HostCall::Block(call) => blocks::handle_block_call(&data.mod_id, call),
         HostCall::Entity(call) => entities::handle_entity_call(&data.mod_id, call),
         HostCall::Player(call) => player::handle_player_call(&data.mod_id, call),
@@ -471,6 +480,10 @@ pub(in crate::modding) fn handle_host_call(
         HostCall::Construction(call) => construction::handle_construction_call(call),
         HostCall::Actor(call) => actors::handle_actor_call(&data.mod_id, call),
         HostCall::Schematic(call) => schematics::handle_schematic_call(&data.mod_id, call),
+        HostCall::ClientFile(call) => super::client::handle_file_call(data, call),
+        HostCall::ClientCapture(call) => super::client::handle_capture_call(data, call),
+        HostCall::ClientPresentation(call) => super::client::handle_presentation_call(data, call),
+        HostCall::ClientMedia(call) => super::client::handle_media_call(data, call),
     }
 }
 
@@ -480,15 +493,24 @@ pub(in crate::modding) fn handle_host_call(
 /// handler.
 fn admit(data: &mut ModStoreData, call: &HostCall) -> Result<(), HostRet> {
     let legality = call.legality();
-    if !legality.sides.allows(data.side) {
-        return Err(HostRet::error(
-            ErrorCode::WrongSide,
+    // A client instance on the shell runs beside no world: only the calls
+    // declared legal there reach it.
+    let shell = data.client.as_ref().is_some_and(|client| client.shell);
+    if !legality.sides.admits(data.side, shell) {
+        let why = if shell && legality.sides.allows(data.side) {
+            format!(
+                "{} needs a world, and this client_wasm instance runs on the shell with none \
+                 (see ClientContext)",
+                call.name()
+            )
+        } else {
             format!(
                 "{} is not available to a {:?} instance",
                 call.name(),
                 data.side
-            ),
-        ));
+            )
+        };
+        return Err(HostRet::error(ErrorCode::WrongSide, why));
     }
     if legality.scope == Scope::Init && data.phase != Phase::Init {
         return Err(data.refuse_registration(
@@ -582,8 +604,8 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                 let bytes = mod_api::encode(&ret)
                     .map_err(|e| wasmtime::Error::msg(format!("encode host reply: {e}")))?;
                 // Host work is metered in the guest's own currency: a call
-                // costs a base plus its request and reply bytes.
-                let cost = budget::host_call_fuel(request_len, bytes.len());
+                // costs a base plus (deterministic sides) its bytes.
+                let cost = budget::host_call_fuel(caller.data().side, request_len, bytes.len());
                 let fuel = caller.get_fuel()?;
                 if fuel < cost {
                     // Drained, so the disable message names the budget.

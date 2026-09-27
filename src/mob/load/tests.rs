@@ -528,8 +528,7 @@ fn loader_rejects_incomplete_tables_and_duplicate_keys() {
 /// thread — the process registry and every other test never see it.
 #[test]
 fn dynamic_pack_mob_flows_end_to_end() {
-    let root = std::env::temp_dir().join(format!("petramond-mobpack-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = petramond_util::test_dirs::TestScratchDir::new("mobpack");
     let pack = root.join("mods/testmob");
     std::fs::create_dir_all(&pack).unwrap();
     std::fs::write(

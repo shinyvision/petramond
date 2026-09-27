@@ -1,0 +1,52 @@
+{
+  "format": 1,
+  "_doc": "The forge's document contract, as far as the engine's document fit guard needs it: the visibility keys only one of which is ever on.",
+  "kinds": {
+    "forge:forging_furnace_fittings": {
+      "state": {
+        "forge:fit_quench_bought": {
+          "type": "bool"
+        },
+        "forge:fit_quench_unbought": {
+          "type": "bool"
+        },
+        "forge:fit_counterweight_bought": {
+          "type": "bool"
+        },
+        "forge:fit_counterweight_unbought": {
+          "type": "bool"
+        },
+        "forge:fit_chute_bought": {
+          "type": "bool"
+        },
+        "forge:fit_chute_unbought": {
+          "type": "bool"
+        },
+        "forge:fit_stoker_bought": {
+          "type": "bool"
+        },
+        "forge:fit_stoker_unbought": {
+          "type": "bool"
+        }
+      },
+      "exclusive": [
+        [
+          "forge:fit_quench_bought",
+          "forge:fit_quench_unbought"
+        ],
+        [
+          "forge:fit_counterweight_bought",
+          "forge:fit_counterweight_unbought"
+        ],
+        [
+          "forge:fit_chute_bought",
+          "forge:fit_chute_unbought"
+        ],
+        [
+          "forge:fit_stoker_bought",
+          "forge:fit_stoker_unbought"
+        ]
+      ]
+    }
+  }
+}

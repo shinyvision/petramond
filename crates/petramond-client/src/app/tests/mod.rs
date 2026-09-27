@@ -9,15 +9,19 @@ use petramond_world::item::{ItemStack, ItemType};
 mod harness;
 use harness::TestApp;
 
+mod client_docs;
 mod connect;
 mod controls;
 mod creative;
 mod drops;
 mod gui_routing;
+mod launched;
+mod media;
 mod overlays;
 mod perf;
 mod session_flow;
 mod sounds;
+mod view_claims;
 
 impl App {
     /// Whether a game session is running.
@@ -110,7 +114,7 @@ fn test_recipe(
 fn ensure_test_data_dir() {
     std::env::set_var(
         "PETRAMOND_DATA_DIR",
-        std::env::temp_dir().join(format!("petramond-test-data-{}", std::process::id())),
+        petramond_util::test_dirs::test_process_data_dir(),
     );
 }
 

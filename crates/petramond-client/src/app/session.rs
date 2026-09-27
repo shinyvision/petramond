@@ -1,9 +1,8 @@
 //! Everything the App holds for exactly one game session, in one value: the
 //! game itself plus the app-side state that only means something while that
 //! game runs — the HUD notice, the creative menu's and schematic library's
-//! forms, chat, the Open to LAN status, a client mod's canvas, the world-sound
-//! scheduling, the HUD/hand effects and the presentation scratch (ambient
-//! drives included).
+//! forms, chat, the Open to LAN status, the world-sound scheduling, the
+//! HUD/hand effects and the presentation scratch (ambient drives included).
 //!
 //! The lifecycle is construction and drop: a session starts as
 //! [`Session::new`] and ends as [`Session::end`] (or a plain drop), so nothing
@@ -12,7 +11,6 @@
 
 use super::chat::ChatUi;
 use super::client_audio::SessionSounds;
-use super::client_mod_ui::ClientCanvasState;
 use super::creative::CreativeMenu;
 use super::hotbar_notice::HotbarNotice;
 use super::hud_fx::HudFx;
@@ -35,9 +33,6 @@ pub(super) struct Session {
     pub(super) lan_error: Option<String>,
     /// This session's chat history, draft and scroll.
     pub(super) chat: ChatUi,
-    /// Open client-WASM physical-pixel canvas, separate from GUI documents;
-    /// dropped whenever the canvas screen is left.
-    pub(super) client_canvas: Option<ClientCanvasState>,
     /// World-sound cues, cadences and the client-local handle pool.
     pub(super) sounds: SessionSounds,
     /// Short-lived HUD/hand presentation: hurt shake, sleep-overlay hand,
@@ -65,7 +60,6 @@ impl Session {
             lan_port: None,
             lan_error: None,
             chat: ChatUi::default(),
-            client_canvas: None,
             sounds: SessionSounds::default(),
             hud_fx: HudFx::default(),
             presentation: GamePresentationScratch::new(),

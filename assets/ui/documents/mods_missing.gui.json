@@ -55,8 +55,10 @@
                     },
                     {
                         "type": "label",
-                        "text": "This server requires mods you don't have installed:",
-                        "wrap": true
+                        "wrap": true,
+                        "bind": {
+                            "text": "missing_intro"
+                        }
                     },
                     {
                         "id": "missing_scroll",
@@ -139,13 +141,64 @@
                         "children": [
                             {
                                 "type": "button",
-                                "id": "back",
-                                "text": "Back",
-                                "layout": {
-                                    "w": 110
+                                "id": "open_anyway",
+                                "text": "Open anyway",
+                                "style": "button.danger",
+                                "bind": {
+                                    "visible": "can_open_anyway"
                                 }
+                            },
+                            {
+                                "type": "spacer",
+                                "layout": {
+                                    "w": {
+                                        "grow": 1
+                                    }
+                                }
+                            },
+                            {
+                                "type": "button",
+                                "id": "back",
+                                "text": "Back"
+                            },
+                            {
+                                "type": "button",
+                                "id": "get_missing",
+                                "text": "Get missing",
+                                "style": "button.success"
                             }
                         ]
+                    }
+                ]
+            },
+            {
+                "type": "tooltip",
+                "hover": "open_anyway",
+                "id": "open_anyway_tooltip",
+                "style": "panel.inset",
+                "bind": {
+                    "visible": "can_open_anyway"
+                },
+                "layout": {
+                    "abs": {
+                        "x": 4,
+                        "y": 4
+                    },
+                    "pad": [
+                        3,
+                        2,
+                        3,
+                        3
+                    ],
+                    "align": "stretch",
+                    "max_w": 200
+                },
+                "children": [
+                    {
+                        "type": "label",
+                        "text": "Blocks and items from these packs become air when the world saves",
+                        "small": true,
+                        "wrap": true
                     }
                 ]
             }

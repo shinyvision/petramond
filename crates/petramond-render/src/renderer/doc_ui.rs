@@ -26,7 +26,6 @@ pub(super) struct DocUi {
     pub(super) overlay_start: usize,
     vbuf: Option<wgpu::Buffer>,
     verts: Vec<UiVertex>,
-    theme_binds: Option<ThemeBinds>,
     /// This frame's `TexId::DocImage` index → source order.
     frame_images: Vec<petramond::gui::DocImageSource>,
     /// Uploaded image textures by path (session-lived; image file changes
@@ -35,12 +34,20 @@ pub(super) struct DocUi {
     dynamic_binds: HashMap<String, DynamicBind>,
 }
 
-struct ThemeBinds {
+/// The theme's atlas pages and font, shared by every UI layer.
+pub(super) struct ThemeBinds {
     /// One bind per theme atlas page, indexed by `TexId::ThemePage`.
-    pages: Vec<wgpu::BindGroup>,
-    font: wgpu::BindGroup,
+    pub(super) pages: Vec<wgpu::BindGroup>,
+    pub(super) font: wgpu::BindGroup,
     /// The font atlas revision `font` was uploaded at.
     font_revision: u64,
+}
+
+impl ThemeBinds {
+    /// The bind of theme atlas page `page`, if the theme has that page.
+    pub(super) fn page(&self, page: u16) -> Option<&wgpu::BindGroup> {
+        self.pages.get(page as usize)
+    }
 }
 
 struct DynamicBind {
@@ -50,29 +57,116 @@ struct DynamicBind {
     bind: wgpu::BindGroup,
 }
 
-impl Renderer {
+/// What a UI layer uploads through.
+pub(super) struct UiGpu<'a> {
+    pub(super) device: &'a wgpu::Device,
+    pub(super) queue: &'a wgpu::Queue,
+    pub(super) texture_bgl: &'a wgpu::BindGroupLayout,
+}
+
+impl UiGpu<'_> {
+    /// The theme's binds: the pages uploaded the first time any layer asks,
+    /// the font atlas again whenever its revision moved (glyphs rasterize the
+    /// first time anything draws them — this frame's paint included, which is
+    /// why every layer asks after it painted).
+    pub(super) fn theme<'t>(&self, theme: &'t mut Option<ThemeBinds>) -> &'t ThemeBinds {
+        let doc_theme = petramond::gui::doc_theme::theme();
+        let revision = doc_theme.ui_font().atlas_revision();
+        if let Some(binds) = theme.as_mut() {
+            if binds.font_revision != revision {
+                binds.font = self.texture_bind(&doc_theme.font_atlas(), "doc ui font atlas");
+                binds.font_revision = revision;
+            }
+        }
+        theme.get_or_insert_with(|| ThemeBinds {
+            pages: doc_theme
+                .pages()
+                .iter()
+                .map(|page| self.texture_bind(page, "doc ui theme page"))
+                .collect(),
+            font: self.texture_bind(&doc_theme.font_atlas(), "doc ui font atlas"),
+            font_revision: revision,
+        })
+    }
+
+    fn texture_bind(&self, image: &petramond_ui::ImageData, label: &str) -> wgpu::BindGroup {
+        self.texture_resources(image.size, &image.rgba, label).1
+    }
+
+    fn texture_resources(
+        &self,
+        size: (u32, u32),
+        rgba: &[u8],
+        label: &str,
+    ) -> (wgpu::Texture, wgpu::BindGroup) {
+        let (w, h) = size;
+        let texture = crate::gpu_mem::create_texture(
+            self.device,
+            &wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: w.max(1),
+                    height: h.max(1),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+        );
+        write_doc_texture(self.queue, &texture, size, rgba);
+        let bind = self.nearest_bind(&texture, label);
+        (texture, bind)
+    }
+
+    /// A nearest-sampled bind of `texture` in the UI texture layout.
+    pub(super) fn nearest_bind(&self, texture: &wgpu::Texture, label: &str) -> wgpu::BindGroup {
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some(label),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout: self.texture_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        })
+    }
+}
+
+impl DocUi {
     /// Upload this frame's GUI-document draw list (`None` = no document UI).
-    /// `images` is the frame's `TexId::DocImage` index → source order.
-    pub(super) fn prepare_doc_ui(
+    pub(super) fn prepare(
         &mut self,
+        gpu: &UiGpu<'_>,
+        theme: &mut Option<ThemeBinds>,
         document: Option<&super::super::DocumentUiFrame<'_>>,
         screen: (u32, u32),
     ) {
-        self.ui.doc_ui.batches.clear();
-        self.ui.doc_ui.overlay_start = 0;
-        self.ui.doc_ui.frame_images.clear();
+        self.batches.clear();
+        self.overlay_start = 0;
+        self.frame_images.clear();
         let Some(document) = document else {
-            self.ui.doc_ui.dynamic_binds.clear();
+            self.dynamic_binds.clear();
             return;
         };
         let draw = document.draw;
-        self.ui
-            .doc_ui
-            .frame_images
-            .extend_from_slice(document.images);
+        self.frame_images.extend_from_slice(document.images);
         let current: std::collections::HashSet<_> = self
-            .ui
-            .doc_ui
             .frame_images
             .iter()
             .filter_map(|source| match source {
@@ -80,101 +174,54 @@ impl Renderer {
                 _ => None,
             })
             .collect();
-        self.ui
-            .doc_ui
-            .dynamic_binds
+        self.dynamic_binds
             .retain(|key, _| current.contains(key.as_str()));
-        self.ensure_doc_image_binds();
+        self.ensure_image_binds(gpu);
         if draw.vertices.is_empty() {
             return;
         }
         if screen.0 == 0 || screen.1 == 0 {
             return;
         }
-        self.ensure_doc_theme_binds();
+        gpu.theme(theme);
 
         // px (y down) → NDC (y up); uv/color pass through, including the
         // solid sentinel.
-        self.ui.doc_ui.verts.clear();
-        self.ui
-            .doc_ui
-            .verts
-            .extend(draw.vertices.iter().map(|v| UiVertex {
-                pos: crate::ui::pixel_to_ndc(screen, v.pos[0], v.pos[1]),
-                uv: v.uv,
-                color: v.color,
-            }));
-        let bytes: &[u8] = bytemuck::cast_slice(&self.ui.doc_ui.verts);
+        self.verts.clear();
+        self.verts.extend(draw.vertices.iter().map(|v| UiVertex {
+            pos: crate::ui::pixel_to_ndc(screen, v.pos[0], v.pos[1]),
+            uv: v.uv,
+            color: v.color,
+        }));
+        let bytes: &[u8] = bytemuck::cast_slice(&self.verts);
         let needs = bytes.len() as u64;
-        if self
-            .ui
-            .doc_ui
-            .vbuf
-            .as_ref()
-            .is_none_or(|b| b.size() < needs)
-        {
-            self.ui.doc_ui.vbuf = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
+        if self.vbuf.as_ref().is_none_or(|b| b.size() < needs) {
+            self.vbuf = Some(gpu.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("doc ui vbuf"),
                 size: needs.next_power_of_two(),
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
         }
-        self.queue
-            .write_buffer(self.ui.doc_ui.vbuf.as_ref().unwrap(), 0, bytes);
+        gpu.queue
+            .write_buffer(self.vbuf.as_ref().unwrap(), 0, bytes);
 
-        self.ui
-            .doc_ui
-            .batches
-            .extend(draw.batches.iter().map(|b| DocBatch {
-                tex: b.tex,
-                start: b.start,
-                count: b.count,
-                clip: b.clip,
-            }));
-        self.ui.doc_ui.overlay_start = draw.overlay_start.min(self.ui.doc_ui.batches.len());
+        self.batches.extend(draw.batches.iter().map(|b| DocBatch {
+            tex: b.tex,
+            start: b.start,
+            count: b.count,
+            clip: b.clip,
+        }));
+        self.overlay_start = draw.overlay_start.min(self.batches.len());
     }
 
-    /// Upload the theme pages once, and the font atlas whenever its
-    /// revision moved (glyphs rasterize the first time anything draws them —
-    /// this frame's paint included, which is why this runs after it).
-    fn ensure_doc_theme_binds(&mut self) {
-        let theme = petramond::gui::doc_theme::theme();
-        let revision = theme.ui_font().atlas_revision();
-        match &self.ui.doc_ui.theme_binds {
-            Some(binds) if binds.font_revision == revision => {}
-            Some(_) => {
-                let font = self.doc_texture_bind(&theme.font_atlas(), "doc ui font atlas");
-                if let Some(binds) = &mut self.ui.doc_ui.theme_binds {
-                    binds.font = font;
-                    binds.font_revision = revision;
-                }
-            }
-            None => {
-                let pages = theme
-                    .pages()
-                    .iter()
-                    .map(|page| self.doc_texture_bind(page, "doc ui theme page"))
-                    .collect();
-                let font = self.doc_texture_bind(&theme.font_atlas(), "doc ui font atlas");
-                self.ui.doc_ui.theme_binds = Some(ThemeBinds {
-                    pages,
-                    font,
-                    font_revision: revision,
-                });
-            }
-        }
-    }
-
-    fn ensure_doc_image_binds(&mut self) {
+    fn ensure_image_binds(&mut self, gpu: &UiGpu<'_>) {
         let missing: Vec<std::path::PathBuf> = self
-            .ui
-            .doc_ui
             .frame_images
             .iter()
             .filter_map(|source| match source {
                 petramond::gui::DocImageSource::Path(path)
-                    if !self.ui.doc_ui.image_binds.contains_key(path) =>
+                    if !self.image_binds.contains_key(path) =>
                 {
                     Some(path.clone())
                 }
@@ -191,12 +238,10 @@ impl Renderer {
                 rgba: img.into_raw(),
                 size,
             };
-            let bind = self.doc_texture_bind(&data, "doc ui image");
-            self.ui.doc_ui.image_binds.insert(path, bind);
+            let bind = gpu.texture_bind(&data, "doc ui image");
+            self.image_binds.insert(path, bind);
         }
         let updates: Vec<_> = self
-            .ui
-            .doc_ui
             .frame_images
             .iter()
             .filter_map(|source| match source {
@@ -206,8 +251,6 @@ impl Renderer {
                     revision,
                     rgba,
                 } if self
-                    .ui
-                    .doc_ui
                     .dynamic_binds
                     .get(key)
                     .is_none_or(|loaded| loaded.revision != *revision) =>
@@ -218,15 +261,15 @@ impl Renderer {
             })
             .collect();
         for (key, size, revision, rgba) in updates {
-            if let Some(existing) = self.ui.doc_ui.dynamic_binds.get_mut(&key) {
+            if let Some(existing) = self.dynamic_binds.get_mut(&key) {
                 if existing.size == size {
-                    write_doc_texture(&self.queue, &existing.texture, size, &rgba);
+                    write_doc_texture(gpu.queue, &existing.texture, size, &rgba);
                     existing.revision = revision;
                     continue;
                 }
             }
-            let (texture, bind) = self.doc_texture_resources(size, &rgba, "dynamic doc ui image");
-            self.ui.doc_ui.dynamic_binds.insert(
+            let (texture, bind) = gpu.texture_resources(size, &rgba, "dynamic doc ui image");
+            self.dynamic_binds.insert(
                 key,
                 DynamicBind {
                     revision,
@@ -238,133 +281,90 @@ impl Renderer {
         }
     }
 
-    fn doc_texture_bind(&self, image: &petramond_ui::ImageData, label: &str) -> wgpu::BindGroup {
-        self.doc_texture_resources(image.size, &image.rgba, label).1
+    /// The base tier: everything under the host's own item icons.
+    pub(super) fn base(&self) -> &[DocBatch] {
+        &self.batches[..self.overlay_start]
     }
 
-    fn doc_texture_resources(
-        &self,
-        size: (u32, u32),
-        rgba: &[u8],
-        label: &str,
-    ) -> (wgpu::Texture, wgpu::BindGroup) {
-        let (w, h) = size;
-        let texture = crate::gpu_mem::create_texture(
-            &self.device,
-            &wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width: w.max(1),
-                    height: h.max(1),
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            },
-        );
-        write_doc_texture(&self.queue, &texture, size, rgba);
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some(label),
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(label),
-            layout: &self.ui.texture_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
-        (texture, bind)
-    }
-}
-
-impl UiPass {
-    /// Draw the base tier of the uploaded document UI (everything under the
-    /// host's own item icons).
-    pub(super) fn draw_doc_ui(&self, pass: &mut wgpu::RenderPass<'_>) {
-        let end = self.doc_ui.overlay_start;
-        self.draw_doc_batches(pass, &self.doc_ui.batches[..end]);
-    }
-
-    /// Draw the overlay tier: floating tooltip chrome, which has to cover the
+    /// The overlay tier: floating tooltip chrome, which has to cover the
     /// host content the base tier drew under.
-    pub(super) fn draw_doc_ui_overlay(&self, pass: &mut wgpu::RenderPass<'_>) {
-        let start = self.doc_ui.overlay_start;
-        self.draw_doc_batches(pass, &self.doc_ui.batches[start..]);
-    }
-
-    pub(super) fn has_doc_overlay(&self) -> bool {
-        self.doc_ui.overlay_start < self.doc_ui.batches.len()
+    pub(super) fn overlay(&self) -> &[DocBatch] {
+        &self.batches[self.overlay_start..]
     }
 
     /// Draw a batch range inside the UI pass. The pipeline is already set;
     /// each batch binds its texture and scissors its clip.
-    fn draw_doc_batches(&self, pass: &mut wgpu::RenderPass<'_>, batches: &[DocBatch]) {
-        let (Some(vbuf), Some(binds)) = (&self.doc_ui.vbuf, &self.doc_ui.theme_binds) else {
+    pub(super) fn draw(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        batches: &[DocBatch],
+        theme: Option<&ThemeBinds>,
+        solid: &wgpu::BindGroup,
+        screen: (u32, u32),
+    ) {
+        let (Some(vbuf), Some(binds)) = (&self.vbuf, theme) else {
             return;
         };
         if batches.is_empty() {
             return;
         }
-        let screen = self.prepared_viewport.size;
         pass.set_vertex_buffer(0, vbuf.slice(..));
         for batch in batches {
-            let bind =
-                match batch.tex {
-                    petramond_ui::TexId::Solid => &self.icon_atlas.bind,
-                    petramond_ui::TexId::ThemePage(i) => match binds.pages.get(i as usize) {
-                        Some(bind) => bind,
-                        None => continue,
-                    },
-                    petramond_ui::TexId::Font => &binds.font,
-                    petramond_ui::TexId::DocImage(i) => {
-                        match self.doc_ui.frame_images.get(i as usize).and_then(|source| {
-                            match source {
-                                petramond::gui::DocImageSource::Path(path) => {
-                                    self.doc_ui.image_binds.get(path)
-                                }
-                                petramond::gui::DocImageSource::Dynamic { key, .. } => {
-                                    self.doc_ui.dynamic_binds.get(key).map(|entry| &entry.bind)
-                                }
+            let bind = match batch.tex {
+                petramond_ui::TexId::Solid => solid,
+                petramond_ui::TexId::ThemePage(page) => match binds.page(page) {
+                    Some(bind) => bind,
+                    None => continue,
+                },
+                petramond_ui::TexId::Font => &binds.font,
+                petramond_ui::TexId::DocImage(i) => {
+                    match self
+                        .frame_images
+                        .get(i as usize)
+                        .and_then(|source| match source {
+                            petramond::gui::DocImageSource::Path(path) => {
+                                self.image_binds.get(path)
+                            }
+                            petramond::gui::DocImageSource::Dynamic { key, .. } => {
+                                self.dynamic_binds.get(key).map(|entry| &entry.bind)
                             }
                         }) {
-                            Some(bind) => bind,
-                            None => continue,
-                        }
+                        Some(bind) => bind,
+                        None => continue,
                     }
-                };
-            match batch.clip {
-                Some([x, y, w, h]) => {
-                    let x0 = x.clamp(0, screen.0 as i32) as u32;
-                    let y0 = y.clamp(0, screen.1 as i32) as u32;
-                    let x1 = (x + w).clamp(0, screen.0 as i32) as u32;
-                    let y1 = (y + h).clamp(0, screen.1 as i32) as u32;
-                    if x1 <= x0 || y1 <= y0 {
-                        continue;
-                    }
-                    pass.set_scissor_rect(x0, y0, x1 - x0, y1 - y0);
                 }
-                None => pass.set_scissor_rect(0, 0, screen.0, screen.1),
+            };
+            if !set_batch_scissor(pass, batch.clip, screen) {
+                continue;
             }
             pass.set_bind_group(0, bind, &[]);
             pass.draw(batch.start..batch.start + batch.count, 0..1);
         }
         pass.set_scissor_rect(0, 0, screen.0, screen.1);
     }
+}
+
+/// Scissor to a batch's physical-px clip (`None` = the whole screen). `false`
+/// when the clip is empty on screen and the batch draws nothing.
+pub(super) fn set_batch_scissor(
+    pass: &mut wgpu::RenderPass<'_>,
+    clip: Option<[i32; 4]>,
+    screen: (u32, u32),
+) -> bool {
+    match clip {
+        Some([x, y, w, h]) => {
+            let x0 = x.clamp(0, screen.0 as i32) as u32;
+            let y0 = y.clamp(0, screen.1 as i32) as u32;
+            let x1 = (x + w).clamp(0, screen.0 as i32) as u32;
+            let y1 = (y + h).clamp(0, screen.1 as i32) as u32;
+            if x1 <= x0 || y1 <= y0 {
+                return false;
+            }
+            pass.set_scissor_rect(x0, y0, x1 - x0, y1 - y0);
+        }
+        None => pass.set_scissor_rect(0, 0, screen.0, screen.1),
+    }
+    true
 }
 
 fn write_doc_texture(queue: &wgpu::Queue, texture: &wgpu::Texture, size: (u32, u32), rgba: &[u8]) {

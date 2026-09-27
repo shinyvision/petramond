@@ -412,6 +412,7 @@ mod tests {
             }
         }
         for column in w.data.columns.values_mut() {
+            let column = std::sync::Arc::make_mut(column);
             for z in 0..SECTION_SIZE {
                 for x in 0..SECTION_SIZE {
                     column.set_surface_y(x, z, SECTION_SIZE as i32 - 1);

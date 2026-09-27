@@ -93,6 +93,8 @@ struct InspectorSchema {
     item_binding: bool,
     accepts_binding: bool,
     palette_binding: bool,
+    scene_binding: bool,
+    icon_binding: bool,
 }
 
 impl InspectorSchema {
@@ -106,6 +108,11 @@ impl InspectorSchema {
             Button { image, .. } => Self {
                 flow_dir: true,
                 frame_binding: image.as_ref().is_some_and(|name| !name.is_empty()),
+                icon_binding: true,
+                ..Self::default()
+            },
+            Toggle { .. } => Self {
+                icon_binding: true,
                 ..Self::default()
             },
             Image { .. } => Self {
@@ -120,8 +127,12 @@ impl InspectorSchema {
                 accepts_binding: !accepts.is_empty(),
                 ..Self::default()
             },
-            Label { .. } => Self {
+            Label { .. } | Badge { .. } | TextInput { .. } => Self {
                 palette_binding: true,
+                ..Self::default()
+            },
+            Canvas { .. } => Self {
+                scene_binding: true,
                 ..Self::default()
             },
             Row
@@ -129,13 +140,11 @@ impl InspectorSchema {
             | Spacer
             | Rotimage { .. }
             | Checkbox
-            | Toggle { .. }
             | Slider { .. }
-            | TextInput { .. }
             | Gauge { .. }
-            | Badge { .. }
             | Alert { .. }
-            | TabBar { .. } => Self::default(),
+            | TabBar { .. }
+            | Viewport { .. } => Self::default(),
         }
     }
 }
@@ -282,6 +291,15 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             // content, stays interactive (not the tooltip tier).
             let r = ui.checkbox(&mut edited.overlay, "overlay tier");
             t.hit(r);
+            if matches!(
+                edited.kind,
+                NodeKind::Label { .. } | NodeKind::Button { .. } | NodeKind::Badge { .. }
+            ) {
+                let r = ui
+                    .checkbox(&mut edited.ellipsis_tip, "ellipsis tip")
+                    .on_hover_text("show the whole text in a tooltip when it had to be cut");
+                t.hit(r);
+            }
         });
 
     egui::CollapsingHeader::new("Bindings")
@@ -326,10 +344,17 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             if schema.accepts_binding {
                 rows.push(("accepts", BindField::Value, &mut edited.bind.accepts));
             }
-            // `palette` recolours a LABEL from a bound theme-palette entry —
-            // only read there (mirrors the engine-side validation).
+            // `palette` recolours a label, badge or text input from a bound
+            // theme-palette entry — only read there (mirrors the engine-side
+            // validation).
             if schema.palette_binding {
                 rows.push(("palette", BindField::Value, &mut edited.bind.palette));
+            }
+            if schema.scene_binding {
+                rows.push(("scene", BindField::Value, &mut edited.bind.scene));
+            }
+            if schema.icon_binding {
+                rows.push(("icon", BindField::Value, &mut edited.bind.icon));
             }
             for (label, field, v) in rows {
                 match &bind_opts {
@@ -369,6 +394,7 @@ fn document_meta(app: &mut App, ui: &mut Ui) {
     let mut kind = app.proj.document.kind.clone();
     let mut class = app.proj.document.class;
     let mut compact_below_w = app.proj.document.compact_below_w;
+    let mut dismiss = app.proj.document.dismiss;
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.label("kind");
@@ -402,11 +428,25 @@ fn document_meta(app: &mut App, ui: &mut Ui) {
                 .changed();
         }
     });
+    ui.horizontal(|ui| {
+        ui.label("escape");
+        for (d, name) in [
+            (petramond_ui::Dismiss::Close, "closes"),
+            (petramond_ui::Dismiss::Event, "sends dismiss"),
+        ] {
+            let r = ui.selectable_label(dismiss == d, name);
+            if r.clicked() {
+                dismiss = d;
+                changed = true;
+            }
+        }
+    });
     if changed {
         app.mutate(|doc| {
             doc.kind = kind;
             doc.class = class;
             doc.compact_below_w = compact_below_w;
+            doc.dismiss = dismiss;
         });
     }
 }
@@ -525,6 +565,7 @@ fn kind_props(
             wrap,
             scale,
             small,
+            max_lines,
         } => {
             text_prop(ui, "text", text, t, focus);
             ui.horizontal(|ui| {
@@ -537,6 +578,23 @@ fn kind_props(
                     .on_hover_text("draw one gui-scale step smaller (secondary text)");
                 t.hit(r);
             });
+            if *wrap {
+                ui.horizontal(|ui| {
+                    let mut has = max_lines.is_some();
+                    let r = ui
+                        .checkbox(&mut has, "max lines")
+                        .on_hover_text("stop after this many lines, the last one ellipsized");
+                    if r.changed() {
+                        *max_lines = has.then_some(2);
+                    }
+                    t.hit(r);
+                    if let Some(n) = max_lines {
+                        t.hit(ui.add(DragValue::new(n).range(1..=64)));
+                    }
+                });
+            } else {
+                *max_lines = None;
+            }
         }
         NodeKind::Button {
             text,
@@ -765,11 +823,16 @@ fn kind_props(
         NodeKind::TextInput {
             placeholder,
             max_chars,
+            masked,
         } => {
             text_prop(ui, "placeholder", placeholder, t, focus);
             ui.horizontal(|ui| {
                 ui.label("max chars");
                 t.hit(ui.add(DragValue::new(max_chars).range(1..=1024)));
+                let r = ui
+                    .checkbox(masked, "masked")
+                    .on_hover_text("draw every character as * (a password field)");
+                t.hit(r);
             });
         }
         NodeKind::Scroll { axis } => {
@@ -834,6 +897,12 @@ fn kind_props(
         NodeKind::Tooltip { hover } => {
             opt_text(ui, "hover", hover, t);
             ui.label("(widget id anchoring the tooltip to its hover; empty = none)");
+        }
+        NodeKind::Canvas { interactive } | NodeKind::Viewport { interactive } => {
+            let r = ui
+                .checkbox(interactive, "interactive")
+                .on_hover_text("report pointer, wheel and size events over it");
+            t.hit(r);
         }
         NodeKind::Frame
         | NodeKind::Row
@@ -1044,6 +1113,11 @@ fn layout_props(ui: &mut Ui, l: &mut LayoutProps, kind: &NodeKind, t: &mut Track
             t.hit(ui.add(DragValue::new(&mut abs.y)));
         }
     });
+    if l.abs.is_some() {
+        opt_text(ui, "anchor to", &mut l.anchor_to, t);
+    } else {
+        l.anchor_to = None;
+    }
     if is_root {
         ui.horizontal(|ui| {
             let mut has = l.anchor.is_some();

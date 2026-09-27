@@ -90,13 +90,18 @@ impl Game {
     /// service the pipe synchronously between the halves (production runs
     /// them back-to-back; the thread answers asynchronously).
     pub fn tick_send(&mut self, dt: f32, input: &GameInput) {
+        self.capture_frame_begin();
+        // A presentation's calls and position move FIRST: everything below —
+        // the interpolation window, the world's frame time — reads this
+        // frame's position, never last frame's.
+        self.drive_presentation(dt);
         // Render time advances by real frame dt FIRST, and the interpolation
         // window turns HERE too — a batch staged last frame whose segment the
         // phase just crossed must commit BEFORE the mount slaving below
         // samples it, or the rider's camera clamps at the segment end for one
         // frame every tick (a 20 Hz stutter) while the world glides on. The
         // receive half turns it again for batches that arrive already overdue.
-        self.replica.entities.advance_clock(dt);
+        self.replica.entities.advance_clock(self.world_dt(dt));
         self.advance_interp_window();
         // Per-frame exceptions kept for local feel: look, hotbar, local player, entity push.
         self.apply_camera_input(input);
@@ -120,6 +125,7 @@ impl Game {
         self.world_tool_input(&mut tool_input);
         let input = &tool_input;
         self.tick_local_mining(dt, input);
+        self.record_dig(input.break_held);
         self.hand.recover(dt);
 
         let update = self.build_player_update(input);
@@ -137,6 +143,7 @@ impl Game {
     /// The frame's OUTPUT half: drain + apply the server's messages, then the
     /// per-frame presentation systems, and assemble the app-facing events.
     pub fn tick_receive(&mut self, dt: f32) -> GameEvents {
+        let dt = self.world_dt(dt);
         // Apply the drained messages (terrain installs, then tick batches)
         // BEFORE any presentation/HUD read — the same messages a remote
         // client applies off the wire. Everything below consumes ONLY what
@@ -181,7 +188,10 @@ impl Game {
         self.fx.advance_block_animations(world, dt);
         self.tick_mesh_budget();
 
-        self.assemble_game_events(events, dt)
+        let mut out = self.assemble_game_events(events, dt);
+        out.presented_world_replaced = self.take_world_replaced();
+        out.presented_time_jumped = self.take_time_jumped();
+        out
     }
 
     /// Drain and apply every pending server→client message. `Game::tick` runs
@@ -189,9 +199,16 @@ impl Game {
     /// suppresses `Game::tick`, so the client keeps consuming server output —
     /// streaming installs land, the channel never backs up, and resume is
     /// instant. Also where a dead server (crash / closed channel) is detected.
+    ///
+    /// The one place world messages enter — the server's, or what a
+    /// presentation released — so it is also where the capture taps them:
+    /// after the drain (in order) and around the apply.
     pub fn pump_network(&mut self) {
+        self.capture_frame_begin();
         let mut msgs = self.net.drain();
+        self.capture_drained(&msgs);
         self.apply_server_messages(&mut msgs);
+        self.capture_applied();
         self.net.recycle(msgs);
     }
 

@@ -48,8 +48,11 @@ fn build_session_with_pool(
     pool: Arc<JobPool>,
 ) -> (ServerGame, ClientBootstrap) {
     let (key, name) = local_player();
-    let (server, session) =
+    let (mut server, session) =
         petramond::local_host::build_in_process(world_name, new_seed, render_dist, key, name, pool);
+    // The suite never talks to the account service: a harness join offers a
+    // plain name, exactly as a private server's players do.
+    server.set_account_policy(petramond::account::AccountPolicy::Offline);
     (
         server,
         ClientBootstrap::local(world_name, render_dist, session),

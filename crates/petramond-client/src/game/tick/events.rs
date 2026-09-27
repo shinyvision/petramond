@@ -148,6 +148,14 @@ pub struct GameEvents {
     /// grows a proper "world stopped" screen for it, it
     /// is logged and the (frozen) world keeps rendering.
     pub connection_lost: Option<String>,
+    /// The world this session presents was swapped this frame (a
+    /// presentation opened or closed): the renderer's world state and every
+    /// playing spatial sound belong to the world that left.
+    pub presented_world_replaced: bool,
+    /// The world this session presents jumped in time this frame (an
+    /// apply restated it): its terrain stays, but what was sounding and moving
+    /// belongs to the moment that was left.
+    pub presented_time_jumped: bool,
 }
 
 impl GameEvents {

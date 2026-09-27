@@ -491,6 +491,18 @@
                                                                 }
                                                             },
                                                             {
+                                                                "type": "frame",
+                                                                "id": "addon_badge",
+                                                                "style": "icon.sheep_head",
+                                                                "layout": {
+                                                                    "w": 12,
+                                                                    "h": 12
+                                                                },
+                                                                "bind": {
+                                                                    "visible": "is_addon"
+                                                                }
+                                                            },
+                                                            {
                                                                 "type": "badge",
                                                                 "bind": {
                                                                     "text": "version",
@@ -579,6 +591,37 @@
                                 "style": "button.danger"
                             }
                         ]
+                    }
+                ]
+            },
+            {
+                "type": "tooltip",
+                "hover": "addon_badge",
+                "id": "addon_badge_tooltip",
+                "style": "panel.inset",
+                "bind": {
+                    "visible": "tab_mods"
+                },
+                "layout": {
+                    "max_w": 200,
+                    "abs": {
+                        "x": 4,
+                        "y": 4
+                    },
+                    "pad": [
+                        3,
+                        2,
+                        3,
+                        3
+                    ],
+                    "align": "stretch"
+                },
+                "children": [
+                    {
+                        "type": "label",
+                        "small": true,
+                        "wrap": true,
+                        "text": "Petramond Addon"
                     }
                 ]
             }

@@ -190,6 +190,7 @@
             "justify": "start"
           },
           "bind": {
+            "text": "leave_label",
             "visible": "is_remote"
           }
         },
@@ -244,6 +245,9 @@
         "bool": true
       },
       "lan_status": {
+        "str": "Sample text"
+      },
+      "leave_label": {
         "str": "Sample text"
       }
     },

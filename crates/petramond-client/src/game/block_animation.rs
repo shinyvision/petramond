@@ -40,7 +40,6 @@ impl BlockAnimations {
     }
 
     /// The chests someone is looking inside.
-    #[cfg(test)]
     pub(super) fn open_chests(&self) -> &FxHashSet<IVec3> {
         &self.open_chests
     }

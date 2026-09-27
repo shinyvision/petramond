@@ -348,12 +348,10 @@ mod tests {
     /// through `is_crashed`.
     #[test]
     fn panicking_server_crashes_loud_and_saves_nothing() {
-        let dir =
-            std::env::temp_dir().join(format!("petramond-handle-panic-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = petramond_util::test_dirs::TestScratchDir::new("handle-panic");
 
         let mut server = server_game();
-        let opened = crate::save::open_at(dir.clone()).expect("temp save opens");
+        let opened = crate::save::open_at(dir.to_path_buf()).expect("temp save opens");
         server.world.attach_save(opened.save, opened.saved);
 
         let mut handle = spawn(server);
@@ -369,7 +367,5 @@ mod tests {
             !dir.join("level.dat").exists(),
             "a crashed server must NOT save (mid-tick state may be corrupt)"
         );
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

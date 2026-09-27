@@ -307,7 +307,7 @@ fn predicted_mine_relights_and_remeshes_the_opened_shaft_synchronously() {
     world.note_section_loaded(shaft);
     world.data.sections.insert(roof, Arc::new(roof_section));
     world.note_section_loaded(roof);
-    let column = world.data.columns.get_mut(&ground.chunk_pos()).unwrap();
+    let column = Arc::make_mut(world.data.columns.get_mut(&ground.chunk_pos()).unwrap());
     for z in 0..petramond_world::chunk::SECTION_SIZE {
         for x in 0..petramond_world::chunk::SECTION_SIZE {
             column.set_surface_y(x, z, 32);

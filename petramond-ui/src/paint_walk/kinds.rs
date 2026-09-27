@@ -1,11 +1,11 @@
 //! One painter per widget kind. Each draws only the instance itself; the
 //! walk in the parent module paints children and scrollbar chrome after it.
 
-use super::{frame_src, Here, PaintCtx};
+use super::{frame_src, mask, Here, Icon, PaintCtx, SceneElement, SceneView};
 use crate::doc::{GaugeMode, ImageFit, TabSpec};
 use crate::layout::{grid_cell, RectI};
 use crate::paint::{Fit, PaintStyle, Painter, SpriteSrc, TexId};
-use crate::theme::{palette, FaceState, Part};
+use crate::theme::{palette, FaceState};
 use crate::widget;
 
 /// Gap between an icon and the label beside it, logical px.
@@ -27,6 +27,7 @@ impl<'a> PaintCtx<'a> {
         wrap: bool,
         scale: u32,
         small: bool,
+        max_lines: Option<u32>,
         p: &mut Painter<'_>,
     ) {
         let inst = n.inst;
@@ -41,6 +42,8 @@ impl<'a> PaintCtx<'a> {
         let (rect, clip) = (n.rect, n.clip);
         if scale > 1 {
             p.text_scaled(text, rect.x, rect.y, scale, color, clip);
+        } else if wrap && max_lines.is_some() {
+            p.text_wrapped_lines(text, rect, small, max_lines, color, clip);
         } else if small && wrap {
             p.text_wrapped_small(text, rect, color, clip);
         } else if small {
@@ -96,7 +99,6 @@ impl<'a> PaintCtx<'a> {
     pub(super) fn button(
         &self,
         n: &Here<'a>,
-        icon: Option<&str>,
         frames: Option<[u32; 2]>,
         fps: Option<f32>,
         p: &mut Painter<'_>,
@@ -147,7 +149,8 @@ impl<'a> PaintCtx<'a> {
             y: rect.y + label_off[1],
             ..rect
         };
-        let text_x = self.icon_and_label_block(p, shifted, icon, text, clip);
+        let icon = inst.icon_name().and_then(|name| self.icon(name));
+        let text_x = self.icon_and_label_block(p, shifted, icon, inst.enabled, text, clip);
         if !text.is_empty() {
             // Centred while the block fits; once it does not, the run starts
             // at the padding edge and ellipsizes into the face instead of
@@ -165,18 +168,18 @@ impl<'a> PaintCtx<'a> {
         }
     }
 
-    /// Draw `icon` (a part key) of an icon + label block centred in `cell`,
-    /// returning where the label starts. Buttons and tabs share it.
+    /// Draw `icon` of an icon + label block centred in `cell`, returning
+    /// where the label starts. Buttons and tabs share it.
     fn icon_and_label_block(
         &self,
         p: &mut Painter<'_>,
         cell: RectI,
-        icon: Option<&str>,
+        icon: Option<Icon<'_>>,
+        enabled: bool,
         text: &str,
         clip: Option<RectI>,
     ) -> i32 {
-        let icon_part = icon.and_then(|k| self.theme.part(k));
-        let (icon_w, icon_h) = icon_part.map(Part::natural).unwrap_or((0, 0));
+        let (icon_w, icon_h) = icon.as_ref().map_or((0, 0), Icon::size);
         let text_w = self.theme.ui_font().width(text);
         let gap = if icon_w > 0 && text_w > 0 {
             ICON_GAP
@@ -184,14 +187,14 @@ impl<'a> PaintCtx<'a> {
             0
         };
         let mut x = cell.x + (cell.w - (icon_w + gap + text_w)) / 2;
-        if let Some(face) = icon_part.and_then(|part| part.face(FaceState::Default)) {
+        if let Some(icon) = &icon {
             let at = RectI {
                 x,
                 y: cell.y + (cell.h - icon_h) / 2,
                 w: icon_w,
                 h: icon_h,
             };
-            self.draw_sprite(p, face, at, PaintStyle::plain(clip));
+            self.draw_icon(p, icon, at, enabled, clip);
             x += icon_w + gap;
         }
         x
@@ -212,18 +215,15 @@ impl<'a> PaintCtx<'a> {
         if let Some(face) = face {
             self.draw_face(p, face, n.rect, n.clip);
         }
-        if let crate::doc::NodeKind::Toggle { icon: Some(icon) } = &inst.node.kind {
-            let icon_part = self.theme.part(icon);
-            let (icon_w, icon_h) = icon_part.map(Part::natural).unwrap_or((0, 0));
-            if let Some(face) = icon_part.and_then(|pt| pt.face(FaceState::Default)) {
-                let at = RectI {
-                    x: n.rect.x + (n.rect.w - icon_w) / 2,
-                    y: n.rect.y + (n.rect.h - icon_h) / 2,
-                    w: icon_w,
-                    h: icon_h,
-                };
-                self.draw_sprite(p, face, at, PaintStyle::plain(n.clip));
-            }
+        if let Some(icon) = inst.icon_name().and_then(|name| self.icon(name)) {
+            let (icon_w, icon_h) = icon.size();
+            let at = RectI {
+                x: n.rect.x + (n.rect.w - icon_w) / 2,
+                y: n.rect.y + (n.rect.h - icon_h) / 2,
+                w: icon_w,
+                h: icon_h,
+            };
+            self.draw_icon(p, &icon, at, inst.enabled, n.clip);
         }
     }
 
@@ -263,7 +263,13 @@ impl<'a> PaintCtx<'a> {
         }
     }
 
-    pub(super) fn text_input(&self, n: &Here<'a>, placeholder: Option<&str>, p: &mut Painter<'_>) {
+    pub(super) fn text_input(
+        &self,
+        n: &Here<'a>,
+        placeholder: Option<&str>,
+        masked: bool,
+        p: &mut Painter<'_>,
+    ) {
         let inst = n.inst;
         let (rect, clip) = (n.rect, n.clip);
         let state = if !inst.enabled {
@@ -273,17 +279,28 @@ impl<'a> PaintCtx<'a> {
         } else {
             FaceState::Default
         };
+        // A bound palette entry tints the field and colours its text, but
+        // never the disabled face.
+        let bound_color = inst
+            .palette
+            .as_deref()
+            .filter(|_| inst.enabled)
+            .map(|key| self.theme.color(key));
         if let Some(face) = n.part.and_then(|p| p.face(state)) {
-            self.draw_face(p, face, rect, clip);
+            let color = bound_color.unwrap_or([1.0; 4]);
+            self.draw_face_styled(p, face, rect, PaintStyle { color, clip });
         }
         let font = self.theme.ui_font();
         let text_rect = widget::input_text_rect(rect, self.theme.metrics.button_pad);
         let visible = widget::input_visible_chars(font, text_rect.w);
         let ty = rect.y + (rect.h - font.line_h()) / 2;
-        let text_color = self.theme.color(palette::TEXT);
+        let text_color = bound_color.unwrap_or_else(|| self.theme.color(palette::TEXT));
         match inst.key.as_ref().and_then(|k| self.fs.editors.get(k)) {
             Some(editor) => {
-                let view = editor.render(visible, n.focused, self.fs.now);
+                let mut view = editor.render(visible, n.focused, self.fs.now);
+                if masked {
+                    view.text = mask(&view.text);
+                }
                 let selection = self.theme.color(palette::SELECTION);
                 p.text_input_view(&view, text_rect.x, ty, text_color, selection, clip);
             }
@@ -298,6 +315,11 @@ impl<'a> PaintCtx<'a> {
                     (bound, text_color)
                 };
                 let shown: String = shown.chars().take(visible).collect();
+                let shown = if masked && !bound.is_empty() {
+                    mask(&shown)
+                } else {
+                    shown
+                };
                 p.text(&shown, text_rect.x, ty, color, clip);
             }
         }
@@ -383,7 +405,8 @@ impl<'a> PaintCtx<'a> {
             }
             // Icon + label centred as one block, like leaf buttons.
             let text = tab.label.as_deref().unwrap_or("");
-            let x = self.icon_and_label_block(p, cell, tab.icon.as_deref(), text, n.clip);
+            let icon = tab.icon.as_deref().and_then(|name| self.icon(name));
+            let x = self.icon_and_label_block(p, cell, icon, inst.enabled, text, n.clip);
             if !text.is_empty() {
                 let y = cell.y + (cell.h - self.theme.ui_font().line_h()) / 2;
                 let color = self.label_color(n.part, inst.enabled);
@@ -394,8 +417,17 @@ impl<'a> PaintCtx<'a> {
 
     pub(super) fn badge(&self, n: &Here<'a>, p: &mut Painter<'_>) {
         let rect = n.rect;
+        // A bound palette entry tints the chip (never a disabled one).
+        let color = match n.inst.palette.as_deref() {
+            Some(key) if n.inst.enabled => self.theme.color(key),
+            _ => [1.0; 4],
+        };
         if let Some(face) = n.part.and_then(|p| p.face(FaceState::Default)) {
-            self.draw_face(p, face, rect, n.clip);
+            let style = PaintStyle {
+                color,
+                clip: n.clip,
+            };
+            self.draw_face_styled(p, face, rect, style);
         }
         if let Some(text) = n.inst.text.as_deref() {
             let font = self.theme.ui_font();
@@ -454,6 +486,114 @@ impl<'a> PaintCtx<'a> {
             };
             let color = self.label_color(n.part, inst.enabled);
             p.text_wrapped(text, block, color, n.clip);
+        }
+    }
+
+    /// A `canvas` node: the host scene its `scene` binding names, one scene
+    /// unit per logical pixel, everything clipped to the canvas.
+    pub(super) fn canvas(&self, n: &Here<'a>, p: &mut Painter<'_>) {
+        let Some(scene) = n.inst.scene.as_deref().and_then(|s| self.images.scene(s)) else {
+            return;
+        };
+        let rect = n.rect;
+        let clip = n.clip.map_or(rect, |c| c.intersect(rect));
+        self.scene(scene, rect, clip, p);
+    }
+
+    fn scene(&self, scene: &SceneView, rect: RectI, clip: RectI, p: &mut Painter<'_>) {
+        let at = |x: f32, y: f32| {
+            (
+                rect.x + (x + scene.offset[0]).round() as i32,
+                rect.y + (y + scene.offset[1]).round() as i32,
+            )
+        };
+        let image = |name: &str| {
+            let (tex, size) = self.images.resolve(name)?;
+            Some(SpriteSrc {
+                tex: TexId::DocImage(tex),
+                rect: [0, 0, size.0, size.1],
+                tex_size: size,
+            })
+        };
+        let style = PaintStyle::plain(Some(clip));
+        for element in &scene.elements {
+            match element {
+                SceneElement::Image {
+                    image: name,
+                    rect: r,
+                } => {
+                    let Some(src) = image(name) else { continue };
+                    let (x, y) = at(r[0], r[1]);
+                    let dst = RectI {
+                        x,
+                        y,
+                        w: r[2].round() as i32,
+                        h: r[3].round() as i32,
+                    };
+                    p.sprite(&src, dst, Fit::Stretch, style);
+                }
+                SceneElement::Sprite {
+                    image: name,
+                    center,
+                } => {
+                    let Some(src) = image(name) else { continue };
+                    let (cx, cy) = at(center[0], center[1]);
+                    let (w, h) = (src.tex_size.0 as i32, src.tex_size.1 as i32);
+                    let dst = RectI {
+                        x: cx - w / 2,
+                        y: cy - h / 2,
+                        w,
+                        h,
+                    };
+                    p.sprite(&src, dst, Fit::Stretch, style);
+                }
+                SceneElement::Rect {
+                    rect: r,
+                    color,
+                    filled,
+                } => {
+                    let (x, y) = at(r[0], r[1]);
+                    let (w, h) = (r[2].round() as i32, r[3].round() as i32);
+                    let edge = |x, y, w, h| RectI { x, y, w, h };
+                    let strips = if *filled || w <= 2 || h <= 2 {
+                        vec![edge(x, y, w, h)]
+                    } else {
+                        vec![
+                            edge(x, y, w, 1),
+                            edge(x, y + h - 1, w, 1),
+                            edge(x, y + 1, 1, h - 2),
+                            edge(x + w - 1, y + 1, 1, h - 2),
+                        ]
+                    };
+                    for strip in strips {
+                        let strip = strip.intersect(clip);
+                        if strip.w > 0 && strip.h > 0 {
+                            p.solid(strip, *color, Some(clip));
+                        }
+                    }
+                }
+                SceneElement::Text {
+                    pos,
+                    text,
+                    color,
+                    small,
+                    max_w,
+                } => {
+                    let (x, y) = at(pos[0], pos[1]);
+                    let right = match max_w {
+                        Some(w) => (x + w.round() as i32).min(clip.x + clip.w),
+                        None => clip.x + clip.w,
+                    };
+                    let k = if *small { p.small_text_step() } else { p.scale };
+                    let line = RectI {
+                        x,
+                        y,
+                        w: (right - x).max(0),
+                        h: (p.font.line_h() * k + p.scale - 1) / p.scale.max(1),
+                    };
+                    p.ellipsized_at(text, line, k, *color, Some(clip));
+                }
+            }
         }
     }
 }

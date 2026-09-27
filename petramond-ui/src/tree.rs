@@ -81,9 +81,13 @@ pub struct InstData {
     /// authored `layout.abs` position.
     pub abs_x: Option<i32>,
     pub abs_y: Option<i32>,
-    /// Resolved `palette` binding (labels): the theme palette entry that
-    /// colours the text this frame (empty string resolves to `None`).
+    /// Resolved `palette` binding (labels, badges, inputs): the theme palette
+    /// entry that colours the node this frame (empty resolves to `None`).
     pub palette: Option<String>,
+    /// Resolved `scene` binding (canvas nodes): the host scene to paint.
+    pub scene: Option<String>,
+    /// Resolved `icon` binding: this frame's icon name (empty = `None`).
+    pub icon: Option<String>,
     pub text_opacity: f32,
     pub enabled: bool,
     /// The enabled state inherited from the parent when this was expanded.
@@ -133,6 +137,18 @@ impl Inst<'_> {
         self.node.effective_align_of(self.layout)
     }
 
+    /// This frame's icon name for a `button`/`toggle`: the bound override,
+    /// else the authored one.
+    pub fn icon_name(&self) -> Option<&str> {
+        if let Some(icon) = self.icon.as_deref() {
+            return Some(icon);
+        }
+        match &self.node.kind {
+            NodeKind::Button { icon, .. } | NodeKind::Toggle { icon } => icon.as_deref(),
+            _ => None,
+        }
+    }
+
     /// The effective image name for `image`/`rotimage`/image-backed `button`
     /// nodes: the bound override, else the node's static name (`None` when
     /// empty).
@@ -163,16 +179,18 @@ impl<'d> InstTree<'d> {
         Self::expand_form_hover(doc, state, compact, None)
     }
 
-    /// [`expand_form`](Self::expand_form) with the id of the widget under the
-    /// cursor (one frame old — the same contract as hover-revealed list
-    /// content): a tooltip whose `hover` anchor does not match expands as
-    /// invisible, so an anchored tooltip costs nothing on the frames its
-    /// widget is not pointed at.
+    /// [`expand_form`](Self::expand_form) with the widget under the cursor
+    /// (one frame old — the same contract as hover-revealed list content): a
+    /// tooltip whose `hover` anchor does not match expands as invisible, so an
+    /// anchored tooltip costs nothing on the frames its widget is not pointed
+    /// at. A tooltip stamped inside a list template matches only its own
+    /// stamp's widget, and binds that stamp's values; one outside matches the
+    /// widget id on any stamp.
     pub fn expand_form_hover(
         doc: &'d Document,
         state: &UiState,
         compact: bool,
-        hover: Option<&str>,
+        hover: Option<&InstKey>,
     ) -> InstTree<'d> {
         let shape = reuse::DocShape::of(doc);
         Self::expand_with(doc, &shape, state, compact, hover, None)
@@ -186,7 +204,7 @@ impl<'d> InstTree<'d> {
         shape: &reuse::DocShape<'d>,
         state: &UiState,
         compact: bool,
-        hover: Option<&str>,
+        hover: Option<&InstKey>,
         prev: Option<&mut Prev>,
     ) -> InstTree<'d> {
         let mut tree = InstTree { insts: Vec::new() };
@@ -294,7 +312,7 @@ struct Grow<'t, 'd, 's> {
     shape: &'s reuse::DocShape<'d>,
     state: &'s UiState,
     compact: bool,
-    hover: Option<&'s str>,
+    hover: Option<&'s InstKey>,
     prev: Option<&'s mut Prev>,
 }
 
@@ -365,7 +383,13 @@ impl<'d> Grow<'_, 'd, '_> {
         if anchored.is_some() {
             reads.deps.push(reuse::HOVER_DEP);
         }
-        if !visible || anchored.is_some_and(|anchor| self.hover != Some(anchor)) {
+        // A tooltip stamped inside a list template matches only its own
+        // stamp's widget; one outside matches the widget id on any stamp.
+        let hover = self.hover;
+        let hovered = |anchor: &str| {
+            hover.is_some_and(|h| h.id == anchor && (at.item.is_none() || h.item == at.item))
+        };
+        if !visible || anchored.is_some_and(|anchor| !hovered(anchor)) {
             // The parent must know what hid this child, or a clean parent
             // could be adopted next frame without the child that should
             // have appeared.
@@ -409,6 +433,8 @@ impl<'d> Grow<'_, 'd, '_> {
             abs_x: reads.int(&node.bind.abs_x),
             abs_y: reads.int(&node.bind.abs_y),
             palette: reads.str(&node.bind.palette),
+            scene: reads.str(&node.bind.scene),
+            icon: reads.str(&node.bind.icon),
             text_opacity: reads
                 .key(&node.bind.text_opacity)
                 .and_then(UiValue::as_f32)

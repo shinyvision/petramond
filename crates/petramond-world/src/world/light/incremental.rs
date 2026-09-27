@@ -126,7 +126,7 @@ pub fn edit_relightable(sections: &FxHashMap<SectionPos, Arc<Section>>, cell: IV
 /// the caller then falls back to full rebakes for every edit.
 pub fn relight_edits(
     sections: &FxHashMap<SectionPos, Arc<Section>>,
-    columns: &FxHashMap<ChunkPos, Column>,
+    columns: &FxHashMap<ChunkPos, Arc<Column>>,
     edits: &[IVec3],
 ) -> Option<Vec<RelitSection>> {
     if edits.len() > MAX_EDITS {
@@ -256,7 +256,7 @@ struct Region<'a> {
 impl<'a> Region<'a> {
     fn build(
         sections: &'a FxHashMap<SectionPos, Arc<Section>>,
-        columns: &'a FxHashMap<ChunkPos, Column>,
+        columns: &'a FxHashMap<ChunkPos, Arc<Column>>,
         edits: &[IVec3],
     ) -> Option<Self> {
         let edit_sections: FxHashSet<SectionPos> = edits

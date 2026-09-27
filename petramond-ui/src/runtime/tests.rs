@@ -240,7 +240,8 @@ fn text_input_focus_type_submit() {
             .any(|e| matches!(e, UiEvent::Submit { id, text } if id == "name" && text == "Hi")),
         "{ev:?}"
     );
-    // Unfocused chars go nowhere; ESC blurs first.
+    // An unfocused char edits nothing and reaches the screen as a key; ESC
+    // blurs first.
     let ev = h.frame(&[
         InputEvent::Key {
             key: NavKey::Escape,
@@ -251,6 +252,14 @@ fn text_input_focus_type_submit() {
     ]);
     assert!(
         !ev.iter().any(|e| matches!(e, UiEvent::TextChanged { .. })),
+        "{ev:?}"
+    );
+    assert!(
+        ev.contains(&UiEvent::Key {
+            key: NavKey::Char('x'),
+            shift: true,
+            ctrl: false,
+        }),
         "{ev:?}"
     );
 }
@@ -1641,4 +1650,373 @@ fn bound_label_opacity_changes_painted_alpha_without_moving_text() {
         assert_eq!(a.pos, b.pos);
         assert_eq!(a.color[3] * 0.5, b.color[3]);
     }
+}
+
+fn seam_doc() -> Arc<Document> {
+    Arc::new(
+        Document::from_json(
+            r#"{
+                "format": 1, "kind": "petramond:seam_test", "class": "screen",
+                "root": { "type": "frame", "layout": { "w": 200, "h": 200, "pad": [4,4,4,4], "gap": 4 },
+                    "children": [
+                        { "type": "button", "id": "sort", "text": "Sort", "layout": { "w": 40 } },
+                        { "type": "text_input", "id": "a", "layout": { "w": 60 } },
+                        { "type": "text_input", "id": "b", "layout": { "w": 60 } },
+                        { "type": "label", "id": "cut", "text": "A title far too long for its box",
+                          "ellipsis_tip": true, "layout": { "w": 30 } },
+                        { "type": "label", "id": "fits", "text": "Ok", "ellipsis_tip": true },
+                        { "type": "label", "id": "capped", "wrap": true, "max_lines": 2,
+                          "text": "one two three four five six seven eight nine ten eleven twelve",
+                          "layout": { "w": 40 } },
+                        { "type": "scroll", "id": "sc", "layout": { "h": 40, "w": 100 },
+                          "children": [
+                            { "type": "list", "id": "rows", "bind": { "items": "rows" },
+                              "children": [
+                                { "type": "row", "layout": { "h": 20 }, "children": [
+                                    { "type": "button", "id": "row_btn", "text": "x" },
+                                    { "type": "tooltip", "hover": "row_btn",
+                                      "layout": { "abs": { "x": 2, "y": 2 } },
+                                      "children": [ { "type": "label", "id": "row_tip", "bind": { "text": "name" } } ] }
+                                ] }
+                              ] }
+                          ] },
+                        { "type": "frame", "id": "popup", "layout": { "abs": { "x": 0, "y": 0 }, "w": 60, "h": 30, "anchor_to": "sort" },
+                          "bind": { "visible": "popup_open" } }
+                    ] }
+            }"#,
+        )
+        .unwrap(),
+    )
+}
+
+fn seam_harness() -> Harness {
+    let mut h = Harness::new();
+    h.rt = UiRuntime::new(seam_doc(), Arc::new(Theme::placeholder()));
+    h.state.set("popup_open", UiValue::Bool(true));
+    h
+}
+
+#[test]
+fn a_tooltip_stamped_in_a_list_shows_for_its_own_stamp_only() {
+    let mut h = seam_harness();
+    h.frame(&[]);
+    let row1 = h
+        .out
+        .named
+        .iter()
+        .find(|(k, _)| k.id == "row_btn" && k.item == Some(1))
+        .map(|(_, r)| *r)
+        .unwrap();
+    let (x, y) = ((row1.x + row1.w / 2) as f32, (row1.y + row1.h / 2) as f32);
+    h.frame(&[InputEvent::PointerMove { x, y }]);
+    h.frame(&[]);
+    let tips: Vec<_> = h
+        .out
+        .named
+        .iter()
+        .filter(|(k, _)| k.id == "row_tip")
+        .map(|(k, _)| k.item)
+        .collect();
+    assert_eq!(
+        tips,
+        vec![Some(1)],
+        "only the hovered stamp's tooltip expands"
+    );
+}
+
+#[test]
+fn an_anchored_popup_sits_under_its_widget() {
+    let mut h = seam_harness();
+    h.frame(&[]);
+    let sort = h.out.rect("sort").unwrap();
+    let popup = h.out.rect("popup").unwrap();
+    assert_eq!((popup.x, popup.y), (sort.x, sort.y + sort.h));
+}
+
+#[test]
+fn leaving_a_text_input_reports_blur_however_focus_moved() {
+    let mut h = seam_harness();
+    h.frame(&[]);
+    let (ax, ay) = h.center("a");
+    h.frame(&[down(ax, ay), up(ax, ay)]);
+    let ev = h.frame(&[InputEvent::Key {
+        key: NavKey::Tab,
+        shift: false,
+        ctrl: false,
+    }]);
+    assert!(ev.contains(&UiEvent::Blur {
+        id: "a".into(),
+        item: None
+    }));
+    let (sx, sy) = h.center("sort");
+    let ev = h.frame(&[down(sx, sy), up(sx, sy)]);
+    assert!(ev.contains(&UiEvent::Blur {
+        id: "b".into(),
+        item: None
+    }));
+    let ev = h.frame(&[]);
+    assert!(!ev.iter().any(|e| matches!(e, UiEvent::Blur { .. })));
+}
+
+#[test]
+fn list_ranges_report_the_stamps_in_view() {
+    let mut h = seam_harness();
+    h.frame(&[]);
+    let range = |h: &Harness| {
+        h.out
+            .list_ranges
+            .iter()
+            .find(|(k, ..)| k.id == "rows")
+            .map(|&(_, first, count)| (first, count))
+    };
+    assert_eq!(range(&h), Some((0, 2)), "a 40 px view shows two 20 px rows");
+    let (x, y) = h.center("sc");
+    h.frame(&[
+        InputEvent::PointerMove { x, y },
+        InputEvent::Scroll { delta: 30 },
+    ]);
+    h.frame(&[]);
+    assert_eq!(
+        range(&h),
+        Some((1, 3)),
+        "scrolled 30 px: rows 1..=3 show part"
+    );
+}
+
+#[test]
+fn an_ellipsis_tip_shows_only_when_the_text_was_cut() {
+    let mut h = seam_harness();
+    h.frame(&[]);
+    let (x, y) = h.center("cut");
+    h.frame(&[InputEvent::PointerMove { x, y }]);
+    assert_eq!(
+        h.out.text_tip.as_deref(),
+        Some("A title far too long for its box")
+    );
+    let (x, y) = h.center("fits");
+    h.frame(&[InputEvent::PointerMove { x, y }]);
+    assert_eq!(h.out.text_tip, None, "nothing was cut, nothing shows");
+}
+
+#[test]
+fn a_capped_label_stops_at_its_line_count() {
+    let mut h = seam_harness();
+    h.frame(&[]);
+    let capped = h.out.rect("capped").unwrap();
+    let font = Theme::placeholder().ui_font().clone();
+    let two_lines = (font.line_h() + font.line_advance()) * 2;
+    assert_eq!(capped.h, two_lines, "two lines at gui scale 2");
+}
+
+struct Scenes(crate::paint_walk::SceneView);
+
+impl crate::paint_walk::DocImages for Scenes {
+    fn resolve(&self, name: &str) -> Option<(u16, (u32, u32))> {
+        (name == "art").then_some((0, (8, 8)))
+    }
+    fn scene(&self, name: &str) -> Option<&crate::paint_walk::SceneView> {
+        (name == "timeline").then_some(&self.0)
+    }
+}
+
+fn surface_run(
+    rt: &UiRuntime,
+    state: &UiState,
+    images: &dyn crate::paint_walk::DocImages,
+    fs: &mut FrameState,
+    out: &mut FrameOutput,
+    now: f64,
+    input: &[InputEvent],
+) -> Vec<UiEvent> {
+    rt.frame(
+        FrameArgs {
+            screen: (400, 400),
+            scale: 2,
+            now,
+            state,
+            input,
+            clipboard: None,
+            images,
+            dim: None,
+            preview: None,
+        },
+        fs,
+        out,
+    );
+    out.events.clone()
+}
+
+/// A document canvas paints its host scene inside its own rect only, and
+/// talks to its host in its own local coordinates: presses with a click
+/// streak, one move per frame, wheel travel that scrolls nothing around it,
+/// its size once and on change, and a leave.
+#[test]
+fn a_document_canvas_paints_its_scene_and_reports_the_pointer() {
+    let doc = Arc::new(
+        Document::from_json(
+            r#"{
+                "format": 1, "kind": "petramond:canvas_test", "class": "screen",
+                "root": { "type": "scroll", "id": "sc", "layout": { "w": 200, "h": 150 },
+                    "children": [
+                        { "type": "frame", "layout": { "h": 400 }, "children": [
+                            { "type": "canvas", "id": "tl", "interactive": true,
+                              "bind": { "scene": "scene_key" }, "layout": { "w": 100, "h": 40 } }
+                        ] }
+                    ] }
+            }"#,
+        )
+        .unwrap(),
+    );
+    let rt = UiRuntime::new(doc, Arc::new(Theme::placeholder()));
+    let mut state = UiState::new();
+    state.set("scene_key", UiValue::Str("timeline".into()));
+    let scene = Scenes(crate::paint_walk::SceneView {
+        offset: [0.0, 0.0],
+        elements: vec![crate::paint_walk::SceneElement::Rect {
+            rect: [-50.0, 0.0, 400.0, 10.0],
+            color: [1.0, 0.0, 0.0, 1.0],
+            filled: true,
+        }],
+    });
+    let (mut fs, mut out) = (FrameState::new(), FrameOutput::default());
+    let ev = surface_run(&rt, &state, &scene, &mut fs, &mut out, 0.0, &[]);
+    assert!(ev.contains(&UiEvent::SurfaceSize {
+        id: "tl".into(),
+        item: None,
+        w: 100,
+        h: 40
+    }));
+    let tl = out.rect("tl").unwrap();
+    let red: Vec<_> = out
+        .draw
+        .vertices
+        .iter()
+        .filter(|v| v.color == [1.0, 0.0, 0.0, 1.0])
+        .collect();
+    assert!(!red.is_empty(), "the scene painted");
+    assert!(
+        red.iter()
+            .all(|v| v.pos[0] >= tl.x as f32 - 0.5 && v.pos[0] <= (tl.x + tl.w) as f32 + 0.5),
+        "and only inside its canvas"
+    );
+
+    let (x, y) = ((tl.x + 20) as f32, (tl.y + 10) as f32);
+    let ev = surface_run(
+        &rt,
+        &state,
+        &scene,
+        &mut fs,
+        &mut out,
+        0.1,
+        &[
+            InputEvent::PointerMove { x, y },
+            InputEvent::PointerMove { x: x + 2.0, y },
+        ],
+    );
+    let moves: Vec<_> = ev
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                UiEvent::SurfacePointer {
+                    phase: PointerPhase::Move,
+                    ..
+                }
+            )
+        })
+        .collect();
+    assert_eq!(moves.len(), 1, "hover moves coalesce to one a frame");
+    let mut press = |now| {
+        let mut fs2 = std::mem::take(&mut fs);
+        let ev = surface_run(
+            &rt,
+            &state,
+            &scene,
+            &mut fs2,
+            &mut out,
+            now,
+            &[down(x, y), up(x, y)],
+        );
+        fs = fs2;
+        ev.into_iter()
+            .find_map(|e| match e {
+                UiEvent::SurfacePointer {
+                    phase: PointerPhase::Down,
+                    clicks,
+                    x,
+                    ..
+                } => Some((clicks, x)),
+                _ => None,
+            })
+            .unwrap()
+    };
+    assert_eq!(press(0.2), (1, 10.0), "local logical x");
+    assert_eq!(press(0.3).0, 2, "a quick second press is a double");
+    let ev = surface_run(
+        &rt,
+        &state,
+        &scene,
+        &mut fs,
+        &mut out,
+        0.4,
+        &[InputEvent::Scroll { delta: 20 }],
+    );
+    assert!(ev
+        .iter()
+        .any(|e| matches!(e, UiEvent::SurfaceScroll { delta: 20, .. })));
+    assert_eq!(
+        fs.scroll_offset(&InstKey {
+            id: "sc".into(),
+            item: None
+        }),
+        0,
+        "the scroll around the canvas stayed put"
+    );
+    let ev = surface_run(
+        &rt,
+        &state,
+        &scene,
+        &mut fs,
+        &mut out,
+        0.5,
+        &[InputEvent::PointerMove { x: 1.0, y: 1.0 }],
+    );
+    assert!(ev.iter().any(|e| matches!(
+        e,
+        UiEvent::SurfacePointer {
+            phase: PointerPhase::Leave,
+            ..
+        }
+    )));
+}
+
+/// A button's icon can be document art, and a binding swaps it per frame.
+#[test]
+fn a_bound_icon_swaps_between_a_theme_part_and_document_art() {
+    let doc = Arc::new(
+        Document::from_json(
+            r#"{
+                "format": 1, "kind": "petramond:icon_test", "class": "screen",
+                "root": { "type": "column", "children": [
+                    { "type": "button", "id": "play", "icon": "art", "bind": { "icon": "play_icon" } }
+                ] }
+            }"#,
+        )
+        .unwrap(),
+    );
+    let rt = UiRuntime::new(doc, Arc::new(Theme::placeholder()));
+    let scene = Scenes(Default::default());
+    let (mut fs, mut out) = (FrameState::new(), FrameOutput::default());
+    let doc_art = |out: &FrameOutput| {
+        out.draw
+            .batches
+            .iter()
+            .any(|b| b.tex == crate::paint::TexId::DocImage(0))
+    };
+    surface_run(&rt, &UiState::new(), &scene, &mut fs, &mut out, 0.0, &[]);
+    assert!(doc_art(&out), "the authored icon names document art");
+    let mut state = UiState::new();
+    state.set("play_icon", UiValue::Str("nothing_by_this_name".into()));
+    surface_run(&rt, &state, &scene, &mut fs, &mut out, 0.0, &[]);
+    assert!(!doc_art(&out), "the binding replaced it");
 }

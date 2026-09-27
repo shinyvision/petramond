@@ -6,33 +6,6 @@ use crate::server::game::PumpOutput;
 use petramond_util::test_time::TEST_HARD_DEADLINE;
 use std::time::Instant;
 
-#[test]
-fn presentation_pressure_reduces_admission_without_stalling_recovery() {
-    let baseline = presentation_admission_rate(2000.0, 0.0);
-    let loaded = presentation_admission_rate(2000.0, 2.0);
-    let overloaded = presentation_admission_rate(2000.0, 8.0);
-    assert!(baseline > loaded && loaded > overloaded && overloaded > 0.0);
-    assert_eq!(presentation_admission_rate(2000.0, 0.0), baseline);
-    assert!(presentation_admission_rate(2000.0, f32::MAX).is_finite());
-    assert!(
-        loaded * 2.0 < baseline,
-        "under pressure the admitted rate falls faster than the backlog ratio"
-    );
-
-    let mut sync = TerrainSync::default();
-    sync.apply_presentation_backlog(0, 0);
-    assert_eq!(sync.presentation_pressure, 0.0);
-    sync.apply_presentation_backlog(1024, 0);
-    assert_eq!(sync.presentation_pressure, 2.0, "mesh backlog in units");
-    sync.apply_presentation_backlog(0, 192);
-    assert_eq!(sync.presentation_pressure, 2.0, "upload backlog in units");
-    sync.apply_presentation_backlog(1024, 96);
-    assert_eq!(
-        sync.presentation_pressure, 2.0,
-        "the larger channel governs"
-    );
-}
-
 fn count_terrain(msgs: &[ServerToClient]) -> usize {
     msgs.iter()
         .filter(|m| {

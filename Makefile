@@ -10,8 +10,11 @@
 #   make sweep           -- delete build artifacts unused for SWEEP_DAYS (default 3) days
 #   make gui-builder     -- build (playtest) & run the GUI builder tool
 #   make gui-builder-dev -- build (debug) & run the GUI builder tool
-#   make mods            -- build mods-src (wasm32) & install packs into mods/
+#   make mods            -- build mods-src (wasm32) & install content packs into mods/
 #   make mod ID=<name>   -- build & install one mod from mods-src/
+#   make addons          -- pack release ZIPs from ../petramond-addons/
+#                           (INSTALL=1 also stages each as a local install)
+#   make content-pack-ids -- print the shipped content-pack ids, comma-separated
 #   make profile         -- run repeatable join + map perf harnesses in scratch data
 #   make smoke           -- exercise threaded, TCP, UI-connect, and headless lifecycles
 #   make test            -- the full debug-safe suite (TEST_GROUPS="core client" for a subset)
@@ -52,7 +55,7 @@ TEST_GROUPS ?=
 # Cargo profile for the wasm guests `make mods` / `make mod` build.
 MOD_PROFILE ?= wasm-dev
 
-.PHONY: run run-native run-release run-server dev build build-native clean sweep gui-builder gui-builder-dev mods mod test test-worldgen fmt fmt-check clippy deny source-audit validate-assets genparity profile smoke check
+.PHONY: run run-native run-release run-server dev build build-native clean sweep gui-builder gui-builder-dev mods mod addons content-pack-ids test test-worldgen fmt fmt-check clippy deny source-audit validate-assets genparity profile smoke check
 
 # `run` uses the `playtest` profile: release opt-level but incremental with
 # parallel codegen units and no LTO, so the edit→playtest loop rebuilds in
@@ -101,11 +104,12 @@ gui-builder-dev:
 	$(CARGO) run -p gui-builder
 
 # Build every mod crate in mods-src/ (its own wasm32 workspace) and install
-# each one that ships a pack/ dir into mods/<id>/ (pack files + mod.wasm),
-# where the game discovers it; only files that changed are copied. The pack
-# convention and its checks live in scripts/install-mods.sh, shared with the
-# tests and releases. MOD_PROFILE=wasm-dev (default) is the fast iteration
-# build; release packaging uses MOD_PROFILE=release.
+# each content pack into mods/<id>/ (pack files + mod.wasm), where the game
+# discovers it; only files that changed are copied. The pack convention and
+# its checks live in scripts/install-mods.sh, shared with the tests and
+# releases. Downloadable addons live in the separate sibling repository.
+# MOD_PROFILE=wasm-dev (default) is the fast iteration build; release
+# packaging uses MOD_PROFILE=release.
 # `make mod ID=<name>` builds and installs a single mod.
 mods:
 	CARGO_CMD="$(CARGO)" MOD_PROFILE="$(MOD_PROFILE)" bash scripts/install-mods.sh mods
@@ -113,6 +117,18 @@ mods:
 mod:
 	@[ -n "$(ID)" ] || { echo "usage: make mod ID=<mod-id>" >&2; exit 2; }
 	CARGO_CMD="$(CARGO)" MOD_PROFILE="$(MOD_PROFILE)" bash scripts/install-mods.sh mods $(ID)
+
+# Use the sibling addon checkout, compile its guests with its
+# wasm flags, and write publishable ZIPs to output/addons/. INSTALL=1 also
+# stages the ZIPs as local installs for the next game start.
+addons:
+	$(CARGO) build --profile playtest -p petramond --bin petramond_content
+	CARGO_CMD="$(CARGO)" INSTALL="$(INSTALL)" bash scripts/addons.sh
+
+# Paste into the website's app.content.reserved-mod-ids whenever a content
+# pack is added.
+content-pack-ids:
+	@bash scripts/content-pack-ids.sh
 
 # The canonical suite builds bundled WASM guests into target/, installs their
 # packs into an isolated temporary root, and runs every workspace with debug

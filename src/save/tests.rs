@@ -13,7 +13,7 @@ const RACHEL: crate::net::identity::PlayerKey = crate::net::identity::PlayerKey(
 #[test]
 fn legacy_player_files_are_adopted_once_by_the_first_claimant() {
     let dir = temp_world_dir("legacy-adopt");
-    let opened = open_at(dir.clone()).expect("open fresh");
+    let opened = open_at(dir.to_path_buf()).expect("open fresh");
     std::fs::create_dir_all(dir.join("players")).expect("players dir");
     let legacy = |slot| {
         let mut plr = Player::new(WorldPos::new(1.0, 70.0, 2.0));
@@ -78,13 +78,10 @@ fn legacy_player_files_are_adopted_once_by_the_first_claimant() {
     drop(files);
     let mut save = opened.save;
     save.shutdown();
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
-fn temp_world_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("petramond-savetest-{}-{tag}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir
+fn temp_world_dir(tag: &str) -> petramond_util::test_dirs::TestScratchDir {
+    petramond_util::test_dirs::TestScratchDir::new(&format!("savetest-{tag}"))
 }
 
 /// Read `pos` back and decode it; `None` if the read never answers. A
@@ -122,7 +119,7 @@ fn save_reopen_roundtrips_section_level_entities() {
     let pos = SectionPos::new(5, -3, -9); // negative cy: below the old datum
 
     {
-        let mut opened = open_at(dir.clone()).expect("open fresh");
+        let mut opened = open_at(dir.to_path_buf()).expect("open fresh");
         assert!(opened.level.is_none(), "fresh world has no level.dat");
         assert!(
             matches!(opened.save.load_player(&RACHEL), Ok(None)),
@@ -159,7 +156,7 @@ fn save_reopen_roundtrips_section_level_entities() {
     }
 
     {
-        let opened = open_at(dir.clone()).expect("reopen");
+        let opened = open_at(dir.to_path_buf()).expect("reopen");
 
         let level = opened.level.expect("level.dat restored");
         assert_eq!(level.seed, 0xABCD);
@@ -189,8 +186,6 @@ fn save_reopen_roundtrips_section_level_entities() {
             "remaining lifetime persisted"
         );
     }
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -200,7 +195,7 @@ fn explored_cache_does_not_expand_the_authoritative_manifest() {
     let edited_pos = SectionPos::new(5, 4, 9);
 
     {
-        let mut opened = open_at(dir.clone()).expect("open fresh");
+        let mut opened = open_at(dir.to_path_buf()).expect("open fresh");
         let mut cached = Section::new(cached_pos.cx, cached_pos.cy, cached_pos.cz);
         cached.set_block(2, 3, 4, Block::Stone);
         let mut cached_snap = SectionSnapshot::from_section(&cached);
@@ -224,7 +219,7 @@ fn explored_cache_does_not_expand_the_authoritative_manifest() {
     }
 
     {
-        let opened = open_at(dir.clone()).expect("reopen");
+        let opened = open_at(dir.to_path_buf()).expect("reopen");
         assert!(opened.saved.explored_contains(cached_pos));
         assert!(!opened.saved.authoritative_contains(cached_pos));
         assert!(opened.saved.authoritative_contains(edited_pos));
@@ -232,8 +227,6 @@ fn explored_cache_does_not_expand_the_authoritative_manifest() {
             load_blocking(&opened.save, &opened.saved, cached_pos).expect("cache section loads");
         assert_eq!(section.block_raw(2, 3, 4), Block::Stone.id());
     }
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -264,8 +257,6 @@ fn delete_world_removes_only_a_single_save_directory() {
 
     let invalid = delete_world_at(&saves, "../outside").expect_err("reject nested path");
     assert_eq!(invalid.kind(), std::io::ErrorKind::InvalidInput);
-
-    let _ = std::fs::remove_dir_all(&saves);
 }
 
 /// The unload/reload dupe, at the save layer: a section record written with a
@@ -276,7 +267,7 @@ fn re_saving_a_drop_free_section_clears_its_stale_record() {
     let dir = temp_world_dir("clear-stale-drops");
     let pos = SectionPos::new(2, 4, -4);
 
-    let mut opened = open_at(dir.clone()).expect("open fresh");
+    let mut opened = open_at(dir.to_path_buf()).expect("open fresh");
 
     // Unload-with-item: the record is written carrying one drop.
     let mut section = Section::new(pos.cx, pos.cy, pos.cz);
@@ -313,7 +304,6 @@ fn re_saving_a_drop_free_section_clears_its_stale_record() {
     assert_eq!(section.block_raw(1, 0, 1), Block::Stone.id());
 
     opened.save.shutdown();
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The same stale-record guard, for mobs: a section record written with a mob, then
@@ -326,7 +316,7 @@ fn re_saving_a_mob_free_section_clears_its_stale_record() {
     let dir = temp_world_dir("clear-stale-mobs");
     let pos = SectionPos::new(-7, 4, 3);
 
-    let mut opened = open_at(dir.clone()).expect("open fresh");
+    let mut opened = open_at(dir.to_path_buf()).expect("open fresh");
 
     // Unload-with-mob: the record is written carrying one mob.
     let section = Section::new(pos.cx, pos.cy, pos.cz);
@@ -360,7 +350,6 @@ fn re_saving_a_mob_free_section_clears_its_stale_record() {
     assert!(mobs.is_empty(), "the stale mob must not resurrect");
 
     opened.save.shutdown();
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A `level.dat` that exists but does not decode must refuse the open: a
@@ -373,10 +362,9 @@ fn an_unreadable_level_dat_refuses_the_open_and_is_left_alone() {
     let mut bad = level::FORMAT.current.to_le_bytes().to_vec();
     bad.push(1);
     std::fs::write(dir.join("level.dat"), &bad).unwrap();
-    let err = open_at(dir.clone()).err().expect("refused");
+    let err = open_at(dir.to_path_buf()).err().expect("refused");
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert_eq!(std::fs::read(dir.join("level.dat")).unwrap(), bad);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// An unreadable player file is an error, never a fresh player, and its
@@ -386,7 +374,7 @@ fn an_unreadable_level_dat_refuses_the_open_and_is_left_alone() {
 fn an_unreadable_player_file_is_quarantined_not_respawned_over() {
     const PAT: crate::net::identity::PlayerKey = crate::net::identity::PlayerKey([7; 32]);
     let dir = temp_world_dir("bad-player");
-    let mut opened = open_at(dir.clone()).expect("open fresh");
+    let mut opened = open_at(dir.to_path_buf()).expect("open fresh");
     let path = super::worlds::player_path(&dir.join("players"), &PAT);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
 
@@ -419,7 +407,6 @@ fn an_unreadable_player_file_is_quarantined_not_respawned_over() {
         newer,
         "a newer build's player file is never saved over"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A legacy (name-keyed) player file that does not decode goes through the
@@ -430,7 +417,7 @@ fn an_unreadable_player_file_is_quarantined_not_respawned_over() {
 fn an_unreadable_legacy_player_file_is_not_migrated() {
     const ANN: crate::net::identity::PlayerKey = crate::net::identity::PlayerKey([9; 32]);
     let dir = temp_world_dir("bad-legacy");
-    let mut opened = open_at(dir.clone()).expect("open fresh");
+    let mut opened = open_at(dir.to_path_buf()).expect("open fresh");
     std::fs::create_dir_all(dir.join("players")).expect("players dir");
     let legacy = dir.join("players/Ann.dat");
     let owned = super::worlds::player_path(&dir.join("players"), &ANN);
@@ -464,7 +451,6 @@ fn an_unreadable_legacy_player_file_is_not_migrated() {
         !owned.exists(),
         "a fresh player never shadows a legacy file from a newer build"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A section whose record must not be overwritten drops out of the index
@@ -477,7 +463,7 @@ fn a_write_protected_section_is_never_saved_over() {
     let mut original = Section::new(pos.cx, pos.cy, pos.cz);
     original.set_block(1, 1, 1, Block::Stone);
     {
-        let mut opened = open_at(dir.clone()).expect("open fresh");
+        let mut opened = open_at(dir.to_path_buf()).expect("open fresh");
         opened.save.save_sections(
             &mut opened.saved,
             vec![SectionSnapshot::from_section(&original)],
@@ -485,7 +471,7 @@ fn a_write_protected_section_is_never_saved_over() {
         opened.save.shutdown();
     }
     {
-        let mut opened = open_at(dir.clone()).expect("reopen");
+        let mut opened = open_at(dir.to_path_buf()).expect("reopen");
         assert!(opened.saved.authoritative_contains(pos));
         opened.save.note_section_unreadable(
             &mut opened.saved,
@@ -512,11 +498,10 @@ fn a_write_protected_section_is_never_saved_over() {
         );
         opened.save.shutdown();
     }
-    let opened = open_at(dir.clone()).expect("reopen again");
+    let opened = open_at(dir.to_path_buf()).expect("reopen again");
     let (section, ..) =
         load_blocking(&opened.save, &opened.saved, pos).expect("original still on disk");
     assert_eq!(section.block_raw(1, 1, 1), Block::Stone.id());
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Two worlds open in one process at once, with palettes that disagree about
@@ -550,8 +535,8 @@ fn two_open_worlds_each_map_through_their_own_palette() {
     section.set_block(2, 2, 2, Block::Stone);
     section.set_block(3, 3, 3, Block::OakLog);
     {
-        let mut a = open_at(dir_a.clone()).expect("open a");
-        let mut b = open_at(dir_b.clone()).expect("open b");
+        let mut a = open_at(dir_a.to_path_buf()).expect("open a");
+        let mut b = open_at(dir_b.to_path_buf()).expect("open b");
         assert_ne!(
             a.save.palette().block_to_disk(Block::Stone.id()),
             b.save.palette().block_to_disk(Block::Stone.id()),
@@ -566,16 +551,14 @@ fn two_open_worlds_each_map_through_their_own_palette() {
         a.save.shutdown();
         b.save.shutdown();
     }
-    let a = open_at(dir_a.clone()).expect("reopen a");
-    let b = open_at(dir_b.clone()).expect("reopen b");
+    let a = open_at(dir_a.to_path_buf()).expect("reopen a");
+    let b = open_at(dir_b.to_path_buf()).expect("reopen b");
     for opened in [&a, &b] {
         let (back, ..) = load_blocking(&opened.save, &opened.saved, pos).expect("loads");
         assert_eq!(back.block_raw(2, 2, 2), Block::Stone.id());
         assert_eq!(back.block_raw(3, 3, 3), Block::OakLog.id());
     }
     drop((a, b));
-    let _ = std::fs::remove_dir_all(&dir_a);
-    let _ = std::fs::remove_dir_all(&dir_b);
 }
 
 /// A mob whose mod is gone never reaches the world, yet survives its section
@@ -601,7 +584,7 @@ fn a_mob_whose_mod_is_gone_survives_its_section_being_resaved() {
         unknown: Default::default(),
     };
     {
-        let mut opened = open_at(dir.clone()).expect("open");
+        let mut opened = open_at(dir.to_path_buf()).expect("open");
         let mut snap = SectionSnapshot::from_section(&Section::new(pos.cx, pos.cy, pos.cz));
         snap.kept.mobs.push(phantom.clone());
         opened.save.save_sections(&mut opened.saved, vec![snap]);
@@ -610,7 +593,7 @@ fn a_mob_whose_mod_is_gone_survives_its_section_being_resaved() {
     {
         // Loaded: nothing to spawn. Saved again the way the world saves it,
         // from the section alone.
-        let mut opened = open_at(dir.clone()).expect("reopen");
+        let mut opened = open_at(dir.to_path_buf()).expect("reopen");
         let (section, _, mobs) =
             load_blocking(&opened.save, &opened.saved, pos).expect("section loads");
         assert!(mobs.is_empty(), "the phantom is not spawned");
@@ -620,7 +603,7 @@ fn a_mob_whose_mod_is_gone_survives_its_section_being_resaved() {
         );
         opened.save.shutdown();
     }
-    let opened = open_at(dir.clone()).expect("reopen again");
+    let opened = open_at(dir.to_path_buf()).expect("reopen again");
     let bytes = region::RegionReader::open(&region::region_path(&dir.join("region"), 0, 0))
         .expect("region opens")
         .read_record(region::local_index(pos))
@@ -629,7 +612,6 @@ fn a_mob_whose_mod_is_gone_survives_its_section_being_resaved() {
     let decoded = codec::decode_section(pos, &bytes, opened.save.palette()).expect("decodes");
     assert_eq!(decoded.kept.mobs, [phantom], "still on disk, unchanged");
     drop(opened);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Opening a world whose last save had a mod that is missing now reports
@@ -648,12 +630,11 @@ fn opening_with_a_mod_missing_backs_the_world_up_first() {
         level::encode(5, 10, &Default::default(), &Default::default()),
     )
     .unwrap();
-    let opened = open_at(dir.clone()).expect("opens");
+    let opened = open_at(dir.to_path_buf()).expect("opens");
     assert_eq!(opened.missing_mods, ["gonemod"]);
     let backup = dir.join("backup").join("mods-missing-gonemod");
     assert!(backup.join("level.dat").exists());
     assert!(backup.join("palette.json").exists());
     assert!(backup.join("mods.json").exists());
     drop(opened);
-    let _ = std::fs::remove_dir_all(&dir);
 }

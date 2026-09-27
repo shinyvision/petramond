@@ -50,6 +50,8 @@ pub fn style_key(kind: &NodeKind) -> Option<&'static str> {
         | NodeKind::List { .. }
         | NodeKind::Gauge { .. }
         | NodeKind::Hook
+        | NodeKind::Canvas { .. }
+        | NodeKind::Viewport { .. }
         | NodeKind::Tooltip { .. } => return None,
     })
 }
@@ -70,8 +72,10 @@ pub fn pointer_target(kind: &NodeKind) -> bool {
         | NodeKind::Slot { .. }
         | NodeKind::SlotGrid { .. }
         | NodeKind::TabBar { .. } => true,
-        // An image takes clicks only when the document asks it to.
-        NodeKind::Image { interactive, .. } => *interactive,
+        // An image or a surface takes clicks only when the document asks.
+        NodeKind::Image { interactive, .. }
+        | NodeKind::Canvas { interactive }
+        | NodeKind::Viewport { interactive } => *interactive,
         NodeKind::Frame
         | NodeKind::Row
         | NodeKind::Column

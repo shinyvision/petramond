@@ -85,7 +85,9 @@ use crate::player::BonePose;
 use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 
-pub use client::{ClientCommand, ClientImageData, ClientOverlayRegistration};
+pub use client::{
+    ClientCanvasSceneData, ClientCommand, ClientImageData, ClientOverlayRegistration,
+};
 use health::ModHealthBoard;
 pub use host::budget::FuelBudget;
 use host::Registration;
@@ -986,6 +988,14 @@ fn finite_nonnegative(value: f32, fallback: f32) -> f32 {
     } else {
         fallback
     }
+}
+
+/// The ABI handshake exports a hand-written WAT test guest declares (this
+/// build's version, no required capabilities), for test suites outside this
+/// crate. `mod_init` then takes the host's `(param i32 i64)`.
+#[cfg(any(test, feature = "test-support"))]
+pub fn wat_abi_exports() -> String {
+    instance::wat_abi_exports(mod_api::ABI_VERSION)
 }
 
 #[cfg(test)]

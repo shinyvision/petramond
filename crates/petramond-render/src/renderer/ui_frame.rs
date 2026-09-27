@@ -8,22 +8,57 @@
 use super::*;
 
 impl Renderer {
-    /// Validate and prepare every UI layer as one viewport-stamped transaction.
-    /// A resize-stale document rejects the whole packet before any layer state
-    /// is cleared or uploaded.
-    pub fn prepare_ui_frame(&mut self, frame: UiFrame<'_>) -> bool {
-        if !frame.matches_viewport(self.ui_viewport()) {
+    /// Validate and prepare both UI layers as one viewport-stamped
+    /// transaction: the scene's at the frame's size, the window's at the
+    /// window's. A resize-stale document rejects the whole packet before any
+    /// layer state is cleared or uploaded.
+    pub fn prepare_ui_frame(&mut self, frame: UiLayers<'_>) -> bool {
+        if !frame.scene.matches_viewport(self.scene_ui_viewport())
+            || !frame.window.matches_viewport(self.window_ui_viewport())
+        {
             return false;
         }
+        let Renderer {
+            device, queue, ui, ..
+        } = self;
+        let gpu = super::doc_ui::UiGpu {
+            device,
+            queue,
+            texture_bgl: &ui.texture_bgl,
+        };
+        for (layer, frame) in [
+            (&mut ui.scene, &frame.scene),
+            (&mut ui.window, &frame.window),
+        ] {
+            layer.prepare(&gpu, &mut ui.theme, &ui.icon_atlas, frame);
+        }
+        true
+    }
+}
+
+impl UiLayer {
+    fn prepare(
+        &mut self,
+        gpu: &super::doc_ui::UiGpu<'_>,
+        theme: &mut Option<super::doc_ui::ThemeBinds>,
+        icon_atlas: &IconAtlas,
+        frame: &UiFrame<'_>,
+    ) {
         let screen = frame.viewport.size;
         let scale = frame.viewport.scale as f32;
         let slots = frame.document.as_ref().map(|document| document.slots);
         let hooks = frame.document.as_ref().map(|document| document.hooks);
-        self.prepare_doc_ui(frame.document.as_ref(), screen);
-        self.prepare_client_overlays(frame.client_overlays, screen, frame.client_overlay_dim);
-        self.build_ui_frame(frame.content, screen, scale, slots, hooks);
-        self.ui.prepared_viewport = frame.viewport;
-        true
+        self.doc_ui
+            .prepare(gpu, theme, frame.document.as_ref(), screen);
+        self.client_overlays.prepare(
+            gpu,
+            theme,
+            frame.client_overlays,
+            screen,
+            frame.client_overlay_dim,
+        );
+        self.build_frame(gpu, icon_atlas, frame.content, screen, scale, slots, hooks);
+        self.prepared_viewport = frame.viewport;
     }
 
     /// Build + upload this frame's game-owned UI geometry from the [`UiBuild`]
@@ -35,58 +70,61 @@ impl Renderer {
     ///   vec to its own buffer.
     /// - `icon_quad_vbuf`: one textured quad per filled slot sampling the item's
     ///   pre-baked icon-atlas cell — normal icons then cursor-held icons.
-    fn build_ui_frame(
+    #[allow(clippy::too_many_arguments)]
+    fn build_frame(
         &mut self,
+        gpu: &super::doc_ui::UiGpu<'_>,
+        icon_atlas: &IconAtlas,
         content: &UiSnapshot,
         screen: (u32, u32),
         scale: f32,
         slots: Option<&[petramond::gui::DocSlot]>,
         hooks: Option<&[petramond::gui::DocHook]>,
     ) {
-        self.ui.count_vertex_count = 0;
-        self.ui.overlay_count_vertex_count = 0;
-        self.ui.drag_count_vertex_count = 0;
-        self.ui.icon_quad_vertex_count = 0;
-        self.ui.overlay_icon_quad_vertex_count = 0;
-        self.ui.drag_icon_quad_vertex_count = 0;
+        self.count_vertex_count = 0;
+        self.overlay_count_vertex_count = 0;
+        self.drag_count_vertex_count = 0;
+        self.icon_quad_vertex_count = 0;
+        self.overlay_icon_quad_vertex_count = 0;
+        self.drag_icon_quad_vertex_count = 0;
 
-        build_ui(content, screen, scale, slots, hooks, &mut self.ui.build);
+        build_ui(content, screen, scale, slots, hooks, &mut self.build);
 
         // Solid quads packed into one buffer in draw order: normal stack
         // counts, the tooltip's counts (after the overlay chrome), then the
         // cursor-held count (drawn after the cursor icon). One upload, the
         // buffer grown to fit.
-        let counts = &self.ui.build.counts;
-        let overlay_counts = &self.ui.build.overlay_counts;
-        let drag_counts = &self.ui.build.drag_counts;
-        let mut solid = std::mem::take(&mut self.ui.solid_verts);
+        let counts = &self.build.counts;
+        let overlay_counts = &self.build.overlay_counts;
+        let drag_counts = &self.build.drag_counts;
+        let mut solid = std::mem::take(&mut self.solid_verts);
         solid.clear();
         solid.extend_from_slice(counts);
         solid.extend_from_slice(overlay_counts);
         solid.extend_from_slice(drag_counts);
         if !solid.is_empty() {
             super::dynamic_draw::upload(
-                &self.device,
-                &self.queue,
-                &mut self.ui.solid_vbuf,
+                gpu.device,
+                gpu.queue,
+                &mut self.solid_vbuf,
                 &solid,
                 wgpu::BufferUsages::VERTEX,
                 "ui solid vbuf",
             );
-            self.ui.count_vertex_count = counts.len() as u32;
-            self.ui.overlay_count_vertex_count = overlay_counts.len() as u32;
-            self.ui.drag_count_vertex_count = drag_counts.len() as u32;
+            self.count_vertex_count = counts.len() as u32;
+            self.overlay_count_vertex_count = overlay_counts.len() as u32;
+            self.drag_count_vertex_count = drag_counts.len() as u32;
         }
-        self.ui.solid_verts = solid;
+        self.solid_verts = solid;
 
         // HUD chrome layers: each layer's UiBuild vec to its own buffer.
-        for layer in &mut self.ui.hud_layers {
+        for layer in &mut self.hud_layers {
             layer.vertex_count = 0;
-            let verts = (layer.source)(&self.ui.build);
+            let verts = (layer.source)(&self.build);
             if !verts.is_empty() {
                 super::dynamic_draw::upload(
-                    &self.device,
-                    &self.queue,
+                    gpu.device,
+                    gpu.queue,
                     &mut layer.vbuf,
                     verts,
                     wgpu::BufferUsages::VERTEX,
@@ -101,14 +139,14 @@ impl Renderer {
         // NDC, cell rect → uv, white tint (so the quad samples the atlas, not the solid
         // sentinel). Normal icons draw in the UI pass; cursor-held icons are appended
         // to the same buffer but drawn later, after normal stack-count overlays.
-        let mut verts = std::mem::take(&mut self.ui.icon_quad_verts);
+        let mut verts = std::mem::take(&mut self.icon_quad_verts);
         verts.clear();
         if screen.0 != 0 && screen.1 != 0 {
-            for &(item, r, color, dyed) in &self.ui.build.icon_quads {
+            for &(item, r, color, dyed) in &self.build.icon_quads {
                 let [u0, v0, u1, v1] = if dyed {
-                    self.ui.icon_atlas.cell_uv_dyed(item)
+                    icon_atlas.cell_uv_dyed(item)
                 } else {
-                    self.ui.icon_atlas.cell_uv(item)
+                    icon_atlas.cell_uv(item)
                 };
                 crate::ui::push_quad_uv(
                     &mut verts,
@@ -124,7 +162,7 @@ impl Renderer {
             }
             let push_hooks = |verts: &mut Vec<UiVertex>, icons: &[crate::ui::HookIconQuad]| {
                 for icon in icons {
-                    let [u0, v0, u1, v1] = self.ui.icon_atlas.cell_uv(icon.item);
+                    let [u0, v0, u1, v1] = icon_atlas.cell_uv(icon.item);
                     let Some((visible, uv_tl, uv_br)) =
                         clipped_icon(icon.rect, icon.clip, [u0, v0, u1, v1])
                     else {
@@ -143,15 +181,15 @@ impl Renderer {
                     );
                 }
             };
-            push_hooks(&mut verts, &self.ui.build.hook_icon_quads);
+            push_hooks(&mut verts, &self.build.hook_icon_quads);
             let normal_icon_vertex_count = verts.len() as u32;
-            push_hooks(&mut verts, &self.ui.build.overlay_icon_quads);
-            self.ui.overlay_icon_quad_vertex_count = verts.len() as u32 - normal_icon_vertex_count;
-            for &(item, r, color, dyed) in &self.ui.build.drag_icon_quads {
+            push_hooks(&mut verts, &self.build.overlay_icon_quads);
+            self.overlay_icon_quad_vertex_count = verts.len() as u32 - normal_icon_vertex_count;
+            for &(item, r, color, dyed) in &self.build.drag_icon_quads {
                 let [u0, v0, u1, v1] = if dyed {
-                    self.ui.icon_atlas.cell_uv_dyed(item)
+                    icon_atlas.cell_uv_dyed(item)
                 } else {
-                    self.ui.icon_atlas.cell_uv(item)
+                    icon_atlas.cell_uv(item)
                 };
                 crate::ui::push_quad_uv(
                     &mut verts,
@@ -165,22 +203,21 @@ impl Renderer {
                     color,
                 );
             }
-            self.ui.icon_quad_vertex_count = normal_icon_vertex_count;
-            self.ui.drag_icon_quad_vertex_count = verts.len() as u32
-                - normal_icon_vertex_count
-                - self.ui.overlay_icon_quad_vertex_count;
+            self.icon_quad_vertex_count = normal_icon_vertex_count;
+            self.drag_icon_quad_vertex_count =
+                verts.len() as u32 - normal_icon_vertex_count - self.overlay_icon_quad_vertex_count;
         }
         if !verts.is_empty() {
             super::dynamic_draw::upload(
-                &self.device,
-                &self.queue,
-                &mut self.ui.icon_quad_vbuf,
+                gpu.device,
+                gpu.queue,
+                &mut self.icon_quad_vbuf,
                 &verts,
                 wgpu::BufferUsages::VERTEX,
                 "icon quad vbuf",
             );
         }
-        self.ui.icon_quad_verts = verts;
+        self.icon_quad_verts = verts;
     }
 }
 

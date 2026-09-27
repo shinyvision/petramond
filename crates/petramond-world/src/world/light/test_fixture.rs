@@ -37,7 +37,7 @@ impl Rng {
 
 pub struct Fixture {
     pub sections: FxHashMap<SectionPos, Arc<Section>>,
-    pub columns: FxHashMap<ChunkPos, Column>,
+    pub columns: FxHashMap<ChunkPos, Arc<Column>>,
     /// Low corner of the section window.
     pub low: SectionPos,
     pub span: usize,
@@ -107,7 +107,7 @@ impl Fixture {
     /// skylight. Fabricating cover independently of blocks creates phantom
     /// full-skylight shafts through which the undecayed down rule tunnels
     /// arbitrarily deep — a state the engine never produces.
-    pub fn derived_columns(&self) -> FxHashMap<ChunkPos, Column> {
+    pub fn derived_columns(&self) -> FxHashMap<ChunkPos, Arc<Column>> {
         let mut columns = FxHashMap::default();
         for dcz in 0..self.span as i32 {
             for dcx in 0..self.span as i32 {
@@ -120,7 +120,7 @@ impl Fixture {
                         col.set_sky_cover_y(lx, lz, cover);
                     }
                 }
-                columns.insert(cp, col);
+                columns.insert(cp, Arc::new(col));
             }
         }
         columns

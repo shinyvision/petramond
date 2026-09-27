@@ -228,8 +228,18 @@ impl WorldFx {
         self.block_animations.set_open_chests(open);
     }
 
+    /// Forget everything that presented the world's MOMENT — bursts and
+    /// dust, dig pacing, block swings and the open chests — for a moment
+    /// restated in full. The particle density and the local body's easing
+    /// are this client's own, and stay.
+    pub(super) fn clear_moment(&mut self) {
+        self.particles.clear();
+        self.mining_feedback = Default::default();
+        self.mob_digging.clear();
+        self.block_animations = Default::default();
+    }
+
     /// The chests someone is looking inside, as last replicated.
-    #[cfg(test)]
     pub(super) fn open_chests(&self) -> &rustc_hash::FxHashSet<IVec3> {
         self.block_animations.open_chests()
     }

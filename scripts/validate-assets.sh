@@ -29,7 +29,10 @@ run_named_tests --profile fasttest -p petramond --lib -- \
     mob::load::tests::shipped_mobs_json_loads_fully \
     player::animator::tests::shipped_player_animators_compile_against_their_rigs \
     player::rigs::tests::the_shipped_rigs_catalog_has_a_rig_per_presenter \
-    gui::documents::tests::every_shipped_document_fits_the_smallest_viewport
+    gui::documents::tests::fit::every_shipped_document_fits_every_window \
+    gui::documents::tests::fit::the_recipe_tooltip_grows_to_the_published_ingredient_width \
+    gui::documents::tests::fit::authored_label_text_fits_the_box_the_document_gives_it \
+    gui::documents::tests::fit::long_dynamic_text_never_pushes_a_widget_off_its_screen
 
 # Every rig clip a shipped pack plays is on its rig (the packs are their own
 # wasm workspace; this runs the pack's check natively).

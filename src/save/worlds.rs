@@ -212,6 +212,26 @@ pub fn write_world_settings(
     settings::store(&saves_dir().join(dir_name), settings)
 }
 
+/// Write a new world's `mods.json` — the enabled set it is created with —
+/// so the first-sight rule has a baseline before its first save.
+pub fn write_world_mod_baseline(
+    dir_name: &str,
+    disabled: &std::collections::BTreeSet<String>,
+) -> std::io::Result<()> {
+    if !is_single_path_component(dir_name) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "world directory must be a single path component",
+        ));
+    }
+    let dir = saves_dir().join(dir_name);
+    std::fs::create_dir_all(&dir)?;
+    atomic_file::replace(
+        &dir.join("mods.json"),
+        &crate::modding::modset::encode_active(disabled),
+    )
+}
+
 pub(super) fn delete_world_at(saves: &Path, dir_name: &str) -> std::io::Result<()> {
     if !is_single_path_component(dir_name) {
         return Err(std::io::Error::new(

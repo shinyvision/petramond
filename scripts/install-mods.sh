@@ -5,8 +5,8 @@
 #
 #   bash scripts/install-mods.sh [--profile <profile>] <mods-root> [mod-id...]
 #
-# Further arguments name the mods to build and install; with none, every
-# bundled mod is.
+# Further arguments name the mods to build and install; with none, build and
+# install every bundled mod.
 #
 # The single implementation of the bundled-pack convention. `make mods` /
 # `make mod ID=` install into mods/, with-test-mods.sh and CI stage a root for
@@ -20,7 +20,9 @@
 #   - a pack directory that is not a crate is content-only, and its pack.json
 #     must not name a guest;
 #   - crates without pack/ (shared libraries, test support) are built but
-#     never installed.
+#     never installed;
+# Downloadable addons live in the separate petramond-addons repository and
+# are built by `make addons`.
 #
 # Profile: `--profile <p>`, else $MOD_PROFILE, else `wasm-dev`.
 #   wasm-dev   fast iteration build (no LTO, opt-level 2): `make mods`, local runs
@@ -31,10 +33,16 @@
 set -euo pipefail
 
 profile=${MOD_PROFILE:-wasm-dev}
-if (($# >= 2)) && [[ $1 == --profile ]]; then
-    profile=$2
-    shift 2
-fi
+while (($# > 0)); do
+    case $1 in
+        --profile)
+            (($# >= 2)) || break
+            profile=$2
+            shift 2
+            ;;
+        *) break ;;
+    esac
+done
 if (($# < 1)); then
     echo "usage: $0 [--profile <profile>] <mods-root> [mod-id...]" >&2
     exit 2
@@ -73,7 +81,8 @@ if (($# > 0)); then
 else
     mod_ids=()
     for pack_source in "$repo_root"/mods-src/*/pack; do
-        mod_ids+=("$(basename "$(dirname "$pack_source")")")
+        crate_dir=$(dirname "$pack_source")
+        mod_ids+=("$(basename "$crate_dir")")
     done
     package_args=(--workspace)
 fi

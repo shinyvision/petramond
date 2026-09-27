@@ -232,20 +232,9 @@ mod tests {
         }
     }
 
-    /// A unique, fresh temp dir per call (cargo runs tests in parallel; no `Date`/random
-    /// needed — pid + a counter suffice).
-    fn temp_root() -> PathBuf {
-        static N: AtomicU64 = AtomicU64::new(0);
-        let n = N.fetch_add(1, Ordering::Relaxed);
-        let dir =
-            std::env::temp_dir().join(format!("petramond-asset-cache-{}-{n}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        dir
-    }
-
     #[test]
     fn compiles_writes_then_a_hit_reads_the_file_instead_of_recompiling() {
-        let root = temp_root();
+        let root = petramond_util::test_dirs::TestScratchDir::new("asset-cache");
         let src = b"owl-source-bytes";
 
         // First load compiles and writes the cache file.
@@ -268,13 +257,11 @@ mod tests {
         .unwrap();
         let second = load_or_compile_in::<Dummy>(&root, "owl", src).unwrap();
         assert_eq!(second, sentinel, "a cache hit must not recompile");
-
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn a_source_change_invalidates_and_recompiles() {
-        let root = temp_root();
+        let root = petramond_util::test_dirs::TestScratchDir::new("asset-cache");
         let a = load_or_compile_in::<Dummy>(&root, "m", b"source-a").unwrap();
         // Same id, different source → different hash → miss → recompile (overwrites).
         let b = load_or_compile_in::<Dummy>(&root, "m", b"source-b").unwrap();
@@ -287,12 +274,11 @@ mod tests {
             hash_source(b"source-b")
         )
         .is_some());
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn a_corrupt_cache_file_is_rebuilt_not_fatal() {
-        let root = temp_root();
+        let root = petramond_util::test_dirs::TestScratchDir::new("asset-cache");
         let path = asset_path::<Dummy>(&root, "x");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, b"not a valid cache file").unwrap();
@@ -300,14 +286,12 @@ mod tests {
         let got = load_or_compile_in::<Dummy>(&root, "x", b"hello").unwrap();
         assert_eq!(got, Dummy::compile(b"hello").unwrap());
         assert!(decode::<Dummy>(&std::fs::read(&path).unwrap(), hash_source(b"hello")).is_some());
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn compile_failure_propagates() {
-        let root = temp_root();
+        let root = petramond_util::test_dirs::TestScratchDir::new("asset-cache");
         assert!(load_or_compile_in::<Dummy>(&root, "x", b"bad").is_err());
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

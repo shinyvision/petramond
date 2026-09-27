@@ -22,6 +22,7 @@ impl ReplicaWorld {
     /// sender re-ships only when the column revision changes, including
     /// immediately before a section unload changes an absent summary.
     pub fn install_remote_column(&mut self, payload: ColumnPayload) {
+        let origin = self.take_record_origin();
         let expected_sections = WorldData::column_section_range().count();
         if payload.biomes.0.len() != SECTION_SIZE * SECTION_SIZE
             || payload.mesh_biomes.0.len() != 20 * 20
@@ -32,6 +33,7 @@ impl ReplicaWorld {
             return;
         }
         let pos = payload.pos;
+        self.before_column_write(pos);
         let col = self.data.ensure_column(pos);
         for z in 0..SECTION_SIZE {
             for x in 0..SECTION_SIZE {
@@ -63,15 +65,22 @@ impl ReplicaWorld {
         // but the deep classification must not silently die if that ordering
         // ever regresses: re-classify anything already installed in this
         // column now that the band floor is known.
+        self.reclassify_column_sections(pos);
+        // The sender re-ships only on its own revision change; move the
+        // replica's revision so surface consumers resample the column.
+        self.data.bump_column_payload_revision(pos);
+        self.set_origin(super::Resident::Column(pos), origin);
+    }
+
+    /// Classify every installed section of column `pos` again, its band
+    /// floor having moved.
+    pub(super) fn reclassify_column_sections(&mut self, pos: ChunkPos) {
         for cy in WorldData::column_section_range() {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
             if self.data.sections.contains_key(&sp) {
                 self.classify_deep_on_install(sp);
             }
         }
-        // The sender re-ships only on its own revision change; move the
-        // replica's revision so surface consumers resample the column.
-        self.data.bump_column_payload_revision(pos);
     }
 
     /// Install one replicated section on a replica, entering at the same
@@ -89,68 +98,34 @@ impl ReplicaWorld {
 
     /// Install without invalidating meshes yet. The message pump batches the
     /// overlapping neighbourhoods from all sections it received this frame.
+    /// `None` = a malformed payload, dropped.
     pub fn install_remote_section_deferred(
         &mut self,
         payload: SectionPayload,
     ) -> Option<SectionPos> {
-        let pos = payload.pos;
-        if !SectionPos::cy_in_range(pos.cy) || payload.blocks.0.len() != SECTION_VOLUME {
-            return None;
-        }
-        if payload
-            .fluid
-            .as_ref()
-            .is_some_and(|w| w.0.len() != SECTION_VOLUME)
-        {
-            return None;
-        }
-        let s = &payload.states;
-        // Before the section install, because that path takes `payload`.
-        let draws: Vec<crate::world::replication::BlockDrawEntry> = s.draws.clone();
-        let cell_kv: CellMap<BTreeMap<String, Vec<u8>>> = s
-            .cell_kv
-            .iter()
-            .map(|(cell, entries)| (*cell, entries.iter().cloned().collect()))
-            .collect();
-        if !payload.metrics.valid() {
-            return None;
-        }
-        let mut section = Section::from_replica(
-            pos.cx,
-            pos.cy,
-            pos.cz,
-            petramond_world::section::BlockCube::from_ids(&payload.blocks.0),
-            payload.fluid.map(|w| w.0),
-            // No furnace machine state on a replica: burn/cook counters are sim
-            // state (progress reaches clients through menu sync), and the lit
-            // face is the block id (`furnace_lit` is its own row).
-            CellMap::new(),
-            CellMap::new(), // container slots replicate via menu sync
-            // The unified state list installs verbatim — the transport already
-            // rewrote the id-masked bytes into this session's block ids.
-            s.cell_states.iter().copied().collect(),
-            cell_kv,
-            payload.metrics,
-        );
-        let light_seeded = payload
-            .skylight
-            .as_ref()
-            .is_some_and(|l| l.0.len() == SECTION_VOLUME);
-        if light_seeded {
-            section.set_skylight(payload.skylight.expect("checked above").0);
-            if let Some(bl) = payload.blocklight.filter(|l| l.0.len() == SECTION_VOLUME) {
-                section.set_blocklight(bl.0);
-            }
-        } else {
-            // The ship gate (`section_light_final`) only lets a lightless
-            // section through when it never bakes (fully opaque) — final
-            // as-is. Authoritative rebakes arrive as `LightData`; local
-            // prediction light never enters through this ingest seam.
-            section.mark_light_clean();
-        }
+        let origin = self.take_record_origin();
+        let decoded = RemoteSection::decode(payload)?;
+        self.before_section_write(decoded.pos);
+        let RemoteSection {
+            pos,
+            section,
+            draws,
+        } = decoded;
+        self.put_section(pos, Arc::new(section), &draws);
+        self.set_origin(super::Resident::Section(pos), origin);
+        Some(pos)
+    }
 
+    /// Install `section` at `pos` with its whole draw state: the one install
+    /// every replica path (a payload, a cached copy, a rewind) goes through.
+    pub(super) fn put_section(
+        &mut self,
+        pos: SectionPos,
+        section: Arc<Section>,
+        draws: &[crate::world::replication::BlockDrawEntry],
+    ) {
         self.data.ensure_column(pos.chunk_pos());
-        self.data.sections.insert(pos, Arc::new(section));
+        self.data.sections.insert(pos, section);
         self.note_section_loaded(pos);
         // Installed content may change the visible surface without moving its
         // height (a same-height block swap) — surface consumers gate on
@@ -165,19 +140,18 @@ impl ReplicaWorld {
         // server has since cleared drawing on the replica forever.
         self.forget_block_draws_in_section(pos);
         for (cell, prims) in draws {
-            let (lx, ly, lz) = petramond_world::chunk::section_local(cell as usize);
+            let (lx, ly, lz) = petramond_world::chunk::section_local(*cell as usize);
             let at = petramond_math::math::IVec3::new(
                 pos.cx * 16 + lx as i32,
                 pos.cy * 16 + ly as i32,
                 pos.cz * 16 + lz as i32,
             );
-            self.apply_remote_block_draw(at, prims);
+            self.apply_remote_block_draw(at, prims.clone());
         }
         // The post-ingest seam, minus gen/save bookkeeping (none exists here).
         self.refresh_block_entity_index(pos);
         self.refresh_particle_emitter_index(pos);
         self.classify_deep_on_install(pos);
-        Some(pos)
     }
 
     /// Invalidate every loaded section touched by a replica install batch once.
@@ -217,9 +191,11 @@ impl ReplicaWorld {
             return;
         }
         let pos = payload.pos;
-        let Some(s) = self.data.section_mut(pos) else {
+        if !self.data.sections.contains_key(&pos) {
             return; // unloaded while the message was in flight
-        };
+        }
+        self.before_section_write(pos);
+        let s = self.data.section_mut(pos).expect("presence checked above");
         // Region-diff against the cached cubes: authoritative light that
         // matches the replica's current cubes (a predicted edit's bake the
         // server agreed with) publishes no remesh, and a change requeues
@@ -291,6 +267,8 @@ impl ReplicaWorld {
         if !self.data.sections.contains_key(&pos) {
             return;
         }
+        self.before_section_write(pos);
+        self.before_column_write(pos.chunk_pos());
         let old = {
             let section = self.data.section_mut(pos).expect("presence checked above");
             let old = section.block(lx, ly, lz);
@@ -333,9 +311,11 @@ impl ReplicaWorld {
         let Some((pos, lx, ly, lz)) = WorldData::split_world(kv.pos.x, kv.pos.y, kv.pos.z) else {
             return;
         };
-        let Some(section) = self.data.section_mut(pos) else {
+        if !self.data.sections.contains_key(&pos) {
             return;
-        };
+        }
+        self.before_section_write(pos);
+        let section = self.data.section_mut(pos).expect("presence checked above");
         let affects_mesh = petramond_world::block::kv_key_affects_mesh(&kv.key);
         match kv.value {
             Some(value) => section.cell_kv_set(lx, ly, lz, kv.key, value),
@@ -372,6 +352,9 @@ impl ReplicaWorld {
     /// later deltas/light for the pos can never mutate the parked copy.
     pub fn uninstall_remote_section(&mut self, pos: SectionPos) -> Option<Arc<Section>> {
         let evicted = self.data.sections.get(&pos).cloned();
+        if evicted.is_some() {
+            self.before_section_write(pos);
+        }
         self.remove_section(pos);
         self.side.terrain.vis_dirty = true;
         evicted
@@ -390,6 +373,10 @@ impl ReplicaWorld {
                 evicted.push((sp, Arc::clone(s)));
             }
         });
+        for (sp, _) in &evicted {
+            self.before_section_write(*sp);
+        }
+        self.before_column_write(pos);
         self.remove_column(pos);
         self.side.terrain.vis_dirty = true;
         evicted
@@ -402,15 +389,92 @@ impl ReplicaWorld {
     /// caller batches the returned pos into `finish_remote_install_batch`
     /// like any other install.
     pub fn install_cached_section(&mut self, pos: SectionPos, section: Arc<Section>) -> SectionPos {
-        self.data.ensure_column(pos.chunk_pos());
-        self.data.sections.insert(pos, section);
-        self.note_section_loaded(pos);
-        // Same rule as a full section install: newly visible surface content
-        // must move the column revision for revision-gated surface sampling.
-        self.data.bump_column_payload_revision(pos.chunk_pos());
-        self.refresh_block_entity_index(pos);
-        self.refresh_particle_emitter_index(pos);
-        self.classify_deep_on_install(pos);
+        self.before_section_write(pos);
+        self.put_section(pos, section, &[]);
         pos
+    }
+}
+
+/// A replicated section decoded into exactly what its install holds: the one
+/// reading of a payload.
+pub(super) struct RemoteSection {
+    pub(super) pos: SectionPos,
+    pub(super) section: Section,
+    /// The section's whole draw state (world-level records, installed beside it).
+    pub(super) draws: Vec<crate::world::replication::BlockDrawEntry>,
+}
+
+impl RemoteSection {
+    /// Shipped baked light seeds the section's cubes (no rebake). Malformed
+    /// buffer lengths drop the payload (a byte-corrupting transport, never
+    /// the local connection).
+    pub(super) fn decode(payload: SectionPayload) -> Option<Self> {
+        let pos = payload.pos;
+        if !SectionPos::cy_in_range(pos.cy) || payload.blocks.0.len() != SECTION_VOLUME {
+            return None;
+        }
+        if payload
+            .fluid
+            .as_ref()
+            .is_some_and(|w| w.0.len() != SECTION_VOLUME)
+        {
+            return None;
+        }
+        if !payload.metrics.valid() {
+            return None;
+        }
+        let SectionPayload {
+            pos: _,
+            blocks,
+            metrics,
+            fluid,
+            skylight,
+            blocklight,
+            states:
+                crate::world::replication::SectionStatesPayload {
+                    cell_states,
+                    cell_kv,
+                    draws,
+                },
+        } = payload;
+        let cell_kv: CellMap<BTreeMap<String, Vec<u8>>> = cell_kv
+            .into_iter()
+            .map(|(cell, entries)| (cell, entries.into_iter().collect()))
+            .collect();
+        let mut section = Section::from_replica(
+            pos.cx,
+            pos.cy,
+            pos.cz,
+            petramond_world::section::BlockCube::from_ids(&blocks.0),
+            fluid.map(|w| w.0),
+            // No furnace machine state on a replica: burn/cook counters are sim
+            // state (progress reaches clients through menu sync), and the lit
+            // face is the block id (`furnace_lit` is its own row).
+            CellMap::new(),
+            CellMap::new(), // container slots replicate via menu sync
+            // The unified state list installs verbatim — the transport already
+            // rewrote the id-masked bytes into this session's block ids.
+            cell_states.into_iter().collect(),
+            cell_kv,
+            metrics,
+        );
+        match skylight.filter(|l| l.0.len() == SECTION_VOLUME) {
+            Some(sky) => {
+                section.set_skylight(sky.0);
+                if let Some(bl) = blocklight.filter(|l| l.0.len() == SECTION_VOLUME) {
+                    section.set_blocklight(bl.0);
+                }
+            }
+            // The ship gate (`section_light_final`) only lets a lightless
+            // section through when it never bakes (fully opaque) — final
+            // as-is. Authoritative rebakes arrive as `LightData`; local
+            // prediction light never enters through this ingest seam.
+            None => section.mark_light_clean(),
+        }
+        Some(Self {
+            pos,
+            section,
+            draws,
+        })
     }
 }

@@ -137,6 +137,12 @@ tools = ["petramond-worldgen/tools"]
 name = "petramond_server"
 path = "src/bin/server.rs"
 
+# The content library's build and install side (`make addons`): pack, check
+# and stage an addon or mod archive, with no GPU.
+[[bin]]
+name = "petramond_content"
+path = "src/bin/content.rs"
+
 [dependencies]
 # Renderer-agnostic GUI runtime (documents, layout, theme, widgets, paint) —
 # shared with the gui-builder so its preview is pixel-exactly the game's UI.
@@ -166,8 +172,12 @@ blake3 = "1"
 # Player identity: clients hold an ed25519 keypair and sign the server's
 # per-connection join challenge; saves and operator rights key on the public key.
 ed25519-dalek = "2"
-# OS randomness for identity keys and join challenges.
+# OS randomness for identity keys, join challenges and the per-run server id a
+# join ticket is minted against.
 getrandom = { version = "0.2", features = ["std"] }
+# The content library checks downloads against the SHA-256 petramond.com
+# publishes for them.
+sha2 = "0.10"
 serde = { workspace = true, features = ["rc"] }
 serde_json = { workspace = true }
 bincode = { workspace = true }
@@ -175,11 +185,18 @@ mimalloc = { workspace = true }
 rustc-hash = { workspace = true }
 # Per-thread scheduling priority (setpriority/gettid) for background worker pools.
 libc = "0.2"
+# The local UTC offset of the client wall clock, and HTTP dates (std has no time zones).
+jiff = { version = "0.2", default-features = false, features = ["std", "tz-system"] }
 # --- Modding host (Phase 2b) ---
 # Shared engine↔mod ABI types (postcard enums).
 mod-api = { workspace = true }
 postcard = { workspace = true }
 wasmtime = { workspace = true }
+# Blocking HTTPS for the Petramond account service (sign-in, token rotation,
+# join-ticket verification). Deliberately minimal: rustls only — no tokio, no
+# native-tls, no cookies, no proxy support. Calls run on their own worker
+# threads; nothing on the tick path or the render path speaks HTTP.
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 
 [dev-dependencies]
 petramond-world = { workspace = true, features = ["test-support"] }

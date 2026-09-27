@@ -148,7 +148,7 @@ mod tests {
     #[test]
     fn small_messages_roundtrip_uncompressed() {
         let msg = ClientToServer::Join {
-            player_name: "Rachel".into(),
+            credential: crate::net::protocol::JoinCredential::Ticket("a-join-ticket".into()),
             key: crate::net::identity::PlayerKey([1; 32]),
             proof: vec![2; 64],
             view_distance: 16,

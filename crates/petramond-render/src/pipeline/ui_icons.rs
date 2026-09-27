@@ -11,7 +11,7 @@ use super::builders::{
 pub(super) fn create_ui_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
-) -> (wgpu::RenderPipeline, wgpu::Buffer) {
+) -> wgpu::RenderPipeline {
     let ui_shader = shader_module(device, "ui shader", include_str!("../../shaders/ui.wgsl"));
     let ui_bgl = texture_sampler_bgl(device, "ui bgl", wgpu::TextureViewDimension::D2);
     let ui_layout = pipeline_layout(device, "ui layout", &[&ui_bgl]);
@@ -56,9 +56,7 @@ pub(super) fn create_ui_pipeline(
         wgpu::PrimitiveState::default(),
         None,
     );
-    let ui_vbuf =
-        crate::renderer::dynamic_draw::new_buffer(device, wgpu::BufferUsages::VERTEX, "ui vbuf");
-    (ui_pipe, ui_vbuf)
+    ui_pipe
 }
 
 /// model-icon pipeline (bbmodel-block icon-atlas cells).

@@ -1,14 +1,17 @@
 //! The title-flow shell's own state: the world list and its selection, the
 //! open per-screen page (World Settings / Create World sessions exist only
-//! while their screen is up), the Connect to Server session, and the last
-//! disconnect reason. Everything here is world-list I/O and form state — no
+//! while their screen is up), the Connect to Server and account sessions, a
+//! local world waiting on the Missing Mods screen, and the last disconnect
+//! reason. Everything here is world-list I/O and form state — no
 //! game session, no rendering — so shell screen controllers are handed this
 //! directly instead of the whole `App`.
 
 use petramond::save::settings::WorldSettings;
 use petramond::save::WorldInfo;
 
+use super::account::AccountSession;
 use super::connect::ConnectSession;
+use super::shell_docs::MissingWorld;
 
 /// One World Settings row: an installed pack. Content-only packs (no `id`)
 /// are listed but not toggleable — disable semantics are namespace-based and
@@ -97,6 +100,11 @@ pub(super) struct ShellState {
     /// The Connect to Server session: entry fields, the off-thread connect
     /// worker's channel, and the mods a refused join reported missing.
     pub(super) connect: ConnectSession,
+    /// The cached view of the stored Petramond sign-in plus the account worker
+    /// (see [`super::account`]).
+    pub(super) account: AccountSession,
+    /// A local world waiting on the Missing Mods screen to be opened anyway.
+    pub(super) missing_world: Option<MissingWorld>,
     /// Why the last session ended, shown by the Disconnected screen.
     disconnect_message: String,
 }

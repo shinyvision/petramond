@@ -125,9 +125,8 @@ fn eviction_racing_an_edit_relight_rewrites_the_record_lightless() {
     // the persist gate must rewrite B's record WITHOUT light so reload
     // rebakes — the pre-fix gate skipped unmodified light-dirty sections
     // entirely, stranding the stale cubes as a permanent dark seam.
-    let dir = std::env::temp_dir().join(format!("petramond-stale-light-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    let opened = crate::save::open_at(dir.clone()).expect("open save");
+    let dir = petramond_util::test_dirs::TestScratchDir::new("stale-light");
+    let opened = crate::save::open_at(dir.to_path_buf()).expect("open save");
     let mut world = ServerWorld::new(0, 0);
     world.attach_save(opened.save, opened.saved);
 
@@ -170,7 +169,6 @@ fn eviction_racing_an_edit_relight_rewrites_the_record_lightless() {
     );
 
     drop(world);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -384,12 +382,8 @@ fn heightmap_recompute_preserves_loaded_dug_shaft_below_generated_surface() {
 
 #[test]
 fn removing_surface_cover_relights_loaded_sections_below_the_changed_section() {
-    let dir = std::env::temp_dir().join(format!(
-        "petramond-sky-cover-relight-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    let opened = crate::save::open_at(dir.clone()).expect("open save");
+    let dir = petramond_util::test_dirs::TestScratchDir::new("sky-cover-relight");
+    let opened = crate::save::open_at(dir.to_path_buf()).expect("open save");
     let mut world = ServerWorld::new(0, 0);
     world.attach_save(opened.save, opened.saved);
     let cp = ChunkPos::new(0, 0);
@@ -464,7 +458,6 @@ fn removing_surface_cover_relights_loaded_sections_below_the_changed_section() {
     );
 
     drop(world);
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]

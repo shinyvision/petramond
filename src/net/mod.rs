@@ -17,6 +17,7 @@ pub mod identity;
 pub mod protocol;
 pub mod rate;
 pub mod remap;
+pub mod spatial_loops;
 
 /// Bumped on ANY wire-incompatible change. Checked first in the handshake —
 /// nothing else is parseable across a mismatch.
@@ -80,7 +81,15 @@ pub mod remap;
 //     server-wide sleep headcount the player rows no longer imply.
 // 52: join name tables include biome keys; tick batches are typed sections;
 //     `ModsDisabled` propagates server-side mod disablement to clients.
-pub const PROTOCOL_VERSION: u16 = 52;
+// 55: the Studio branch's changes, which numbered themselves 50–54 in
+//     parallel with the above: `JoinData::player_name` (the name the joining
+//     player was admitted under) and `JoinData::client_policy`;
+//     `ClientToServer::TerrainBacklog` removed (the ack-measured apply rate
+//     alone sizes streaming); Petramond accounts — `HelloAck` also carries
+//     `requires_account` and `server_id`, `Join` carries a `credential`
+//     (`JoinCredential::Ticket` or `::Name`) beside the identity proof, and
+//     `JoinRejectReason` gains the `Account*` refusals.
+pub const PROTOCOL_VERSION: u16 = 55;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

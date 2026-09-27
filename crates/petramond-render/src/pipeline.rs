@@ -30,6 +30,7 @@ mod variation;
 
 #[cfg(test)]
 pub(crate) use environment::scaler_sources;
+pub(crate) use environment::scene_depth_source;
 
 pub(crate) const GRADE_SHADER: &str = include_str!("../shaders/grade.wgsl");
 
@@ -185,9 +186,6 @@ pub(super) struct PipelineResources {
     /// NO depth, drawn last; group(0) binds whatever texture each quad samples — a
     /// baked GUI texture or the icon atlas (solid quads ignore the sampler).
     pub ui_pipe: wgpu::RenderPipeline,
-    /// Reusable dynamic vbuf for the UI's solid quads (dim backdrop + digits);
-    /// grown by the renderer to fit.
-    pub ui_vbuf: wgpu::Buffer,
     /// model-icon pipeline: bbmodel-block icons. The icon MVP is baked into the
     /// `ItemVertex` positions CPU-side and the faces self-sort by depth (the model is
     /// double-sided like the in-world block), so this is a near pass-through sampling
@@ -452,7 +450,7 @@ pub(super) fn create_pipeline_resources(
     let entity_shadow_pipe =
         create_entity_shadow_pipeline(device, format, max_samples, &shared.uniform_bgl);
     let particles = create_particle_pipeline(device, format, max_samples, &shared.layout);
-    let (ui_pipe, ui_vbuf) = create_ui_pipeline(device, format);
+    let ui_pipe = create_ui_pipeline(device, format);
     let model_icon_pipe = create_model_icon_pipeline(device, format, &shared.atlas_bgl);
     let (grade_pipe, grade_bgl) = create_grade_pipeline(device, format);
 
@@ -504,7 +502,6 @@ pub(super) fn create_pipeline_resources(
         particle_pipe: particles.pipe,
         emitter_particle_pipe: particles.emitter_pipe,
         ui_pipe,
-        ui_vbuf,
         model_icon_pipe,
     }
 }

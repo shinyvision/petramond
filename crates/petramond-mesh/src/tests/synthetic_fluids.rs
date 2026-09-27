@@ -40,9 +40,8 @@ fn fluid_row(name: &str, alpha: f32, tiles: &str) -> String {
 }
 
 /// A fresh mods root holding the `meshfluids` pack.
-fn stage() -> std::path::PathBuf {
-    let root = std::env::temp_dir().join(format!("petramond-mesh-fluids-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+fn stage() -> petramond_util::test_dirs::TestScratchDir {
+    let root = petramond_util::test_dirs::TestScratchDir::new("mesh-fluids");
     let pack = root.join("mods/meshfluids");
     std::fs::create_dir_all(pack.join("textures")).unwrap();
     let write = |file: &str, text: &str| std::fs::write(pack.join(file), text).unwrap();
@@ -87,7 +86,6 @@ fn synthetic_fluid_rows() {
     an_opaque_top_under_a_lid_draws_only_when_recessed(tar, mist);
     only_a_full_opaque_medium_covers_the_faces_behind_it(tar, mist);
     biome_tinted_fluid_tiles_mark_the_section(tar, mist);
-    let _ = std::fs::remove_dir_all(&root);
 }
 
 fn block(name: &str) -> Block {

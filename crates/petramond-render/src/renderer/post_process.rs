@@ -103,6 +103,9 @@ impl Renderer {
     }
 
     pub(crate) fn scene_route(&self) -> SceneRoute {
+        if self.captures.world_due {
+            return SceneRoute::PostProcess;
+        }
         let native = self.scene_dims() == self.screen_size();
         match (
             self.targets.grade_enabled,
@@ -165,12 +168,13 @@ fn scene_dimensions((w, h): (u32, u32), render_scale: f32, aa: AntiAliasing) -> 
 
 impl Renderer {
     pub fn resize(&mut self, width: u32, height: u32) {
-        if width == 0 || height == 0 {
+        if width == 0 || height == 0 || self.resize_under_sized_frames(width, height) {
             return;
         }
         self.config.width = width;
         self.config.height = height;
-        self.ui.viewport_generation = self.ui.viewport_generation.wrapping_add(1).max(1);
+        self.ui.scene_generation = self.ui.scene_generation.wrapping_add(1).max(1);
+        self.ui.window_generation = self.ui.window_generation.wrapping_add(1).max(1);
         if let Some(surface) = &self.surface {
             surface.configure(&self.device, &self.config);
         }

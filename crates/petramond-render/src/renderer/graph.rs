@@ -91,6 +91,9 @@ pub(crate) enum ColorTarget {
     EnvColor,
     /// The presented image.
     Swapchain,
+    /// The world's eye depth the window's world marks test against, kept
+    /// before the hand clears the frame depth. Read after the frame.
+    MarksEye,
 }
 
 /// A depth target a node can attach.
@@ -193,16 +196,18 @@ pub(crate) enum Resource {
     EnvColor,
     Depth,
     EnvDepth,
+    MarksEye,
 }
 
 impl Resource {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::Swapchain,
         Self::SceneColor,
         Self::MultisampleColor,
         Self::EnvColor,
         Self::Depth,
         Self::EnvDepth,
+        Self::MarksEye,
     ];
 
     const fn bit(self) -> u8 {
@@ -217,6 +222,9 @@ pub(crate) struct FrameShape {
     pub(crate) route: SceneRoute,
     /// The world colour and depth are multisampled.
     pub(crate) msaa: bool,
+    /// The scene texture is read after the frame: a world capture grades it
+    /// again into a target of its own.
+    pub(crate) keep_scene: bool,
 }
 
 impl FrameShape {
@@ -229,6 +237,17 @@ impl FrameShape {
             },
             ColorTarget::EnvColor => Resource::EnvColor,
             ColorTarget::Swapchain => Resource::Swapchain,
+            ColorTarget::MarksEye => Resource::MarksEye,
+        }
+    }
+
+    /// Whether `resource` is read after the frame's last pass, and so must
+    /// survive it whatever the passes do.
+    fn read_after(self, resource: Resource) -> bool {
+        match resource {
+            Resource::Swapchain | Resource::MarksEye => true,
+            Resource::SceneColor => self.keep_scene,
+            _ => false,
         }
     }
 
@@ -482,11 +501,11 @@ impl<N: Copy + PartialEq> FrameGraph<N> {
     }
 }
 
-/// Whether a pass must keep `resource` when it ends: it is the frame's
-/// output, or a later pass reads it (loads or samples) before any pass
-/// clears it.
+/// Whether a pass must keep `resource` when it ends: it is read after the
+/// frame, or a later pass reads it (loads or samples) before any pass clears
+/// it.
 fn stored(resource: Resource, later: &[PassGroup], shape: FrameShape) -> bool {
-    if resource == Resource::Swapchain {
+    if shape.read_after(resource) {
         return true;
     }
     for group in later {

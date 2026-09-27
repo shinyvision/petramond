@@ -1,3 +1,4 @@
+use crate::net::identity::PlayerKey;
 use crate::net::protocol::JoinData;
 use crate::player::PlayerId;
 use crate::server::admissions::self_restore_from;
@@ -15,6 +16,7 @@ impl ServerGame {
         let local = self.sessions.first()?;
         Some(Box::new(JoinData {
             player_id: local.id,
+            player_name: local.name.clone(),
             seed: self.world.data().seed,
             clock: crate::server::daynight::current_clock(&self.world),
             tables: crate::net::remap::local_name_tables(),
@@ -24,6 +26,7 @@ impl ServerGame {
                 .iter()
                 .map(|s| (s.id, s.name.clone()))
                 .collect(),
+            client_policy: self.client_policy,
         }))
     }
 
@@ -67,4 +70,15 @@ impl ServerGame {
         }
         Some(self.sessions.leave(s).name)
     }
+}
+
+/// The identity a verified Petramond account joins under: derived from the
+/// account's stable id, so the record survives a website rename. It has no
+/// secret half, so no identity proof can ever claim it: only a redeemed
+/// ticket reaches it.
+pub(in crate::server) fn account_key(user_id: i64) -> PlayerKey {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"petramond/account-identity/v1\0");
+    hasher.update(&user_id.to_le_bytes());
+    PlayerKey(*hasher.finalize().as_bytes())
 }

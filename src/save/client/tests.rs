@@ -2,11 +2,7 @@ use super::*;
 
 #[test]
 fn identity_fields_roundtrip_and_default_to_none() {
-    let dir = std::env::temp_dir().join(format!(
-        "petramond-clienttest-{}-identity",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = petramond_util::test_dirs::TestScratchDir::new("clienttest-identity");
     let file = dir.join("client.json");
 
     // New fields survive a store/load round-trip.
@@ -26,8 +22,6 @@ fn identity_fields_roundtrip_and_default_to_none() {
     assert_eq!(old.player_name, None);
     assert_eq!(old.last_server, None);
     assert_eq!(old.fps_cap, 90);
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -40,4 +34,35 @@ fn player_name_resolution_trims_and_falls_through_blanks() {
         "Rachel"
     );
     assert_eq!(first_nonempty([None, Some(String::new())]), "Player");
+}
+
+/// A signed-in Petramond account IS the local player's name — in singleplayer
+/// too, which is where it first shipped wrong: the world's chat kept showing
+/// the OS username after signing in. The account outranks client.json, and a
+/// blank or absent one falls through to it rather than blanking the name.
+///
+/// Env is not exercised here: `PETRAMOND_PLAYER_NAME` is process-global state
+/// no test may set for the rest of the suite. Its position (above the account,
+/// as the deliberate per-run override) is documented on `resolve_player_name`.
+#[test]
+fn a_signed_in_account_outranks_the_configured_player_name() {
+    let configured = ClientSettings {
+        player_name: Some("rachel".to_string()),
+        ..ClientSettings::default()
+    };
+    assert_eq!(
+        player_name_from(&configured, Some(" Explorer ".to_string())),
+        "Explorer",
+        "the account username wins, trimmed"
+    );
+    assert_eq!(
+        player_name_from(&configured, None),
+        "rachel",
+        "signed out, the configured name still answers"
+    );
+    assert_eq!(
+        player_name_from(&configured, Some("   ".to_string())),
+        "rachel",
+        "a blank account name falls through instead of blanking the identity"
+    );
 }

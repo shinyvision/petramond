@@ -415,8 +415,22 @@ impl Solver<'_, '_, '_> {
         if let Size::Px(p) = l.h {
             natural.1 = p;
         }
-        natural.0 = clamp_opt(natural.0, effective_min_w(inst), l.max_w);
+        let content_h = natural.1;
         natural.1 = clamp_opt(natural.1, l.min_h, l.max_h);
+        // A vertical scroll its own cap makes overflow already knows it will
+        // show its bar: the lane belongs in its natural width, not carved out
+        // of its content, or an auto-width scroll squeezes its rows under it.
+        if matches!(
+            node.kind,
+            NodeKind::Scroll {
+                axis: ScrollAxis::Vertical
+            }
+        ) && matches!(l.w, Size::Auto)
+            && natural.1 < content_h
+        {
+            natural.0 += self.env.scrollbar_width();
+        }
+        natural.0 = clamp_opt(natural.0, effective_min_w(inst), l.max_w);
         self.naturals[idx as usize] = natural;
         natural
     }

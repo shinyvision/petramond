@@ -36,6 +36,10 @@ pub struct Camera {
     // owns the authoritative yaw/pitch (and the pitch clamp). Radians.
     pub yaw: f32,   // around +Y
     pub pitch: f32, // up/down
+    /// Bank about the look, radians: positive rolls the view to the right
+    /// (the horizon turns counter-clockwise on screen). Zero for the player's
+    /// own eye; only a claimed view camera rolls.
+    pub roll: f32,
     pub fov_y: f32,
     pub aspect: f32,
     pub near: f32,
@@ -50,6 +54,7 @@ impl Camera {
             // this default only applies to a standalone camera, e.g. in tests.
             yaw: 0.0,
             pitch: 0.0,
+            roll: 0.0,
             fov_y: 70f32.to_radians(),
             aspect,
             near: 0.1,
@@ -71,6 +76,16 @@ impl Camera {
         Vec3::new(-self.yaw.cos(), 0.0, self.yaw.sin()).normalize()
     }
 
+    /// The view's up axis, derived from the yaw-only `right`, which is
+    /// defined at every pitch: an unrolled level look gets world up, and a
+    /// look swept past vertical turns over smoothly instead of snapping.
+    pub fn up(&self) -> Vec3 {
+        let forward = self.forward();
+        let right = self.right();
+        let level_up = right.cross(forward).normalize();
+        level_up * self.roll.cos() + right * self.roll.sin()
+    }
+
     pub fn proj(&self) -> Mat4 {
         Mat4::perspective_rh(self.fov_y, self.aspect, self.near, self.far)
     }
@@ -80,7 +95,7 @@ impl Camera {
     #[cfg(test)]
     pub fn view(&self) -> Mat4 {
         let eye = self.pos.relative_to(glam::IVec3::ZERO);
-        Mat4::look_at_rh(eye, eye + self.forward(), Vec3::Y)
+        Mat4::look_at_rh(eye, eye + self.forward(), self.up())
     }
 
     #[cfg(test)]
@@ -117,5 +132,18 @@ mod tests {
         // The permissive frustum culls nothing.
         let (mn, mx) = chunk(-8.0, -64.0);
         assert!(Frustum::permissive().aabb_visible(mn, mx));
+    }
+
+    #[test]
+    fn a_pitch_swept_past_vertical_never_flips_the_image_in_one_step() {
+        let mut cam = Camera::new(WorldPos::new(0.0, 80.0, 0.0), 1.0);
+        let screen_right = |cam: &Camera| cam.view().row(0).truncate();
+        let mut prev = screen_right(&cam);
+        for step in 0..=300 {
+            cam.pitch = 1.5 + step as f32 * 0.001;
+            let now = screen_right(&cam);
+            assert!(now.dot(prev) > 0.99, "flipped at pitch {}", cam.pitch);
+            prev = now;
+        }
     }
 }

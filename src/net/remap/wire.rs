@@ -86,7 +86,6 @@ pub(super) fn remap_to_server(map: &IdRemap, msg: &mut ClientToServer) {
         | ClientToServer::CraftRecipe { .. }
         | ClientToServer::ChatSend { .. }
         | ClientToServer::StreamBatchAck { .. }
-        | ClientToServer::TerrainBacklog { .. }
         | ClientToServer::SectionCacheMiss { .. }
         | ClientToServer::Pause(_)
         | ClientToServer::KeepAlive
@@ -170,6 +169,7 @@ impl Remap for JoinData {
     fn remap(&mut self, map: &IdRemap) -> bool {
         let JoinData {
             player_id: _,
+            player_name: _,
             seed: _,
             clock: _,
             // The tables ARE the vocabulary.
@@ -178,6 +178,7 @@ impl Remap for JoinData {
             // Recipes resolve by registry name.
             crafting_recipes: _,
             players: _,
+            client_policy: _,
         } = self;
         self_restore.remap(map)
     }
@@ -393,6 +394,7 @@ impl Remap for SelfState {
             sleeping: _,
             sleep_bed: _,
             move_scale: _,
+            fly_scale: _,
             denied_actions: _,
             held_pose_main: _,
             held_pose_off: _,

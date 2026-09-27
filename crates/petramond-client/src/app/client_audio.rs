@@ -99,13 +99,30 @@ impl ClientAudio {
         }
     }
 
-    /// Play a non-positional one-shot (UI clicks, the own pickup/hurt).
-    pub(super) fn play(&mut self, sound: Sound) {
-        self.audio.play(sound);
+    /// [`play`](Self::play) for the viewer's own interface (a menu click):
+    /// always on the device, never part of an offline mixdown.
+    pub(super) fn play_interface(&mut self, sound: Sound) {
+        self.audio.play_interface(sound);
     }
 
     pub(super) fn set_volumes(&mut self, master: f32, sound: f32, music: f32) {
         self.audio.set_volumes(master, sound, music);
+    }
+
+    /// The engine itself, for the media host: taps on the world's sound,
+    /// the offline mix a stepped clock pulls, and what the device plays.
+    pub(super) fn engine(&self) -> &Audio {
+        &self.audio
+    }
+
+    pub(super) fn engine_mut(&mut self) -> &mut Audio {
+        &mut self.audio
+    }
+
+    /// Drop every playing spatial voice: the presented world or moment they
+    /// belong to has gone.
+    pub(super) fn clear_spatial(&mut self) {
+        self.audio.clear_spatial();
     }
 
     /// Stop the local mining loop (menus, pause, released buttons).

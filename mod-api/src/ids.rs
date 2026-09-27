@@ -40,7 +40,7 @@ pub struct MobId(pub u8);
 ///
 /// [`PlayerCall::PlayerInput`]: crate::PlayerCall::PlayerInput
 /// [`EntityCall::MobMount`]: crate::EntityCall::MobMount
-#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PlayerId(pub u8);
 
 /// A runtime body CONDITION id (`conditions.json`, e.g. `"petramond:burning"`) —

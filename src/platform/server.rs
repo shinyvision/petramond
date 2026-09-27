@@ -37,6 +37,14 @@ pub struct ServerSettings {
     /// Most players connected at once (`1..=256`); joins beyond it are
     /// refused with `ServerFull`.
     pub max_players: usize,
+    /// Check every joining player against their Petramond account (the default).
+    /// Turn it off only for a private server: with it off the server admits
+    /// whatever name a client sends, so any client can claim any name — and
+    /// therefore any other player's saved inventory.
+    pub online_mode: bool,
+    /// Let players load presentation-only packs this server does not run
+    /// (a minimap, a HUD). Consent, not enforcement.
+    pub presentation_packs: bool,
 }
 
 impl Default for ServerSettings {
@@ -45,6 +53,8 @@ impl Default for ServerSettings {
             view_distance: 32,
             simulation_distance: crate::mob::SimDistance::default(),
             max_players: 20,
+            online_mode: true,
+            presentation_packs: true,
         }
     }
 }
@@ -99,9 +109,11 @@ fn install_world_content(world_name: &str) -> Result<(), petramond_world::conten
 }
 
 /// `petramond_server <world-name>` — configured by `settings.json` beside the
-/// binary (`view_distance`, `simulation_distance`); env overrides: `PETRAMOND_SEED` (new worlds
-/// only), `PETRAMOND_RD` (streaming radius > settings.json), `PETRAMOND_PORT`
-/// (default 7434, 0 = ephemeral).
+/// binary (`view_distance`, `simulation_distance`, `max_players`, `online_mode`,
+/// `presentation_packs`); env overrides: `PETRAMOND_SEED` (new worlds only),
+/// `PETRAMOND_RD` (streaming radius > settings.json), `PETRAMOND_PORT`
+/// (default 7434, 0 = ephemeral), `PETRAMOND_ONLINE_MODE=0` (skip account
+/// checks) and `PETRAMOND_ACCOUNT_URL` (a website checkout).
 pub fn run() {
     super::init_logging();
     let Some(world_name) = std::env::args().nth(1) else {
@@ -109,11 +121,17 @@ pub fn run() {
         eprintln!(
             "  settings.json (beside the binary): view_distance <4..64>, \
              simulation_distance {{full_chunks, reduced_chunks, reduced_interval}}, \
-             max_players <1..256>"
+             max_players <1..256>, online_mode <bool>, presentation_packs <bool>"
         );
         eprintln!("  env: PETRAMOND_SEED=<u32>  PETRAMOND_RD=<4..64>  PETRAMOND_PORT=<port>");
+        eprintln!("       PETRAMOND_ONLINE_MODE=0  PETRAMOND_ACCOUNT_URL=<origin>");
         std::process::exit(2);
     };
+    // A server never applies content changes, but no client on this data
+    // directory may apply them under it either.
+    let _content_lock = crate::content::ContentLock::shared(&crate::content::Dirs::installed())
+        .map_err(|e| log::warn!("content lock: {e}"))
+        .ok();
     if let Err(e) = install_world_content(&world_name) {
         eprintln!("{e}");
         std::process::exit(1);
@@ -136,6 +154,22 @@ pub fn run() {
     let mut server = crate::server::session_build::build_headless_session(&world_name, seed, rd);
     server.set_sim_distance(settings.simulation_distance);
     server.set_max_players(settings.max_players);
+    // settings.json is the deployment's own switch; the env var (already read by
+    // the constructor) is the one-off override, so it wins.
+    if !settings.online_mode && std::env::var("PETRAMOND_ONLINE_MODE").is_err() {
+        server.set_account_policy(crate::account::AccountPolicy::Offline);
+    }
+    server.set_client_policy(crate::net::protocol::ClientPolicy {
+        presentation_packs: settings.presentation_packs,
+    });
+    if server.account_policy().requires_account() {
+        log::info!(
+            "online mode: players are verified against {}",
+            crate::account::service_url()
+        );
+    } else {
+        log::warn!("online mode is OFF: any client may claim any player name");
+    }
     let mut handle = crate::server::handle::spawn(server);
     let port = match handle.open_to_lan(port) {
         Ok(port) => port,

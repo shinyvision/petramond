@@ -30,7 +30,8 @@ const KEY_WAYPOINT: u32 = 2;
 
 #[derive(Default)]
 struct Minimap {
-    /// Explored base/mip tile caches plus the async region loader.
+    /// Explored base/mip tile caches plus the async region loader — of the
+    /// world on screen.
     store: TileStore,
     waypoints: Vec<Waypoint>,
     player: [f64; 3],
@@ -75,9 +76,35 @@ impl Mod for Minimap {
         if runtime_side() != RuntimeSide::Client {
             return;
         }
-        client_register_overlay(HUD_IMAGE, ClientOverlayAnchor::TopRight, [8, 8], [256, 256]);
-        client_register_key("open_map", "Open World Map", "key_m", KEY_MAP);
-        client_register_key("add_waypoint", "Add Waypoint", "key_n", KEY_WAYPOINT);
+        client_register_overlay(
+            HUD_IMAGE,
+            ClientOverlayAnchor::TopRight,
+            [8, 8],
+            [256, 256],
+            true,
+        );
+        client_register_key(
+            "open_map",
+            "Open World Map",
+            "key_m",
+            ClientKeyMods::default(),
+            ClientKeyContexts {
+                gameplay: true,
+                screens: vec![FULL_CANVAS.into()],
+            },
+            KEY_MAP,
+        );
+        client_register_key(
+            "add_waypoint",
+            "Add Waypoint",
+            "key_n",
+            ClientKeyMods::default(),
+            ClientKeyContexts {
+                gameplay: true,
+                screens: Vec::new(),
+            },
+            KEY_WAYPOINT,
+        );
         self.load_waypoints();
         log("client minimap initialized");
     }
@@ -87,6 +114,11 @@ impl Mod for Minimap {
         self.player = frame.player_pos;
         self.yaw = frame.yaw;
         self.open_canvas = frame.open_canvas.clone();
+        // A presentation's instance is fresh and never outlives it: its
+        // exploration is the presented world's, never a session's to keep.
+        if !self.store.ephemeral && matches!(client_context(), ClientContext::Presentation { .. }) {
+            self.enter_presentation();
+        }
         self.store.begin_frame(self.frame);
         // Loader heartbeat: poll async region reads, repaint arrivals, trim
         // the caches when the map is closed.
@@ -139,7 +171,7 @@ impl Mod for Minimap {
                     client_canvas_open(FULL_CANVAS, [FULL_SIZE as u16, FULL_SIZE as u16]);
                 }
             }
-            KEY_WAYPOINT => self.open_create(),
+            KEY_WAYPOINT if !self.store.ephemeral => self.open_create(),
             _ => {}
         }
     }
@@ -154,9 +186,9 @@ impl Mod for Minimap {
                     self.save_editor();
                 }
             }
-            ClientUiEvent::Click { id } if id == keys::WIDGET_SAVE => self.save_editor(),
-            ClientUiEvent::Click { id } if id == keys::WIDGET_CANCEL => self.cancel_editor(),
-            ClientUiEvent::Click { id } if id == keys::WIDGET_DELETE => self.delete_editor(),
+            ClientUiEvent::Click { id, .. } if id == keys::WIDGET_SAVE => self.save_editor(),
+            ClientUiEvent::Click { id, .. } if id == keys::WIDGET_CANCEL => self.cancel_editor(),
+            ClientUiEvent::Click { id, .. } if id == keys::WIDGET_DELETE => self.delete_editor(),
             _ => {}
         }
     }
@@ -183,6 +215,19 @@ impl Mod for Minimap {
 }
 
 impl Minimap {
+    /// Every sample, watermark and raster started before the instance knew
+    /// it presents belongs to no world it keeps.
+    fn enter_presentation(&mut self) {
+        self.store = TileStore::ephemeral();
+        self.last_sample = None;
+        self.explored_revision = self.explored_revision.wrapping_add(1);
+        self.hud_stamp = None;
+        self.full_tile_slots = FullTileSlots::default();
+        self.full_scene_stamp = None;
+        self.full_view_bits = None;
+        self.full_needed_stamp = None;
+    }
+
     /// Scale-2 single-line measurement through a cache: `client_text_measure`
     /// crosses the ABI, so each distinct string measures once.
     fn measure_cached(&mut self, text: &str) -> [u16; 2] {

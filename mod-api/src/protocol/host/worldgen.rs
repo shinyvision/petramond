@@ -65,7 +65,7 @@ host_domain! {
         /// → [`HostRet::UndergroundBiomes`](crate::HostRet::UndergroundBiomes).
         UndergroundBiomeAt {
             positions: Vec<[i32; 3]>,
-        } => legal(EVERY, Any, Read),
+        } => legal(BESIDE_WORLD, Any, Read),
         /// Is the GENERATED TERRAIN solid at each world cell, reply parallel to
         /// `positions`? A pure function of (world seed, position): the density
         /// surface minus the cave carve — the same two decisions the engine's own
@@ -93,7 +93,7 @@ host_domain! {
         UndergroundBiomesInBox {
             lo: [i32; 3],
             hi: [i32; 3],
-        } => legal(EVERY, Any, Read),
+        } => legal(BESIDE_WORLD, Any, Read),
         /// The final SURFACE biome of each world column, reply parallel to
         /// `columns` (`[x, z]`). The day-surface member of the positional
         /// worldgen family, and subject to the same rules as

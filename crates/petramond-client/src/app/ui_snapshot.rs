@@ -23,18 +23,20 @@ pub(super) fn build(
     };
 
     let menu = game.menu_read_model();
-    let inv = menu.inventory;
-    snapshot.active = inv.active_slot();
-    snapshot.off_hand = inv.off_hand().copied();
+    snapshot.cursor = menu.inventory.cursor().copied();
     snapshot.craft_output = menu.craft_output;
-    snapshot.cursor = inv.cursor().copied();
     snapshot.container = menu.container.cloned();
     snapshot.gui_state = menu.gui_state.cloned();
-    snapshot.health = game.player_health();
-    snapshot.effects = game.player_effect_icons();
-
-    for (i, slot) in snapshot.slots.iter_mut().enumerate() {
-        *slot = inv.slot(i).copied();
+    // The HUD is whoever's view presents; nobody's draws empty.
+    if let Some(view) = game.hud_view() {
+        let inv = &view.inventory;
+        snapshot.active = inv.active_slot();
+        snapshot.off_hand = inv.off_hand().copied();
+        snapshot.health = view.health_view();
+        snapshot.effects = view.effect_icons();
+        for (i, slot) in snapshot.slots.iter_mut().enumerate() {
+            *slot = inv.slot(i).copied();
+        }
     }
     if let Some((slots, button)) = drag_preview {
         apply_menu_drag_preview(&mut snapshot, slots, button);

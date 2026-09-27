@@ -23,9 +23,20 @@
 //! lit face ships — the replica installs a minimal lit stand-in so the mesher
 //! renders it), mobs, and dropped items.
 
+mod changes;
+mod detached;
 mod ingest;
 mod payload;
+mod provenance;
+mod restate;
 mod send_plan;
+
+pub use changes::{column_key, section_key, Changes, FrameChanges};
+pub use detached::{DetachedFold, TerrainEdit};
+pub(crate) use payload::{detached_column_payload, detached_section_payload};
+pub(in crate::world) use provenance::Provenance;
+pub use provenance::{Cached, PieceRange, Resident, SectionContent};
+pub use restate::decode_section_payload;
 
 #[cfg(test)]
 mod tests;

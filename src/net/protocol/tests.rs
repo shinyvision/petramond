@@ -18,7 +18,7 @@ fn representative_messages_roundtrip_through_postcard() {
     )));
     roundtrip(&ClientToServer::Hello { protocol: 1 });
     roundtrip(&ClientToServer::Join {
-        player_name: "Rachel".into(),
+        credential: crate::net::protocol::JoinCredential::Name("Rachel".into()),
         key: crate::net::identity::PlayerKey([0xAB; 32]),
         proof: vec![0x5A; 64],
         view_distance: 16,
@@ -143,6 +143,8 @@ fn representative_messages_roundtrip_through_postcard() {
     roundtrip(&ServerToClient::HelloAck {
         protocol: 50,
         challenge: [0x11; 32],
+        requires_account: true,
+        server_id: "0123456789abcdef0123456789abcdef".into(),
     });
     roundtrip(&ServerToClient::ModsDisabled {
         mods: vec!["farming".into(), "combat".into()],
@@ -152,6 +154,8 @@ fn representative_messages_roundtrip_through_postcard() {
         JoinRejectReason::InvalidName("Player name cannot be empty".into()),
         JoinRejectReason::AlreadyConnected,
         JoinRejectReason::ServerFull,
+        JoinRejectReason::AccountRequired,
+        JoinRejectReason::AccountRejected("That ticket has expired".into()),
     ] {
         roundtrip(&ServerToClient::JoinReject { reason });
     }
@@ -410,6 +414,7 @@ fn tick_updates_roundtrip() {
                 eating: Some(128),
                 eating_off_hand: true,
                 move_scale: 0.5,
+                fly_scale: 1.0,
                 denied_actions: crate::player::DeniedActions::of([mod_api::BodyAction::Mine]),
                 held_pose_main: Some(mod_api::HeldPose {
                     first_person: mod_api::HeldPoseData {

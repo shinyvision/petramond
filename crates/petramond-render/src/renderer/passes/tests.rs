@@ -107,6 +107,11 @@ fn ordering_contracts_hold() {
         "highlights draw over the whole world",
     );
     assert_before(Ghosts, Hand, "the hand draws over everything in the world");
+    assert_before(
+        WorldMarksDepth,
+        Hand,
+        "the marks keep the world's depth before the hand clears it",
+    );
     assert_before(Hand, Grade, "the grade reads the finished world");
     assert_before(
         Grade,
@@ -143,31 +148,38 @@ fn group_of(plan: &FramePlan<Node>, node: Node) -> &PassGroup {
 const GRADED: FrameShape = FrameShape {
     route: SceneRoute::PostProcess,
     msaa: false,
+    keep_scene: false,
 };
 
 /// Every node active: the frame that used to open 26 render passes (the
-/// MSAA resolve included).
+/// MSAA resolve included). A mod's world marks that can hide behind the
+/// world copy its depth in a pass of their own, only on the frames that
+/// draw such a mark.
 #[test]
 fn a_full_frame_collapses_into_seven_render_passes() {
-    let p = plan(GRADED, |_| true);
-    assert_eq!(
-        group_labels(&p),
-        [
-            "opaque pass",
-            "env depth downsample",
-            "environment pass",
-            "env composite pass",
-            "emitter particle pass",
-            "hand pass",
-            "grade pass",
-        ]
-    );
+    let p = plan(GRADED, |n| n != Node::WorldMarksDepth);
+    let seven = [
+        "opaque pass",
+        "env depth downsample",
+        "environment pass",
+        "env composite pass",
+        "emitter particle pass",
+        "hand pass",
+        "grade pass",
+    ];
+    assert_eq!(group_labels(&p), seven);
     // Opaque through fluid is one pass; the volumetrics split it only
     // because they sample the depth it writes.
     let world = &p.groups[0];
     assert_eq!(world.nodes.len(), 15);
     assert!(world.depth.unwrap().store, "the volumetrics sample depth");
     assert_eq!(p.validate(GRADED), Ok(()));
+
+    let marked = plan(GRADED, |_| true);
+    let mut eight = seven.to_vec();
+    eight.insert(5, "world marks depth");
+    assert_eq!(group_labels(&marked), eight);
+    assert_eq!(marked.validate(GRADED), Ok(()));
 }
 
 #[test]
@@ -175,7 +187,7 @@ fn without_volumetrics_the_world_is_one_pass_up_to_the_hand() {
     let p = plan(GRADED, |n| {
         !matches!(
             n,
-            Node::EnvDownsample | Node::Environment | Node::EnvComposite
+            Node::EnvDownsample | Node::Environment | Node::EnvComposite | Node::WorldMarksDepth
         )
     });
     assert_eq!(group_labels(&p), ["opaque pass", "hand pass", "grade pass"]);
@@ -199,6 +211,7 @@ fn msaa_resolves_on_the_hand_pass_and_discards_its_samples() {
     let shape = FrameShape {
         route: SceneRoute::PostProcess,
         msaa: true,
+        keep_scene: false,
     };
     let p = plan(shape, |_| true);
     let hand = group_of(&p, Node::Hand);
@@ -213,6 +226,7 @@ fn msaa_without_a_hand_resolves_on_the_last_world_pass() {
     let shape = FrameShape {
         route: SceneRoute::ResolveToSwapchain,
         msaa: true,
+        keep_scene: false,
     };
     let p = plan(shape, |n| {
         matches!(
@@ -253,18 +267,22 @@ fn every_activity_combination_plans_validly() {
         FrameShape {
             route: SceneRoute::Direct,
             msaa: false,
+            keep_scene: false,
         },
         FrameShape {
             route: SceneRoute::ResolveToSwapchain,
             msaa: true,
+            keep_scene: false,
         },
         FrameShape {
             route: SceneRoute::PostProcess,
             msaa: false,
+            keep_scene: false,
         },
         FrameShape {
             route: SceneRoute::PostProcess,
             msaa: true,
+            keep_scene: false,
         },
     ];
     let order = order();

@@ -63,31 +63,6 @@ const INITIAL_CLIENT_RATE: f32 = 1600.0;
 /// (the queue-headroom allowance still backstops the high end).
 const CLIENT_RATE_BOUNDS: (f32, f32) = (50.0, 50_000.0);
 
-/// A client mesh backlog of this many sections counts as one unit of
-/// presentation pressure: two frames of the client's mesh admission (256
-/// sections per pump frame), i.e. more than it can start meshing before the
-/// next backlog report (every 100 ms) arrives.
-const MESH_BACKLOG_PRESSURE_UNIT: f32 = 512.0;
-/// A client GPU-upload backlog of this many columns counts as one unit of
-/// presentation pressure: one maximum remote batch ([`MAX_BATCH_MSGS`]) worth
-/// of columns still waiting to reach the GPU.
-const UPLOAD_BACKLOG_PRESSURE_UNIT: f32 = 96.0;
-
-/// The terrain admission rate (messages/second) for a client applying at
-/// `client_rate` under presentation `pressure` (backlog / one pressure unit,
-/// the larger of the mesh and upload channels).
-///
-/// Below one unit the client is keeping up and the ack-measured rate stands.
-/// Above it the rate falls with the SQUARE of the pressure: dividing by the
-/// pressure alone would admit exactly the rate the client clears and freeze
-/// the backlog where it is; the square admits LESS than the client clears, so
-/// a backlog shrinks, and shrinks fastest when it is largest. The floor keeps a
-/// swamped client streaming instead of parking it.
-fn presentation_admission_rate(client_rate: f32, pressure: f32) -> f32 {
-    let pressure = pressure.max(1.0);
-    (client_rate / (pressure * pressure)).max(CLIENT_RATE_BOUNDS.0)
-}
-
 /// Outbound-queue slots the streamer must always leave free for tick
 /// updates, unloads, and broadcasts. Below this headroom a remote session
 /// ships NO streaming messages this pump (terrain AND light — light defers
@@ -168,10 +143,6 @@ pub struct TerrainSync {
     /// ack) instead of trickling `INITIAL_CLIENT_RATE × dt` messages per
     /// pump while the player stares at an empty spawn.
     batch_quota: f32,
-    /// The client's presentation backlog in pressure units (see
-    /// [`apply_presentation_backlog`](Self::apply_presentation_backlog));
-    /// 0 until the first report.
-    presentation_pressure: f32,
     batch_limit: usize,
     window_limit: u32,
 }
@@ -196,7 +167,6 @@ impl Default for TerrainSync {
             max_unacked: 1,
             client_rate: INITIAL_CLIENT_RATE,
             batch_quota: MAX_BATCH_MSGS as f32,
-            presentation_pressure: 0.0,
             batch_limit: MAX_BATCH_MSGS,
             window_limit: MAX_UNACKED_BATCHES,
         }
@@ -258,16 +228,6 @@ impl TerrainSync {
             self.client_rate =
                 messages_per_second.clamp(CLIENT_RATE_BOUNDS.0, CLIENT_RATE_BOUNDS.1);
         }
-    }
-
-    /// Apply one `TerrainBacklog` report: the client's raw presentation
-    /// backlog (sections awaiting a mesh, columns awaiting GPU upload) becomes
-    /// the pressure [`presentation_admission_rate`] throttles by. The policy
-    /// — what one unit of pressure means — lives here, beside the rate it
-    /// feeds; the client only ever reports counts.
-    pub fn apply_presentation_backlog(&mut self, mesh_sections: u32, upload_columns: u32) {
-        self.presentation_pressure = (mesh_sections as f32 / MESH_BACKLOG_PRESSURE_UNIT)
-            .max(upload_columns as f32 / UPLOAD_BACKLOG_PRESSURE_UNIT);
     }
 
     /// Believe the client parks `sp` under `hash` (it was just vouched in an
@@ -426,10 +386,8 @@ impl ServerGame {
         msgs: &mut Vec<ServerToClient>,
     ) {
         let sync = &mut self.sessions[s].transport.terrain;
-        let admitted_rate =
-            presentation_admission_rate(sync.client_rate, sync.presentation_pressure);
         sync.batch_quota =
-            (sync.batch_quota + admitted_rate * dt.max(0.0)).min(sync.batch_limit as f32);
+            (sync.batch_quota + sync.client_rate * dt.max(0.0)).min(sync.batch_limit as f32);
         if sync.unacked_batches >= sync.max_unacked {
             return;
         }

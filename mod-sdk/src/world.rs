@@ -253,7 +253,7 @@ host_fn! {
     /// collision boxes). Unloaded cells read as air, like the crosshair's own
     /// ray. THE line-of-sight primitive — a swung weapon reaching for a
     /// body, a projectile's flight, an AI's sightline. `None` = nothing
-    /// within `max`.
+    /// within `max`. From a client instance it is cast against the replica.
     pub fn raycast(from: [f64; 3], dir: [f32; 3], max: f32, filter: RayFilter)
         -> Option<RaycastHitData>
         => Raycast { from, dir, max, filter } => Raycast

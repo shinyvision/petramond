@@ -73,11 +73,17 @@ fn bundled_pack_shaders_parse_and_validate() {
         "ui.wgsl",
         "env_downsample.wgsl",
         "env_composite.wgsl",
+        "world_marks.wgsl",
+        "world_marks_depth.wgsl",
+        "world_marks_depth.wgsl (multisampled)",
     ] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("shaders")
-            .join(standalone);
-        let source = if standalone == "env_downsample.wgsl" {
+            .join(standalone.split(' ').next().unwrap_or(standalone));
+        let source = if let Some(depth) = standalone.strip_prefix("world_marks_depth.wgsl") {
+            crate::pipeline::scene_depth_source(!depth.is_empty(), 0)
+                + &std::fs::read_to_string(&path).expect("engine shader reads")
+        } else if standalone == "env_downsample.wgsl" {
             crate::pipeline::scaler_sources(false).0
         } else if standalone == "env_composite.wgsl" {
             crate::pipeline::scaler_sources(false).1
@@ -86,6 +92,8 @@ fn bundled_pack_shaders_parse_and_validate() {
         } else {
             std::fs::read_to_string(&path).expect("engine shader reads")
         };
+        let source = crate::pipeline::prelude::compose(&source)
+            .unwrap_or_else(|e| panic!("{standalone}: {e}"));
         let module = naga::front::wgsl::parse_str(&source)
             .unwrap_or_else(|e| panic!("{standalone} fails to parse: {e}"));
         naga::valid::Validator::new(

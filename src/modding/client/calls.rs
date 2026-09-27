@@ -1,39 +1,60 @@
-//! The client-instance host-call handlers: the whole [`ClientCall`] domain,
-//! size/namespace-capped, plus the read-only replica scope, and the
-//! [`BodyCall`] domain answered as PREDICTIONS against the local mirror.
-//! Which calls a client instance may make at all is the switchboard's
-//! decision, read from each call's declared legality.
+//! The client-instance host-call handlers: the [`ClientCall`] domain,
+//! size/namespace-capped, plus the read-only replica scope; the mod-file,
+//! capture, presentation and media domains; and the [`BodyCall`] domain and
+//! the replica `Raycast` answered as PREDICTIONS against the local mirror.
+//! Which calls a client instance may make at all — and which also on the
+//! shell — is the switchboard's decision, read from each call's declared
+//! legality.
 
+mod entities;
+mod events;
+mod facts;
+mod files;
+mod media;
+mod present;
+mod state;
 #[cfg(test)]
 mod tests;
 mod validate;
+mod view;
+mod world_marks;
 
 use std::sync::Arc;
 
-use mod_api::{BodyCall, ClientCall, ErrorCode, HostRet};
+use mod_api::{
+    BodyCall, ClientCall, ClientCaptureCall, ClientFileCall, ClientMediaCall,
+    ClientPresentationCall, ClientStorageScope, ErrorCode, HostRet, CLIENT_ENV_PARAM_MAX,
+};
 use petramond_world::item::ItemType;
 
 use crate::modding::host::guards::{key_owned_by_namespace, KV_MAX_KEY_BYTES};
 use crate::modding::host::ModStoreData;
 
 use super::scope as client_scope;
-use super::state::{ClientCommand, ClientImageData, ClientOverlayRegistration};
+use super::state::{ClientCommand, ClientImageData, ClientOverlayRegistration, ClientStoreData};
 use validate::{
-    client_canvas_element_image_key, client_canvas_element_valid, valid_client_key,
-    valid_client_key_id, CLIENT_AMBIENT_WIND_MAX, CLIENT_BLOCKS_QUERY_MAX,
-    CLIENT_CANVAS_ELEMENT_MAX, CLIENT_CANVAS_MAX, CLIENT_CANVAS_SIDE_MAX, CLIENT_COMMAND_MAX,
-    CLIENT_ENV_PARAM_MAX, CLIENT_IMAGE_MAX, CLIENT_IMAGE_SIDE_MAX, CLIENT_KEY_BINDING_MAX,
-    CLIENT_OVERLAY_DISPLAY_SIDE_MAX, CLIENT_OVERLAY_MAX, CLIENT_SURFACE_QUERY_MAX,
-    CLIENT_TEXT_BYTES_MAX, CLIENT_TEXT_RUN_MAX, CLIENT_TEXT_SCALE_MAX, CLIENT_UI_STATE_MAX,
+    client_canvas_element_image_key, client_canvas_element_valid, valid_client_key_id,
+    CLIENT_AMBIENT_WIND_MAX, CLIENT_BLOCKS_QUERY_MAX, CLIENT_CANVAS_MAX, CLIENT_CANVAS_SIDE_MAX,
+    CLIENT_COMMAND_MAX, CLIENT_IMAGE_SIDE_MAX, CLIENT_OVERLAY_DISPLAY_SIDE_MAX, CLIENT_OVERLAY_MAX,
+    CLIENT_SURFACE_QUERY_MAX, CLIENT_TEXT_BYTES_MAX, CLIENT_TEXT_RUN_MAX, CLIENT_TEXT_SCALE_MAX,
 };
+
+/// The client instance's store, or the refusal for an instance without one.
+fn client_store(data: &mut ModStoreData) -> Result<&mut ClientStoreData, HostRet> {
+    data.client
+        .as_mut()
+        .ok_or_else(|| HostRet::invalid("client instance has no client state".into()))
+}
 
 /// The presentation surface. Only a client instance reaches it (the
 /// switchboard admits a call by its declared sides), and the registrations
 /// only inside `mod_init` (their declared scope).
 pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: ClientCall) -> HostRet {
     let mod_id = data.mod_id.clone();
-    let Some(client) = data.client.as_mut() else {
-        return HostRet::invalid("client instance has no client state".into());
+    let guest_memory_max = data.guest_memory_max;
+    let client = match client_store(data) {
+        Ok(client) => client,
+        Err(refused) => return refused,
     };
     match call {
         ClientCall::ClientRegisterOverlay {
@@ -41,6 +62,7 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
             anchor,
             margin,
             display_size,
+            hud,
         } => {
             if !key_owned_by_namespace(&mod_id, &image_key) {
                 return HostRet::invalid(format!(
@@ -75,6 +97,7 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
                     anchor,
                     margin,
                     display_size,
+                    hud,
                 });
             }
             HostRet::Unit
@@ -83,6 +106,8 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
             id,
             label,
             key,
+            mods,
+            contexts,
             action_id,
         } => {
             if !valid_client_key_id(&id) {
@@ -93,19 +118,32 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
             if label.trim().is_empty() || label.len() > 48 {
                 return HostRet::invalid(format!("invalid client key label '{label}'"));
             }
-            if !valid_client_key(&key) {
+            if super::keys::key_code_for_name(&key).is_none() {
                 return HostRet::invalid(format!("unsupported client key '{key}'"));
+            }
+            if !contexts.gameplay && contexts.screens.is_empty() {
+                return HostRet::invalid(format!(
+                    "client key '{id}' fires nowhere: no gameplay and no screens"
+                ));
+            }
+            if let Some(screen) = contexts
+                .screens
+                .iter()
+                .find(|screen| !key_owned_by_namespace(&mod_id, screen))
+            {
+                return HostRet::invalid(format!(
+                    "client key '{id}' names screen '{screen}' outside '{mod_id}:'"
+                ));
             }
             if client.key_bindings.iter().any(|b| b.id == id) {
                 return HostRet::invalid(format!("client key id '{id}' registered twice"));
-            }
-            if client.key_bindings.len() >= CLIENT_KEY_BINDING_MAX {
-                return HostRet::invalid("client key registration limit reached".into());
             }
             client.key_bindings.push(super::state::ClientKeyBinding {
                 id,
                 label,
                 key,
+                mods,
+                contexts,
                 action_id,
             });
             HostRet::Unit
@@ -271,9 +309,6 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
             if !validate::gui_value_fits(&value) {
                 return HostRet::invalid("client UI value exceeds its size limit".into());
             }
-            if !client.ui_state.contains_key(&key) && client.ui_state.len() >= CLIENT_UI_STATE_MAX {
-                return HostRet::invalid("client UI state entry limit reached".into());
-            }
             Arc::make_mut(&mut client.ui_state).insert(key, value);
             HostRet::Unit
         }
@@ -290,41 +325,7 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
             width,
             height,
             rgba,
-        } => {
-            if !key_owned_by_namespace(&mod_id, &key) {
-                return HostRet::invalid(format!(
-                    "client image key '{key}' must be namespaced '{mod_id}:name'"
-                ));
-            }
-            if width == 0
-                || height == 0
-                || width > CLIENT_IMAGE_SIDE_MAX
-                || height > CLIENT_IMAGE_SIDE_MAX
-                || rgba.len() != width as usize * height as usize * 4
-            {
-                return HostRet::invalid(format!(
-                    "invalid client image {width}x{height} with {} RGBA bytes",
-                    rgba.len()
-                ));
-            }
-            if !client.images.contains_key(&key) && client.images.len() >= CLIENT_IMAGE_MAX {
-                return HostRet::invalid("client image limit reached".into());
-            }
-            let revision = client.next_image_revision;
-            client.next_image_revision = client.next_image_revision.wrapping_add(1).max(1);
-            client.images.insert(
-                key.clone(),
-                ClientImageData {
-                    key,
-                    width,
-                    height,
-                    rgba: Arc::from(rgba.into_boxed_slice()),
-                    revision,
-                    recent_blits: Vec::new(),
-                },
-            );
-            HostRet::Unit
-        }
+        } => publish_image(client, &mod_id, key, width, height, rgba),
         ClientCall::ClientImageBlit {
             key,
             origin,
@@ -357,8 +358,7 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
                     rgba.len()
                 ));
             }
-            let revision = client.next_image_revision;
-            client.next_image_revision = client.next_image_revision.wrapping_add(1).max(1);
+            let revision = next_image_revision();
             let image = client.images.get_mut(&key).unwrap();
             let dst = Arc::make_mut(&mut image.rgba);
             for row in 0..h {
@@ -413,8 +413,7 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
             if !client.images.contains_key(&key) {
                 return HostRet::invalid(format!("client image '{key}' has not been published"));
             }
-            let revision = client.next_image_revision;
-            client.next_image_revision = client.next_image_revision.wrapping_add(1).max(1);
+            let revision = next_image_revision();
             let image = client.images.get_mut(&key).unwrap();
             let rgba = Arc::make_mut(&mut image.rgba);
             let font = crate::gui::doc_theme::ui_font();
@@ -502,12 +501,9 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
                     "client canvas key '{canvas_key}' must be namespaced '{mod_id}:name'"
                 ));
             }
-            if elements.len() > CLIENT_CANVAS_ELEMENT_MAX {
-                return HostRet::invalid("client canvas element limit reached".into());
-            }
             if let Some(image_key) = elements
                 .iter()
-                .map(client_canvas_element_image_key)
+                .filter_map(client_canvas_element_image_key)
                 .find(|key| !key_owned_by_namespace(&mod_id, key))
             {
                 return HostRet::invalid(format!(
@@ -526,7 +522,9 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
             {
                 return HostRet::invalid("client canvas limit reached".into());
             }
-            client.canvas_scenes.entry(canvas_key).or_default().elements = elements;
+            let scene = client.canvas_scenes.entry(canvas_key).or_default();
+            scene.elements = Arc::new(elements);
+            scene.revision += 1;
             HostRet::Unit
         }
         ClientCall::ClientCanvasViewSet { canvas_key, offset } => {
@@ -543,18 +541,20 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
             {
                 return HostRet::invalid("client canvas limit reached".into());
             }
-            client.canvas_scenes.entry(canvas_key).or_default().offset = offset;
+            let scene = client.canvas_scenes.entry(canvas_key).or_default();
+            scene.offset = offset;
+            scene.revision += 1;
             HostRet::Unit
         }
-        ClientCall::ClientStorageGetMany { keys } => {
-            for key in &keys {
-                if !key_owned_by_namespace(&mod_id, key) {
-                    return HostRet::invalid(format!(
-                        "client storage key '{key}' must be namespaced '{mod_id}:name'"
-                    ));
-                }
+        ClientCall::ClientStorageGetMany { scope, keys } => {
+            if let Some(refused) = foreign_storage_key(&mod_id, keys.iter()) {
+                return refused;
             }
-            match client.storage.get_many(&keys) {
+            let storage = match bucket(client, scope) {
+                Ok(storage) => storage,
+                Err(refused) => return refused,
+            };
+            match storage.get_many(&keys, guest_memory_max) {
                 Ok(values) => HostRet::ClientStorageValues(
                     values
                         .into_iter()
@@ -564,51 +564,294 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
                 Err(error) => HostRet::invalid(error),
             }
         }
-        ClientCall::ClientStorageReadBegin { keys } => {
-            for key in &keys {
-                if !key_owned_by_namespace(&mod_id, key) {
-                    return HostRet::invalid(format!(
-                        "client storage key '{key}' must be namespaced '{mod_id}:name'"
-                    ));
-                }
+        ClientCall::ClientStorageReadBegin { scope, keys } => {
+            if let Some(refused) = foreign_storage_key(&mod_id, keys.iter()) {
+                return refused;
             }
-            match client.storage.read_begin(keys) {
+            let storage = match bucket(client, scope) {
+                Ok(storage) => storage,
+                Err(refused) => return refused,
+            };
+            match storage.read_begin(keys) {
                 Ok(ticket) => HostRet::U64(ticket),
                 Err(error) => HostRet::invalid(error),
             }
         }
-        ClientCall::ClientStorageReadPoll { ticket } => match client.storage.read_poll(ticket) {
-            Ok(values) => HostRet::ClientStorageRead(values.map(|values| {
-                values
-                    .into_iter()
-                    .map(|value| value.map(mod_api::ByteBuf::from))
-                    .collect()
-            })),
-            Err(error) => HostRet::invalid(error),
-        },
-        ClientCall::ClientStorageSetMany { entries } => {
-            for (key, value) in &entries {
-                if !key_owned_by_namespace(&mod_id, key) {
-                    return HostRet::invalid(format!(
-                        "client storage key '{key}' must be namespaced '{mod_id}:name'"
-                    ));
-                }
-                if key.len() > super::storage::KEY_MAX || value.len() > super::storage::VALUE_MAX {
-                    return HostRet::invalid(format!(
-                        "client storage entry '{key}' exceeds key/value limits"
-                    ));
-                }
-            }
-            let entries = entries
-                .into_iter()
-                .map(|(key, value)| (key, value.into_vec()))
-                .collect();
-            match client.storage.set_many(entries) {
-                Ok(()) => HostRet::Bool(true),
+        ClientCall::ClientStorageReadPoll { scope, ticket } => {
+            let storage = match bucket(client, scope) {
+                Ok(storage) => storage,
+                Err(refused) => return refused,
+            };
+            match storage.read_poll(ticket, guest_memory_max) {
+                Ok(values) => HostRet::ClientStorageRead(values.map(|values| {
+                    values
+                        .into_iter()
+                        .map(|value| value.map(mod_api::ByteBuf::from))
+                        .collect()
+                })),
                 Err(error) => HostRet::invalid(error),
             }
         }
+        ClientCall::ClientStorageSetMany { scope, entries } => {
+            if let Some(refused) = foreign_storage_key(&mod_id, entries.iter().map(|(key, _)| key))
+            {
+                return refused;
+            }
+            // A presented world is no session's; its bucket keeps nothing.
+            // The pack's bucket belongs to no world, so it keeps taking writes.
+            if scope == ClientStorageScope::World
+                && matches!(
+                    client.presented.lock().context,
+                    mod_api::ClientContext::Presentation { .. }
+                )
+            {
+                return HostRet::refused(
+                    "a presented world is no session's; its storage keeps nothing",
+                );
+            }
+            let storage = match bucket(client, scope) {
+                Ok(storage) => storage,
+                Err(refused) => return refused,
+            };
+            let entries = entries
+                .into_iter()
+                .map(|(key, value)| (key, value.map(mod_api::ByteBuf::into_vec)))
+                .collect();
+            match storage.set_many(entries) {
+                Ok(ticket) => HostRet::ClientStorageWrite(ticket),
+                Err(refused) => HostRet::refused(refused),
+            }
+        }
+        ClientCall::ClientStorageWritePoll { scope, ticket } => {
+            let storage = match bucket(client, scope) {
+                Ok(storage) => storage,
+                Err(refused) => return refused,
+            };
+            match storage.write_poll(ticket) {
+                Ok(None) => HostRet::ClientStorageWritten(false),
+                Ok(Some(Ok(()))) => HostRet::ClientStorageWritten(true),
+                Ok(Some(Err(refused))) => HostRet::refused(refused),
+                Err(error) => HostRet::invalid(error),
+            }
+        }
+        ClientCall::ClientContext => HostRet::ClientContext(if client.shell {
+            mod_api::ClientContext::Shell
+        } else {
+            client.presented.lock().context.clone()
+        }),
+        ClientCall::ClientUiFocus { id, item } => {
+            let open = {
+                let presented = client.presented.lock();
+                presented.screen.as_deref().is_some_and(|screen| {
+                    key_owned_by_namespace(&mod_id, screen)
+                        && presented
+                            .text_inputs
+                            .iter()
+                            .any(|(i, n)| *i == id && *n == item)
+                })
+            };
+            if !open {
+                return HostRet::Bool(false);
+            }
+            if client.commands.len() >= CLIENT_COMMAND_MAX {
+                return HostRet::invalid("client command queue limit reached".into());
+            }
+            client.commands.push(ClientCommand::FocusInput {
+                owner: mod_id,
+                id,
+                item,
+            });
+            HostRet::Bool(true)
+        }
+        ClientCall::ClientPauseOpen => {
+            let own_screen = client
+                .presented
+                .lock()
+                .screen
+                .as_deref()
+                .is_some_and(|screen| key_owned_by_namespace(&mod_id, screen));
+            if client.shell || !own_screen {
+                return HostRet::Bool(false);
+            }
+            if client.commands.len() >= CLIENT_COMMAND_MAX {
+                return HostRet::invalid("client command queue limit reached".into());
+            }
+            client
+                .commands
+                .push(ClientCommand::OpenPause { owner: mod_id });
+            HostRet::Bool(true)
+        }
+        ClientCall::ClientKeyLabels { ids } => {
+            let presented = client.presented.lock();
+            HostRet::Names(
+                ids.iter()
+                    .map(|id| presented.key_labels.get(&format!("{mod_id}:{id}")).cloned())
+                    .collect(),
+            )
+        }
+        ClientCall::ClientViewCameraSet { .. }
+        | ClientCall::ClientViewCameraRelease
+        | ClientCall::ClientViewChromeSet { .. }
+        | ClientCall::ClientViewPerspectiveSet { .. }
+        | ClientCall::ClientViewState
+        | ClientCall::ClientEnvSet { .. }
+        | ClientCall::ClientViewFrameSet { .. }
+        | ClientCall::ClientViewSubjectSet { .. } => view::handle(client, call),
+        ClientCall::ClientEntities { ids, near } => entities::answer(client, ids, near),
+        ClientCall::ClientEngineFacts | ClientCall::ClientPacks | ClientCall::ClientWallClock => {
+            facts::handle(client, guest_memory_max, call)
+        }
+        ClientCall::ClientWorldMarksSet { set, marks } => {
+            world_marks::set(client, &mod_id, set, marks)
+        }
     }
+}
+
+/// A client mod's own files, in its buckets.
+pub(in crate::modding) fn handle_file_call(
+    data: &mut ModStoreData,
+    call: ClientFileCall,
+) -> HostRet {
+    let guest_memory_max = data.guest_memory_max;
+    match client_store(data) {
+        Ok(client) => files::handle(client, guest_memory_max, call),
+        Err(refused) => refused,
+    }
+}
+
+/// The presented world's state and events, into mod files.
+pub(in crate::modding) fn handle_capture_call(
+    data: &mut ModStoreData,
+    call: ClientCaptureCall,
+) -> HostRet {
+    let mod_id = data.mod_id.clone();
+    let client = match client_store(data) {
+        Ok(client) => client,
+        Err(refused) => return refused,
+    };
+    match call {
+        ClientCaptureCall::ClientWorldStateWrite { .. } => state::handle(client, call),
+        ClientCaptureCall::ClientWorldEventsBegin { .. }
+        | ClientCaptureCall::ClientWorldEventsEnd { .. }
+        | ClientCaptureCall::ClientWorldEventsPoll { .. } => events::handle(client, &mod_id, call),
+    }
+}
+
+/// A world presented from mod-file byte ranges.
+pub(in crate::modding) fn handle_presentation_call(
+    data: &mut ModStoreData,
+    call: ClientPresentationCall,
+) -> HostRet {
+    let mod_id = data.mod_id.clone();
+    match client_store(data) {
+        Ok(client) => present::handle(client, &mod_id, call),
+        Err(refused) => refused,
+    }
+}
+
+/// Frames, the stepped clock, sound taps and media files.
+pub(in crate::modding) fn handle_media_call(
+    data: &mut ModStoreData,
+    call: ClientMediaCall,
+) -> HostRet {
+    let mod_id = data.mod_id.clone();
+    match client_store(data) {
+        Ok(client) => media::handle(client, &mod_id, call),
+        Err(refused) => refused,
+    }
+}
+
+/// The ray a sim instance casts, cast against the replica.
+pub(in crate::modding) fn raycast(
+    from: [f64; 3],
+    dir: [f32; 3],
+    max: f32,
+    filter: mod_api::RayFilter,
+) -> HostRet {
+    match crate::modding::host::blocks::RaycastQuery::new(from, dir, max, filter) {
+        Ok(query) => client_scope::with_active(|world| query.against(world.data()))
+            .unwrap_or_else(|| HostRet::invalid("no client replica is active".into())),
+        Err(refused) => refused,
+    }
+}
+
+/// The bucket a storage call names. Only the shell lacks a world one.
+fn bucket(
+    client: &mut ClientStoreData,
+    scope: ClientStorageScope,
+) -> Result<&mut super::storage::ClientStorage, HostRet> {
+    match scope {
+        ClientStorageScope::Pack => Ok(&mut client.pack_storage),
+        ClientStorageScope::World => client.storage.as_mut().ok_or_else(|| {
+            HostRet::invalid(
+                "client storage scope World needs a world, and this instance runs on the \
+                 shell with none; use scope Pack"
+                    .into(),
+            )
+        }),
+    }
+}
+
+/// Every bucket is the caller's alone, and so is every key in it.
+fn foreign_storage_key<'a>(
+    mod_id: &str,
+    mut keys: impl Iterator<Item = &'a String>,
+) -> Option<HostRet> {
+    keys.find(|key| !key_owned_by_namespace(mod_id, key))
+        .map(|key| {
+            HostRet::invalid(format!(
+                "client storage key '{key}' must be namespaced '{mod_id}:name'"
+            ))
+        })
+}
+
+/// Publish (or replace) one of this mod's images — the one path every image a
+/// mod names enters by, whoever produced its pixels.
+fn publish_image(
+    client: &mut ClientStoreData,
+    mod_id: &str,
+    key: String,
+    width: u16,
+    height: u16,
+    rgba: Vec<u8>,
+) -> HostRet {
+    if !key_owned_by_namespace(mod_id, &key) {
+        return HostRet::invalid(format!(
+            "client image key '{key}' must be namespaced '{mod_id}:name'"
+        ));
+    }
+    if width == 0
+        || height == 0
+        || width > CLIENT_IMAGE_SIDE_MAX
+        || height > CLIENT_IMAGE_SIDE_MAX
+        || rgba.len() != width as usize * height as usize * 4
+    {
+        return HostRet::invalid(format!(
+            "invalid client image {width}x{height} with {} RGBA bytes",
+            rgba.len()
+        ));
+    }
+    let revision = next_image_revision();
+    client.images.insert(
+        key.clone(),
+        ClientImageData {
+            key,
+            width,
+            height,
+            rgba: Arc::from(rgba.into_boxed_slice()),
+            revision,
+            recent_blits: Vec::new(),
+        },
+    );
+    HostRet::Unit
+}
+
+/// Image revisions are unique across every client instance, so a renderer's
+/// cached upload of a key can never be mistaken for another instance's
+/// same-keyed image.
+fn next_image_revision() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The body domain on a client instance: every write is a PREDICTION
@@ -617,8 +860,9 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
 /// — the same query-the-snapshot doctrine as the server side.
 pub(in crate::modding) fn handle_body_call(data: &mut ModStoreData, call: BodyCall) -> HostRet {
     let mod_id = data.mod_id.clone();
-    let Some(client) = data.client.as_mut() else {
-        return HostRet::invalid("client instance has no client state".into());
+    let client = match client_store(data) {
+        Ok(client) => client,
+        Err(refused) => return refused,
     };
     match call {
         BodyCall::PlayerState => match super::scope::active_actor() {

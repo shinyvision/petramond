@@ -5,7 +5,7 @@
 //! `super::shell_state`.
 
 use super::session::Session;
-use super::{now_seconds, App, AppScreen};
+use super::{App, AppScreen};
 use petramond_input::controls::{text_shortcut_from_key_code, TextKey, TextShortcut};
 use petramond_render::camera::Camera;
 
@@ -14,7 +14,7 @@ impl App {
     /// consumed (false when no document screen is active).
     pub fn handle_text_key(&mut self, key: TextKey) -> bool {
         if self.screen == AppScreen::Chat {
-            let now = now_seconds();
+            let now = self.now();
             match key {
                 TextKey::Enter => {
                     if let Some(Session { game, chat, .. }) = self.session.as_mut() {
@@ -62,7 +62,7 @@ impl App {
     pub fn handle_text_shortcut(&mut self, shortcut: TextShortcut) -> bool {
         if self.screen == AppScreen::Chat {
             let key = nav_key_from_shortcut(shortcut);
-            let now = now_seconds();
+            let now = self.now();
             let clipboard = self.ui.clipboard_mut();
             if let Some(session) = self.session.as_mut() {
                 session
@@ -74,18 +74,22 @@ impl App {
         if self.doc_ui_kind().is_none() {
             return false;
         }
+        // A chord reaches the screen as the Ctrl chord it is; the clipboard
+        // shortcuts are already their meaning.
+        let chord = matches!(shortcut, TextShortcut::Chord(_));
         self.ui.push_input(petramond_ui::InputEvent::Key {
             key: nav_key_from_shortcut(shortcut),
-            shift: false,
-            ctrl: false,
+            shift: chord && self.controls.modifiers.shift,
+            ctrl: chord,
         });
         true
     }
 
     pub fn handle_text_input(&mut self, text: &str) -> bool {
         if self.screen == AppScreen::Chat {
+            let now = self.now();
             if let Some(session) = self.session.as_mut() {
-                session.chat.insert_text(text, now_seconds());
+                session.chat.insert_text(text, now);
             }
             return true;
         }
@@ -111,17 +115,26 @@ impl App {
         // screen switch below is what stops App::update calling Game::tick
         // (it still pumps the network — see update.rs).
         session.game.set_paused(true);
+        self.pause_return = None;
         self.set_screen(AppScreen::Pause);
-        self.sound.stop_mining_loop(now_seconds());
+        self.sound.stop_mining_loop(self.now());
     }
 
+    /// Resume: back to gameplay, or to the client UI a mod's
+    /// `ClientPauseOpen` paused over.
     pub(super) fn resume_game(&mut self) {
         let Some(session) = self.session.as_mut() else {
             self.set_screen(AppScreen::Title);
             return;
         };
         session.game.set_paused(false);
-        self.set_screen(AppScreen::Game);
+        match self.pause_return.take() {
+            Some((screen, canvas)) => {
+                self.set_screen(screen);
+                self.client_canvas = canvas;
+            }
+            None => self.set_screen(AppScreen::Game),
+        }
     }
 
     /// The pause menu's Open to LAN: bind the default port into the running
@@ -182,11 +195,21 @@ impl App {
         if let Some(session) = self.session.take() {
             self.retained_section_cache = Some(session.end());
         }
-        self.sound.end_session(now_seconds());
-        self.rebuild_action_table();
-        self.renderer_world_clear_pending = true;
+        self.teardown_game_scene();
         self.shell.refresh_worlds();
         self.set_screen(next);
+    }
+
+    /// The app-lifetime side of a session that just went — ended, or handed
+    /// back to the shell by the presentation a launched pack opened: the
+    /// engine's voices, the mods' overlays, the action table and the
+    /// renderer's world.
+    pub(super) fn teardown_game_scene(&mut self) {
+        self.sound.end_session(self.now());
+        self.pause_return = None;
+        self.client_overlays.clear();
+        self.rebuild_action_table();
+        self.renderer_world_clear_pending = true;
     }
 
     pub(super) fn play_selected_world(&mut self) {
@@ -194,7 +217,7 @@ impl App {
             return;
         };
         let seed = petramond::save::random_seed();
-        self.start_game(&world.dir_name, seed);
+        self.open_world_checked(&world.dir_name, seed);
     }
 
     /// Open (or create) the world saved under `world_dir_name` —
@@ -256,6 +279,7 @@ fn nav_key_from_text_key(key: TextKey) -> petramond_ui::NavKey {
         TextKey::ArrowDown => petramond_ui::NavKey::Down,
         TextKey::Home => petramond_ui::NavKey::Home,
         TextKey::End => petramond_ui::NavKey::End,
+        TextKey::F(n) => petramond_ui::NavKey::F(n),
     }
 }
 
@@ -265,5 +289,6 @@ fn nav_key_from_shortcut(shortcut: TextShortcut) -> petramond_ui::NavKey {
         TextShortcut::Cut => petramond_ui::NavKey::Cut,
         TextShortcut::Copy => petramond_ui::NavKey::Copy,
         TextShortcut::Paste => petramond_ui::NavKey::Paste,
+        TextShortcut::Chord(ch) => petramond_ui::NavKey::Char(ch),
     }
 }

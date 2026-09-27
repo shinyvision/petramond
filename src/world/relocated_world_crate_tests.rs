@@ -15,8 +15,7 @@ mod registry_palette {
     /// this thread — the process registry and every other test never see it.
     #[test]
     fn dynamic_pack_content_flows_end_to_end() {
-        let root = std::env::temp_dir().join(format!("petramond-dynpack-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = petramond_util::test_dirs::TestScratchDir::new("dynpack");
         let pack = root.join("mods/testmod");
         std::fs::create_dir_all(&pack).unwrap();
         // `id` is mandatory since 2b: the pack introduces `testmod:` keys, and

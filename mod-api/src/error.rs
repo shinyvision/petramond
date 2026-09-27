@@ -46,6 +46,11 @@ pub enum ErrorCode {
     /// [`EVENT_MAX_DATA_BYTES`](crate::EVENT_MAX_DATA_BYTES). Recoverable:
     /// split or shard and retry.
     LimitExceeded,
+    /// The host declined, or an accepted operation later failed, for a
+    /// reason of the moment a player can read (the path is in use, the disk
+    /// refused a write, this build has no encoder). Recoverable: show the
+    /// reason, retry later or do without.
+    Refused,
 }
 
 impl ErrorCode {
@@ -53,7 +58,7 @@ impl ErrorCode {
     /// the failure depends on the data it was handed, not on how the mod was
     /// written.
     pub const fn is_recoverable(self) -> bool {
-        matches!(self, Self::LimitExceeded)
+        matches!(self, Self::LimitExceeded | Self::Refused)
     }
 }
 
@@ -81,13 +86,22 @@ impl fmt::Display for HostError {
 
 impl std::error::Error for HostError {}
 
+/// Where a mod carries its failures as text a player reads, a refusal is its
+/// detail, so `?` passes the host's reason straight through.
+impl From<HostError> for String {
+    fn from(error: HostError) -> Self {
+        error.detail
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn only_data_bounds_are_recoverable() {
+    fn only_data_bounds_and_refusals_are_recoverable() {
         assert!(ErrorCode::LimitExceeded.is_recoverable());
+        assert!(ErrorCode::Refused.is_recoverable());
         for code in [
             ErrorCode::WrongSide,
             ErrorCode::NotInInit,

@@ -48,6 +48,8 @@ pub(crate) use entity_store::{Adopt, AssignFrom, EntityStore, Replica};
 
 /// One tick window's entity lanes and player actions.
 pub struct EntityWindow {
+    /// The replicated tick these rows describe.
+    pub tick: u64,
     // Shared straight off the batch: each lane selects rows out of tables
     // the server builds once per tick window, and the FIFO holds up to four
     // windows, so staging them is refcount bumps and index lists rather than
@@ -523,6 +525,7 @@ pub struct SelfView {
     /// The body-level land-speed scale the movement code reads every step
     /// (adopted onto the predicted player beside the effect list).
     pub move_scale: f32,
+    pub fly_scale: f32,
     /// The actions mods denied on this body
     /// adopted onto the predicted player with the speed scale — the local
     /// mining timer and the attack click read it, so the button goes dead here
@@ -575,6 +578,9 @@ impl SelfView {
             move_scale: player
                 .claims
                 .replicated_attribute(mod_api::PlayerAttribute::MoveSpeed),
+            fly_scale: player
+                .claims
+                .replicated_attribute(mod_api::PlayerAttribute::FlySpeed),
             denied_actions: player.claims.replicated_denied_actions(),
             held_pose_main: player.claims.held_pose(Hand::Main),
             held_pose_off: player.claims.held_pose(Hand::Off),
@@ -585,6 +591,73 @@ impl SelfView {
             bone_poses: player.claims.bone_poses().collect(),
             animator: player.claims.animator().clone(),
         }
+    }
+
+    /// Nobody's view: no inventory, no hearts. What a HUD reads before a
+    /// recorded player's own state has arrived.
+    pub fn nobody() -> Self {
+        Self::seed_from(&Player::new(petramond_math::world_pos::WorldPos::ZERO))
+            .with_mode(PlayerMode::Spectator)
+    }
+
+    fn with_mode(mut self, mode: PlayerMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// This view as the state batch that would have produced it, inventory
+    /// whole: what a state capture's Viewer piece holds.
+    pub fn to_wire(&self) -> SelfState {
+        let inv = &self.inventory;
+        SelfState {
+            conditions: self.conditions.clone(),
+            health: self.health,
+            mode: self.mode.to_u8(),
+            effects: self.effects.iter().map(|&(e, left)| (e.0, left)).collect(),
+            inventory_revision: self.inventory_revision,
+            inventory: Some(
+                inv.raw_slots()
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(inv.cursor().copied()))
+                    .chain(std::iter::once(inv.off_hand().copied()))
+                    .map(|slot| slot.map(petramond::net::protocol::ItemSlotWire::from_stack))
+                    .collect(),
+            ),
+            eating: self
+                .eating
+                .map(|p| (p.clamp(0.0, 1.0) * 255.0).round() as u8),
+            eating_off_hand: self.eating_off_hand,
+            sleeping: self
+                .sleeping
+                .map(|p| (p.clamp(0.0, 1.0) * 255.0).round() as u8),
+            sleep_bed: self.sleep_bed,
+            move_scale: self.move_scale,
+            fly_scale: self.fly_scale,
+            denied_actions: self.denied_actions,
+            held_pose_main: self.held_pose_main,
+            held_pose_off: self.held_pose_off,
+            held_display: self.held_display.map(|id| id.map(|i| i.0)),
+            bone_poses: self.bone_poses.clone(),
+            animator: self.animator.clone(),
+            transform: None,
+        }
+    }
+
+    /// The hearts this view shows, `None` outside survival.
+    pub fn health_view(&self) -> Option<petramond_world::gui_state::HealthView> {
+        (self.mode == PlayerMode::Survival).then_some(petramond_world::gui_state::HealthView {
+            current: self.health,
+            max: petramond::player::MAX_HEALTH,
+        })
+    }
+
+    /// The effect icon row, in application order; empty outside survival.
+    pub fn effect_icons(&self) -> Vec<petramond_world::effect::Effect> {
+        if self.mode != PlayerMode::Survival {
+            return Vec::new();
+        }
+        self.effects.iter().map(|&(e, _)| e).collect()
     }
 
     /// Adopt one batch's self state. `adopt_inventory` is false when the
@@ -616,6 +689,7 @@ impl SelfView {
         self.sleeping = state.sleeping.map(|p| p as f32 / 255.0);
         self.sleep_bed = state.sleep_bed;
         self.move_scale = state.move_scale;
+        self.fly_scale = state.fly_scale;
         self.denied_actions = state.denied_actions;
         self.held_pose_main = state.held_pose_main;
         self.held_pose_off = state.held_pose_off;
@@ -922,6 +996,14 @@ impl Game {
     /// body lands it beside the hull. Runs each frame right after the batches
     /// drained (`tick_receive`), before presentation samples `tick_alpha`.
     pub fn advance_interp_window(&mut self) {
+        // A presentation's window follows its position exactly: the pair
+        // around it committed, alpha its fraction — never a clock of its own.
+        if let Some(at) = self.presentation_position() {
+            while let Some(committed) = self.replica.entities.commit_presented(at) {
+                self.after_commit(committed);
+            }
+            return;
+        }
         while let Some(committed) = self.replica.entities.commit_next_due() {
             self.after_commit(committed);
         }
@@ -955,6 +1037,7 @@ impl Game {
         } = *update;
         self.replica.entities.set_tick(tick);
         let mut rows = EntityWindow {
+            tick,
             mobs: MobLane::default(),
             items: ItemLane::default(),
             players: PlayerLane::default(),
@@ -1067,6 +1150,7 @@ impl Game {
             // them with the effects.
             self.local.player.adopt_resolved_body(
                 self.replica.self_view.move_scale,
+                self.replica.self_view.fly_scale,
                 self.replica.self_view.denied_actions,
             );
             // Tick-side transform mutations (teleports, knockback) win over
@@ -1150,7 +1234,11 @@ impl Game {
     /// holds every cell this client already presented (or still has pending).
     /// Observers' / natural breaks still present. Server-side strip is the
     /// primary filter; this is the belt for races.
-    fn buffer_world_event(&mut self, msg: WorldEventMsg, suppress: &rustc_hash::FxHashSet<IVec3>) {
+    pub(super) fn buffer_world_event(
+        &mut self,
+        msg: WorldEventMsg,
+        suppress: &rustc_hash::FxHashSet<IVec3>,
+    ) {
         use crate::game::tick::{MobSoundEvent, SoundEvent, SpatialSoundCommand};
         let ev = &mut self.replica.events;
         match msg {

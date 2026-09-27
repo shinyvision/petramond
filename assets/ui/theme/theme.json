@@ -1019,6 +1019,46 @@
         16
       ]
     },
+    "icon.sheep_head": {
+      "rect": [
+        100,
+        176,
+        12,
+        12
+      ]
+    },
+    "icon.refresh": {
+      "rect": [
+        116,
+        176,
+        16,
+        16
+      ]
+    },
+    "icon.account": {
+      "rect": [
+        136,
+        176,
+        16,
+        16
+      ]
+    },
+    "icon.cancel": {
+      "rect": [
+        156,
+        176,
+        16,
+        16
+      ]
+    },
+    "icon.undo": {
+      "rect": [
+        176,
+        176,
+        16,
+        16
+      ]
+    },
     "tab.creative": {
       "states": {
         "default": {

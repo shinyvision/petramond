@@ -14,10 +14,12 @@ enum N {
 const PLAIN: FrameShape = FrameShape {
     route: SceneRoute::PostProcess,
     msaa: false,
+    keep_scene: false,
 };
 const MSAA: FrameShape = FrameShape {
     route: SceneRoute::PostProcess,
     msaa: true,
+    keep_scene: false,
 };
 
 fn world(id: N, label: &'static str, phase: Phase) -> PassNode<N> {
@@ -197,6 +199,7 @@ fn a_world_drawn_straight_to_the_swapchain_is_always_stored() {
     let direct = FrameShape {
         route: SceneRoute::Direct,
         msaa: false,
+        keep_scene: false,
     };
     let p = plan(direct, &[N::First, N::Stamp, N::Chrome]);
     assert!(p.groups[0].color.unwrap().store);
@@ -210,6 +213,7 @@ fn resolving_to_the_swapchain_feeds_the_screen_passes() {
     let shape = FrameShape {
         route: SceneRoute::ResolveToSwapchain,
         msaa: true,
+        keep_scene: false,
     };
     let p = plan(shape, &[N::First, N::Chrome]);
     assert!(p.groups[0].resolve);
@@ -218,6 +222,7 @@ fn resolving_to_the_swapchain_feeds_the_screen_passes() {
     let unresolved = FrameShape {
         route: SceneRoute::ResolveToSwapchain,
         msaa: false,
+        keep_scene: false,
     };
     let p = plan(unresolved, &[N::First, N::Chrome]);
     assert_eq!(

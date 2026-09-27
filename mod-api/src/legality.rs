@@ -26,12 +26,20 @@ impl Sides {
     /// The detached per-thread worldgen instances: no simulation context,
     /// replies must be pure functions of their inputs and the world seed.
     pub const WORLDGEN: Self = Self(1 << 1);
-    /// A presentation-only `client_wasm` instance.
+    /// A presentation-only `client_wasm` instance beside a world.
     pub const CLIENT: Self = Self(1 << 2);
+    /// A `client_wasm` instance on the shell, with no world beside it
+    /// ([`ClientContext::Shell`](crate::ClientContext::Shell)): its registries,
+    /// its own UI, images, storage and files, media, and opening a presentation.
+    pub const SHELL: Self = Self(1 << 3);
     pub const SERVER_WORLDGEN: Self = Self::SERVER.union(Self::WORLDGEN);
     pub const SERVER_CLIENT: Self = Self::SERVER.union(Self::CLIENT);
-    /// Every instance side.
-    pub const EVERY: Self = Self::SERVER_WORLDGEN.union(Self::CLIENT);
+    /// A client instance wherever it runs: beside a world or on the shell.
+    pub const CLIENT_SHELL: Self = Self::CLIENT.union(Self::SHELL);
+    /// Every instance that runs beside a world.
+    pub const BESIDE_WORLD: Self = Self::SERVER_WORLDGEN.union(Self::CLIENT);
+    /// Every instance side, the shell included.
+    pub const EVERY: Self = Self::BESIDE_WORLD.union(Self::SHELL);
 
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
@@ -53,6 +61,16 @@ impl Sides {
     /// Whether an instance on `side` may make the call.
     pub const fn allows(self, side: RuntimeSide) -> bool {
         self.contains(Self::of(side))
+    }
+
+    /// Whether an instance on `side` may make the call, where `shell` says a
+    /// client instance runs on the shell with no world: there only the
+    /// [`SHELL`](Self::SHELL) side admits.
+    pub const fn admits(self, side: RuntimeSide, shell: bool) -> bool {
+        match side {
+            RuntimeSide::Client if shell => self.contains(Self::SHELL),
+            _ => self.allows(side),
+        }
     }
 }
 
@@ -125,6 +143,8 @@ pub(crate) mod prelude {
     pub(crate) const CLIENT: Sides = Sides::CLIENT;
     pub(crate) const SERVER_WORLDGEN: Sides = Sides::SERVER_WORLDGEN;
     pub(crate) const SERVER_CLIENT: Sides = Sides::SERVER_CLIENT;
+    pub(crate) const CLIENT_SHELL: Sides = Sides::CLIENT_SHELL;
+    pub(crate) const BESIDE_WORLD: Sides = Sides::BESIDE_WORLD;
     pub(crate) const EVERY: Sides = Sides::EVERY;
 
     pub(crate) const fn legal(
@@ -155,6 +175,16 @@ mod tests {
             assert!(Sides::EVERY.allows(side));
             assert!(Sides::of(side).allows(side));
         }
+    }
+
+    #[test]
+    fn the_shell_admits_only_shell_calls() {
+        assert!(!Sides::CLIENT.admits(RuntimeSide::Client, true));
+        assert!(Sides::CLIENT.admits(RuntimeSide::Client, false));
+        assert!(Sides::CLIENT_SHELL.admits(RuntimeSide::Client, true));
+        assert!(!Sides::BESIDE_WORLD.admits(RuntimeSide::Client, true));
+        assert!(Sides::EVERY.admits(RuntimeSide::Client, true));
+        assert!(Sides::SERVER.admits(RuntimeSide::Server, true));
     }
 
     #[test]

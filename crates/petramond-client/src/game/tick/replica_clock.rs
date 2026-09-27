@@ -70,6 +70,12 @@ impl ReplicaClock {
         self.phase = self.phase.min(1.0);
     }
 
+    /// Place render time at `alpha` into the committed pair — a presentation's
+    /// time sets it outright instead of accumulating frame time.
+    pub fn place(&mut self, alpha: f32) {
+        self.phase = alpha.clamp(0.0, 1.0);
+    }
+
     /// Fraction (0..1) into the committed prev→curr pair. `1.0` before the
     /// first update (render current state, no interpolation).
     pub fn alpha(&self) -> f32 {

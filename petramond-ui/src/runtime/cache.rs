@@ -36,7 +36,7 @@ pub(crate) struct ExpandKey {
     pub origin: u64,
     pub revision: u64,
     pub compact: bool,
-    pub hover: Option<String>,
+    pub hover: Option<crate::tree::InstKey>,
 }
 
 /// The inputs a solve is a pure function of (besides document and theme).
@@ -116,13 +116,13 @@ impl FrameCache {
                     shape,
                     state,
                     key.compact,
-                    key.hover.as_deref(),
+                    key.hover.as_ref(),
                     Some(&mut prev),
                 );
                 self.stats.reused = prev.adopted();
                 tree
             }
-            _ => InstTree::expand_with(doc, shape, state, key.compact, key.hover.as_deref(), None),
+            _ => InstTree::expand_with(doc, shape, state, key.compact, key.hover.as_ref(), None),
         };
         self.stats.expanded = tree.len() - self.stats.reused;
         self.expanded = Some(key);

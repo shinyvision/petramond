@@ -310,6 +310,7 @@ fn slot_tip_span(line: usize, span: usize) -> Node {
         wrap: false,
         scale: 1,
         small: true,
+        max_lines: None,
     });
     label.bind.text = Some(text);
     label.bind.palette = Some(palette);
@@ -353,82 +354,76 @@ fn load() -> Registry {
     let mut entries = Vec::new();
     for (_, found) in manifests {
         sources.push((found.json.clone(), file_mtime(&found.json)));
-        let Ok(text) = std::fs::read_to_string(&found.json) else {
-            continue;
-        };
-        let mut doc = match Document::from_json(&text) {
-            Ok(doc) => doc,
-            Err(e) => {
-                log::warn!("gui: ignoring {} — {e}", found.json.display());
-                continue;
-            }
-        };
-        inject_item_tooltip(&mut doc);
-        inject_slot_tooltip(&mut doc);
-        let Some(kind) = super::intern_kind(&doc.kind) else {
-            log::warn!(
-                "gui: ignoring {} — unknown kind '{}'",
-                found.json.display(),
-                doc.kind
-            );
-            continue;
-        };
-        // The shared engine rules — the same function the gui-builder runs,
-        // so a document it calls valid is one this loader accepts.
-        let issues = validate_for_engine(
-            &doc,
-            &EngineCheck {
-                styles: Some(theme.as_ref()),
-                pack_id: found.pack_id.as_deref(),
-                catalog: &ItemTags,
-                image_size: &|name| image_size_beside(&found.dir, name),
-            },
-        );
-        if !issues.is_empty() {
-            for issue in &issues {
-                log::warn!("gui: {} — {issue}", found.json.display());
-            }
-            continue;
+        match load_entry(&found.json, &found.dir, found.pack_id.as_deref(), &theme) {
+            Ok(entry) => entries.push(entry),
+            Err(e) => log::warn!("gui: ignoring {} — {e}", found.json.display()),
         }
-        // Presentation must match the rules: a document whose container
-        // slots disagree with the kind's contract would draw slots the
-        // server does not have (or hide ones it does).
-        let declared = match doc_container_specs(&doc) {
-            Ok(specs) => specs.len(),
-            Err(e) => {
-                log::warn!("gui: ignoring {} — {e}", found.json.display());
-                continue;
-            }
-        };
-        let contracted = crate::menu::slot_specs_for_kind(kind).len();
-        if declared != 0 && declared != contracted {
-            log::warn!(
-                "gui: ignoring {} — {declared} container slots, but the kind's contract has {contracted}",
-                found.json.display()
-            );
-            continue;
-        }
-        // Collect referenced images (resolved beside the document) with
-        // their pixel sizes for layout naturals. The art was validated
-        // above; a file that vanished since still rejects the document.
-        let images = match collect_doc_images(&doc, &found.dir) {
-            Ok(images) => images,
-            Err(e) => {
-                log::warn!("gui: ignoring {} — {e}", found.json.display());
-                continue;
-            }
-        };
-        entries.push(DocEntry {
-            kind,
-            doc: Arc::new(doc),
-            images: Arc::new(images),
-        });
     }
     Registry {
         entries,
         sources,
         last_check: Instant::now(),
     }
+}
+
+/// Parse, validate and resolve one document file as the registry loads it.
+fn load_entry(
+    json: &std::path::Path,
+    dir: &std::path::Path,
+    pack_id: Option<&str>,
+    theme: &petramond_ui::Theme,
+) -> Result<DocEntry, String> {
+    let (kind, doc, images) = read_document(json, dir, pack_id, theme)?;
+    // Presentation must match the rules: a document whose container slots
+    // disagree with the kind's contract would draw slots the server does not
+    // have (or hide ones it does).
+    let declared = doc_container_specs(&doc)?.len();
+    let contracted = crate::menu::slot_specs_for_kind(kind).len();
+    if declared != 0 && declared != contracted {
+        return Err(format!(
+            "{declared} container slots, but the kind's contract has {contracted}"
+        ));
+    }
+    Ok(DocEntry {
+        kind,
+        doc: Arc::new(doc),
+        images: Arc::new(images),
+    })
+}
+
+/// The half of [`load_entry`] that needs no slot contract table: the shared
+/// engine rules — the same function the gui-builder runs, so a document it
+/// calls valid is one this loader accepts — and every image the document
+/// names resolved beside it with its pixel size for layout naturals.
+fn read_document(
+    json: &std::path::Path,
+    dir: &std::path::Path,
+    pack_id: Option<&str>,
+    theme: &petramond_ui::Theme,
+) -> Result<(GuiKind, Document, Vec<DocImageRef>), String> {
+    let text = std::fs::read_to_string(json).map_err(|e| e.to_string())?;
+    let mut doc = Document::from_json(&text).map_err(|e| e.to_string())?;
+    inject_item_tooltip(&mut doc);
+    inject_slot_tooltip(&mut doc);
+    let kind =
+        super::intern_kind(&doc.kind).ok_or_else(|| format!("unknown kind '{}'", doc.kind))?;
+    let issues = validate_for_engine(
+        &doc,
+        &EngineCheck {
+            styles: Some(theme),
+            pack_id,
+            catalog: &ItemTags,
+            image_size: &|name| image_size_beside(dir, name),
+        },
+    );
+    if !issues.is_empty() {
+        let issues: Vec<String> = issues.iter().map(ToString::to_string).collect();
+        return Err(issues.join("; "));
+    }
+    // The art was validated above; a file that vanished since still rejects
+    // the document.
+    let images = collect_doc_images(&doc, dir)?;
+    Ok((kind, doc, images))
 }
 
 #[cfg(test)]

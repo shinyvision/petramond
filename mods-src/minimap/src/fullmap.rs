@@ -718,6 +718,8 @@ impl Minimap {
                 }
                 self.dragged = false;
             }
+            // The modal map captures its drags; nothing leaves it mid-press.
+            ClientPointerPhase::Leave => {}
         }
     }
 }

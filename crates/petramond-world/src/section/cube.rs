@@ -158,6 +158,17 @@ impl BlockCube {
     }
 }
 
+/// The same 4096 ids, whichever form holds them.
+impl PartialEq for BlockCube {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.repr, &other.repr) {
+            (Repr::Narrow(a), Repr::Narrow(b)) => Arc::ptr_eq(a, b) || a == b,
+            (Repr::Wide(a), Repr::Wide(b)) => Arc::ptr_eq(a, b) || a == b,
+            _ => self.iter().eq(other.iter()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

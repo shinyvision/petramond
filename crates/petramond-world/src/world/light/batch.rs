@@ -111,7 +111,7 @@ pub fn snapshot_batch(
     base: SectionPos,
     member_positions: &[SectionPos],
     sections: &FxHashMap<SectionPos, Arc<Section>>,
-    columns: &FxHashMap<ChunkPos, Column>,
+    columns: &FxHashMap<ChunkPos, std::sync::Arc<Column>>,
 ) -> Option<LightBatchJob> {
     let mut members = Vec::with_capacity(member_positions.len());
     for &pos in member_positions {

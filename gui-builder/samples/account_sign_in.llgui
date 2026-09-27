@@ -1,0 +1,302 @@
+{
+  "version": 2,
+  "document": {
+    "format": 1,
+    "kind": "petramond:account_sign_in",
+    "class": "screen",
+    "root": {
+      "type": "frame",
+      "layout": {
+        "w": {
+          "grow": 1
+        },
+        "h": {
+          "grow": 1
+        },
+        "pad": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "gap": 0,
+        "dir": "column",
+        "align": "center",
+        "justify": "center"
+      },
+      "children": [
+        {
+          "type": "image",
+          "image": "../../textures/gui/screenshot.png",
+          "fit": "cover",
+          "layout": {
+            "w": {
+              "grow": 1
+            },
+            "h": {
+              "grow": 1
+            },
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start",
+            "abs": {
+              "x": 0,
+              "y": 0
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "layout": {
+            "w": 300,
+            "h": "auto",
+            "pad": [
+              4,
+              2,
+              4,
+              4
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 4,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start"
+          },
+          "style": "panel.large",
+          "children": [
+            {
+              "type": "label",
+              "text": "Sign In",
+              "scale": 2
+            },
+            {
+              "type": "label",
+              "wrap": true,
+              "style": "label.muted",
+              "bind": {
+                "text": "service_line"
+              }
+            },
+            {
+              "type": "label",
+              "text": "Username or Email",
+              "style": "label.muted"
+            },
+            {
+              "id": "account_id",
+              "type": "text_input",
+              "placeholder": "username",
+              "max_chars": 254,
+              "bind": {
+                "text": "account_id"
+              }
+            },
+            {
+              "type": "label",
+              "text": "Password",
+              "style": "label.muted"
+            },
+            {
+              "id": "account_password",
+              "type": "text_input",
+              "placeholder": "password",
+              "max_chars": 128,
+              "masked": true,
+              "bind": {
+                "text": "account_password"
+              }
+            },
+            {
+              "type": "label",
+              "style": "label.muted",
+              "bind": {
+                "text": "working_text",
+                "visible": "working"
+              }
+            },
+            {
+              "id": "status_scroll",
+              "type": "scroll",
+              "axis": "vertical",
+              "layout": {
+                "w": "auto",
+                "h": {
+                  "grow": 1
+                },
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start",
+                "min_h": 12,
+                "max_h": 34
+              },
+              "bind": {
+                "visible": "has_status"
+              },
+              "children": [
+                {
+                  "type": "label",
+                  "wrap": true,
+                  "style": "label.danger",
+                  "bind": {
+                    "text": "status_text"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "row",
+              "layout": {
+                "w": "auto",
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 4,
+                "dir": "column",
+                "align": "stretch",
+                "justify": "start"
+              },
+              "children": [
+                {
+                  "id": "submit",
+                  "type": "button",
+                  "text": "Sign In",
+                  "layout": {
+                    "w": {
+                      "grow": 1
+                    },
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  },
+                  "style": "button.success",
+                  "bind": {
+                    "enabled": "can_submit"
+                  }
+                },
+                {
+                  "id": "back",
+                  "type": "button",
+                  "text": "Back",
+                  "layout": {
+                    "w": {
+                      "grow": 1
+                    },
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "editor": {
+    "sample_state": {
+      "account_id": {
+        "str": "Sample text"
+      },
+      "account_password": {
+        "str": "Sample text"
+      },
+      "can_submit": {
+        "bool": true
+      },
+      "has_status": {
+        "bool": true
+      },
+      "service_line": {
+        "str": "Sample text"
+      },
+      "status_text": {
+        "str": "Sample text"
+      },
+      "working": {
+        "bool": true
+      },
+      "working_text": {
+        "str": "Sample text"
+      }
+    },
+    "zoom": 1.0,
+    "preview_scale": 2,
+    "screen": [
+      1280,
+      720
+    ],
+    "pixel_grid": false
+  }
+}

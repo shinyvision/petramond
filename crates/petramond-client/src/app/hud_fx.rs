@@ -32,6 +32,7 @@ struct HeartWiggle {
 
 /// The hurt-shake offsets for one frame: camera look jitter (radians), a hand
 /// screen offset (NDC), and the red edge-vignette strength.
+#[derive(Clone, Copy)]
 pub(super) struct HurtShake {
     pub(super) yaw: f32,
     pub(super) pitch: f32,

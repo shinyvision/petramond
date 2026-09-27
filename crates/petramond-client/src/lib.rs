@@ -10,6 +10,7 @@ pub mod animation;
 pub mod app;
 pub mod game;
 pub mod keymap;
+pub mod media;
 pub mod native;
 pub mod particle;
 pub mod scene;

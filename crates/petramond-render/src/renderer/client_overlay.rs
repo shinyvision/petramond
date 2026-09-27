@@ -3,6 +3,8 @@
 //! These images deliberately bypass GUI documents and `gui_scale`: placement
 //! and display dimensions are physical screen pixels. The renderer owns upload
 //! caching and draws nearest-sampled quads in the ordinary depthless UI pass.
+//! A canvas's rules and labels ride the same ordered batch list as its images,
+//! sampling the theme's solid sentinel and font the way document chrome does.
 
 use super::*;
 
@@ -11,13 +13,30 @@ pub(super) struct ClientOverlays {
     pub(super) batches: Vec<OverlayBatch>,
     vbuf: Option<wgpu::Buffer>,
     verts: Vec<UiVertex>,
+    images: ClientImageBinds,
+}
+
+/// Client images uploaded as textures, by key: re-uploaded when the image's
+/// revision moves, by its recorded blit rects when they cover the gap.
+#[derive(Default)]
+pub(super) struct ClientImageBinds {
     binds: Vec<(String, OverlayBind)>,
 }
 
 pub(super) struct OverlayBatch {
-    bind_index: Option<usize>,
+    tex: OverlayTex,
     start: u32,
     count: u32,
+    /// Physical-px scissor; `None` = the whole screen.
+    clip: Option<[i32; 4]>,
+}
+
+#[derive(Copy, Clone)]
+enum OverlayTex {
+    /// Index into the uploaded image binds.
+    Image(usize),
+    Solid,
+    Font,
 }
 
 struct OverlayBind {
@@ -27,23 +46,30 @@ struct OverlayBind {
     bind: wgpu::BindGroup,
 }
 
-impl Renderer {
-    pub(super) fn prepare_client_overlays(
+impl ClientOverlays {
+    pub(super) fn prepare(
         &mut self,
-        images: &[super::super::ClientOverlayImage],
+        gpu: &super::doc_ui::UiGpu<'_>,
+        theme: &mut Option<super::doc_ui::ThemeBinds>,
+        layer: &super::super::ClientOverlayLayer,
         screen: (u32, u32),
         dim_background: bool,
     ) {
-        self.ui.client_overlays.batches.clear();
-        self.ui.client_overlays.verts.clear();
+        self.batches.clear();
+        self.verts.clear();
+        self.images
+            .retain_keys(layer.items.iter().filter_map(|item| match item {
+                super::super::ClientOverlayItem::Image(image) => Some(image.key.as_str()),
+                super::super::ClientOverlayItem::Paint { .. } => None,
+            }));
         if screen.0 == 0 || screen.1 == 0 {
             return;
         }
 
         if dim_background {
-            let start = self.ui.client_overlays.verts.len() as u32;
+            let start = self.verts.len() as u32;
             crate::ui::push_solid(
-                &mut self.ui.client_overlays.verts,
+                &mut self.verts,
                 screen,
                 0.0,
                 0.0,
@@ -51,18 +77,28 @@ impl Renderer {
                 screen.1 as f32,
                 [0.0, 0.0, 0.0, 0.55],
             );
-            self.ui.client_overlays.batches.push(OverlayBatch {
-                bind_index: None,
+            self.batches.push(OverlayBatch {
+                tex: OverlayTex::Solid,
                 start,
                 count: 6,
+                clip: None,
             });
         }
 
-        for image in images {
-            let bind_index = self.ensure_client_overlay_bind(image);
-            let start = self.ui.client_overlays.verts.len() as u32;
+        for item in &layer.items {
+            let image = match item {
+                super::super::ClientOverlayItem::Image(image) => image,
+                super::super::ClientOverlayItem::Paint { batches } => {
+                    if self.push_paint(&layer.paint, batches.clone(), screen) {
+                        gpu.theme(theme);
+                    }
+                    continue;
+                }
+            };
+            let bind_index = self.images.ensure(gpu, image);
+            let start = self.verts.len() as u32;
             crate::ui::push_quad_uv(
-                &mut self.ui.client_overlays.verts,
+                &mut self.verts,
                 screen,
                 image.rect[0],
                 image.rect[1],
@@ -72,46 +108,129 @@ impl Renderer {
                 [image.uv[2], image.uv[3]],
                 [1.0; 4],
             );
-            self.ui.client_overlays.batches.push(OverlayBatch {
-                bind_index: Some(bind_index),
+            self.batches.push(OverlayBatch {
+                tex: OverlayTex::Image(bind_index),
                 start,
                 count: 6,
+                clip: None,
             });
         }
 
-        let bytes = bytemuck::cast_slice::<_, u8>(&self.ui.client_overlays.verts);
+        let bytes = bytemuck::cast_slice::<_, u8>(&self.verts);
         if bytes.is_empty() {
             return;
         }
         let needs = bytes.len() as u64;
         if self
-            .ui
-            .client_overlays
             .vbuf
             .as_ref()
             .is_none_or(|buffer| buffer.size() < needs)
         {
-            self.ui.client_overlays.vbuf =
-                Some(self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("client overlay vbuf"),
-                    size: needs.next_power_of_two(),
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                }));
+            self.vbuf = Some(gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("client overlay vbuf"),
+                size: needs.next_power_of_two(),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
         }
-        self.queue
-            .write_buffer(self.ui.client_overlays.vbuf.as_ref().unwrap(), 0, bytes);
+        gpu.queue
+            .write_buffer(self.vbuf.as_ref().unwrap(), 0, bytes);
     }
 
-    fn ensure_client_overlay_bind(&mut self, image: &super::super::ClientOverlayImage) -> usize {
-        if let Some(index) = self
-            .ui
-            .client_overlays
-            .binds
-            .iter()
-            .position(|(key, _)| key == &image.key)
-        {
-            let existing = &mut self.ui.client_overlays.binds[index].1;
+    /// Carry painted batches over as they are: px → NDC per vertex, the
+    /// batch's clip kept for the draw's scissor. `true` when a run samples
+    /// the font.
+    fn push_paint(
+        &mut self,
+        paint: &petramond_ui::DrawList,
+        batches: std::ops::Range<usize>,
+        screen: (u32, u32),
+    ) -> bool {
+        let Some(batches) = paint.batches.get(batches) else {
+            return false;
+        };
+        let mut font = false;
+        for batch in batches {
+            let tex = match batch.tex {
+                petramond_ui::TexId::Solid => OverlayTex::Solid,
+                petramond_ui::TexId::Font => OverlayTex::Font,
+                // A canvas paints geometry and glyphs only.
+                petramond_ui::TexId::ThemePage(_) | petramond_ui::TexId::DocImage(_) => continue,
+            };
+            font |= matches!(tex, OverlayTex::Font);
+            let range = batch.start as usize..(batch.start + batch.count) as usize;
+            let Some(verts) = paint.vertices.get(range) else {
+                continue;
+            };
+            let start = self.verts.len() as u32;
+            self.verts.extend(verts.iter().map(|v| UiVertex {
+                pos: crate::ui::pixel_to_ndc(screen, v.pos[0], v.pos[1]),
+                uv: v.uv,
+                color: v.color,
+            }));
+            self.batches.push(OverlayBatch {
+                tex,
+                start,
+                count: batch.count,
+                clip: batch.clip,
+            });
+        }
+        font
+    }
+
+    pub(super) fn draw(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        theme: Option<&super::doc_ui::ThemeBinds>,
+        solid: &wgpu::BindGroup,
+        screen: (u32, u32),
+    ) {
+        let Some(vbuf) = &self.vbuf else {
+            return;
+        };
+        pass.set_vertex_buffer(0, vbuf.slice(..));
+        for batch in &self.batches {
+            let bind = match batch.tex {
+                OverlayTex::Image(index) => match self.images.bind(index) {
+                    Some(bind) => bind,
+                    None => continue,
+                },
+                OverlayTex::Solid => solid,
+                OverlayTex::Font => match theme {
+                    Some(theme) => &theme.font,
+                    None => continue,
+                },
+            };
+            if !super::doc_ui::set_batch_scissor(pass, batch.clip, screen) {
+                continue;
+            }
+            pass.set_bind_group(0, bind, &[]);
+            pass.draw(batch.start..batch.start + batch.count, 0..1);
+        }
+        pass.set_scissor_rect(0, 0, screen.0, screen.1);
+    }
+}
+
+impl ClientImageBinds {
+    /// Free the textures of every key not among `drawn`, this frame's.
+    pub(super) fn retain_keys<'a>(&mut self, drawn: impl IntoIterator<Item = &'a str>) {
+        let drawn: Vec<&str> = drawn.into_iter().collect();
+        self.binds.retain(|(key, _)| drawn.contains(&key.as_str()));
+    }
+
+    /// The bind at `index`, as [`ensure`](Self::ensure) returned it.
+    pub(super) fn bind(&self, index: usize) -> Option<&wgpu::BindGroup> {
+        self.binds.get(index).map(|(_, image)| &image.bind)
+    }
+
+    /// Upload `image` if its texture is missing or stale; its bind's index.
+    pub(super) fn ensure(
+        &mut self,
+        gpu: &super::doc_ui::UiGpu<'_>,
+        image: &super::super::ClientOverlayImage,
+    ) -> usize {
+        if let Some(index) = self.binds.iter().position(|(key, _)| key == &image.key) {
+            let existing = &mut self.binds[index].1;
             if existing.size == image.size {
                 if existing.revision != image.revision {
                     // Partial refresh when every revision step since the one
@@ -125,7 +244,7 @@ impl Renderer {
                         for &(revision, rect) in &image.recent_blits {
                             if revision > existing.revision {
                                 write_overlay_texture_rect(
-                                    &self.queue,
+                                    gpu.queue,
                                     &existing.texture,
                                     image.size,
                                     &image.rgba,
@@ -135,7 +254,7 @@ impl Renderer {
                         }
                     } else {
                         write_overlay_texture(
-                            &self.queue,
+                            gpu.queue,
                             &existing.texture,
                             image.size,
                             &image.rgba,
@@ -148,7 +267,7 @@ impl Renderer {
         }
 
         let texture = crate::gpu_mem::create_texture(
-            &self.device,
+            gpu.device,
             &wgpu::TextureDescriptor {
                 label: Some("client overlay image"),
                 size: wgpu::Extent3d {
@@ -164,73 +283,20 @@ impl Renderer {
                 view_formats: &[],
             },
         );
-        write_overlay_texture(&self.queue, &texture, image.size, &image.rgba);
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("client overlay image"),
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("client overlay image"),
-            layout: &self.ui.texture_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
-        if let Some(index) = self
-            .ui
-            .client_overlays
-            .binds
-            .iter()
-            .position(|(key, _)| key == &image.key)
-        {
-            self.ui.client_overlays.binds[index].1 = OverlayBind {
-                revision: image.revision,
-                size: image.size,
-                texture,
-                bind,
-            };
+        write_overlay_texture(gpu.queue, &texture, image.size, &image.rgba);
+        let bind = gpu.nearest_bind(&texture, "client overlay image");
+        let entry = OverlayBind {
+            revision: image.revision,
+            size: image.size,
+            texture,
+            bind,
+        };
+        if let Some(index) = self.binds.iter().position(|(key, _)| key == &image.key) {
+            self.binds[index].1 = entry;
             return index;
         }
-        self.ui.client_overlays.binds.push((
-            image.key.clone(),
-            OverlayBind {
-                revision: image.revision,
-                size: image.size,
-                texture,
-                bind,
-            },
-        ));
-        self.ui.client_overlays.binds.len() - 1
-    }
-}
-
-impl UiPass {
-    pub(super) fn draw_client_overlays(&self, pass: &mut wgpu::RenderPass<'_>) {
-        let Some(vbuf) = &self.client_overlays.vbuf else {
-            return;
-        };
-        pass.set_vertex_buffer(0, vbuf.slice(..));
-        for batch in &self.client_overlays.batches {
-            let bind = match batch.bind_index {
-                Some(index) => match self.client_overlays.binds.get(index) {
-                    Some((_, image)) => &image.bind,
-                    None => continue,
-                },
-                None => &self.icon_atlas.bind,
-            };
-            pass.set_bind_group(0, bind, &[]);
-            pass.draw(batch.start..batch.start + batch.count, 0..1);
-        }
+        self.binds.push((image.key.clone(), entry));
+        self.binds.len() - 1
     }
 }
 

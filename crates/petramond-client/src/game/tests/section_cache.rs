@@ -231,7 +231,7 @@ fn a_moved_belief_hash_resends_the_full_payload() {
     // replica holds the section live again. The quiet-frame `settle` is a
     // scheduling assumption — under load the home column's base can land and
     // 30 frames pass while this section's regen job is still starved, ending
-    // the recording window before the payload ever shipped.
+    // the observation window before the payload ever shipped.
     place_player(&mut game, HOME);
     let msgs = frames_until(&mut game, "the mismatched section streamed back in", |g| {
         g.replica.world.section_payload(sp).is_some()

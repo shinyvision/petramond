@@ -64,7 +64,8 @@ impl WorldData {
         if !any {
             return None;
         }
-        let column = self.columns.get_mut(&cpos).expect("column checked above");
+        let column =
+            std::sync::Arc::make_mut(self.columns.get_mut(&cpos).expect("column checked above"));
         let mut payload_changed = false;
         let mut sky_change: Option<SkyCoverChange> = None;
         for lz in 0..SECTION_SIZE {

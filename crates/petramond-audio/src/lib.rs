@@ -6,6 +6,12 @@
 //! into sound here. The only non-deterministic ingredient — the per-play pitch
 //! jitter — lives here by design.
 //!
+//! The world's sounds can mix down OFFLINE instead of to the device
+//! ([`Audio::begin_offline`], [`Audio::pull`]): the same play paths on rodio's
+//! device-free mixer, pulled on the caller's clock from a seeded jitter, so the
+//! same session mixes down to the same samples. The viewer's interface sounds
+//! and soundtrack stay on the device.
+//!
 //! [`Audio`] is best-effort: if no output device opens, or a sound fails to decode,
 //! it logs and runs silent rather than failing — a missing speaker never costs you
 //! the game (mirroring [`petramond_world::asset_cache`]'s never-fatal stance).
@@ -36,6 +42,8 @@ mod engine;
 mod engine;
 
 pub use engine::Audio;
+
+pub mod convert;
 
 /// Listener state for active spatial sounds, derived by the app from the
 /// current camera every frame.

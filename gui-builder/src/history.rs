@@ -95,11 +95,13 @@ mod tests {
             kind: "petramond:test".into(),
             class: DocClass::Screen,
             compact_below_w: None,
+            dismiss: Default::default(),
             root: Node::leaf(NodeKind::Label {
                 text: Some(label.into()),
                 wrap: false,
                 scale: 1,
                 small: false,
+                max_lines: None,
             }),
         }
     }
@@ -110,6 +112,7 @@ mod tests {
             wrap: false,
             scale: 1,
             small: false,
+            max_lines: None,
         };
     }
 

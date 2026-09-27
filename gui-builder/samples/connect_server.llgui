@@ -130,16 +130,10 @@
             },
             {
               "type": "label",
-              "text": "Player Name",
-              "style": "label.muted"
-            },
-            {
-              "id": "player_name",
-              "type": "text_input",
-              "placeholder": "Player",
-              "max_chars": 32,
+              "wrap": true,
+              "style": "label.muted",
               "bind": {
-                "text": "player_name"
+                "text": "signed_in_as"
               }
             },
             {
@@ -236,6 +230,35 @@
                 "justify": "start"
               },
               "children": [
+                {
+                  "id": "account",
+                  "type": "button",
+                  "text": "Account",
+                  "layout": {
+                    "w": {
+                      "grow": 1
+                    },
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  },
+                  "bind": {
+                    "visible": "signed_out"
+                  }
+                },
                 {
                   "id": "connect",
                   "type": "button",
@@ -342,11 +365,17 @@
       "has_status": {
         "bool": true
       },
-      "player_name": {
-        "str": "Sample text"
+      "is_signed_in": {
+        "bool": true
       },
       "server_addr": {
         "str": "Sample text"
+      },
+      "signed_in_as": {
+        "str": "Sample text"
+      },
+      "signed_out": {
+        "bool": true
       },
       "status_text": {
         "str": "Sample text"

@@ -119,6 +119,9 @@ pub const MOVE_SCALE_DEFAULT: f32 = ATTRIBUTE_DEFAULT;
 /// status-effect row bound.
 pub const MOVE_SCALE_MAX: f32 = 5.0;
 
+/// Widest flight-speed scale the resolved product may reach.
+pub const FLY_SCALE_MAX: f32 = 4.0;
+
 /// The widest resolved product each attribute may reach. Per quantity,
 /// because the harm a runaway scale can do is per quantity.
 fn attribute_max(attribute: PlayerAttribute) -> f32 {
@@ -128,6 +131,7 @@ fn attribute_max(attribute: PlayerAttribute) -> f32 {
         // that is no longer an attack rate, it is a bar on attacking — which
         // is the denial claim's job, not a number's.
         PlayerAttribute::AttackCooldown => 10.0,
+        PlayerAttribute::FlySpeed => FLY_SCALE_MAX,
     }
 }
 

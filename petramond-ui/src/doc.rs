@@ -30,7 +30,28 @@ pub struct Document {
     /// bindings can never diverge between the two forms.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact_below_w: Option<i32>,
+    /// What Escape does to this document: `close` it (the default), or
+    /// deliver a dismiss EVENT to its owner and stay open — for a document
+    /// that has its own layers to unwind first (a popup, an edit in
+    /// progress, a selection).
+    #[serde(default, skip_serializing_if = "Dismiss::is_close")]
+    pub dismiss: Dismiss,
     pub root: Node,
+}
+
+/// What Escape does to a document ([`Document::dismiss`]).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Dismiss {
+    #[default]
+    Close,
+    Event,
+}
+
+impl Dismiss {
+    pub fn is_close(&self) -> bool {
+        *self == Dismiss::Close
+    }
 }
 
 impl Document {
@@ -83,6 +104,11 @@ pub struct Node {
     /// stays in flow and stays fully interactive (hit testing is unchanged).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub overlay: bool,
+    /// `label`, `button` and `badge`: when the text had to be ellipsized to
+    /// fit and the pointer rests on it, the engine shows the whole text in a
+    /// standard tooltip. Nothing shows when nothing was cut.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ellipsis_tip: bool,
     #[serde(default, skip_serializing_if = "Bindings::is_empty")]
     pub bind: Bindings,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -104,6 +130,7 @@ impl<'de> Deserialize<'de> for Node {
             compact_layout: Option<Box<LayoutProps>>,
             style: Option<String>,
             overlay: bool,
+            ellipsis_tip: bool,
             bind: Bindings,
             children: Vec<Node>,
         }
@@ -119,6 +146,7 @@ impl<'de> Deserialize<'de> for Node {
             "compact_layout",
             "style",
             "overlay",
+            "ellipsis_tip",
             "bind",
             "children",
         ] {
@@ -147,6 +175,7 @@ impl<'de> Deserialize<'de> for Node {
             compact_layout: common.compact_layout,
             style: common.style,
             overlay: common.overlay,
+            ellipsis_tip: common.ellipsis_tip,
             bind: common.bind,
             children: common.children,
         })
@@ -185,6 +214,10 @@ pub enum NodeKind {
         /// scale 1, where there is no smaller step.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         small: bool,
+        /// A `wrap` label stops at this many lines, the last one ellipsized:
+        /// a bound description can never push its row off the screen.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_lines: Option<u32>,
     },
     /// An image beside the document (path relative to the document; a bound
     /// `image` key overrides the name per instance — list-row icons).
@@ -220,8 +253,9 @@ pub enum NodeKind {
         /// instead and leaves `text`/`icon` unset.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         text: Option<String>,
-        /// Theme part drawn as the button's icon (centred alone, or left of
-        /// the label) — e.g. `icon.edit` for a pencil button.
+        /// The button's icon (centred alone, or left of the label): a theme
+        /// part (`icon.edit`), or a `.png` beside the document drawn on the
+        /// themed face. `bind.icon` swaps it per frame and per list stamp.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         icon: Option<String>,
         /// A document image drawn as the button's face INSTEAD of the theme
@@ -241,8 +275,9 @@ pub enum NodeKind {
     },
     Checkbox,
     Toggle {
-        /// Theme part drawn centred on the toggle face — an on/off icon
-        /// button (e.g. the crafting browser's craftable-only filter).
+        /// Icon drawn centred on the toggle face — an on/off icon button
+        /// (the crafting browser's craftable-only filter): a theme part, or a
+        /// `.png` beside the document; `bind.icon` swaps it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         icon: Option<String>,
     },
@@ -257,6 +292,11 @@ pub enum NodeKind {
         placeholder: Option<String>,
         #[serde(default = "default_max_chars")]
         max_chars: usize,
+        /// Draw every character as `*` instead of itself (a password field).
+        /// Presentation only: the editor, the bound value and the clipboard all
+        /// still hold the real text, so masking cannot lose what was typed.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        masked: bool,
     },
     /// Clipping scroll region around its children.
     Scroll {
@@ -330,6 +370,21 @@ pub enum NodeKind {
     /// Visibility is ordinary host-bound state: bind `visible` and the tooltip
     /// exists only on the frames the host wants it. Content is ordinary nodes,
     /// so a tooltip carries no knowledge of what it describes.
+    /// A host-kept 2-D scene painted into the node's solved rect, clipped to
+    /// it: `bind.scene` names the scene, and one scene unit is one logical
+    /// pixel. `interactive` reports pointer and wheel events over it, local
+    /// to the rect, and its size whenever the layout changes it.
+    Canvas {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        interactive: bool,
+    },
+    /// Where the host presents its world frame: a layout-reserved region the
+    /// host draws into (like a `hook`), with a canvas's pointer, wheel and
+    /// size events when `interactive`.
+    Viewport {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        interactive: bool,
+    },
     Tooltip {
         /// Optional widget anchor: the tooltip expands only while a widget
         /// with this `id` is under the cursor (one frame of lag, the same
@@ -378,6 +433,8 @@ impl NodeKind {
         "badge",
         "alert",
         "hook",
+        "canvas",
+        "viewport",
         "tooltip",
     ];
 
@@ -393,6 +450,7 @@ impl NodeKind {
                 wrap: false,
                 scale: 1,
                 small: false,
+                max_lines: None,
             },
             "image" => NodeKind::Image {
                 image: "image.png".into(),
@@ -422,6 +480,7 @@ impl NodeKind {
             "text_input" => NodeKind::TextInput {
                 placeholder: None,
                 max_chars: 64,
+                masked: false,
             },
             "scroll" => NodeKind::Scroll {
                 axis: ScrollAxis::Vertical,
@@ -464,6 +523,8 @@ impl NodeKind {
                 ],
             },
             "hook" => NodeKind::Hook,
+            "canvas" => NodeKind::Canvas { interactive: true },
+            "viewport" => NodeKind::Viewport { interactive: true },
             "tooltip" => NodeKind::Tooltip { hover: None },
             _ => return None,
         })
@@ -499,6 +560,16 @@ impl NodeKind {
                 | NodeKind::List { .. }
                 | NodeKind::TabBar { .. }
                 | NodeKind::Hook
+                | NodeKind::Canvas { .. }
+                | NodeKind::Viewport { .. }
+        )
+    }
+
+    /// Whether this node reports canvas pointer, wheel and size events.
+    pub fn is_surface(&self) -> bool {
+        matches!(
+            self,
+            NodeKind::Canvas { interactive: true } | NodeKind::Viewport { interactive: true }
         )
     }
 
@@ -526,6 +597,8 @@ impl NodeKind {
             NodeKind::Alert { .. } => "alert",
             NodeKind::TabBar { .. } => "tab_bar",
             NodeKind::Hook => "hook",
+            NodeKind::Canvas { .. } => "canvas",
+            NodeKind::Viewport { .. } => "viewport",
             NodeKind::Tooltip { .. } => "tooltip",
         }
     }
@@ -746,6 +819,13 @@ pub struct LayoutProps {
     /// Root-only: where the tree sits on screen. Ignored on non-root nodes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anchor: Option<Anchor>,
+    /// An `abs` frame placed against a named widget instead of its parent:
+    /// below the widget's solved rect with left edges aligned, flipped above
+    /// it or shifted left when it would leave the viewport — a popup under
+    /// the button that opened it, at every size. Inside a list template the
+    /// widget is the same stamp's; otherwise it is the instance last pressed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor_to: Option<String>,
 }
 
 impl Default for LayoutProps {
@@ -765,6 +845,7 @@ impl Default for LayoutProps {
             max_h: None,
             abs: None,
             anchor: None,
+            anchor_to: None,
         }
     }
 }
@@ -858,12 +939,20 @@ pub struct Bindings {
     /// key. Takes are never gated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accepts: Option<String>,
-    /// `label` nodes only: a `Str` key naming a THEME PALETTE entry that
-    /// overrides the label's colour this frame — text whose colour IS state
-    /// (a condition word painted by its severity). Empty resolves to the
-    /// node's own style; a disabled node keeps the disabled colour.
+    /// `label`, `badge` and `text_input` nodes: a `Str` key naming a THEME
+    /// PALETTE entry whose colour IS state this frame — a label's text, a
+    /// badge's face (a severity chip), an input's frame and text (an invalid
+    /// number). Empty resolves to the node's own style; a disabled node keeps
+    /// its disabled face.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub palette: Option<String>,
+    /// `canvas` nodes: a `Str` key naming the host-kept scene to paint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scene: Option<String>,
+    /// `button`/`toggle` nodes: a `Str` key overriding the icon name this
+    /// frame (play ↔ pause); empty = the authored icon.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     /// Label text alpha (0–1), for transient notices without changing layout.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text_opacity: Option<String>,
@@ -1016,6 +1105,7 @@ impl Node {
             compact_layout: None,
             style: None,
             overlay: false,
+            ellipsis_tip: false,
             bind: Bindings::default(),
             children: Vec::new(),
         }

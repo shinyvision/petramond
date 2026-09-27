@@ -14,8 +14,7 @@ fn wait_for(what: &str, done: impl Fn() -> bool) {
 /// and must land once the disk takes it again.
 #[test]
 fn a_failed_write_holds_the_barrier_and_lands_in_order_later() {
-    let dir = std::env::temp_dir().join(format!("petramond-save-io-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = petramond_util::test_dirs::TestScratchDir::new("save-io");
     // A directory where the player file goes makes that write fail.
     let ada = crate::net::identity::PlayerKey([0xAD; 32]);
     let blocker = dir.join(format!("players/{ada}.dat"));
@@ -25,7 +24,7 @@ fn a_failed_write_holds_the_barrier_and_lands_in_order_later() {
     let reads = ReadQueues::new(1);
     let held = Arc::new(AtomicU64::new(0));
     let writer = {
-        let (dir, reads, held) = (dir.clone(), reads.clone(), held.clone());
+        let (dir, reads, held) = (dir.to_path_buf(), reads.clone(), held.clone());
         std::thread::spawn(move || {
             write_thread(dir, rx, reads, held, Arc::new(Palette::identity()))
         })
@@ -52,7 +51,6 @@ fn a_failed_write_holds_the_barrier_and_lands_in_order_later() {
     assert_eq!(held.load(Ordering::Relaxed), 0);
     assert_eq!(std::fs::read(&blocker).unwrap(), vec![1; 4]);
     assert_eq!(std::fs::read(dir.join("level.dat")).unwrap(), vec![2; 4]);
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// A backlog merges into one job: the newest version of each file and of

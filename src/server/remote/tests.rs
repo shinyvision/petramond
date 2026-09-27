@@ -2,7 +2,7 @@ use super::*;
 use crate::net::connection::TcpClientConn;
 use crate::net::framing::{read_msg, write_msg};
 use crate::net::handle::ServerHandle;
-use crate::net::handshake::{client_handshake, installed_mod_ids};
+use crate::net::handshake::{client_handshake, installed_mod_ids, HandshakeError, ServerOffer};
 use crate::net::identity::PlayerIdentity;
 use crate::net::protocol::{PlayerAction, PlayerUpdate, TargetRef};
 use crate::net::remap::IdRemap;
@@ -21,6 +21,32 @@ fn identity() -> PlayerIdentity {
 
 fn key(byte: u8) -> PlayerKey {
     PlayerKey([byte; 32])
+}
+
+/// A headless server for the suite: OFFLINE, so a join carries a plain name and
+/// nothing in these tests reaches the account service.
+pub(super) fn headless(
+    world_name: &str,
+    new_seed: u32,
+    render_dist: i32,
+) -> crate::server::game::ServerGame {
+    let mut server =
+        crate::server::session_build::build_headless_session(world_name, new_seed, render_dist);
+    server.account_policy = crate::account::AccountPolicy::Offline;
+    server
+}
+
+/// The credential callback for an offline server: the plain name the test joins as.
+pub(super) fn joins_as(
+    name: &'static str,
+) -> impl FnOnce(&ServerOffer) -> Result<crate::net::protocol::JoinCredential, HandshakeError> {
+    move |offer| {
+        assert!(
+            !offer.requires_account,
+            "the suite's servers are offline; a test must not need the account service"
+        );
+        Ok(crate::net::protocol::JoinCredential::Name(name.to_string()))
+    }
 }
 
 fn connect(port: u16) -> TcpStream {
@@ -120,7 +146,7 @@ fn duplicate_join_names_dedupe_with_the_lowest_free_numeric_suffix() {
 
 #[test]
 fn headless_disconnect_detaches_before_player_id_reuse() {
-    let mut server = crate::server::session_build::build_headless_session("", 3, 2);
+    let mut server = headless("", 3, 2);
     let dismounts = Arc::new(AtomicUsize::new(0));
     let observed = Arc::clone(&dismounts);
     server.mods.bus_mut().on_post(
@@ -195,8 +221,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
         left
     };
 
-    let dir = std::env::temp_dir().join(format!("petramond-lan-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = petramond_util::test_dirs::TestScratchDir::new("lan");
     std::fs::create_dir_all(dir.join("players")).expect("temp players dir");
     // Pre-seed the joining player's save as a PRE-IDENTITY name-keyed file
     // (the visitor's identity adopts it on first join): standing on the
@@ -240,7 +265,10 @@ fn full_lan_join_place_pause_gate_and_leave() {
     };
     let (mut server, _, _) =
         crate::server::session_build::build_server("", 7, 2, Some(host_player));
-    let opened = crate::save::open_at(dir.clone()).expect("temp save opens");
+    // A threaded-pool listen server, but still a SUITE server: offline, so the
+    // joins below carry plain names and nothing reaches the account service.
+    server.account_policy = crate::account::AccountPolicy::Offline;
+    let opened = crate::save::open_at(dir.to_path_buf()).expect("temp save opens");
     server.world.attach_save(opened.save, opened.saved);
     // Pre-build a tiny stone pad at the visitor's feet (threaded pool, but a
     // single column) so the place claim targets a known cell instead of
@@ -317,7 +345,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
     let join = client_handshake(
         &mut stream,
         &visitor_id,
-        "Visitor",
+        joins_as("Visitor"),
         2,
         &installed_mod_ids(),
         Vec::new(),
@@ -473,7 +501,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
         let data = client_handshake(
             &mut dup,
             &identity(),
-            "vISITOR",
+            joins_as("vISITOR"),
             2,
             &installed_mod_ids(),
             Vec::new(),
@@ -505,7 +533,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
         let data = client_handshake(
             &mut guest,
             &identity(),
-            "Guest",
+            joins_as("Guest"),
             2,
             &installed_mod_ids(),
             Vec::new(),
@@ -575,7 +603,6 @@ fn full_lan_join_place_pause_gate_and_leave() {
     );
 
     host.shutdown_and_join();
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The HEADLESS server shape end-to-end: built with NO local session,
@@ -586,7 +613,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
 /// having passed.
 #[test]
 fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
-    let mut server = crate::server::session_build::build_headless_session("", 11, 2);
+    let mut server = headless("", 11, 2);
     assert!(!server.sessions.has_local_session());
     assert!(server.sessions.is_empty());
     assert!(server.clock.lan_ever_opened(), "the pause gate starts open");
@@ -608,7 +635,7 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
     let join = client_handshake(
         &mut stream,
         &head,
-        "Head",
+        joins_as("Head"),
         16,
         &installed_mod_ids(),
         Vec::new(),
@@ -649,7 +676,7 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
     let join = client_handshake(
         &mut stream,
         &head,
-        "Head",
+        joins_as("Head"),
         16,
         &installed_mod_ids(),
         Vec::new(),
@@ -672,4 +699,154 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
 
     remote.shutdown_and_join();
     host.shutdown_and_join();
+}
+
+/// Read replies until `f` takes one, skipping keepalives.
+fn reply<T>(stream: &mut TcpStream, mut f: impl FnMut(ServerToClient) -> Option<T>) -> T {
+    loop {
+        match read_msg::<ServerToClient, _>(stream).expect("a reply") {
+            ServerToClient::KeepAlive => continue,
+            other => {
+                let shown = format!("{other:?}");
+                if let Some(hit) = f(other) {
+                    return hit;
+                }
+                panic!("unexpected reply: {shown}");
+            }
+        }
+    }
+}
+
+/// `Hello` a raw socket; the `HelloAck`'s `(challenge, requires_account, server_id)`.
+fn hello(stream: &mut TcpStream) -> (crate::net::identity::JoinChallenge, bool, String) {
+    write_msg(
+        stream,
+        &ClientToServer::Hello {
+            protocol: PROTOCOL_VERSION,
+        },
+    )
+    .expect("send");
+    reply(stream, |msg| match msg {
+        ServerToClient::HelloAck {
+            challenge,
+            requires_account,
+            server_id,
+            ..
+        } => Some((challenge, requires_account, server_id)),
+        _ => None,
+    })
+}
+
+/// A proven `Join` offering `credential`, and the server's `JoinReject` reason.
+fn refused_join(
+    stream: &mut TcpStream,
+    challenge: &crate::net::identity::JoinChallenge,
+    credential: crate::net::protocol::JoinCredential,
+) -> JoinRejectReason {
+    let me = identity();
+    write_msg(
+        stream,
+        &ClientToServer::Join {
+            credential,
+            key: me.key(),
+            proof: me.sign_join(challenge),
+            view_distance: 2,
+            cached_sections: Vec::new(),
+        },
+    )
+    .expect("send");
+    reply(stream, |msg| match msg {
+        ServerToClient::JoinReject { reason } => Some(reason),
+        _ => None,
+    })
+}
+
+/// An ONLINE server's handshake: it advertises what it wants up front, and
+/// refuses the wrong kind of credential BY NAME rather than dropping the socket
+/// — the client was told the policy, so a mismatch is a reason to show.
+///
+/// Redeeming a real ticket is deliberately not exercised here: it is a live
+/// HTTPS round trip to the account service, and a unit suite that reaches the
+/// network is a unit suite that fails on a train.
+#[test]
+fn an_online_server_advertises_its_policy_and_refuses_a_plain_name() {
+    let mut server = headless("", 5, 2);
+    server.account_policy = crate::account::AccountPolicy::Online;
+    let mut host = crate::server::handle::spawn(server);
+    host.unthrottle_for_test();
+    let port = host.open_to_lan(0).expect("bind an ephemeral port");
+
+    let mut probe = connect(port);
+    let (challenge, requires_account, server_id) = hello(&mut probe);
+    assert!(requires_account, "an online server says so up front");
+    assert_eq!(server_id.len(), 32, "a full-width opaque server id");
+    assert_eq!(
+        refused_join(
+            &mut probe,
+            &challenge,
+            crate::net::protocol::JoinCredential::Name("Sneaky".to_string()),
+        ),
+        JoinRejectReason::AccountRequired
+    );
+
+    // The mirror image: an OFFLINE server cannot redeem a ticket, and the name
+    // it would need lives inside one — so it refuses that too, by its own name.
+    let mut offline = crate::server::handle::spawn(headless("", 5, 2));
+    offline.unthrottle_for_test();
+    let offline_port = offline.open_to_lan(0).expect("bind an ephemeral port");
+    let mut probe = connect(offline_port);
+    let (challenge, requires_account, _) = hello(&mut probe);
+    assert!(!requires_account, "an offline server asks for no account");
+    assert_eq!(
+        refused_join(
+            &mut probe,
+            &challenge,
+            crate::net::protocol::JoinCredential::Ticket(server_id),
+        ),
+        JoinRejectReason::AccountNotAccepted
+    );
+
+    offline.shutdown_and_join();
+    host.shutdown_and_join();
+}
+
+/// A verified account is filed under its stable account id, never its
+/// username: a website rename between visits moves the display name and
+/// nothing else, and one account is one session whatever it is called.
+///
+/// This shipped broken once — the username keyed the record, so a rename (or
+/// a first sign-in) silently opened the world on a fresh spawn with the old
+/// character still on disk.
+#[test]
+fn a_verified_account_is_filed_under_its_id_not_its_username() {
+    let mut server = headless("", 13, 2);
+    let account = super::joins::account_key(77);
+
+    let (data, first) = server
+        .admit_remote_player(account, "Explorer", 8, &[])
+        .expect("admitted");
+    assert_eq!(first, "Explorer", "the display name is the username");
+    assert_eq!(
+        server.sessions.by_id(data.player_id).map(|s| s.key),
+        Some(account),
+        "a verified account files under its id"
+    );
+    assert_eq!(
+        server
+            .admit_remote_player(account, "ShinyVision", 8, &[])
+            .err(),
+        Some(JoinRejectReason::AlreadyConnected),
+        "a renamed account is still the same session"
+    );
+
+    server.remove_remote_session(data.player_id);
+    let (data, renamed) = server
+        .admit_remote_player(account, "ShinyVision", 8, &[])
+        .expect("rejoins");
+    assert_eq!(renamed, "ShinyVision");
+    assert_eq!(
+        server.sessions.by_id(data.player_id).map(|s| s.key),
+        Some(account),
+        "a rename moves the display name and nothing else"
+    );
 }

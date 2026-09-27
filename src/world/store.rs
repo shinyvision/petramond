@@ -81,8 +81,12 @@ pub type ReplicaWorld = World<ReplicaSide>;
 
 impl<S: WorldSide> World<S> {
     fn with_side(seed: u32, render_dist: i32, jobs: &Arc<JobPool>, side: S) -> Self {
+        let mut data = WorldData::new(seed, render_dist);
+        // Every store takes its own revision range, so a revision kept across
+        // a replica swap can never read as unchanged.
+        data.column_revision_counter = petramond_world::world::data::revision_base();
         Self {
-            data: WorldData::new(seed, render_dist),
+            data,
             light_bakes: LightBakeQueue::new(jobs.clone()),
             draws: DrawStore::default(),
             side,

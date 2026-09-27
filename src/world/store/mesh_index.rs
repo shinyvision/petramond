@@ -35,6 +35,14 @@ impl TerrainRenderState {
         removed
     }
 
+    fn redeliver_meshes(&mut self) {
+        let columns: Vec<ChunkPos> = self.mesh_columns.iter().copied().collect();
+        for column in columns {
+            self.bump_mesh_upload_revision(column);
+            self.mesh_upload_dirty_columns.insert(column);
+        }
+    }
+
     fn bump_mesh_upload_revision(&mut self, pos: ChunkPos) {
         let revision = self.mesh_upload_revisions.entry(pos).or_insert(0);
         *revision = revision.wrapping_add(1).max(1);
@@ -57,5 +65,13 @@ impl ReplicaWorld {
     /// Iterate loaded section meshes for rendering (caller culls by camera).
     pub fn iter_meshes(&self) -> impl Iterator<Item = (SectionPos, &ChunkMesh)> {
         self.side.terrain.meshes.iter().map(|(p, m)| (*p, m))
+    }
+
+    /// Hand every meshed column to the renderer again, as if each had just
+    /// been meshed: for a renderer that dropped its copies of this world while
+    /// it presented another one. Released CPU geometry comes back through the
+    /// renderer's ordinary repack path.
+    pub fn redeliver_meshes(&mut self) {
+        self.side.terrain.redeliver_meshes();
     }
 }

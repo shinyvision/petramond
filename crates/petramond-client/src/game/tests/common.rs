@@ -63,7 +63,19 @@ pub(super) fn game_on_empty_chunk() -> TestGame {
 /// The fixture with an explicit camera (the WASM child tests spawn near their
 /// build site).
 pub(super) fn game_with_camera(cam: Camera) -> TestGame {
-    let (server, bootstrap) = crate::game::tests::bootstrap::build_session_inline("", 1, 1);
+    assemble("", cam)
+}
+
+/// The fixture on a named world save (a world created or reopened on disk).
+pub(super) fn game_for_world(world: &str) -> TestGame {
+    assemble(
+        world,
+        Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0),
+    )
+}
+
+fn assemble(world: &str, cam: Camera) -> TestGame {
+    let (server, bootstrap) = crate::game::tests::bootstrap::build_session_inline(world, 1, 1);
     let (handle, pipe) = petramond::net::handle::ServerHandle::loopback();
     let game = Game::assemble(cam, handle, bootstrap);
     TestGame { game, server, pipe }

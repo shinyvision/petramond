@@ -11,3 +11,6 @@ workspace = true
 
 [dependencies]
 flate2 = { workspace = true }
+
+[dev-dependencies]
+petramond-util = { workspace = true, features = ["test-support"] }

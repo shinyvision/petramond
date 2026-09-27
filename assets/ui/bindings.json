@@ -3,12 +3,47 @@
  "_doc": "The data contract between the game and each GUI document kind: which UiState keys the game populates every frame (bindable via a node's `bind`), what fields each list item map carries, and which widget ids / events the screen's controller reacts to. The gui-builder reads this to offer binding pickers and to seed preview sample data. Source of truth for behavior is the controller in src/app/shell_docs/ (or drive_doc_menu for menus); keep this file in sync when a controller's populate/handle changes.",
  "kinds": {
   "petramond:title": {
-   "state": {},
+   "state": {
+    "has_launchers": {
+     "type": "bool",
+     "doc": "at least one enabled pack declares a launch entry (the launcher dock exists)"
+    },
+    "launchers": {
+     "type": "list",
+     "item": {
+      "icon": "str"
+     },
+     "doc": "one icon button per enabled pack with a pack.json launch entry, in pack load order"
+    },
+    "launch_tip": {
+     "type": "str",
+     "doc": "the hovered launch entry's label; empty (hidden) when none is hovered"
+    },
+    "notice": {
+     "type": "str",
+     "doc": "one line under the menu: content apply failures, a deferred apply, download progress, or changes waiting for a restart"
+    },
+    "has_notice": {
+     "type": "bool",
+     "doc": "notice is non-empty"
+    },
+    "notice_tip": {
+     "type": "str",
+     "doc": "the notice in full, wrapped"
+    },
+    "account_tip": {
+     "type": "str",
+     "doc": "the corner account button's tooltip: 'Account: <username>' or 'Sign in'"
+    }
+   },
    "handles": {
     "start": "click: open world select",
     "connect": "click: open the connect-to-server screen",
     "quit": "click: quit the game",
-    "options": "click: open the Options screens"
+    "options": "click: open the Options screens",
+    "account": "click (corner icon): open the Account screen",
+    "launchers": "list click: start that pack's client_wasm on the shell",
+    "browse": "click: open the content browser"
    }
   },
   "petramond:world_select": {
@@ -59,7 +94,8 @@
       "icon": "str",
       "has_icon": "bool",
       "version": "str",
-      "has_version": "bool"
+      "has_version": "bool",
+      "is_addon": "bool"
      },
      "doc": "one row per installed mod pack"
     },
@@ -181,7 +217,8 @@
       "icon": "str",
       "has_icon": "bool",
       "version": "str",
-      "has_version": "bool"
+      "has_version": "bool",
+      "is_addon": "bool"
      },
      "doc": "one row per installed mod pack"
     },
@@ -226,7 +263,7 @@
     },
     "is_remote": {
      "type": "bool",
-     "doc": "this session joined a remote server (shows Disconnect)"
+     "doc": "this session has nothing of its own to save \u2014 a remote server, or a presentation (shows the leave button)"
     },
     "lan_open": {
      "type": "bool",
@@ -247,12 +284,16 @@
     "has_lan_error": {
      "type": "bool",
      "doc": "lan_error is non-empty"
+    },
+    "leave_label": {
+     "type": "str",
+     "doc": "the leave button's caption: DISCONNECT for a remote session, LEAVE for a presentation"
     }
    },
    "handles": {
     "resume": "click: back to the game",
     "open_lan": "click: open the running host to LAN on port 7434",
-    "disconnect": "click: leave the remote server and return to title",
+    "disconnect": "click: leave the remote server and return to title; ends a presentation (back to the pack that opened it)",
     "save_quit": "click: save and return to title (host only)",
     "keys": "Enter resumes (ESC also resumes, via the global close control)",
     "options": "click: open the Options screens (Back returns to pause)"
@@ -661,10 +702,6 @@
      "type": "str",
      "doc": "live address input text (prefilled from client.json last_server; :port optional, default 7434)"
     },
-    "player_name": {
-     "type": "str",
-     "doc": "live player-name input text (prefilled from the resolved player name)"
-    },
     "status_text": {
      "type": "str",
      "doc": "the last attempt's failure message"
@@ -683,15 +720,27 @@
     },
     "can_connect": {
      "type": "bool",
-     "doc": "both fields non-empty and no attempt running (enables Connect)"
+     "doc": "the address is non-empty and no attempt is running (enables Connect)"
+    },
+    "signed_in_as": {
+     "type": "str",
+     "doc": "who the player will appear as: the signed-in account, or a prompt to sign in"
+    },
+    "is_signed_in": {
+     "type": "bool",
+     "doc": "a Petramond sign-in is stored"
+    },
+    "signed_out": {
+     "type": "bool",
+     "doc": "no sign-in is stored (shows the Account shortcut)"
     }
    },
    "handles": {
     "server_addr": "text_input: server address; Enter connects",
-    "player_name": "text_input: player name; Enter connects",
     "connect": "click: start the connect attempt",
     "cancel": "click: abandon the running attempt (stays on this screen)",
-    "back": "click: cancel and return to title (ESC does the same)"
+    "back": "click: cancel and return to title (ESC does the same)",
+    "account": "click: open Account to sign in"
    }
   },
   "petramond:mods_missing": {
@@ -703,11 +752,21 @@
       "version": "str",
       "has_version": "bool"
      },
-     "doc": "one row per server mod this client lacks"
+     "doc": "one row per mod this client lacks: a refused join's, or a local world's recorded world-affecting packs"
+    },
+    "missing_intro": {
+     "type": "str",
+     "doc": "what needs the mods: the server, or the world being opened"
+    },
+    "can_open_anyway": {
+     "type": "bool",
+     "doc": "a local world is waiting to open (never for a server)"
     }
    },
    "handles": {
-    "back": "click: back to the connect screen, address preserved (Enter too)"
+    "open_anyway": "click: open the local world without them (its content becomes air when it saves)",
+    "back": "click: back to the connect screen with the address preserved, or to World Select (Enter too)",
+    "get_missing": "click: open the content browser filtered to the missing packs; its Back returns here"
    }
   },
   "petramond:connection_lost": {
@@ -1001,6 +1060,245 @@
     "include_air": "toggle"
    },
    "notes": "screen: the schematic library a mod's choice opens in any game mode; choosing uploads the design to the world if it lacks it"
+  },
+  "petramond:account": {
+   "state": {
+    "account_name": {
+     "type": "str",
+     "doc": "the signed-in account's username, or \"Not signed in\""
+    },
+    "account_detail": {
+     "type": "str",
+     "doc": "the account's profile address, or why to sign in"
+    },
+    "is_signed_in": {
+     "type": "bool",
+     "doc": "a sign-in is stored (shows Log Out)"
+    },
+    "signed_out": {
+     "type": "bool",
+     "doc": "no sign-in is stored (shows Sign In)"
+    },
+    "working": {
+     "type": "bool",
+     "doc": "an account request is running (shows the progress label)"
+    },
+    "working_text": {
+     "type": "str",
+     "doc": "the running request's progress label"
+    },
+    "has_status": {
+     "type": "bool",
+     "doc": "status_text is non-empty (shows the danger label)"
+    },
+    "status_text": {
+     "type": "str",
+     "doc": "the last refusal, or why a join sent the player here"
+    }
+   },
+   "handles": {
+    "sign_in": "click: open the Petramond sign-in form",
+    "sign_out": "click: forget the stored sign-in and revoke it",
+    "back": "click: back to the screen that opened it (ESC/Enter too)"
+   }
+  },
+  "petramond:account_sign_in": {
+   "state": {
+    "account_id": {
+     "type": "str",
+     "doc": "live username-or-email input text"
+    },
+    "account_password": {
+     "type": "str",
+     "doc": "live password input text (the input draws it masked)"
+    },
+    "service_line": {
+     "type": "str",
+     "doc": "which account service this signs in against"
+    },
+    "working": {
+     "type": "bool",
+     "doc": "the sign-in request is running"
+    },
+    "working_text": {
+     "type": "str",
+     "doc": "the running request's progress label"
+    },
+    "has_status": {
+     "type": "bool",
+     "doc": "status_text is non-empty (shows the danger label)"
+    },
+    "status_text": {
+     "type": "str",
+     "doc": "why the last sign-in was refused"
+    },
+    "can_submit": {
+     "type": "bool",
+     "doc": "both fields are non-empty and no request is running"
+    }
+   },
+   "handles": {
+    "account_id": "text_input: username or email; Enter submits",
+    "account_password": "text_input: password; Enter submits",
+    "submit": "click: sign in",
+    "back": "click: back to Account (ESC does the same)"
+   }
+  },
+  "petramond:content": {
+   "state": {
+    "rows": {
+     "type": "list",
+     "item": {
+      "is_header": "bool",
+      "is_message": "bool",
+      "is_entry": "bool",
+      "header": "str",
+      "message": "str",
+      "message_palette": "str",
+      "message_busy": "bool",
+      "message_progress": "f32",
+      "has_message_action": "bool",
+      "message_action_text": "str",
+      "icon": "str",
+      "has_icon": "bool",
+      "no_icon": "bool",
+      "name": "str",
+      "is_addon": "bool",
+      "version": "str",
+      "has_version": "bool",
+      "summary": "str",
+      "description": "str",
+      "world_note": "str",
+      "has_world_note": "bool",
+      "expanded": "bool",
+      "collapsed": "bool",
+      "detail": "str",
+      "detail_palette": "str",
+      "can_get": "bool",
+      "can_replace": "bool",
+      "can_undo": "bool",
+      "busy": "bool",
+      "action_text": "str",
+      "progress": "f32",
+      "can_delete": "bool"
+     },
+     "doc": "the one content list in display order: section headers (Installed, Available on petramond.com, Part of Petramond), message stamps (sign in, loading, errors, empty, filters) and pack entries. Exactly one of is_header/is_message/is_entry is set. An entry's action column shows one of can_get/can_replace/can_undo/busy; its trash column can_delete or busy (cancel)"
+    },
+    "row_sel": {
+     "type": "i32",
+     "doc": "the keyboard-selected entry's index in rows (-1 = none); kept by the row's stable key across rebuilds"
+    },
+    "search": {
+     "type": "str",
+     "doc": "the search text (mirrored from the editor)"
+    },
+    "list_page": {
+     "type": "bool",
+     "doc": "the list page is showing"
+    },
+    "confirm_page": {
+     "type": "bool",
+     "doc": "the confirm page is showing (replaces the list page)"
+    },
+    "account_tip": {
+     "type": "str",
+     "doc": "the footer account button's tooltip: 'Account: <username>' or 'Sign in'"
+    },
+    "get_tip": {
+     "type": "str",
+     "doc": "tooltip for the hovered row's Get/Update/Retry button; '(Enter)' only on the selected row"
+    },
+    "replace_tip": {
+     "type": "str",
+     "doc": "tooltip for the hovered row's Replace button"
+    },
+    "undo_tip": {
+     "type": "str",
+     "doc": "tooltip for the hovered row's undo button; '(Ctrl+Z)' only on the selected row"
+    },
+    "delete_tip": {
+     "type": "str",
+     "doc": "tooltip for the hovered row's trash button; '(Del)' only on the selected row"
+    },
+    "cancel_tip": {
+     "type": "str",
+     "doc": "tooltip for the hovered row's cancel-download button"
+    },
+    "detail_tip": {
+     "type": "str",
+     "doc": "the hovered row's detail line in full"
+    },
+    "message_tip": {
+     "type": "str",
+     "doc": "tooltip for the hovered message stamp's action button"
+    },
+    "pending_changes": {
+     "type": "bool",
+     "doc": "a change waits for a restart (shows Restart now)"
+    },
+    "restart_tip": {
+     "type": "str",
+     "doc": "what Restart now applies, naming at most three packs"
+    },
+    "confirm_question": {
+     "type": "str",
+     "doc": "the confirm page's question"
+    },
+    "confirm_body": {
+     "type": "str",
+     "doc": "the confirm page's consequences"
+    },
+    "confirming_destroy": {
+     "type": "bool",
+     "doc": "confirm variant: Cancel left, a danger action right"
+    },
+    "confirming_go": {
+     "type": "bool",
+     "doc": "confirm variant: Cancel left, a benign action right"
+    },
+    "confirming_exit": {
+     "type": "bool",
+     "doc": "confirm variant: a danger 'now' far left, Cancel and a benign 'when done' right"
+    },
+    "cancel_left": {
+     "type": "bool",
+     "doc": "Cancel sits at the left (every variant but exit)"
+    },
+    "shows_go": {
+     "type": "bool",
+     "doc": "the benign confirm_go button shows (go and exit variants)"
+    },
+    "confirm_action_text": {
+     "type": "str",
+     "doc": "the danger confirm button's text (Delete, Replace, Don't install)"
+    },
+    "confirm_go_text": {
+     "type": "str",
+     "doc": "the benign confirm button's text"
+    },
+    "confirm_now_text": {
+     "type": "str",
+     "doc": "the exit variant's danger button text (Restart now / Quit now)"
+    }
+   },
+   "handles": {
+    "search": "text: filter every section by name, summary and id; Submit runs the selected row's primary action",
+    "refresh": "click: fetch the listing again and rebuild the list (F5)",
+    "content": "list select: select an entry and toggle its expansion; activate: its primary action",
+    "get": "click (row): Get / Update / Retry (Enter on the selected row)",
+    "replace": "click (row): confirm replacing a hand-installed copy with the petramond.com version",
+    "undo": "click (row): withdraw the row's pending change (Ctrl+Z)",
+    "delete": "click (row): confirm removing an installed pack at the next restart (Delete)",
+    "cancel": "click (row): cancel the row's download (Delete)",
+    "message_action": "click (message row): Sign In / Cancel / Retry / Show all",
+    "back": "click: leave the browser (Escape); downloads keep running",
+    "account": "click: open the Account screen; its Back returns here",
+    "restart": "click: restart Petramond to apply the waiting changes (asks first while downloads run)",
+    "confirm_cancel": "click: close the confirm page (Escape)",
+    "confirm_danger": "click: do the destructive action (Enter)",
+    "confirm_go": "click: do the benign action (Enter)",
+    "confirm_now": "click: exit now, cancelling running downloads"
+   }
   }
  }
 }

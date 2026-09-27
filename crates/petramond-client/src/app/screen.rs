@@ -14,9 +14,16 @@ pub(super) enum AppScreen {
     WorldSettings,
     CreateWorld,
     DeleteWorld,
-    /// The "Connect to Server" screen (address + player name).
-    /// The connect worker runs while this screen is up.
+    /// The "Connect to Server" screen (server address only — identity comes from
+    /// the Petramond account). The connect worker runs while this screen is up.
     ConnectServer,
+    /// "Account": the signed-in Petramond identity.
+    Account,
+    /// The Petramond sign-in form the Account screen opens.
+    AccountSignIn,
+    /// The content browser: installed packs, petramond.com's addons and
+    /// mods, and the content packs that ship with the game.
+    Content,
     /// The refused-join screen listing the server mods this client lacks;
     /// Back returns to [`ConnectServer`](AppScreen::ConnectServer).
     ModsMissing,
@@ -51,7 +58,7 @@ pub(super) enum AppScreen {
     /// session.
     Schematics,
     /// A presentation-only client mod's centered physical-pixel canvas. The
-    /// concrete owner/image lives in `Session::client_canvas`; this screen gates
+    /// concrete owner/image lives in `App::client_canvas`; this screen gates
     /// gameplay and releases the cursor without selecting a GUI document.
     ClientCanvas,
     /// The sleep overlay (bed interaction): the simulation KEEPS TICKING under
@@ -112,8 +119,21 @@ pub(super) enum Escape {
     CancelRemapOrBack(AppScreen),
     /// Cancel the connect worker and return to the title.
     CancelConnect,
-    /// Back to the connect screen with the refused attempt's fields intact.
-    ReopenConnect,
+    /// Leave the refused-join screen: back to the connect screen with the
+    /// refused attempt's fields intact, or to the world list for a local
+    /// world that was not opened anyway.
+    LeaveModsMissing,
+    /// Back to the screen that opened the account screens.
+    LeaveAccount,
+    /// Back to whoever asked for the sign-in, never straight out.
+    LeaveAccountSignIn,
+    /// The content browser unwinds its own layers (a confirmation, a detail
+    /// page) before it leaves.
+    LeaveContent,
+    /// A client mod's document or canvas: a document that unwinds its own
+    /// layers hears `Dismiss` and stays; otherwise it closes, back to the
+    /// world (or, on the shell, the title).
+    LeaveClientUi,
     /// Close the server menu session and return to gameplay.
     CloseMenu,
     /// Ask the tick to wake the player and drop the sleep overlay.
@@ -211,7 +231,10 @@ impl AppScreen {
             S::CreateWorld => shell(GuiKind::CreateWorld, E::Back(S::WorldSelect)),
             S::DeleteWorld => shell(GuiKind::DeleteWorld, E::Back(S::WorldSelect)),
             S::ConnectServer => shell(GuiKind::ConnectServer, E::CancelConnect),
-            S::ModsMissing => shell(GuiKind::ModsMissing, E::ReopenConnect),
+            S::Account => shell(GuiKind::Account, E::LeaveAccount),
+            S::AccountSignIn => shell(GuiKind::AccountSignIn, E::LeaveAccountSignIn),
+            S::Content => shell(GuiKind::Content, E::LeaveContent),
+            S::ModsMissing => shell(GuiKind::ModsMissing, E::LeaveModsMissing),
             S::ConnectionLost => shell(GuiKind::ConnectionLost, E::Back(S::Title)),
             S::Options => shell(GuiKind::Options, E::Back(S::Title)),
             S::OptionsSound => shell(GuiKind::OptionsSound, E::CancelRemapOrBack(S::Options)),
@@ -221,9 +244,9 @@ impl AppScreen {
             S::Game => Spec::new(R::Gameplay, None, E::PauseGame).with_hud(),
             S::Chat => Spec::new(R::Chat, None, E::Back(S::Game)).with_hud(),
             S::Menu(kind) => Spec::new(R::GameMenu, Some(kind), E::CloseMenu),
-            S::ClientModGui(kind) => Spec::new(R::ClientDoc, Some(kind), E::Back(S::Game)),
-            S::Schematics => Spec::new(R::ClientDoc, Some(GuiKind::Schematics), E::Back(S::Game)),
-            S::ClientCanvas => Spec::new(R::Canvas, None, E::Back(S::Game)),
+            S::ClientModGui(kind) => Spec::new(R::ClientDoc, Some(kind), E::LeaveClientUi),
+            S::Schematics => Spec::new(R::ClientDoc, Some(GuiKind::Schematics), E::LeaveClientUi),
+            S::ClientCanvas => Spec::new(R::Canvas, None, E::LeaveClientUi),
             S::Sleeping => Spec::new(R::Overlay, Some(GuiKind::Sleep), E::CancelSleep)
                 .with_hand(HandPolicy::SleepFade),
             S::Dead => Spec::new(R::Overlay, Some(GuiKind::Death), E::Blocked)
@@ -239,6 +262,15 @@ impl AppScreen {
     #[inline]
     pub(super) fn gameplay_enabled(self) -> bool {
         self.role() == ScreenRole::Gameplay
+    }
+
+    /// A screen that is only UI on the window: a menu, a mod's document or
+    /// canvas, the chat being typed, the pause and options screens. The sleep
+    /// fade and the death screen are more: they say the player's body cannot
+    /// aim or hold, which the scene shows.
+    #[inline]
+    pub(super) fn window_only(self) -> bool {
+        !matches!(self.role(), ScreenRole::Gameplay | ScreenRole::Overlay)
     }
 
     #[inline]

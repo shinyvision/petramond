@@ -226,6 +226,17 @@ impl<R: Clone, K> EntityLane<R, K> {
 }
 
 impl<R: EntityRow> EntityLane<R, R::Id> {
+    /// Move `set` on by this lane as a store adopts it: despawns, then
+    /// spawns, then updates.
+    pub fn apply_to(&self, set: &mut BTreeMap<R::Id, R>) {
+        for id in &self.despawned {
+            set.remove(id);
+        }
+        for row in self.iter() {
+            set.insert(row.entity_id(), row.clone());
+        }
+    }
+
     /// Fold the NEXT window's lane into this one, so applying the result
     /// equals applying both in order: ids despawned by `newer` lose their
     /// rows here, every row is the latest one per id, and an entity that

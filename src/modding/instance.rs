@@ -67,6 +67,7 @@ pub(super) struct ModInstance {
 impl ModInstance {
     /// A standalone server instance with its own health and the default
     /// fuel budget (fixtures and single-instance tools).
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn from_module(id: &str, module: &Module, world_seed: u32) -> Result<Self, String> {
         Self::from_module_side(
             id,
@@ -84,15 +85,14 @@ impl ModInstance {
         module: &Module,
         world_seed: u32,
         side: mod_api::RuntimeSide,
-        client_storage_dir: Option<std::path::PathBuf>,
+        client_buckets: Option<super::client::ClientBuckets>,
         health: Arc<ModHealth>,
         budget: FuelBudget,
     ) -> Result<Self, String> {
         let mut store = Store::new(
             host::engine(),
-            ModStoreData::new_for_side(id, world_seed, side, client_storage_dir),
+            ModStoreData::new_for_side(id, world_seed, side, client_buckets),
         );
-        store.limiter(|data| &mut data.limits);
         store.data_mut().meter.set_budget(budget);
         // Instantiation runs guest code too (data/start sections): same leash.
         store
@@ -120,6 +120,10 @@ impl ModInstance {
         let fn_dispatch = instance
             .get_typed_func::<(u32, u32), u64>(&mut store, "mod_dispatch")
             .map_err(|e| typed_err("mod_dispatch", e))?;
+        let ty = memory.ty(&store);
+        store.data_mut().guest_memory_max = ty.maximum().map_or(host::WASM32_MEMORY_MAX, |pages| {
+            pages.saturating_mul(ty.page_size())
+        });
         store.data_mut().memory = Some(memory);
         store.data_mut().alloc = Some(fn_alloc.clone());
         Ok(Self {
@@ -410,12 +414,23 @@ impl ModInstance {
         super::client::scope::enter(world, || self.call_guest_detached(call))
     }
 
+    /// See [`ModStoreData::set_world_seed`](super::host::ModStoreData::set_world_seed).
+    pub(super) fn set_world_seed(&mut self, seed: u32) {
+        self.store.data_mut().set_world_seed(seed);
+    }
+
     pub(super) fn client_data(&self) -> Option<&super::client::ClientStoreData> {
         self.store.data().client.as_ref()
     }
 
     pub(super) fn client_data_mut(&mut self) -> Option<&mut super::client::ClientStoreData> {
         self.store.data_mut().client.as_mut()
+    }
+
+    /// The whole store, for issuing a host call as this instance (tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn store_data_mut(&mut self) -> &mut super::host::ModStoreData {
+        self.store.data_mut()
     }
 
     /// The raw request/reply protocol of one dispatch (see the module docs).

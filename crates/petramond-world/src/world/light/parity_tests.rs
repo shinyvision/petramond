@@ -92,10 +92,10 @@ fn a_custom_aperture_gates_light_identically_in_both_bakes() {
 
         let mut sections: FxHashMap<SectionPos, Arc<Section>> = FxHashMap::default();
         sections.insert(pos, Arc::new(section));
-        let mut columns: FxHashMap<ChunkPos, Column> = FxHashMap::default();
+        let mut columns: FxHashMap<ChunkPos, Arc<Column>> = FxHashMap::default();
         for cz in -1..=1 {
             for cx in -1..=1 {
-                columns.insert(ChunkPos::new(cx, cz), Column::new());
+                columns.insert(ChunkPos::new(cx, cz), Arc::new(Column::new()));
             }
         }
 

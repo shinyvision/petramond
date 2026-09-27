@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::app::{App, CursorIcon as AppCursorIcon, CursorPolicy};
+use crate::app::{App, CursorIcon as AppCursorIcon, CursorPolicy, ExitKind};
 use crate::keymap::{key_code, mouse_button, text_key_from_named};
 use petramond_input::controls::Modifiers;
 use petramond_render::camera::Camera;
@@ -22,6 +22,10 @@ fn frame_period(fps: u32) -> Duration {
 
 pub fn run() {
     petramond::platform::init_logging();
+    // Staged content changes land before any pack is discovered; the lock
+    // this process then holds (shared) keeps every other Petramond process
+    // from applying changes under it for as long as it runs.
+    let (content_report, content_lock) = petramond::content::apply_pending();
     // Every content catalog loads here, once, before anything touches one: a
     // bad pack is a load report on stderr, not a panic on whichever thread
     // first read a catalog.
@@ -55,14 +59,27 @@ pub fn run() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(client.fps_cap);
     let mut host = NativeHost::new(seed, rd, fps, client.menu_fps_cap.min(fps));
+    host.content_report = Some(content_report);
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
     event_loop.run_app(&mut host).unwrap();
 
     // Final save on quit: queue the writes, then dropping `host` joins the save
     // thread so everything is flushed before the process exits.
-    if let Some(app) = host.app.as_mut() {
+    let relaunch = host.app.as_mut().and_then(|app| {
         app.save_on_exit();
+        app.take_relaunch()
+    });
+    drop(host);
+    // What mods queued to their files (the instances' closing syncs
+    // included) reaches the disk before the I/O threads die with the
+    // process.
+    petramond::modding::client::files::flush();
+    if let Some(route) = relaunch {
+        drop(content_lock);
+        if let Err(e) = petramond_util::process::spawn_self(&route) {
+            log::error!("could not start Petramond again: {e}");
+        }
     }
 }
 
@@ -93,6 +110,10 @@ struct NativeHost {
     /// through the hot mouse-look path.
     cursor_policy: Option<CursorPolicy>,
     modifiers: Modifiers,
+    /// The display refresh last handed to the app, in millihertz.
+    refresh_mhz: Option<u32>,
+    /// The startup content apply's report, handed to the app once it exists.
+    content_report: Option<petramond::content::ApplyReport>,
 }
 
 impl NativeHost {
@@ -116,6 +137,8 @@ impl NativeHost {
             perf_render_max: Duration::ZERO,
             cursor_policy: None,
             modifiers: Modifiers::default(),
+            refresh_mhz: None,
+            content_report: None,
         }
     }
 
@@ -227,7 +250,11 @@ impl ApplicationHandler for NativeHost {
             petramond_math::world_pos::WorldPos::new(8.0, 90.0, 8.0),
             size.width as f32 / size.height.max(1) as f32,
         );
+        App::publish_device_frame_limits(&renderer);
         let mut app = App::new(cam, self.render_dist);
+        if let Some(report) = self.content_report.take() {
+            app.set_content_report(report);
+        }
         // Graphics settings reach the renderer through the same call every
         // later options change uses; there is no creation-time path.
         app.apply_graphics(&mut renderer);
@@ -260,7 +287,10 @@ impl ApplicationHandler for NativeHost {
 
         match event {
             WindowEvent::CloseRequested => {
-                event_loop.exit();
+                app.request_exit(ExitKind::Quit);
+                if app.take_quit_requested() {
+                    event_loop.exit();
+                }
             }
             WindowEvent::Resized(size) => {
                 renderer.resize(size.width, size.height);
@@ -334,7 +364,7 @@ impl ApplicationHandler for NativeHost {
                     // included). `false` = an unconsumed CloseScreen press —
                     // quit, as always.
                     if !app.handle_raw_key(code, down) {
-                        event_loop.exit();
+                        app.request_exit(ExitKind::Quit);
                     }
                 }
                 if app.take_quit_requested() {
@@ -373,6 +403,15 @@ impl ApplicationHandler for NativeHost {
             }
             WindowEvent::RedrawRequested => {
                 apply_cursor_policy(window, &mut self.cursor_policy, app.cursor_policy());
+                let refresh = window
+                    .current_monitor()
+                    .and_then(|monitor| monitor.refresh_rate_millihertz());
+                if refresh != self.refresh_mhz {
+                    if let Some(mhz) = refresh {
+                        app.set_display_refresh_hz(f64::from(mhz) / 1000.0);
+                    }
+                    self.refresh_mhz = refresh;
+                }
                 // The host requests this once per `App::update`; the simulation itself
                 // advances in `about_to_wait`.
                 let render_start = Instant::now();
@@ -417,7 +456,7 @@ impl ApplicationHandler for NativeHost {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let (Some(app), Some(renderer)) = (self.app.as_mut(), self.renderer.as_ref()) else {
+        let (Some(app), Some(renderer)) = (self.app.as_mut(), self.renderer.as_mut()) else {
             return;
         };
         let now = Instant::now();
@@ -445,7 +484,11 @@ impl ApplicationHandler for NativeHost {
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
             }
-            let frame = if app.cursor_policy().grabbed
+            // A frame the stepped clock moves does not wait for the wall: its
+            // capture may be due at once. A held frame keeps the normal cap.
+            let frame = if app.frame_uncapped() {
+                Duration::ZERO
+            } else if app.cursor_policy().grabbed
                 || app.game_menu_open()
                 || app.client_canvas_screen()
             {

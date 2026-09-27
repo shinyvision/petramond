@@ -65,6 +65,8 @@ pub enum TextKey {
     ArrowDown,
     Home,
     End,
+    /// A function key, `F(5)` = F5.
+    F(u8),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -73,6 +75,8 @@ pub enum TextShortcut {
     Cut,
     Copy,
     Paste,
+    /// Ctrl with any other letter or digit, lowercase.
+    Chord(char),
 }
 
 /// Keyboard modifier state (Ctrl / Shift / Alt / Meta), tracked from the OS
@@ -731,13 +735,47 @@ pub fn text_shortcut_from_key_code(code: KeyCode, modifiers: Modifiers) -> Optio
         KeyCode::KeyX => Some(TextShortcut::Cut),
         KeyCode::KeyC => Some(TextShortcut::Copy),
         KeyCode::KeyV => Some(TextShortcut::Paste),
-        _ => None,
+        code => chord_char(code).map(TextShortcut::Chord),
     }
+}
+
+/// The lowercase letter or digit a key types, for a Ctrl chord.
+fn chord_char(code: KeyCode) -> Option<char> {
+    let name = code.name();
+    let ch = name
+        .strip_prefix("Key")
+        .or_else(|| name.strip_prefix("Digit"))
+        .filter(|rest| rest.len() == 1)?
+        .chars()
+        .next()?;
+    Some(ch.to_ascii_lowercase())
 }
 
 #[cfg(test)]
 mod binding_tests {
     use super::*;
+
+    #[test]
+    fn ctrl_with_any_other_letter_or_digit_is_a_chord() {
+        let ctrl = mods(true, false);
+        assert_eq!(
+            text_shortcut_from_key_code(KeyCode::KeyC, ctrl),
+            Some(TextShortcut::Copy)
+        );
+        assert_eq!(
+            text_shortcut_from_key_code(KeyCode::KeyS, ctrl),
+            Some(TextShortcut::Chord('s'))
+        );
+        assert_eq!(
+            text_shortcut_from_key_code(KeyCode::Digit5, ctrl),
+            Some(TextShortcut::Chord('5'))
+        );
+        assert_eq!(text_shortcut_from_key_code(KeyCode::F1, ctrl), None);
+        assert_eq!(
+            text_shortcut_from_key_code(KeyCode::KeyS, mods(false, false)),
+            None
+        );
+    }
 
     fn mods(ctrl: bool, shift: bool) -> Modifiers {
         Modifiers {

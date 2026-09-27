@@ -182,6 +182,8 @@ fn vacant() -> InstData {
         abs_x: None,
         abs_y: None,
         palette: None,
+        scene: None,
+        icon: None,
         text_opacity: 1.0,
         enabled: false,
         parent_enabled: false,

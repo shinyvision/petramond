@@ -105,6 +105,7 @@ impl Project {
                 wrap: false,
                 scale: 1,
                 small: false,
+                max_lines: None,
             }));
         }
         for (role, count) in &contract.roles {
@@ -132,6 +133,7 @@ impl Project {
                 kind: kind.to_owned(),
                 class: engine.map_or(DocClass::Screen, |k| k.class),
                 compact_below_w: None,
+                dismiss: Default::default(),
                 root,
             },
             editor: EditorSettings::default(),

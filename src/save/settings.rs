@@ -52,10 +52,57 @@ impl Default for WorldSettings {
     }
 }
 
-/// Read the world's settings. Absent file = defaults (all mods enabled); an
-/// unreadable file warns and falls back to defaults — settings must never
-/// block opening a world.
+/// Read the world's settings, with the first-sight rule folded in (see
+/// [`first_sight`]); never writes. Absent file = defaults (all mods
+/// enabled); an unreadable file warns and falls back to defaults — settings
+/// must never block opening a world.
 pub fn load(dir: &Path) -> WorldSettings {
+    let mut settings = read(dir);
+    first_sight(
+        &mut settings,
+        crate::modding::modset::recorded_ids(dir).as_ref(),
+        &crate::content::held_off_at_first_sight(),
+    );
+    settings
+}
+
+/// [`load`], writing the fold back when it held a pack off: what opening
+/// the world does, so the hold survives the pack being recorded.
+pub fn load_persisting(dir: &Path) -> WorldSettings {
+    let settings = load(dir);
+    if settings != read(dir) {
+        if let Err(e) = store(dir, &settings) {
+            log::warn!("could not write {}/settings.json: {e}", dir.display());
+        }
+    }
+    settings
+}
+
+/// The first-sight rule: a pack the content library installed that can
+/// change a world (`held`) starts OFF in an existing world that has never
+/// seen it — one whose `mods.json` (`recorded`) does not list it and whose
+/// settings do not already say. A legacy save without a record is left
+/// alone, and so is anything not in `held` (shipped packs, loose packs,
+/// presentation-only packs: ON everywhere). `true` = something was held off.
+pub fn first_sight(
+    settings: &mut WorldSettings,
+    recorded: Option<&BTreeSet<String>>,
+    held: &BTreeSet<String>,
+) -> bool {
+    let Some(recorded) = recorded else {
+        return false;
+    };
+    let mut changed = false;
+    for id in held {
+        if !recorded.contains(id) && !settings.disabled_mods.contains(id) {
+            settings.disabled_mods.insert(id.clone());
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn read(dir: &Path) -> WorldSettings {
     let path = dir.join("settings.json");
     let Ok(bytes) = std::fs::read(&path) else {
         return WorldSettings::default();
@@ -85,9 +132,8 @@ mod tests {
 
     #[test]
     fn settings_roundtrip_and_absent_file_defaults() {
-        let dir =
-            std::env::temp_dir().join(format!("petramond-settings-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let scratch = petramond_util::test_dirs::TestScratchDir::new("settings-test");
+        let dir = scratch.join("world");
 
         // Absent file (directory doesn't even exist) = all mods enabled.
         assert_eq!(load(&dir), WorldSettings::default());
@@ -125,5 +171,28 @@ mod tests {
         assert_eq!(load(&dir), WorldSettings::default());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_library_pack_starts_off_only_in_a_world_that_never_saw_it() {
+        let held: BTreeSet<String> = ["world_blocks".to_owned()].into();
+        let mut settings = WorldSettings::default();
+        assert!(
+            !first_sight(&mut settings, None, &held),
+            "a save without a record is left alone"
+        );
+        let seen: BTreeSet<String> = ["world_blocks".to_owned()].into();
+        assert!(!first_sight(&mut settings, Some(&seen), &held));
+        assert!(
+            settings.disabled_mods.is_empty(),
+            "a recorded pack stays on"
+        );
+        let before: BTreeSet<String> = ["forge".to_owned()].into();
+        assert!(first_sight(&mut settings, Some(&before), &held));
+        assert!(settings.disabled_mods.contains("world_blocks"));
+        assert!(
+            !first_sight(&mut settings, Some(&before), &held),
+            "the fold is the same answer read twice"
+        );
     }
 }

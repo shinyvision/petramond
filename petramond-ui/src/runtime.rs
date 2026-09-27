@@ -15,10 +15,10 @@ use crate::doc::{Document, NodeKind};
 use crate::input::{FrameState, InputEvent, PreviewState, UiEvent};
 use crate::interact::{collect_slots, Interact};
 use crate::layout::{grid_cell, solve, RectI};
-use crate::paint::{DrawList, Painter, TexId, SOLID_UV};
+use crate::paint::{DrawList, Fit, PaintStyle, Painter, SpriteSrc, TexId, SOLID_UV};
 use crate::paint_walk::{DocImages, PaintCtx};
 use crate::text_edit::TextClipboard;
-use crate::theme::{Theme, ThemeEnv};
+use crate::theme::{FaceState, Theme, ThemeEnv};
 use crate::tree::reuse::DocShape;
 use crate::tree::{InstKey, InstTree, ROOT};
 use crate::widget;
@@ -99,6 +99,19 @@ pub struct FrameOutput {
     /// The list stamp under the cursor as `(list id, item index)` — the index
     /// into the bound items, so the host can look the row's data up directly.
     pub hover_item: Option<(String, u32)>,
+    /// The topmost NAMED widget under the cursor, interactive or not.
+    pub hover_widget: Option<InstKey>,
+    /// Every keyed list's stamps at least partly in view, as `(list, first
+    /// item, count)` — what a host loads per-row content (thumbnails) for.
+    pub list_ranges: Vec<(InstKey, u32, u32)>,
+    /// The whole text an `ellipsis_tip` node is showing in its tooltip this
+    /// frame, if one is.
+    pub text_tip: Option<String>,
+    /// Every ENABLED text input this frame — what a host may focus.
+    pub text_inputs: Vec<InstKey>,
+    /// Physical rects of every `viewport` node — where the host presents its
+    /// world frame.
+    pub viewports: Vec<(InstKey, RectI)>,
 }
 
 impl FrameOutput {
@@ -129,6 +142,11 @@ impl UiRuntime {
         out.slots.clear();
         out.hover_slot = None;
         out.hover_item = None;
+        out.hover_widget = None;
+        out.list_ranges.clear();
+        out.text_tip = None;
+        out.text_inputs.clear();
+        out.viewports.clear();
         out.panel_rect = RectI::ZERO;
         if args.screen.0 == 0 || args.screen.1 == 0 || args.scale <= 0 {
             return;
@@ -187,13 +205,13 @@ impl UiRuntime {
                     .unwrap_or(0)
             })
         });
-        // Tooltip placement follows the cursor every frame, so the cache
-        // keeps the layout as solved, before it moves.
-        let has_tooltips = tree
-            .insts
-            .iter()
-            .any(|inst| matches!(inst.node.kind, NodeKind::Tooltip { .. }));
-        let pristine = has_tooltips.then(|| solved.clone());
+        // Tooltips follow the cursor and `anchor_to` popups the widget last
+        // pressed, both placed every frame, so the cache keeps the layout as
+        // solved, before either moves.
+        let floats = tree.insts.iter().any(|inst| {
+            matches!(inst.node.kind, NodeKind::Tooltip { .. }) || inst.layout.anchor_to.is_some()
+        });
+        let pristine = floats.then(|| solved.clone());
 
         // Re-clamp scroll offsets against this frame's content so a shrunk
         // list can't strand its offset out of range.
@@ -265,6 +283,33 @@ impl UiRuntime {
             }
         }
 
+        place_anchored(&tree, &mut solved, viewport, fs);
+        if let Some(key) = fs.pending_focus.take() {
+            let input = tree.find(&key.id, key.item);
+            if let Some(i) = input.filter(|&i| tree.get(i).enabled) {
+                let inst = tree.get(i);
+                if let NodeKind::TextInput { max_chars, .. } = inst.node.kind {
+                    let text = inst.text.clone().unwrap_or_default();
+                    let text_rect = widget::input_text_rect(
+                        solved.rects[i as usize],
+                        self.theme.metrics.button_pad,
+                    );
+                    let visible = widget::input_visible_chars(self.theme.ui_font(), text_rect.w);
+                    fs.focus_text_input(key.clone(), &text, max_chars);
+                    let now = fs.now;
+                    if let Some(editor) = fs.editors.get_mut(&key) {
+                        editor.move_end(false, visible, now);
+                    }
+                }
+            }
+        }
+        out.text_inputs = tree
+            .insts
+            .iter()
+            .filter(|inst| inst.enabled && matches!(inst.node.kind, NodeKind::TextInput { .. }))
+            .filter_map(|inst| inst.key.clone())
+            .collect();
+
         let slots = collect_slots(&tree);
         let metrics = crate::layout::SlotMetrics {
             slot: self.theme.metrics.slot,
@@ -279,6 +324,33 @@ impl UiRuntime {
             metrics,
         };
         interact.run(fs, args.input, args.clipboard.take(), &mut out.events);
+        for i in 0..tree.len() as u32 {
+            let inst = tree.get(i);
+            let Some(key) = inst.key.as_ref().filter(|_| inst.node.kind.is_surface()) else {
+                continue;
+            };
+            let r = solved.rects[i as usize];
+            if fs.surface_sizes.get(key) != Some(&(r.w, r.h)) {
+                fs.surface_sizes.insert(key.clone(), (r.w, r.h));
+                out.events.push(UiEvent::SurfaceSize {
+                    id: key.id.clone(),
+                    item: key.item,
+                    w: r.w,
+                    h: r.h,
+                });
+            }
+        }
+        // A focus that moved by ANY path — a click elsewhere, Tab, Escape, the
+        // host focusing another input — reports the input it left.
+        if fs.last_focus.is_some() && fs.last_focus != fs.focus {
+            if let Some(left) = fs.last_focus.take() {
+                out.events.push(UiEvent::Blur {
+                    id: left.id,
+                    item: left.item,
+                });
+            }
+        }
+        fs.last_focus = fs.focus.clone();
 
         // Hover resolution for paint, from the post-input cursor.
         let (cx, cy) = (fs.cursor().0 / scale as f32, fs.cursor().1 / scale as f32);
@@ -315,6 +387,10 @@ impl UiRuntime {
         });
         // Next frame's expansion reads the hover anchor (one frame of lag).
         fs.hover_widget = hovered.anchor;
+        out.hover_widget = fs.hover_widget.clone();
+        out.list_ranges = list_ranges(&tree, &solved, viewport);
+        let visible_at = |i: u32| under_cursor(&solved, (cx, cy), i);
+        let ellipsis = ellipsis_tip_text(&tree, &solved, &self.theme, scale, &visible_at);
 
         // Paint: dim backdrop (physical fullscreen), then the tree.
         if let Some(color) = args.dim {
@@ -340,11 +416,22 @@ impl UiRuntime {
             tab_hover,
             preview: args.preview,
         };
-        ctx.paint(&mut Painter {
+        let mut painter = Painter {
             list: &mut out.draw,
             scale,
             font: self.theme.ui_font(),
-        });
+        };
+        ctx.paint(&mut painter);
+        if let Some(text) = &ellipsis {
+            paint_text_tip(
+                &mut painter,
+                &self.theme,
+                text,
+                (cx as i32, cy as i32),
+                viewport,
+            );
+        }
+        out.text_tip = ellipsis;
 
         // Outputs the host layers content with, all in physical px.
         let phys = |r: RectI| RectI {
@@ -358,6 +445,9 @@ impl UiRuntime {
             if let Some(key) = &inst.key {
                 let rect = phys(solved.rects[i]);
                 out.named.push((key.clone(), rect));
+                if matches!(inst.node.kind, NodeKind::Viewport { .. }) {
+                    out.viewports.push((key.clone(), rect));
+                }
                 if matches!(inst.node.kind, NodeKind::Hook) {
                     out.hooks.push(HookRectOut {
                         key: key.clone(),
@@ -413,19 +503,23 @@ struct Hovered {
     /// The topmost NAMED widget, interactive or not — the anchor for
     /// hover-anchored tooltips: a gauge a machine fills can describe itself
     /// exactly like a disabled list row.
-    anchor: Option<String>,
+    anchor: Option<InstKey>,
+}
+
+/// Whether instance `i` is under the cursor and not clipped away there
+/// (tooltips excluded).
+fn under_cursor(solved: &crate::layout::Solved, (cx, cy): (f32, f32), i: u32) -> bool {
+    !solved.overlay[i as usize]
+        && widget::contains_f(solved.rects[i as usize], cx, cy)
+        && solved.clips[i as usize].is_none_or(|c| widget::contains_f(c, cx, cy))
 }
 
 fn resolve_hover(
     tree: &InstTree<'_>,
     solved: &crate::layout::Solved,
-    (cx, cy): (f32, f32),
+    cursor: (f32, f32),
 ) -> Hovered {
-    let visible_at = |i: u32| {
-        !solved.overlay[i as usize]
-            && widget::contains_f(solved.rects[i as usize], cx, cy)
-            && solved.clips[i as usize].is_none_or(|c| widget::contains_f(c, cx, cy))
-    };
+    let visible_at = |i: u32| under_cursor(solved, cursor, i);
     let mut found = Hovered {
         widget: None,
         row: None,
@@ -441,7 +535,7 @@ fn resolve_hover(
             found.widget = Some(i);
         }
         if found.anchor.is_none() {
-            found.anchor = inst.key.as_ref().map(|k| k.id.clone());
+            found.anchor = inst.key.clone();
         }
         if matches!(inst.node.kind, NodeKind::List { .. }) {
             if found.row.is_none() {
@@ -515,6 +609,215 @@ fn place_tooltips(
             stack.extend_from_slice(&tree.get(n).children);
         }
     }
+}
+
+/// Place every `anchor_to` frame against its widget: below it, left edges
+/// aligned, flipped above or shifted left rather than leaving the viewport.
+/// Before interaction, so the popup is hit where it paints.
+fn place_anchored(
+    tree: &InstTree<'_>,
+    solved: &mut crate::layout::Solved,
+    viewport: (i32, i32),
+    fs: &FrameState,
+) {
+    for i in 0..tree.len() as u32 {
+        let inst = tree.get(i);
+        let Some(target_id) = inst.layout.anchor_to.as_deref() else {
+            continue;
+        };
+        // Inside a list template the popup belongs to its own stamp;
+        // elsewhere to the instance of that widget last pressed.
+        let target = match inst.item {
+            Some(item) => tree.find(target_id, Some(item)),
+            None => fs
+                .last_pressed
+                .get(target_id)
+                .and_then(|k| tree.find(&k.id, k.item))
+                .or_else(|| {
+                    (0..tree.len() as u32)
+                        .find(|&j| tree.get(j).key.as_ref().is_some_and(|k| k.id == target_id))
+                }),
+        };
+        let Some(target) = target else { continue };
+        let anchor = solved.rects[target as usize];
+        let rect = solved.rects[i as usize];
+        let below = anchor.y + anchor.h;
+        let y = if below + rect.h > viewport.1 && anchor.y - rect.h >= 0 {
+            anchor.y - rect.h
+        } else {
+            below.min((viewport.1 - rect.h).max(0))
+        };
+        let x = anchor.x.min((viewport.0 - rect.w).max(0)).max(0);
+        shift_subtree(tree, solved, i, x - rect.x, y - rect.y);
+    }
+}
+
+/// Move a popup's subtree by `(dx, dy)`. A popup floats free of its
+/// ancestors' clips, like a tooltip; clips from scrolls INSIDE it move with it.
+fn shift_subtree(
+    tree: &InstTree<'_>,
+    solved: &mut crate::layout::Solved,
+    root: u32,
+    dx: i32,
+    dy: i32,
+) {
+    let outer = solved.clips[root as usize];
+    let mut stack = vec![root];
+    while let Some(n) = stack.pop() {
+        solved.rects[n as usize].x += dx;
+        solved.rects[n as usize].y += dy;
+        let clip = &mut solved.clips[n as usize];
+        if *clip == outer {
+            *clip = None;
+        } else if let Some(c) = clip.as_mut() {
+            c.x += dx;
+            c.y += dy;
+        }
+        stack.extend_from_slice(&tree.get(n).children);
+    }
+}
+
+/// The stamps of every keyed list that are at least partly in view.
+fn list_ranges(
+    tree: &InstTree<'_>,
+    solved: &crate::layout::Solved,
+    viewport: (i32, i32),
+) -> Vec<(InstKey, u32, u32)> {
+    let screen = RectI {
+        x: 0,
+        y: 0,
+        w: viewport.0,
+        h: viewport.1,
+    };
+    let mut out = Vec::new();
+    for i in 0..tree.len() as u32 {
+        let inst = tree.get(i);
+        if !matches!(inst.node.kind, NodeKind::List { .. }) {
+            continue;
+        }
+        let Some(key) = inst.key.clone() else {
+            continue;
+        };
+        let seen = |c: u32| {
+            let r = solved.rects[c as usize];
+            let clip = solved.clips[c as usize].map_or(screen, |c| c.intersect(screen));
+            let v = r.intersect(clip);
+            v.w > 0 && v.h > 0
+        };
+        let items: Vec<u32> = inst
+            .children
+            .iter()
+            .filter(|&&c| seen(c))
+            .filter_map(|&c| tree.get(c).item)
+            .collect();
+        let (first, count) = match (items.iter().min(), items.iter().max()) {
+            (Some(&lo), Some(&hi)) => (lo, hi - lo + 1),
+            _ => (0, 0),
+        };
+        out.push((key, first, count));
+    }
+    out
+}
+
+/// The whole text of the topmost `ellipsis_tip` label, button or badge under
+/// the cursor, when its solved box cut it.
+fn ellipsis_tip_text(
+    tree: &InstTree<'_>,
+    solved: &crate::layout::Solved,
+    theme: &Theme,
+    scale: i32,
+    visible_at: &dyn Fn(u32) -> bool,
+) -> Option<String> {
+    let i = (0..tree.len() as u32)
+        .rev()
+        .find(|&i| tree.get(i).node.ellipsis_tip && visible_at(i))?;
+    let inst = tree.get(i);
+    let text = inst.text.as_deref().filter(|t| !t.is_empty())?;
+    let rect = solved.rects[i as usize];
+    let font = theme.ui_font();
+    let m = &theme.metrics;
+    let cut = match &inst.node.kind {
+        NodeKind::Label {
+            scale: 1,
+            wrap,
+            small,
+            max_lines,
+            ..
+        } => {
+            let k = if *small { (scale - 1).max(1) } else { scale };
+            let room = rect.w * scale / k.max(1);
+            match (wrap, max_lines) {
+                (false, _) => font.width(text) > room,
+                (true, Some(max)) => font.wrap(text, room).len() > *max as usize,
+                (true, None) => false,
+            }
+        }
+        NodeKind::Button { icon, .. } => {
+            let icon_w = icon
+                .as_deref()
+                .and_then(|k| theme.part(k))
+                .map_or(0, |p| p.natural().0 + 4);
+            font.width(text) > rect.w - m.button_pad * 2 - icon_w
+        }
+        NodeKind::Badge { .. } => font.width(text) > rect.w - m.badge_pad * 2,
+        _ => false,
+    };
+    cut.then(|| text.to_owned())
+}
+
+/// The standard tooltip: a `panel.inset` of small wrapped text at most 200
+/// logical px wide, beside the cursor, flipped rather than leaving the
+/// viewport.
+fn paint_text_tip(
+    p: &mut Painter<'_>,
+    theme: &Theme,
+    text: &str,
+    cursor: (i32, i32),
+    viewport: (i32, i32),
+) {
+    const MAX_W: i32 = 200;
+    const PAD: [i32; 4] = [3, 2, 3, 3];
+    const OFFSET: i32 = 4;
+    let step = p.small_text_step();
+    let full = p.scale.max(1);
+    let down = |v: i32| (v * step + full - 1) / full;
+    let (w, h) = p.font.measure(text, Some(MAX_W * full / step));
+    let (w, h) = (down(w), down(h));
+    let size = (w + PAD[0] + PAD[2], h + PAD[1] + PAD[3]);
+    let flip = |cur: i32, size: i32, limit: i32| {
+        let lead = cur + OFFSET;
+        let placed = if lead + size > limit {
+            cur - OFFSET - size
+        } else {
+            lead
+        };
+        placed.clamp(0, (limit - size).max(0))
+    };
+    let rect = RectI {
+        x: flip(cursor.0, size.0, viewport.0),
+        y: flip(cursor.1, size.1, viewport.1),
+        w: size.0,
+        h: size.1,
+    };
+    if let Some(face) = theme
+        .part("panel.inset")
+        .and_then(|part| part.face(FaceState::Default))
+    {
+        let src = SpriteSrc {
+            tex: TexId::ThemePage(face.page),
+            rect: face.rect,
+            tex_size: theme.page_size(face.page),
+        };
+        let fit = Fit::NineSlice(face.slice.unwrap_or([0; 4]));
+        p.sprite(&src, rect, fit, PaintStyle::plain(None));
+    }
+    let inner = RectI {
+        x: rect.x + PAD[0],
+        y: rect.y + PAD[1],
+        w,
+        h,
+    };
+    p.text_wrapped_small(text, inner, theme.color("text"), None);
 }
 
 #[cfg(test)]

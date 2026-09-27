@@ -1,45 +1,69 @@
 //! Presentation-only client instance calls: overlays, registered keys,
 //! replica surface sampling, document state, images and text, GUI/canvas
-//! lifecycle, and sandboxed client storage.
+//! lifecycle, world marks, sandboxed client storage, and where the instance runs.
 
 use mod_api::{
-    BlockId, ClientCanvasElement, ClientOverlayAnchor, ClientSurfaceColumn, ClientSurfaceQuery,
-    ClientTextRun, GuiValue, HostRet,
+    BlockId, ClientCanvasElement, ClientContext, ClientEngineFactsData, ClientKeyContexts,
+    ClientKeyMods, ClientOverlayAnchor, ClientPackInfo, ClientStorageScope, ClientSurfaceColumn,
+    ClientSurfaceQuery, ClientTextRun, ClientWallTime, ClientWorldMark, GuiValue, HostRet,
 };
 
 // Imported for intra-doc links only.
 #[allow(unused_imports)]
 use crate::Mod;
 
-use crate::__rt::host_fn;
+use crate::__rt::{host_fn, recoverable, try_host_fn};
 
 host_fn! {
     /// Register an always-on physical-pixel overlay image during [`Mod::init`].
+    /// `hud: true` = part of the HUD (a hidden HUD hides it); `false` = a
+    /// tool's own status, shown whatever the HUD claim. Never recorded.
     pub fn client_register_overlay(
         image_key: &str,
         anchor: ClientOverlayAnchor,
         margin: [u16; 2],
-        display_size: [u16; 2]
+        display_size: [u16; 2],
+        hud: bool
     ) => ClientRegisterOverlay {
         image_key: image_key.into(),
         anchor,
         margin,
         display_size,
+        hud,
     }
 }
 
 host_fn! {
     /// Register a REMAPPABLE client key action during init: a stable bare `id`
     /// (the player's remap persists as `mod_id:id`), a display `label` for the
-    /// Options → Controls screen, the DEFAULT physical `key` (for example
-    /// `"key_m"`), and the `action_id` your `client_key` handler matches on.
-    pub fn client_register_key(id: &str, label: &str, key: &str, action_id: u32)
-        => ClientRegisterKey {
-            id: id.into(),
-            label: label.into(),
-            key: key.into(),
-            action_id,
-        }
+    /// Options → Controls screen, the DEFAULT physical `key` (any key, in
+    /// snake_case: `"key_m"`, `"f9"`, `"arrow_left"`, `"space"`) with the chord
+    /// `mods` it needs, where it fires (`contexts`: gameplay and/or your own
+    /// document kinds and canvas keys), and the `action_id` your `client_key`
+    /// handler matches on.
+    pub fn client_register_key(
+        id: &str,
+        label: &str,
+        key: &str,
+        mods: ClientKeyMods,
+        contexts: ClientKeyContexts,
+        action_id: u32
+    ) => ClientRegisterKey {
+        id: id.into(),
+        label: label.into(),
+        key: key.into(),
+        mods,
+        contexts,
+        action_id,
+    }
+}
+
+host_fn! {
+    /// What each of your key actions (by bare id) is bound to right now, as
+    /// Options → Controls prints it — for tooltips that name the real key.
+    /// Parallel to `ids`; `None` = no such action of yours.
+    pub fn client_key_labels(ids: Vec<String>) -> Vec<Option<String>>
+        => ClientKeyLabels { ids } => Names
 }
 
 host_fn! {
@@ -118,6 +142,20 @@ host_fn! {
 }
 
 host_fn! {
+    /// Put the caret (at the end) in text input `id` (`item` for one stamped
+    /// in a list) of your OPEN document. `false` = no such enabled input.
+    pub fn client_ui_focus(id: &str, item: Option<u32>) -> bool
+        => ClientUiFocus { id: id.into(), item } => Bool
+}
+
+host_fn! {
+    /// Open the engine's pause menu over your open document or canvas; its
+    /// Resume comes back to it. `false` where there is no pause menu (the
+    /// shell with no world) or your UI is not on screen.
+    pub fn client_pause_open() -> bool => ClientPauseOpen => Bool
+}
+
+host_fn! {
     pub fn client_canvas_open(canvas_key: &str, size: [u16; 2]) -> bool
         => ClientCanvasOpen { canvas_key: canvas_key.into(), size } => Bool
 }
@@ -137,40 +175,70 @@ host_fn! {
 }
 
 host_fn! {
-    pub fn client_storage_get_many(keys: Vec<String>) -> Vec<Option<Vec<u8>>>
-        => ClientStorageGetMany { keys }
+    /// Read exact keys from the `scope` bucket: [`ClientStorageScope::World`]
+    /// is the presented session's (none on the shell — an error there),
+    /// [`ClientStorageScope::Pack`] is this mod's own, in every context.
+    pub fn client_storage_get_many(scope: ClientStorageScope, keys: Vec<String>) -> Vec<Option<Vec<u8>>>
+        => ClientStorageGetMany { scope, keys }
         => HostRet::ClientStorageValues(values) => values
             .into_iter()
             .map(|value| value.map(mod_api::ByteBuf::into_vec))
             .collect()
 }
 
-host_fn! {
-    pub fn client_storage_set_many(entries: Vec<(String, Vec<u8>)>) -> bool
+try_host_fn! {
+    /// Write entries into the `scope` bucket: `Some(bytes)` stores, `None`
+    /// deletes. `Ok(ticket)` = queued ([`client_storage_write_poll`] says when
+    /// it reached the disk); `Err(why)` = refused, nothing queued — the World
+    /// bucket while a presentation presents. The Pack bucket keeps what it is
+    /// given everywhere.
+    pub fn client_storage_set_many(
+        scope: ClientStorageScope,
+        entries: Vec<(String, Option<Vec<u8>>)>
+    ) -> u64
         => ClientStorageSetMany {
+            scope,
             entries: entries
                 .into_iter()
-                .map(|(key, value)| (key, mod_api::ByteBuf::from(value)))
+                .map(|(key, value)| (key, value.map(mod_api::ByteBuf::from)))
                 .collect(),
-        } => Bool
+        } => ClientStorageWrite
+}
+
+/// Where a write queued in `scope` stands: `None` = still queued,
+/// `Some(Ok(()))` = on disk, `Some(Err(why))` = the disk refused it
+/// ([`mod_api::ErrorCode::Refused`]).
+pub fn client_storage_write_poll(
+    scope: ClientStorageScope,
+    ticket: u64,
+) -> Option<Result<(), mod_api::HostError>> {
+    let ret = crate::__rt::host_call(&mod_api::HostCall::from(
+        mod_api::calls::ClientStorageWritePoll { scope, ticket },
+    ));
+    match recoverable("ClientStorageWritePoll", ret) {
+        Ok(mod_api::HostRet::ClientStorageWritten(landed)) => landed.then_some(Ok(())),
+        Err(refused) => Some(Err(refused)),
+        Ok(other) => panic!("ClientStorageWritePoll returned {other:?}"),
+    }
 }
 
 host_fn! {
     /// Begin an asynchronous storage read on the host's background worker; the
-    /// returned ticket resolves through [`client_storage_read_poll`], usually on
-    /// a later frame. The REQUIRED path for bulk spatial reads — a slow disk
-    /// delays the data, never the frame. Bounded outstanding tickets (see the
-    /// ABI docs); ordered after already-issued writes.
-    pub fn client_storage_read_begin(keys: Vec<String>) -> u64
-        => ClientStorageReadBegin { keys } => U64
+    /// returned ticket resolves through [`client_storage_read_poll`] in the same
+    /// `scope`, usually on a later frame. The REQUIRED path for bulk spatial
+    /// reads — a slow disk delays the data, never the frame. Ordered after
+    /// already-issued writes.
+    pub fn client_storage_read_begin(scope: ClientStorageScope, keys: Vec<String>) -> u64
+        => ClientStorageReadBegin { scope, keys } => U64
 }
 
 host_fn! {
-    /// Poll an asynchronous storage read: `Some(values)` (parallel to the begun
-    /// keys, `None` entry = absent) consumes the ticket, `None` = still in
-    /// flight. Polling an unknown or consumed ticket disables the mod.
-    pub fn client_storage_read_poll(ticket: u64) -> Option<Vec<Option<Vec<u8>>>>
-        => ClientStorageReadPoll { ticket }
+    /// Poll an asynchronous storage read begun in `scope`: `Some(values)`
+    /// (parallel to the begun keys, `None` entry = absent) consumes the ticket,
+    /// `None` = still in flight. Polling an unknown or consumed ticket disables
+    /// the mod.
+    pub fn client_storage_read_poll(scope: ClientStorageScope, ticket: u64) -> Option<Vec<Option<Vec<u8>>>>
+        => ClientStorageReadPoll { scope, ticket }
         => HostRet::ClientStorageRead(values) => values.map(|values| {
             values
                 .into_iter()
@@ -222,4 +290,44 @@ host_fn! {
     /// (and so mob spawning) never change. Mods combine by max.
     pub fn client_mood_set(darken: f32, desaturate: f32) -> bool
         => ClientMoodSet { darken, desaturate } => Bool
+}
+
+host_fn! {
+    /// CLIENT: replace this mod's retained world mark set `set` (a name of
+    /// lowercase letters, digits and `_`) — lines and camera-facing points at
+    /// world positions, drawn over the world on this window until that set is
+    /// set again; an empty `marks` clears it. Sets are replaced independently.
+    /// A set with an invalid mark is refused whole. Marks are never part of
+    /// a frame capture.
+    pub fn client_world_marks_set(set: &str, marks: Vec<ClientWorldMark>)
+        => ClientWorldMarksSet { set: set.into(), marks }
+}
+
+host_fn! {
+    /// Where this instance runs right now: beside a world, or on the shell
+    /// with none (started from the pack's title-screen launch entry). It moves
+    /// to `Presentation` while a presentation it opened from the shell
+    /// presents, and back.
+    pub fn client_context() -> ClientContext => ClientContext => ClientContext
+}
+
+host_fn! {
+    /// CLIENT: what THIS build and machine are — the capture format and
+    /// protocol it reads, its id vocabulary, seconds per tick, the rendering
+    /// device's frame limits, and how far this instance's memory can grow.
+    /// The constants a mod was compiled against may differ; this is the truth.
+    pub fn client_engine_facts() -> ClientEngineFactsData
+        => ClientEngineFacts => ClientEngineFacts
+}
+
+host_fn! {
+    /// CLIENT: every installed id-bearing pack, as a presentation opened now
+    /// could host it.
+    pub fn client_packs() -> Vec<ClientPackInfo> => ClientPacks => ClientPacks
+}
+
+host_fn! {
+    /// CLIENT: the machine's wall clock and its UTC offset. Read-only; a
+    /// frame's real elapsed time is [`ClientFrameData::wall_dt`](mod_api::ClientFrameData::wall_dt).
+    pub fn client_wall_clock() -> ClientWallTime => ClientWallClock => ClientWallClock
 }

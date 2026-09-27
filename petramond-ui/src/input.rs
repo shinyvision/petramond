@@ -36,6 +36,12 @@ pub enum NavKey {
     Copy,
     Cut,
     Paste,
+    /// A function key, `F(5)` = F5.
+    F(u8),
+    /// A letter or digit, always lowercase: pressed with Ctrl (the
+    /// clipboard chords aside, `ctrl: true`), or typed with no text input
+    /// focused to take it (`ctrl: false`).
+    Char(char),
 }
 
 /// One host input event. Pointer coordinates are physical px.
@@ -75,6 +81,16 @@ pub enum InputEvent {
     },
     /// Pointer/keyboard focus left the window: release presses and drags.
     Blur,
+    /// The modifier keys held changed (surface events report them).
+    Modifiers(Mods),
+}
+
+/// The modifier keys held, as surface pointer and wheel events report them.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Mods {
+    pub ctrl: bool,
+    pub shift: bool,
+    pub alt: bool,
 }
 
 /// A resolved widget event the host acts on. `item` is the list item index
@@ -111,6 +127,12 @@ pub enum UiEvent {
         id: String,
         text: String,
     },
+    /// A text input lost focus — by a click elsewhere, Tab, Escape or the
+    /// host moving focus: the moment a field typed into is "left".
+    Blur {
+        id: String,
+        item: Option<u32>,
+    },
     /// Pointer interaction over an `image` with `interactive: true`.
     /// Coordinates are local to the solved image rect in logical pixels and
     /// remain available while a drag continues outside the rect.
@@ -124,6 +146,39 @@ pub enum UiEvent {
     ListSelect {
         id: String,
         index: u32,
+    },
+    /// The pointer over an interactive `canvas`/`viewport`, in logical px
+    /// local to its rect: presses (with the click count of a streak), moves
+    /// (at most one per frame; with `button` while one is held, since a
+    /// press captures the pointer until its release), and `Leave` when an
+    /// uncaptured pointer leaves it.
+    SurfacePointer {
+        id: String,
+        item: Option<u32>,
+        phase: PointerPhase,
+        x: f32,
+        y: f32,
+        button: Option<PointerButton>,
+        mods: Mods,
+        clicks: u8,
+    },
+    /// Wheel travel over an interactive surface (logical px, positive =
+    /// content up) — the surface's, never an enclosing scroll's.
+    SurfaceScroll {
+        id: String,
+        item: Option<u32>,
+        x: f32,
+        y: f32,
+        delta: i32,
+        mods: Mods,
+    },
+    /// An interactive surface's solved size, on its first frame and every
+    /// time the layout changes it (logical px).
+    SurfaceSize {
+        id: String,
+        item: Option<u32>,
+        w: i32,
+        h: i32,
     },
     /// Double-click / Enter on a list row.
     ListActivate {
@@ -183,6 +238,10 @@ pub(crate) enum Drag {
         key: InstKey,
         button: PointerButton,
     },
+    Surface {
+        key: InstKey,
+        button: PointerButton,
+    },
     Slots {
         button: PointerButton,
         shift: bool,
@@ -196,6 +255,8 @@ pub enum PointerPhase {
     Down,
     Move,
     Up,
+    /// The pointer left a surface it was hovering (surfaces only).
+    Leave,
 }
 
 /// Per-open-GUI ephemeral state. Never serialized, never tick-visible.
@@ -220,10 +281,29 @@ pub struct FrameState {
     /// Last observed bound selection per list, so a selection change (e.g.
     /// keyboard nav) can auto-scroll the enclosing scroll region.
     pub(crate) last_selected: BTreeMap<InstKey, i32>,
-    /// The id of the named widget under the cursor on the LAST frame — the
-    /// hover anchor a `tooltip` node's `hover` property matches against.
-    /// One frame old, the same contract as hover-revealed list content.
-    pub(crate) hover_widget: Option<String>,
+    /// The named widget under the cursor on the LAST frame — the hover
+    /// anchor a `tooltip` node's `hover` property matches against. One frame
+    /// old, the same contract as hover-revealed list content.
+    pub(crate) hover_widget: Option<InstKey>,
+    /// The text input focused at the end of the last frame, so a focus that
+    /// moved by any path reports the input it left.
+    pub(crate) last_focus: Option<InstKey>,
+    /// The instance of each widget id last pressed — what an `anchor_to`
+    /// popup outside a list template sits under.
+    pub(crate) last_pressed: BTreeMap<String, InstKey>,
+    /// A host's request to focus a text input, carried out by the next frame
+    /// (which knows the input's bound text and limits).
+    pub(crate) pending_focus: Option<InstKey>,
+    pub(crate) mods: Mods,
+    /// The surface a moved pointer last reported on this frame, reported
+    /// once at the frame's end (or before a release).
+    pub(crate) surface_move: Option<(InstKey, f32, f32, Option<PointerButton>)>,
+    /// The surface the pointer hovered at the end of the last frame.
+    pub(crate) surface_hover: Option<InstKey>,
+    /// The last surface press: which, when, where, and its streak count.
+    pub(crate) surface_press: Option<(InstKey, f64, (f32, f32), u8)>,
+    /// Each interactive surface's last reported size.
+    pub(crate) surface_sizes: BTreeMap<InstKey, (i32, i32)>,
     /// Last frame's expanded arena and layout (see `crate::runtime::cache`).
     pub(crate) cache: crate::runtime::cache::FrameCache,
 }
@@ -245,6 +325,17 @@ impl FrameState {
 
     pub fn focused(&self) -> Option<&InstKey> {
         self.focus.as_ref()
+    }
+
+    /// Focus text input `key` (caret at the end) on the next frame, if it is
+    /// then an enabled text input; otherwise the request lapses.
+    pub fn request_focus(&mut self, key: InstKey) {
+        self.pending_focus = Some(key);
+    }
+
+    /// The named widget under the cursor as of the last frame.
+    pub fn hover_widget(&self) -> Option<&InstKey> {
+        self.hover_widget.as_ref()
     }
 
     /// The active cursor-stack distribution gesture, for presentation-only
@@ -295,6 +386,8 @@ impl FrameState {
         let focus = self.focus.as_ref();
         self.scroll.retain(|key, _| live.contains(key));
         self.last_selected.retain(|key, _| live.contains(key));
+        self.last_pressed.retain(|_, key| live.contains(key));
+        self.surface_sizes.retain(|key, _| live.contains(key));
         self.editors
             .retain(|key, _| live.contains(key) || focus == Some(key));
     }
@@ -310,6 +403,13 @@ impl FrameState {
         self.last_row_click = None;
         self.last_selected.clear();
         self.hover_widget = None;
+        self.last_focus = None;
+        self.last_pressed.clear();
+        self.pending_focus = None;
+        self.surface_move = None;
+        self.surface_hover = None;
+        self.surface_press = None;
+        self.surface_sizes.clear();
         self.cache = Default::default();
     }
 }

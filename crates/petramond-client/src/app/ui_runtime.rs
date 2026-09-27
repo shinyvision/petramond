@@ -23,6 +23,7 @@ struct DocImageSet<'a> {
     doc: std::sync::Arc<Vec<documents::DocImageRef>>,
     extra: &'a [documents::DocImageRef],
     dynamic: &'a [petramond::modding::ClientImageData],
+    scenes: &'a std::collections::BTreeMap<String, (u64, petramond_ui::SceneView)>,
 }
 
 impl DocImages for DocImageSet<'_> {
@@ -43,6 +44,56 @@ impl DocImages for DocImageSet<'_> {
             )
         })
     }
+
+    fn scene(&self, name: &str) -> Option<&petramond_ui::SceneView> {
+        self.scenes.get(name).map(|(_, scene)| scene)
+    }
+}
+
+/// A mod's retained scene as a document canvas paints it.
+fn scene_view(scene: &petramond::modding::ClientCanvasSceneData) -> petramond_ui::SceneView {
+    use mod_api::ClientCanvasElement as E;
+    use petramond_ui::SceneElement as S;
+    let rgba = |c: [u8; 4]| c.map(|v| f32::from(v) / 255.0);
+    petramond_ui::SceneView {
+        offset: scene.offset,
+        elements: scene
+            .elements
+            .iter()
+            .map(|element| match element {
+                E::Image { image_key, rect } => S::Image {
+                    image: image_key.clone(),
+                    rect: *rect,
+                },
+                E::Sprite { image_key, center } => S::Sprite {
+                    image: image_key.clone(),
+                    center: *center,
+                },
+                E::Rect {
+                    rect,
+                    color,
+                    filled,
+                } => S::Rect {
+                    rect: *rect,
+                    color: rgba(*color),
+                    filled: *filled,
+                },
+                E::Text {
+                    pos,
+                    text,
+                    color,
+                    small,
+                    max_w,
+                } => S::Text {
+                    pos: *pos,
+                    text: text.clone(),
+                    color: rgba(*color),
+                    small: *small,
+                    max_w: *max_w,
+                },
+            })
+            .collect(),
+    }
 }
 
 pub(super) struct AppUi {
@@ -55,6 +106,9 @@ pub(super) struct AppUi {
     /// controller names via `bind.image`), appended to the `DocImage` space.
     extra_images: Vec<documents::DocImageRef>,
     dynamic_images: Vec<petramond::modding::ClientImageData>,
+    /// The owning mod's scenes as document canvases paint them, each with
+    /// the revision it was converted at.
+    scenes: std::collections::BTreeMap<String, (u64, petramond_ui::SceneView)>,
     /// This frame's `DocImage` index → source order (renderer upload).
     image_sources: Vec<petramond::gui::DocImageSource>,
     viewport_generation: u64,
@@ -115,6 +169,7 @@ impl AppUi {
             active: None,
             extra_images: Vec::new(),
             dynamic_images: Vec::new(),
+            scenes: Default::default(),
             image_sources: Vec::new(),
             viewport_generation: 0,
             frame_stamp: None,
@@ -180,6 +235,18 @@ impl AppUi {
         self.dynamic_images = images;
     }
 
+    /// The owning mod's scenes, converted only where their revision moved.
+    pub fn set_scenes(&mut self, scenes: &[(String, petramond::modding::ClientCanvasSceneData)]) {
+        self.scenes
+            .retain(|key, _| scenes.iter().any(|(k, _)| k == key));
+        for (key, scene) in scenes {
+            if self.scenes.get(key).map(|(rev, _)| *rev) != Some(scene.revision) {
+                self.scenes
+                    .insert(key.clone(), (scene.revision, scene_view(scene)));
+            }
+        }
+    }
+
     pub fn replace_client_state(
         &mut self,
         state: &std::collections::BTreeMap<String, mod_api::GuiValue>,
@@ -220,6 +287,11 @@ impl AppUi {
         );
     }
 
+    /// Focus a text input on the next frame, if it is then enabled.
+    pub fn request_focus(&mut self, key: petramond_ui::InstKey) {
+        self.fs.request_focus(key);
+    }
+
     /// Reset ephemeral widget state + bound state when the screen changes,
     /// BEFORE the new screen's controller populates.
     pub fn ensure_active(&mut self, kind: GuiKind) {
@@ -237,6 +309,7 @@ impl AppUi {
         self.state.clear();
         self.extra_images.clear();
         self.dynamic_images.clear();
+        self.scenes.clear();
         self.frame_stamp = None;
         self.out.hover_slot = None;
         self.out.hover_item = None;
@@ -257,13 +330,25 @@ impl AppUi {
         now: f64,
         dim: Option<[f32; 4]>,
     ) -> bool {
+        let viewport = petramond::gui::UiViewport::new(screen, self.viewport_generation);
+        self.frame_in(kind, viewport, now, dim)
+    }
+
+    /// [`frame`](Self::frame) at an explicit viewport — a world frame's HUD
+    /// lays out at the frame's own UI scale.
+    pub fn frame_in(
+        &mut self,
+        kind: GuiKind,
+        viewport: petramond::gui::UiViewport,
+        now: f64,
+        dim: Option<[f32; 4]>,
+    ) -> bool {
         let Some(doc) = documents::doc_for(kind) else {
             self.input.clear();
             self.frame_stamp = None;
             return false;
         };
         self.ensure_active(kind);
-        let viewport = petramond::gui::UiViewport::new(screen, self.viewport_generation);
         let rt = UiRuntime::new(doc.doc, doc_theme::theme());
         self.image_sources.clear();
         self.image_sources.extend(
@@ -291,6 +376,7 @@ impl AppUi {
             doc: doc.images,
             extra: &self.extra_images,
             dynamic: &self.dynamic_images,
+            scenes: &self.scenes,
         };
         let input = std::mem::take(&mut self.input);
         rt.frame(
@@ -381,10 +467,6 @@ impl AppUi {
             })
             .collect();
         (!slots.is_empty()).then_some((slots, button))
-    }
-
-    pub fn draw_mut(&mut self) -> &mut petramond_ui::DrawList {
-        &mut self.out.draw
     }
 
     /// Derive the last solved frame's slot cells (as game-typed

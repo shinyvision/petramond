@@ -1,13 +1,20 @@
 //! Pause screen controller: resume, options, host-only Open to LAN + Save
-//! and Quit, remote-only Disconnect. Enter resumes (ESC stays on the global
-//! close-screen control path).
+//! and Quit, remote-only Disconnect (Leave for a presentation).
+//! Enter resumes (ESC stays on the global close-screen control path).
 
 use super::{ScreenCtx, ShellCommand};
 use crate::app::AppScreen;
 use petramond_ui::{NavKey, UiEvent, UiState, UiValue};
 
 pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
-    let is_remote = ctx.session.is_remote;
+    // A presentation has no session of its own: nothing to save and no LAN
+    // to open, so it leaves the way a remote session does.
+    let presenting = ctx.session.presenting;
+    let is_remote = presenting || ctx.session.is_remote;
+    state.set(
+        "leave_label",
+        UiValue::Str(if presenting { "LEAVE" } else { "DISCONNECT" }.into()),
+    );
     let lan_open = ctx.session.lan_port.is_some();
     state.set("is_remote", UiValue::Bool(is_remote));
     state.set("is_host", UiValue::Bool(!is_remote));
@@ -31,6 +38,7 @@ pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
             "resume" => ctx.request(ShellCommand::ResumeGame),
             "options" => ctx.request(ShellCommand::Push(AppScreen::Options)),
             "open_lan" => ctx.request(ShellCommand::OpenLan),
+            "disconnect" if ctx.session.presenting => ctx.request(ShellCommand::EndPresentation),
             "disconnect" => ctx.request(ShellCommand::DisconnectToTitle),
             "save_quit" => ctx.request(ShellCommand::SaveAndQuitToTitle),
             _ => {}

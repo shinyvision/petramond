@@ -13,13 +13,19 @@
 //! app-level (transitions, sessions, applying options), which the App runs
 //! after the frame. Runs from [`App::update`], never from render.
 
-mod connect_server;
+mod account;
+pub(in crate::app) mod account_sign_in;
+pub(in crate::app) mod connect_server;
 mod connection_lost;
+mod content;
+pub(in crate::app) use content::rows::locals_from_discovery as content_locals;
+pub(in crate::app) use content::ContentView;
 mod context;
 mod create_world;
 mod death;
 mod delete_world;
 mod mods_missing;
+pub(crate) use mods_missing::MissingWorld;
 mod mods_tab;
 mod options;
 mod options_controls;
@@ -85,8 +91,8 @@ fn options_dim(ctx: &ScreenCtx) -> Option<[f32; 4]> {
 
 /// Shared prepare for the screens whose Mods tab shows per-pack icons.
 fn pack_icon_prepare(ctx: &mut ScreenCtx) -> bool {
-    let icons = mods_tab::extra_images();
-    ctx.ui.set_extra_images(&icons);
+    ctx.ui
+        .set_dynamic_images(crate::app::content::pack_icons().to_vec());
     true
 }
 
@@ -127,7 +133,7 @@ fn controller_for(kind: GuiKind) -> ShellController {
             |_, state| super::ui_runtime::demo::populate(state),
             |ctx, ev| super::ui_runtime::demo::apply_one(ctx.ui.state_mut(), &ev),
         ),
-        GuiKind::Title => C::screen(title::populate, title::handle),
+        GuiKind::Title => C::screen(title::populate, title::handle).with_prepare(title::prepare),
         GuiKind::WorldSelect => C::screen(world_select::populate, world_select::handle),
         GuiKind::WorldSettings => C::screen(world_settings::populate, world_settings::handle)
             .with_prepare(world_settings::prepare),
@@ -137,6 +143,14 @@ fn controller_for(kind: GuiKind) -> ShellController {
         GuiKind::DeleteWorld => C::screen(delete_world::populate, delete_world::handle),
         GuiKind::ConnectServer => C::screen(connect_server::populate, connect_server::handle)
             .with_prepare(connect_prepare),
+        GuiKind::Account => {
+            C::screen(account::populate, account::handle).with_prepare(account::prepare)
+        }
+        GuiKind::AccountSignIn => C::screen(account_sign_in::populate, account_sign_in::handle)
+            .with_prepare(account_sign_in::prepare),
+        GuiKind::Content => {
+            C::screen(content::populate, content::handle).with_prepare(content::prepare)
+        }
         GuiKind::ModsMissing => C::screen(mods_missing::populate, mods_missing::handle),
         GuiKind::ConnectionLost => C::screen(connection_lost::populate, connection_lost::handle),
         GuiKind::Options => C::screen(options::populate, options::handle).with_dim(options_dim),
@@ -214,7 +228,7 @@ pub(in crate::app) fn menu_widget_activation(ev: &petramond_ui::UiEvent) -> Opti
 /// not a question each Back button and each options checkbox should answer
 /// separately — and every screen that forgot to ask flipped under a
 /// right-click.
-fn is_secondary_activation(ev: &petramond_ui::UiEvent) -> bool {
+pub(super) fn is_secondary_activation(ev: &petramond_ui::UiEvent) -> bool {
     use petramond_ui::PointerButton::Secondary;
     matches!(
         ev,
@@ -244,10 +258,12 @@ impl App {
     pub(super) fn drive_doc_ui(&mut self, kind: GuiKind, screen: (u32, u32), now: f64) {
         self.ui.ensure_active(kind);
         let ctl = controller_for(kind);
+        let now_presented = self.now();
         let live = self.session.as_ref();
         let session = SessionFacts {
             in_game: live.is_some(),
             is_remote: live.is_some_and(|s| s.game.is_remote()),
+            presenting: live.is_some_and(|s| s.game.in_presentation()),
             lan_port: live.and_then(|s| s.lan_port),
             lan_error: live.and_then(|s| s.lan_error.as_deref()),
             sleep_counts: live
@@ -258,9 +274,11 @@ impl App {
         let mut ctx = ScreenCtx::new(
             &mut self.shell,
             &mut self.options,
+            (&mut self.content, &self.content_report),
             &self.controls.action_table,
             &mut self.ui,
             session,
+            now_presented,
         );
         let proceed = ctl.prepare.is_none_or(|prepare| prepare(&mut ctx));
         if proceed {
@@ -274,7 +292,7 @@ impl App {
                     continue;
                 }
                 if is_widget_activation(&ev) {
-                    self.sound.play(Sound::UiClick);
+                    self.sound.play_interface(Sound::UiClick);
                 }
                 (ctl.handle)(&mut ctx, ev);
             }
@@ -290,12 +308,23 @@ impl App {
             ShellCommand::Goto(screen) => self.set_screen(screen),
             ShellCommand::Push(screen) => self.push_screen(screen),
             ShellCommand::Back => self.go_back(),
-            ShellCommand::Quit => self.quit_requested = true,
+            ShellCommand::Exit(kind) => self.request_exit(kind),
+            ShellCommand::ExitNow(kind) => self.exit_now(kind),
             ShellCommand::PlaySelectedWorld => self.play_selected_world(),
             ShellCommand::StartGame { dir_name, seed } => self.start_game(&dir_name, seed),
             ShellCommand::OpenConnectServer => self.open_connect_server(),
-            ShellCommand::ReopenConnectServer => self.reopen_connect_server(),
             ShellCommand::BeginConnect => self.begin_connect(),
+            ShellCommand::LeaveModsMissing => self.leave_mods_missing(),
+            ShellCommand::OpenContent { back, filter } => self.open_content(back, filter),
+            ShellCommand::CloseContent => self.close_content(),
+            ShellCommand::OpenAccount(status) => self.open_account(status),
+            ShellCommand::LeaveAccount => self.leave_account(),
+            ShellCommand::OpenAccountSignIn => self.open_account_sign_in(),
+            ShellCommand::LeaveAccountSignIn => self.leave_account_sign_in(),
+            ShellCommand::SubmitAccountSignIn => self.submit_account_sign_in(),
+            ShellCommand::AccountSignOut => self.account_sign_out(),
+            ShellCommand::LaunchPack { pack_id, screen } => self.launch_pack(&pack_id, screen),
+            ShellCommand::EndPresentation => self.end_presentation(),
             ShellCommand::AdoptRemote(join, handle) => self.start_remote_game(*join, handle),
             ShellCommand::ResumeGame => self.resume_game(),
             ShellCommand::OpenLan => self.open_lan(),
@@ -361,7 +390,7 @@ impl App {
         let modifier_shift = self.controls.modifiers.shift;
         for ev in self.ui.take_events() {
             if is_widget_activation(&ev) && !is_secondary_activation(&ev) {
-                self.sound.play(Sound::UiClick);
+                self.sound.play_interface(Sound::UiClick);
             }
             let handled_crafting = if crafting_station.is_some() {
                 self.session.as_mut().is_some_and(|session| {

@@ -57,12 +57,7 @@ fn wait_ready(store: &mut Store, digest: &Digest) -> Arc<Asset> {
 
 #[test]
 fn a_published_asset_outlives_the_store_that_received_it() {
-    let dir = std::env::temp_dir().join(format!(
-        "petramond-schematic-store-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = petramond_util::test_dirs::TestScratchDir::new("schematic-store");
     let bytes = archive_bytes("Store fixture");
     let id = digest(&bytes);
     let mut store = Store::new(Some(&dir));
@@ -77,7 +72,6 @@ fn a_published_asset_outlives_the_store_that_received_it() {
         "Store fixture"
     );
     assert_eq!(&*reopened.read_bytes(&id).unwrap(), &bytes[..]);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

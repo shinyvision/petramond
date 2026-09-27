@@ -145,6 +145,11 @@ impl UiState {
         self.values.get(key).map(|(value, _)| value)
     }
 
+    /// Every key set, in order.
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.values.keys().map(String::as_str)
+    }
+
     /// Resolve `key` against an optional list-item map first, then the global
     /// map — the template-binding rule.
     pub fn resolve<'a>(&'a self, item: Option<&'a UiMap>, key: &str) -> Option<&'a UiValue> {

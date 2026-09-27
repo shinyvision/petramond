@@ -57,6 +57,8 @@ confidence-threshold = 0.9
 exceptions = [
     # egui's bundled default fonts (GUI builder only, never shipped with the game).
     { crate = "epaint_default_fonts", allow = ["OFL-1.1", "LicenseRef-UFL-1.0"] },
+    # Mozilla's CA bundle under rustls (the Petramond account client).
+    { crate = "webpki-roots", allow = ["CDLA-Permissive-2.0"] },
 ]
 
 [bans]

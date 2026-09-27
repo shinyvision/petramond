@@ -14,9 +14,26 @@ pub struct ModEntry {
     pub version: String,
 }
 
+/// What a joining client offers as its identity, beside the proof of its own
+/// key.
+///
+/// Which one a client may send is not its choice: the server states its policy
+/// in `HelloAck { requires_account }` and refuses the other kind. An online
+/// server learns the session's name from the redeemed ticket, never from the
+/// client — which is why there is no name field beside the ticket.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum JoinCredential {
+    /// A single-use Petramond join ticket, minted for this server's advertised
+    /// `server_id`. The account's username becomes the session name.
+    Ticket(String),
+    /// A requested display name, for a server running with account checks
+    /// off. The proven identity key is then the player.
+    Name(String),
+}
+
 /// Why a `Join` was refused. A taken display name is NOT a refusal: it is
 /// auto-deduped with a numeric suffix at admission (see
-/// `ServerGame::admit_remote_player`).
+/// `ServerGame::begin_admission`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum JoinRejectReason {
     /// The identity proof did not verify against this connection's challenge.
@@ -27,6 +44,22 @@ pub enum JoinRejectReason {
     AlreadyConnected,
     /// Every player slot is in use.
     ServerFull,
+    /// This server requires a Petramond account and the client offered a name.
+    AccountRequired,
+    /// This server checks no accounts, so it cannot redeem a ticket — and the
+    /// ticket is the only place the account's name lives, so there is nothing to
+    /// admit. The client must offer a name instead.
+    AccountNotAccepted,
+    /// This account is already playing on this server. An account is one
+    /// session, never deduped with a suffix — checked by its stable id, so a
+    /// rename cannot walk the same person in twice.
+    AccountAlreadyOnline,
+    /// The account service refused the client's ticket (expired, already used,
+    /// minted for another server, or the account cannot play online).
+    AccountRejected(String),
+    /// The server could not reach the account service, so it cannot tell who
+    /// this is. Nothing about the client is wrong; retrying may work.
+    AccountUnavailable(String),
 }
 
 /// The server's registry name tables, in server-runtime-id order — the wire's
@@ -85,6 +118,9 @@ pub struct SelfRestore {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct JoinData {
     pub player_id: PlayerId,
+    /// The name this player was admitted under — the one every other client
+    /// knows it by, which need not be the one it asked for.
+    pub player_name: String,
     pub seed: u32,
     /// The day/night clock (`petramond:clock` contract) so the sky renders right
     /// from the first frame.
@@ -97,4 +133,24 @@ pub struct JoinData {
     pub crafting_recipes: Vec<CraftingRecipeData>,
     /// Already-connected players (id, name), local player excluded.
     pub players: Vec<(PlayerId, String)>,
+    /// What this server consents to about the joining client's own packs.
+    pub client_policy: ClientPolicy,
+}
+
+/// What a server consents to about the client-side packs of the players who
+/// join it — signalled, not enforced: a modified client can
+/// ignore it; the honest client and every shipped pack obey it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClientPolicy {
+    /// Presentation-only packs (no simulation module, no world content) the
+    /// server does not run may load on its players' clients.
+    pub presentation_packs: bool,
+}
+
+impl Default for ClientPolicy {
+    fn default() -> Self {
+        Self {
+            presentation_packs: true,
+        }
+    }
 }

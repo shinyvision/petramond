@@ -16,18 +16,26 @@
 //! restored on the job pool (`server::admissions`); at a later pump the
 //! finished restore gets its reader/writer threads ([`TcpServerConn`]) and
 //! its session. Nothing in a join blocks the server loop.
+//!
+//! An ONLINE server (`account::AccountPolicy`) admits a Petramond account, not
+//! a name: the join's ticket is redeemed on a per-join worker thread
+//! ([`Verifying`]) that the loop polls, and the verified account's stable id
+//! decides the identity (`joins::account_key`).
 
 use std::io;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender, TrySendError};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError, TrySendError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::account::{AccountError, AccountIdentity};
 use crate::net::connection::TcpServerConn;
-use crate::net::identity::{new_challenge, validate_player_name, verify_join, PlayerKey};
+use crate::net::identity::{
+    coerce_player_name, new_challenge, validate_player_name, verify_join, PlayerKey,
+};
 use crate::net::protocol::{
-    ClientToServer, JoinRejectReason, ModEntry, SectionCacheClaim, ServerToClient,
+    ClientToServer, JoinCredential, JoinRejectReason, ModEntry, SectionCacheClaim, ServerToClient,
 };
 use crate::net::PROTOCOL_VERSION;
 use crate::player::PlayerId;
@@ -129,10 +137,27 @@ struct Admitting {
     conn: PendingConn,
 }
 
+/// A `Join` whose account ticket is being redeemed on a worker thread.
+///
+/// Redeeming is a blocking HTTPS round trip, so it CANNOT run in the server
+/// loop — one joining player would stall every tick for the duration. Its
+/// socket stays thread-free and unpolled until the verdict lands, so no
+/// frame from it is read before the join.
+struct Verifying {
+    conn: PendingConn,
+    verdict: Receiver<Result<AccountIdentity, AccountError>>,
+    /// The verification's own budget, on top of the handshake's: a slow
+    /// account service must produce a REASON, not a silently dropped
+    /// connection one tick before the verdict lands.
+    deadline: Instant,
+    view_distance: u8,
+    cached_sections: Vec<SectionCacheClaim>,
+}
+
 /// A `Join` frame, with the challenge it must prove itself against.
 struct JoinRequest {
     challenge: crate::net::identity::JoinChallenge,
-    player_name: String,
+    credential: JoinCredential,
     key: PlayerKey,
     proof: Vec<u8>,
     view_distance: u8,
@@ -144,6 +169,7 @@ struct JoinRequest {
 pub struct RemoteHub {
     listener: Option<LanListener>,
     pending: Vec<PendingConn>,
+    verifying: Vec<Verifying>,
     admitting: Vec<Admitting>,
     clients: Vec<RemoteClient>,
 }
@@ -171,6 +197,7 @@ impl RemoteHub {
         }
         self.clients.clear();
         self.pending.clear();
+        self.verifying.clear();
         self.admitting.clear();
         self.listener = None;
     }
@@ -188,6 +215,7 @@ impl RemoteHub {
     ) {
         self.accept_new();
         self.drive_pending(server);
+        self.drive_verifying(server);
         self.finish_admissions(server, local_tx);
         self.drain_clients(server, inbound, local_tx);
     }
@@ -252,6 +280,7 @@ impl RemoteHub {
             let joining = self
                 .pending
                 .iter()
+                .chain(self.verifying.iter().map(|v| &v.conn))
                 .chain(self.admitting.iter().map(|a| &a.conn));
             if let Err(why) = admission::admits(joining, peer.ip()) {
                 refused.note(peer.ip(), why);
@@ -278,10 +307,45 @@ impl RemoteHub {
                 PendingVerdict::Drop => drop(self.pending.swap_remove(i)),
                 PendingVerdict::Join(request) => {
                     let pending = self.pending.swap_remove(i);
-                    if let Some(admitting) = begin_admission(pending, request, server) {
-                        self.admitting.push(admitting);
+                    match begin_join(pending, request, server) {
+                        Some(Joining::Verifying(verifying)) => self.verifying.push(verifying),
+                        Some(Joining::Admitting(admitting)) => self.admitting.push(admitting),
+                        None => {}
                     }
                 }
+            }
+        }
+    }
+
+    /// Collect every ticket verdict that landed: a verified account goes on
+    /// to admission, a refused one gets its reason. The verification deadline
+    /// bounds the wait, so a wedged account service drops the connection
+    /// rather than leaking an entry.
+    fn drive_verifying(&mut self, server: &mut ServerGame) {
+        let now = Instant::now();
+        let mut i = 0;
+        while i < self.verifying.len() {
+            let v = &self.verifying[i];
+            if now >= v.deadline {
+                drop(self.verifying.swap_remove(i)); // silent: it never joined
+                continue;
+            }
+            let verdict = match v.verdict.try_recv() {
+                Ok(verdict) => verdict,
+                Err(TryRecvError::Empty) => {
+                    i += 1;
+                    continue;
+                }
+                // The thread died without reporting (a panic): the deadline
+                // would drop the connection silently, but the client deserves
+                // a reason.
+                Err(TryRecvError::Disconnected) => Err(AccountError::Unreachable(
+                    "The server could not check your Petramond account".to_string(),
+                )),
+            };
+            let verifying = self.verifying.swap_remove(i);
+            if let Some(admitting) = admit_account(verifying, verdict, server) {
+                self.admitting.push(admitting);
             }
         }
     }
@@ -406,6 +470,8 @@ fn step_pending(pending: &mut PendingConn, server: &ServerGame) -> PendingVerdic
                 pending.send(&ServerToClient::HelloAck {
                     protocol: PROTOCOL_VERSION,
                     challenge,
+                    requires_account: server.account_policy.requires_account(),
+                    server_id: server.server_id.clone(),
                 })
             }
             (ClientToServer::ModQuery, Stage::Helloed { .. }) => {
@@ -420,7 +486,7 @@ fn step_pending(pending: &mut PendingConn, server: &ServerGame) -> PendingVerdic
             }
             (
                 ClientToServer::Join {
-                    player_name,
+                    credential,
                     key,
                     proof,
                     view_distance,
@@ -430,7 +496,7 @@ fn step_pending(pending: &mut PendingConn, server: &ServerGame) -> PendingVerdic
             ) => {
                 return PendingVerdict::Join(JoinRequest {
                     challenge,
-                    player_name,
+                    credential,
                     key,
                     proof,
                     view_distance,
@@ -448,38 +514,130 @@ fn step_pending(pending: &mut PendingConn, server: &ServerGame) -> PendingVerdic
     }
 }
 
-/// Settle a `Join`'s verdict: verify the identity proof, validate the
-/// display name, and reserve the admission. Every refusal is a `JoinReject`
-/// over the thread-free socket; an accepted join waits for its restore.
-fn begin_admission(
-    mut pending: PendingConn,
+/// Where a `Join` went after its first verdict.
+enum Joining {
+    Verifying(Verifying),
+    Admitting(Admitting),
+}
+
+/// Settle a `Join`'s first verdict: verify the identity proof, then act on
+/// the credential. A name on an online server (or a ticket on an offline
+/// one) is a policy mismatch, not a bad client: the server states its policy
+/// in `HelloAck`, so the client knew. A name is validated and admitted under
+/// the proven key; a ticket goes out for redemption. Every refusal is a
+/// `JoinReject` over the thread-free socket.
+fn begin_join(
+    pending: PendingConn,
     request: JoinRequest,
     server: &mut ServerGame,
-) -> Option<Admitting> {
-    let peer = pending.peer();
-    let verdict = if !verify_join(&request.challenge, &request.key, &request.proof) {
-        Err(JoinRejectReason::BadProof)
-    } else {
-        validate_player_name(&request.player_name)
-            .map_err(|e| JoinRejectReason::InvalidName(e.to_string()))
-            .and_then(|name| {
-                server.begin_admission(
-                    request.key,
-                    &name,
-                    request.view_distance as i32,
-                    request.cached_sections,
-                )
-            })
-    };
-    match verdict {
-        Ok(ticket) => Some(Admitting {
-            ticket,
-            conn: pending,
-        }),
-        Err(reason) => {
-            log::info!("refused join from {peer}: {reason:?}");
-            let _ = pending.send(&ServerToClient::JoinReject { reason });
-            None
+) -> Option<Joining> {
+    if !verify_join(&request.challenge, &request.key, &request.proof) {
+        return refuse(pending, JoinRejectReason::BadProof);
+    }
+    match (server.account_policy.requires_account(), request.credential) {
+        (false, JoinCredential::Name(name)) => {
+            let verdict = validate_player_name(&name)
+                .map_err(|e| JoinRejectReason::InvalidName(e.to_string()))
+                .and_then(|name| {
+                    server.begin_admission(
+                        request.key,
+                        &name,
+                        request.view_distance as i32,
+                        request.cached_sections,
+                    )
+                });
+            match verdict {
+                Ok(ticket) => Some(Joining::Admitting(Admitting {
+                    ticket,
+                    conn: pending,
+                })),
+                Err(reason) => refuse(pending, reason),
+            }
+        }
+        (false, JoinCredential::Ticket(_)) => refuse(pending, JoinRejectReason::AccountNotAccepted),
+        (true, JoinCredential::Name(_)) => refuse(pending, JoinRejectReason::AccountRequired),
+        (true, JoinCredential::Ticket(ticket)) => {
+            let server_id = server.server_id.clone();
+            let (tx, verdict) = mpsc::channel();
+            if std::thread::Builder::new()
+                .name("petramond-verify-join".to_string())
+                .spawn(move || {
+                    let _ = tx.send(crate::account::verify_join(&ticket, &server_id));
+                })
+                .is_err()
+            {
+                return refuse(
+                    pending,
+                    JoinRejectReason::AccountUnavailable(
+                        "The server could not check your Petramond account".to_string(),
+                    ),
+                );
+            }
+            Some(Joining::Verifying(Verifying {
+                conn: pending,
+                verdict,
+                deadline: Instant::now() + crate::account::SERVICE_TIMEOUT + Duration::from_secs(2),
+                view_distance: request.view_distance,
+                cached_sections: request.cached_sections,
+            }))
         }
     }
+}
+
+/// Admit a redeemed ticket's account under the identity its stable id keys,
+/// or refuse with the service's reason. An account is never suffixed into a
+/// second session: one already connected (or joining) is refused, checked by
+/// the id, so a website rename cannot walk the same person in twice.
+fn admit_account(
+    verifying: Verifying,
+    verdict: Result<AccountIdentity, AccountError>,
+    server: &mut ServerGame,
+) -> Option<Admitting> {
+    let Verifying {
+        conn,
+        view_distance,
+        cached_sections,
+        ..
+    } = verifying;
+    let identity = match verdict {
+        Ok(identity) => identity,
+        Err(e) if e.clears_sign_in() || matches!(e, AccountError::Refused(_)) => {
+            return refuse(
+                conn,
+                JoinRejectReason::AccountRejected(e.message().to_string()),
+            );
+        }
+        Err(e) => {
+            return refuse(
+                conn,
+                JoinRejectReason::AccountUnavailable(e.message().to_string()),
+            );
+        }
+    };
+    log::info!(
+        "verified Petramond account '{}' (id {}) for {}",
+        identity.username,
+        identity.user_id,
+        conn.peer()
+    );
+    let admission = server.begin_admission(
+        joins::account_key(identity.user_id),
+        &coerce_player_name(&identity.username),
+        view_distance as i32,
+        cached_sections,
+    );
+    match admission {
+        Ok(ticket) => Some(Admitting { ticket, conn }),
+        Err(JoinRejectReason::AlreadyConnected) => {
+            refuse(conn, JoinRejectReason::AccountAlreadyOnline)
+        }
+        Err(reason) => refuse(conn, reason),
+    }
+}
+
+/// Send the refusal; dropping the connection afterwards closes it.
+fn refuse<T>(mut pending: PendingConn, reason: JoinRejectReason) -> Option<T> {
+    log::info!("refused join from {}: {reason:?}", pending.peer());
+    let _ = pending.send(&ServerToClient::JoinReject { reason });
+    None
 }

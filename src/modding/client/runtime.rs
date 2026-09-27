@@ -24,9 +24,26 @@ use crate::modding::health::ModHealth;
 use crate::modding::host::budget::FuelBudget;
 use crate::modding::instance::ModInstance;
 
+mod buckets;
+mod launch;
+
+use buckets::{client_storage_dir, pack_storage_dir};
+#[cfg(any(test, feature = "test-support"))]
+pub use buckets::{
+    client_storage_dir_for_test, pack_files_dir_for_test, seed_client_storage_for_test,
+};
+pub use buckets::{delete_local_world_storage, local_session_key, remote_session_key};
+
 struct ClientMod {
     id: String,
     instance: ModInstance,
+    /// The client-dispatchable handlers `mod_init` registered, as
+    /// `(priority, kind, filter, handler id)` in registration order — kept
+    /// with the instance, which may move from one runtime into another.
+    handlers: Vec<(i32, EventKind, EventFilter, u32)>,
+    /// Started from its pack's launch entry rather than loaded for a session:
+    /// the shell's own instance, carried into a presentation it opens and back.
+    launched: bool,
 }
 
 /// One client-registered event handler: the kind it asked for during
@@ -62,11 +79,15 @@ fn client_dispatchable(kind: EventKind) -> bool {
 pub struct ClientUiView {
     pub state: Arc<std::collections::BTreeMap<String, mod_api::GuiValue>>,
     pub images: Vec<ClientImageData>,
+    /// The mod's retained scenes, for its documents' `canvas` nodes.
+    pub scenes: Vec<(String, super::state::ClientCanvasSceneData)>,
 }
 
+/// One retained canvas element, with the image it draws when it draws one:
+/// geometry and glyph rows carry `None`.
 pub struct ClientCanvasElementView {
     pub element: mod_api::ClientCanvasElement,
-    pub image: ClientImageData,
+    pub image: Option<ClientImageData>,
 }
 
 pub struct ClientCanvasView {
@@ -82,8 +103,10 @@ pub struct ModKeyAction {
     pub label: String,
     /// Controls-screen category: the owning pack's display name.
     pub category: String,
-    /// The registered DEFAULT key (the player may remap it away).
-    pub default_code: petramond_input::keycode::KeyCode,
+    /// The registered DEFAULT binding (the player may remap it away).
+    pub default: petramond_input::controls::Binding,
+    /// Where a press reaches the mod.
+    contexts: mod_api::ClientKeyContexts,
     mod_index: usize,
     action_id: u32,
 }
@@ -105,6 +128,10 @@ pub struct ClientModRuntime {
     pressed: HashSet<String>,
     /// Graph events client mods fired that the server has yet to echo.
     pending_fires: super::pending_fires::PendingFires,
+    /// The frame, clock, tap and media desk every mod of this runtime shares.
+    media: super::media::MediaDesk,
+    /// What the app presented, for the host calls that answer it.
+    presented: super::presented::PresentedDesk,
     /// Test-only scripted answer for [`Self::placement_plan`]: lets prediction
     /// tests drive the custom-shape placement arm without a wasm instance.
     #[cfg(any(test, feature = "test-support"))]
@@ -117,73 +144,54 @@ impl ClientModRuntime {
     /// world's disabled set; on a remote join the server's
     /// handshake-reported mod set. A locally installed client mod the
     /// server does not run therefore never activates.
-    pub fn load(world_seed: u32, session_key: &str, enabled: &BTreeSet<String>) -> Self {
-        let mut mods = Vec::new();
-        let mut handler_rows: Vec<(i32, Handler)> = Vec::new();
-        let session = session_client_mods(petramond_world::assets::packs(), enabled);
-        crate::modding::host::module_cache::prewarm(session.iter().map(|(_, path)| path.clone()));
-        for (id, path) in session {
-            let module = match crate::modding::host::module_for(&path) {
-                Ok(module) => module,
-                Err(e) => {
-                    log::error!("client mod '{id}' disabled: {e}");
-                    continue;
-                }
-            };
-            let storage = client_storage_dir(session_key, &id);
-            let mut instance = match ModInstance::from_module_side(
-                &id,
-                &module,
-                world_seed,
-                RuntimeSide::Client,
-                Some(storage),
-                ModHealth::standalone(&id),
-                FuelBudget::DEFAULT,
-            ) {
-                Ok(instance) => instance,
-                Err(e) => {
-                    log::error!("client mod '{id}' disabled: {e}");
-                    continue;
-                }
-            };
-            instance.call_init_detached();
-            if instance.disabled() {
-                continue;
+    pub fn load(
+        world_seed: u32,
+        session_key: &str,
+        enabled: &BTreeSet<String>,
+        context: mod_api::ClientContext,
+    ) -> Self {
+        let media = super::media::MediaDesk::default();
+        let presented = super::presented::PresentedDesk::new(context);
+        let mods = load_mods(world_seed, session_key, enabled, &media, &presented);
+        Self::assemble(mods, media, presented)
+    }
+
+    /// A runtime around already-initialized instances, in load order, sharing
+    /// one media desk and one presented desk.
+    fn assemble(
+        mut mods: Vec<ClientMod>,
+        media: super::media::MediaDesk,
+        presented: super::presented::PresentedDesk,
+    ) -> Self {
+        for loaded in &mut mods {
+            if let Some(data) = loaded.instance.client_data_mut() {
+                data.presented = presented.clone();
             }
-            // Client registrations live in ClientStoreData; of the
-            // simulation registrations only the client-dispatchable event
-            // handlers are meaningful here — the rest are irrelevant to this
-            // isolated instance (a dual-side wasm branches its init on
-            // RuntimeSide).
-            let registrations = instance.take_registrations();
-            let mod_index = mods.len();
-            for reg in registrations {
-                if let crate::modding::host::Registration::EventHandler {
-                    event,
-                    priority,
-                    handler_id,
-                    filter,
-                } = reg
-                {
-                    if client_dispatchable(event) {
-                        handler_rows.push((
-                            priority,
-                            Handler {
-                                kind: event,
-                                filter,
-                                mod_index,
-                                handler_id,
-                            },
-                        ));
-                    } else {
-                        log::warn!(
-                            "client mod '{id}': event kind {event:?} is not dispatched on a client instance; handler ignored"
-                        );
-                    }
-                }
-            }
-            mods.push(ClientMod { id, instance });
         }
+        // Dispatch order: (priority, load order, registration order) — the
+        // stable sort keeps ties in the order they are listed here.
+        let mut handler_rows: Vec<(i32, Handler)> = mods
+            .iter()
+            .enumerate()
+            .flat_map(|(mod_index, loaded)| {
+                loaded
+                    .handlers
+                    .iter()
+                    .map(move |(priority, kind, filter, handler_id)| {
+                        (
+                            *priority,
+                            Handler {
+                                kind: *kind,
+                                filter: filter.clone(),
+                                mod_index,
+                                handler_id: *handler_id,
+                            },
+                        )
+                    })
+            })
+            .collect();
+        handler_rows.sort_by_key(|(priority, _)| *priority);
+        let handlers = handler_rows.into_iter().map(|(_, h)| h).collect();
 
         let mut actions = Vec::new();
         let mut overlays = Vec::new();
@@ -203,20 +211,7 @@ impl ClientModRuntime {
                 .map(|p| p.name.clone())
                 .unwrap_or_else(|| loaded.id.clone());
             for binding in &data.key_bindings {
-                // The DEFAULT may not shadow an engine default — the player
-                // could no longer tell who owns the key out of the box.
-                // (Remaps are the player's own choice and are not policed.)
-                if reserved_key(&binding.key) {
-                    log::error!(
-                        "client mod '{}': default key '{}' conflicts with an engine binding; \
-                         action '{}' ignored",
-                        loaded.id,
-                        binding.key,
-                        binding.id
-                    );
-                    continue;
-                }
-                let Some(default_code) = key_code_for_name(&binding.key) else {
+                let Some(code) = super::keys::key_code_for_name(&binding.key) else {
                     log::error!(
                         "client mod '{}': unknown default key '{}'; action '{}' ignored",
                         loaded.id,
@@ -225,19 +220,28 @@ impl ClientModRuntime {
                     );
                     continue;
                 };
+                let default = super::keys::default_binding(code, binding.mods);
+                if let Some(why) = super::keys::default_refusal(default, binding.contexts.gameplay)
+                {
+                    log::error!(
+                        "client mod '{}': default {} for action '{}' refused: {why}",
+                        loaded.id,
+                        default.label(),
+                        binding.id
+                    );
+                    continue;
+                }
                 actions.push(ModKeyAction {
                     full_id: format!("{}:{}", loaded.id, binding.id),
                     label: binding.label.clone(),
                     category: category.clone(),
-                    default_code,
+                    default,
+                    contexts: binding.contexts.clone(),
                     mod_index: index,
                     action_id: binding.action_id,
                 });
             }
         }
-        // Stable sort: ties keep (load order, registration order).
-        handler_rows.sort_by_key(|(priority, _)| *priority);
-        let handlers = handler_rows.into_iter().map(|(_, h)| h).collect();
 
         // Body claims fold in MOD-ID order, not load order — see `fold_order`.
         let mut fold_order: Vec<usize> = (0..mods.len()).collect();
@@ -251,11 +255,41 @@ impl ClientModRuntime {
             overlays,
             pressed: HashSet::new(),
             pending_fires: Default::default(),
+            media,
+            presented,
             #[cfg(any(test, feature = "test-support"))]
             scripted_shape_plan: None,
         };
         rt.bake_item_geometry();
         rt
+    }
+
+    /// No client mods at all — the stand-in a client holds while its real
+    /// runtime is handed back to the shell.
+    pub fn empty() -> Self {
+        Self {
+            mods: Vec::new(),
+            fold_order: Vec::new(),
+            handlers: Vec::new(),
+            actions: Vec::new(),
+            overlays: Vec::new(),
+            pressed: HashSet::new(),
+            pending_fires: Default::default(),
+            media: Default::default(),
+            presented: Default::default(),
+            #[cfg(any(test, feature = "test-support"))]
+            scripted_shape_plan: None,
+        }
+    }
+
+    /// The frame, clock, tap and media desk this runtime's mods drive.
+    pub fn media_desk(&self) -> &super::media::MediaDesk {
+        &self.media
+    }
+
+    /// What the app presented, as this runtime's mods read it back.
+    pub fn presented(&self) -> &super::presented::PresentedDesk {
+        &self.presented
     }
 
     /// One-time load pass: bake every custom-shape block's ITEM geometry
@@ -652,8 +686,10 @@ impl ClientModRuntime {
         actor: &PlayerSnapshot,
         inventory: &Inventory,
         frame: ClientFrameData,
+        view: mod_api::ClientViewStateData,
     ) {
         let call = GuestCall::ClientFrame { frame };
+        self.presented.lock().view = Some(view);
         super::scope::enter_inventory(inventory, || {
             for loaded in &mut self.mods {
                 // Each mod sees ITS OWN answer to "is this press mine", the
@@ -661,10 +697,121 @@ impl ClientModRuntime {
                 let mut mine = actor.clone();
                 mine.holds_use = loaded.instance.client_data().is_some_and(|d| d.holds_use);
                 super::scope::enter_actor(mine, || {
-                    dispatch_unit(&mut loaded.instance, world, &call, "client frame");
+                    dispatch_unit(&mut loaded.instance, Some(world), &call, "client frame");
                 });
             }
         });
+    }
+
+    /// Drive every client mod's per-frame hook with no world behind it (the
+    /// shell): no actor, no inventory, no presented view — the frame's player
+    /// fields are zero, and the mods' world calls answer an error.
+    pub fn frame_detached(&mut self, frame: ClientFrameData) {
+        let call = GuestCall::ClientFrame { frame };
+        for loaded in &mut self.mods {
+            dispatch_unit(&mut loaded.instance, None, &call, "client frame");
+        }
+    }
+
+    /// Every client mod's VIEW CLAIMS, resolved in the same mod-id fold order
+    /// the body claims settle in ([`view::fold`](super::view::fold)).
+    pub fn view_claims(&self) -> super::view::ViewFold {
+        super::view::fold(self.claim_stores().map(|data| &data.view))
+    }
+
+    /// Whether client mod `mod_id` is loaded here and still running.
+    pub fn is_live(&self, mod_id: &str) -> bool {
+        self.mods
+            .iter()
+            .any(|m| m.id == mod_id && !m.instance.disabled())
+    }
+
+    /// Drop every mod's view claims: the presented session changed, and a
+    /// claim was made of the view that presented before (mods re-issue
+    /// theirs for the new session).
+    pub fn drop_view_claims(&mut self) {
+        for loaded in &mut self.mods {
+            if let Some(data) = loaded.instance.client_data_mut() {
+                data.view = Default::default();
+            }
+        }
+    }
+
+    /// Stand in for mod `mod_id`'s own view calls. `false` = no such client
+    /// mod.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_view_claims_for_test(
+        &mut self,
+        mod_id: &str,
+        claims: super::view::ViewClaims,
+    ) -> bool {
+        let data = self
+            .mods
+            .iter_mut()
+            .find(|m| m.id == mod_id)
+            .and_then(|m| m.instance.client_data_mut());
+        data.map(|data| data.view = claims).is_some()
+    }
+
+    /// Every client mod's world marks, mods in mod-id order, each mod's sets in
+    /// name order and each set's marks in the order it set them, with the
+    /// published image a mark's
+    /// sprite names (`None` when it names none or the image is not there).
+    pub fn for_each_world_mark(
+        &self,
+        mut f: impl FnMut(&mod_api::ClientWorldMark, Option<&ClientImageData>),
+    ) {
+        for data in self.claim_stores() {
+            for mark in data.world_marks.values().flatten() {
+                let image = match mark {
+                    mod_api::ClientWorldMark::Point {
+                        sprite: Some(mod_api::ClientSprite::Image { key }),
+                        ..
+                    } => data.images.get(key),
+                    _ => None,
+                };
+                f(mark, image);
+            }
+        }
+    }
+
+    /// Issue `call` exactly as client mod `mod_id` would from a dispatch —
+    /// the same capability check, routing and handler — beside `world`
+    /// when given. `None` = no such client mod.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn call_as_for_test(
+        &mut self,
+        mod_id: &str,
+        world: Option<&ReplicaWorld>,
+        call: mod_api::HostCall,
+    ) -> Option<mod_api::HostRet> {
+        let loaded = self.mods.iter_mut().find(|m| m.id == mod_id)?;
+        let data = loaded.instance.store_data_mut();
+        Some(match world {
+            Some(world) => {
+                super::scope::enter(world, || crate::modding::host::handle_host_call(data, call))
+            }
+            None => crate::modding::host::handle_host_call(data, call),
+        })
+    }
+
+    /// Stand in for mod `mod_id`'s own `ClientWorldMarksSet` (unvalidated).
+    /// `false` = no such client mod.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_world_marks_for_test(
+        &mut self,
+        mod_id: &str,
+        marks: Vec<mod_api::ClientWorldMark>,
+    ) -> bool {
+        let data = self
+            .mods
+            .iter_mut()
+            .find(|m| m.id == mod_id)
+            .and_then(|m| m.instance.client_data_mut());
+        data.map(|data| {
+            data.world_marks = std::iter::once(("test".to_owned(), marks)).collect();
+        })
+        .is_some()
     }
 
     /// The mod holding the local player's use gesture, if any.
@@ -861,12 +1008,22 @@ impl ClientModRuntime {
     }
 
     /// Dispatch one bound-action edge to its owning mod, by the action's
-    /// namespaced `full_id`. Returns whether a live mod owns the action.
-    pub fn action(&mut self, world: &ReplicaWorld, full_id: &str, pressed: bool) -> bool {
+    /// namespaced `full_id`. A press reaches the mod only where the action
+    /// fires ([`mod_api::ClientKeyContexts`] against `at`); a release always
+    /// does, so an action never stays down. Returns whether a live mod owns
+    /// the action.
+    pub fn action(
+        &mut self,
+        world: Option<&ReplicaWorld>,
+        full_id: &str,
+        pressed: bool,
+        at: super::keys::KeyContext<'_>,
+    ) -> bool {
         let Some((index, action_id)) = self
             .actions
             .iter()
             .find(|a| a.full_id == full_id)
+            .filter(|a| !pressed || super::keys::fires_in(&a.contexts, at))
             .map(|a| (a.mod_index, a.action_id))
         else {
             return false;
@@ -889,7 +1046,7 @@ impl ClientModRuntime {
         true
     }
 
-    pub fn ui_event(&mut self, world: &ReplicaWorld, kind_key: &str, event: ClientUiEvent) {
+    pub fn ui_event(&mut self, world: Option<&ReplicaWorld>, kind_key: &str, event: ClientUiEvent) {
         let call = GuestCall::ClientUi {
             kind_key: kind_key.to_owned(),
             event,
@@ -902,7 +1059,7 @@ impl ClientModRuntime {
 
     pub fn canvas_event(
         &mut self,
-        world: &ReplicaWorld,
+        world: Option<&ReplicaWorld>,
         canvas_key: &str,
         event: mod_api::ClientCanvasEvent,
     ) {
@@ -918,7 +1075,7 @@ impl ClientModRuntime {
 
     pub fn canvas_scroll(
         &mut self,
-        world: &ReplicaWorld,
+        world: Option<&ReplicaWorld>,
         canvas_key: &str,
         x: f32,
         y: f32,
@@ -936,7 +1093,7 @@ impl ClientModRuntime {
         dispatch_unit(&mut loaded.instance, world, &call, "client canvas scroll");
     }
 
-    pub fn release_all_keys(&mut self, world: &ReplicaWorld) {
+    pub fn release_all_keys(&mut self, world: Option<&ReplicaWorld>) {
         let pressed: Vec<_> = self.pressed.drain().collect();
         for full_id in pressed {
             let Some((index, action_id)) = self
@@ -976,26 +1133,9 @@ impl ClientModRuntime {
     pub fn canvas_view(&self, canvas_key: &str) -> Option<ClientCanvasView> {
         let data = self.owner_mod(canvas_key)?.instance.client_data()?;
         let scene = data.canvas_scenes.get(canvas_key)?;
-        let elements = scene
-            .elements
-            .iter()
-            .filter_map(|element| {
-                let image_key = match element {
-                    mod_api::ClientCanvasElement::Image { image_key, .. }
-                    | mod_api::ClientCanvasElement::Sprite { image_key, .. } => image_key,
-                };
-                data.images
-                    .get(image_key)
-                    .cloned()
-                    .map(|image| ClientCanvasElementView {
-                        element: element.clone(),
-                        image,
-                    })
-            })
-            .collect();
         Some(ClientCanvasView {
             offset: scene.offset,
-            elements,
+            elements: canvas_rows(&scene.elements, &data.images),
         })
     }
 
@@ -1004,6 +1144,11 @@ impl ClientModRuntime {
         Some(ClientUiView {
             state: data.ui_state.clone(),
             images: data.images.values().cloned().collect(),
+            scenes: data
+                .canvas_scenes
+                .iter()
+                .map(|(key, scene)| (key.clone(), scene.clone()))
+                .collect(),
         })
     }
 
@@ -1145,11 +1290,120 @@ pub fn bake_installed_custom_item_geometry() {
     }
 }
 
+/// Load a session's client mods: every enabled pack's `client_wasm`, each
+/// with the session's storage bucket and the shared desks.
+fn load_mods(
+    world_seed: u32,
+    session_key: &str,
+    enabled: &BTreeSet<String>,
+    media: &super::media::MediaDesk,
+    presented: &super::presented::PresentedDesk,
+) -> Vec<ClientMod> {
+    let chosen = session_client_mods(petramond_world::assets::packs(), enabled);
+    crate::modding::host::module_cache::prewarm(chosen.iter().map(|(_, path)| path.clone()));
+    chosen
+        .into_iter()
+        .filter_map(|(id, path)| {
+            let buckets = super::ClientBuckets {
+                world: Some(client_storage_dir(session_key, &id)),
+                pack: pack_storage_dir(&id),
+            };
+            instantiate(&id, &path, world_seed, buckets, media, presented)
+        })
+        .collect()
+}
+
+/// Instantiate one client mod and run its `mod_init`. `None` = it failed to
+/// load or trapped in init (logged); a mod is never half-loaded.
+fn instantiate(
+    id: &str,
+    path: &Path,
+    world_seed: u32,
+    buckets: super::ClientBuckets,
+    media: &super::media::MediaDesk,
+    presented: &super::presented::PresentedDesk,
+) -> Option<ClientMod> {
+    let module = match crate::modding::host::module_for(path) {
+        Ok(module) => module,
+        Err(e) => {
+            log::error!("client mod '{id}' disabled: {e}");
+            return None;
+        }
+    };
+    let mut instance = match ModInstance::from_module_side(
+        id,
+        &module,
+        world_seed,
+        RuntimeSide::Client,
+        Some(buckets),
+        ModHealth::standalone(id),
+        FuelBudget::DEFAULT,
+    ) {
+        Ok(instance) => instance,
+        Err(e) => {
+            log::error!("client mod '{id}' disabled: {e}");
+            return None;
+        }
+    };
+    if let Some(data) = instance.client_data_mut() {
+        data.media = media.clone();
+        data.presented = presented.clone();
+    }
+    instance.call_init_detached();
+    if instance.disabled() {
+        return None;
+    }
+    // Client registrations live in ClientStoreData; of the simulation
+    // registrations only the client-dispatchable event handlers are
+    // meaningful here — the rest are irrelevant to this isolated instance (a
+    // dual-side wasm branches its init on RuntimeSide).
+    let handlers = instance
+        .take_registrations()
+        .into_iter()
+        .filter_map(|reg| match reg {
+            crate::modding::host::Registration::EventHandler {
+                event,
+                priority,
+                handler_id,
+                filter,
+            } if client_dispatchable(event) => Some((priority, event, filter, handler_id)),
+            crate::modding::host::Registration::EventHandler { event, .. } => {
+                log::warn!(
+                    "client mod '{id}': event kind {event:?} is not dispatched on a client instance; handler ignored"
+                );
+                None
+            }
+            _ => None,
+        })
+        .collect();
+    Some(ClientMod {
+        id: id.to_owned(),
+        instance,
+        handlers,
+        launched: false,
+    })
+}
+
 /// The `(mod id, client wasm path)` pairs a session activates: every
 /// installed id-bearing pack that ships `client_wasm` AND is in the
 /// session's enabled set. Pure — the client-side enablement contract,
 /// unit-tested against synthetic pack lists (the client twin of
 /// `session_wasm_mods` in `modding/mod.rs`).
+/// Every installed pack whose only part is presentation (a client module and
+/// presentation catalogs, nothing that changes what a world holds): what may
+/// load on a server that does not run it, when that server consents.
+pub fn presentation_only_packs() -> BTreeSet<String> {
+    presentation_only(petramond_world::assets::packs())
+}
+
+fn presentation_only(packs: &[petramond_world::assets::Pack]) -> BTreeSet<String> {
+    packs
+        .iter()
+        .filter(|pack| !pack.touches_world && pack.client_wasm.is_some())
+        .filter_map(|pack| pack.id.clone())
+        .collect()
+}
+
 fn session_client_mods(
     packs: &[petramond_world::assets::Pack],
     enabled: &BTreeSet<String>,
@@ -1168,224 +1422,60 @@ fn session_client_mods(
         .collect()
 }
 
-fn dispatch_unit(instance: &mut ModInstance, world: &ReplicaWorld, call: &GuestCall, what: &str) {
-    match instance.call_guest_client(world, call) {
+/// Dispatch into a client instance beside `world`, or with no world at all
+/// (the shell): the instance's world calls then answer an error.
+fn call_client(
+    instance: &mut ModInstance,
+    world: Option<&ReplicaWorld>,
+    call: &GuestCall,
+) -> Option<GuestRet> {
+    match world {
+        Some(world) => instance.call_guest_client(world, call),
+        None => instance.call_guest_detached(call),
+    }
+}
+
+fn dispatch_unit(
+    instance: &mut ModInstance,
+    world: Option<&ReplicaWorld>,
+    call: &GuestCall,
+    what: &str,
+) {
+    match call_client(instance, world, call) {
         None | Some(GuestRet::Unit) => {}
         Some(_) => instance.disable(&format!("returned a non-unit reply to {what}")),
     }
 }
 
-/// Whether a physical key is already bound by an engine gameplay control:
-/// the fixed (non-remappable) table plus every DEFAULT action binding. The
-/// player's live remaps deliberately don't move this set — a mod key that was
-/// valid at pack load must not turn invalid because the player rebound Sneak.
-fn reserved_key(key: &str) -> bool {
-    let defaults = petramond_input::controls::BindingSet::default();
-    let default_bound = |code: petramond_input::keycode::KeyCode| {
-        petramond_input::controls::BindableAction::ALL
-            .iter()
-            .any(|a| defaults.binding(*a).input == petramond_input::controls::BoundInput::Key(code))
-    };
-    PHYSICAL_KEYS.iter().any(|(code, name)| {
-        *name == key
-            && (petramond_input::controls::fixed_control_from_key_code(*code).is_some()
-                || default_bound(*code))
-    })
-}
-
-/// The client-storage identity of a LOCAL world: its save-DIRECTORY name,
-/// never the display name. A world's directory never changes after creation
-/// (renames rewrite only `world.json`), so personal mod data — minimap
-/// exploration, waypoints — follows a renamed world with zero migration.
-pub fn local_session_key(world_dir_name: &str) -> String {
-    format!("local:{world_dir_name}")
-}
-
-/// The client-storage identity of a remote server (its address string).
-pub fn remote_session_key(server_identity: &str) -> String {
-    format!("remote:{server_identity}")
-}
-
-/// The ONE bucket holding every client mod's sandboxed storage for a session
-/// identity: `<base>/client_mod_data/<fnv1a64(session_key)>/<mod_id>/...` —
-/// this is the `<mod_id>`s' parent, the unit world deletion removes.
-fn session_storage_bucket(base: &Path, session_key: &str) -> PathBuf {
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
-    for byte in session_key.bytes() {
-        hash = (hash ^ byte as u64).wrapping_mul(0x1_0000_0000_01b3);
-    }
-    base.join("client_mod_data").join(format!("{hash:016x}"))
-}
-
-fn client_storage_dir(session_key: &str, mod_id: &str) -> PathBuf {
-    session_storage_bucket(&petramond_util::paths::base_data_dir(), session_key).join(mod_id)
-}
-
-#[cfg(any(test, feature = "test-support"))]
-pub fn client_storage_dir_for_test(session_key: &str, mod_id: &str) -> PathBuf {
-    client_storage_dir(session_key, mod_id)
-}
-
-/// Test seeding: write entries into a mod's session storage bucket through
-/// the ordered worker, flushed before return — perf harnesses fabricate a
-/// large explored world without driving real exploration.
-#[cfg(any(test, feature = "test-support"))]
-pub fn seed_client_storage_for_test(
-    session_key: &str,
-    mod_id: &str,
-    mut entries: Vec<(String, Vec<u8>)>,
-) {
-    let mut storage = super::storage::ClientStorage::new(client_storage_dir(session_key, mod_id));
-    while !entries.is_empty() {
-        // Stay under the per-batch byte cap whatever the value sizes.
-        let mut take = 0usize;
-        let mut bytes = 0usize;
-        while take < entries.len() && take < 512 && bytes < 8 << 20 {
-            bytes += entries[take].0.len() + entries[take].1.len();
-            take += 1;
-        }
-        let rest = entries.split_off(take);
-        // The worker drains asynchronously; when a large seed outruns the
-        // pending-byte cap, wait for it rather than fail.
-        let batch = entries;
-        loop {
-            match storage.set_many(batch.clone()) {
-                Ok(()) => break,
-                Err(error) if error.contains("too many queued writes") => {
-                    std::thread::sleep(std::time::Duration::from_millis(2));
-                }
-                Err(error) => panic!("seed client storage batch: {error}"),
-            }
-        }
-        entries = rest;
-    }
-    // Drop flushes the worker, so files exist when the test proceeds.
-}
-
-/// Delete every client mod's sandboxed storage for a LOCAL world — the
-/// world-deletion hook. Exploration maps and waypoints live OUTSIDE the save
-/// (personal data, keyed on the world's directory name); without this, a
-/// future world reusing the deleted world's directory name would inherit
-/// them — explored terrain from a dead seed on a supposed-to-be-black map.
-/// Safe against in-flight writes: the storage worker drains synchronously on
-/// session drop, and deletion is only reachable from the world-select menu.
-pub fn delete_local_world_storage(world_dir_name: &str) -> std::io::Result<()> {
-    delete_local_world_storage_at(&petramond_util::paths::base_data_dir(), world_dir_name)
-}
-
-fn delete_local_world_storage_at(base: &Path, world_dir_name: &str) -> std::io::Result<()> {
-    let bucket = session_storage_bucket(base, &local_session_key(world_dir_name));
-    match std::fs::remove_dir_all(bucket) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e),
-    }
-}
-
-/// The bindable physical keys and their stable ABI names — the one table
-/// behind [`key_code_for_name`] and [`reserved_key`].
-const PHYSICAL_KEYS: &[(petramond_input::keycode::KeyCode, &str)] = {
-    use petramond_input::keycode::KeyCode;
-    &[
-        (KeyCode::KeyA, "key_a"),
-        (KeyCode::KeyB, "key_b"),
-        (KeyCode::KeyC, "key_c"),
-        (KeyCode::KeyD, "key_d"),
-        (KeyCode::KeyE, "key_e"),
-        (KeyCode::KeyF, "key_f"),
-        (KeyCode::KeyG, "key_g"),
-        (KeyCode::KeyH, "key_h"),
-        (KeyCode::KeyI, "key_i"),
-        (KeyCode::KeyJ, "key_j"),
-        (KeyCode::KeyK, "key_k"),
-        (KeyCode::KeyL, "key_l"),
-        (KeyCode::KeyM, "key_m"),
-        (KeyCode::KeyN, "key_n"),
-        (KeyCode::KeyO, "key_o"),
-        (KeyCode::KeyP, "key_p"),
-        (KeyCode::KeyQ, "key_q"),
-        (KeyCode::KeyR, "key_r"),
-        (KeyCode::KeyS, "key_s"),
-        (KeyCode::KeyT, "key_t"),
-        (KeyCode::KeyU, "key_u"),
-        (KeyCode::KeyV, "key_v"),
-        (KeyCode::KeyW, "key_w"),
-        (KeyCode::KeyX, "key_x"),
-        (KeyCode::KeyY, "key_y"),
-        (KeyCode::KeyZ, "key_z"),
-        (KeyCode::Digit0, "digit_0"),
-        (KeyCode::Digit1, "digit_1"),
-        (KeyCode::Digit2, "digit_2"),
-        (KeyCode::Digit3, "digit_3"),
-        (KeyCode::Digit4, "digit_4"),
-        (KeyCode::Digit5, "digit_5"),
-        (KeyCode::Digit6, "digit_6"),
-        (KeyCode::Digit7, "digit_7"),
-        (KeyCode::Digit8, "digit_8"),
-        (KeyCode::Digit9, "digit_9"),
-    ]
-};
-
-/// The `KeyCode` behind a registered default-key name (`"key_m"` → `KeyM`).
-pub fn key_code_for_name(name: &str) -> Option<petramond_input::keycode::KeyCode> {
-    PHYSICAL_KEYS
+/// The view rows of a retained canvas scene, in paint order. An image row
+/// whose image is not published (yet) drops; geometry and glyphs name no image
+/// and always survive.
+fn canvas_rows(
+    elements: &[mod_api::ClientCanvasElement],
+    images: &std::collections::BTreeMap<String, ClientImageData>,
+) -> Vec<ClientCanvasElementView> {
+    elements
         .iter()
-        .find(|(_, bindable)| *bindable == name)
-        .map(|(code, _)| *code)
+        .filter_map(|element| {
+            let image = match element {
+                mod_api::ClientCanvasElement::Image { image_key, .. }
+                | mod_api::ClientCanvasElement::Sprite { image_key, .. } => {
+                    Some(images.get(image_key)?.clone())
+                }
+                mod_api::ClientCanvasElement::Rect { .. }
+                | mod_api::ClientCanvasElement::Text { .. } => None,
+            };
+            Some(ClientCanvasElementView {
+                element: element.clone(),
+                image,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Deleting a world's client-mod storage removes that world's WHOLE
-    /// bucket — every mod's data, nothing of any other identity — and a
-    /// world that never stored anything deletes cleanly. Guards the
-    /// world-deletion hook against key-derivation drift: a renamed hash or
-    /// session-key format that no longer matches what the runtime writes
-    /// would silently orphan (or worse, miss) the data again.
-    #[test]
-    fn world_deletion_removes_exactly_its_own_storage_bucket() {
-        let base = std::env::temp_dir().join(format!(
-            "petramond-client-storage-delete-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&base);
-        let dir_for = |session_key: &str, mod_id: &str| {
-            session_storage_bucket(&base, session_key).join(mod_id)
-        };
-        for (key, mod_id) in [
-            (local_session_key("doomed"), "minimap"),
-            (local_session_key("doomed"), "othermod"),
-            (local_session_key("kept"), "minimap"),
-            (remote_session_key("play.example.org"), "minimap"),
-        ] {
-            let dir = dir_for(&key, mod_id);
-            std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(dir.join("blob"), b"tile").unwrap();
-        }
-
-        delete_local_world_storage_at(&base, "doomed").unwrap();
-        assert!(
-            !session_storage_bucket(&base, &local_session_key("doomed")).exists(),
-            "the deleted world's bucket goes whole — every mod's data"
-        );
-        assert!(
-            dir_for(&local_session_key("kept"), "minimap")
-                .join("blob")
-                .exists(),
-            "another world's bucket is untouched"
-        );
-        assert!(
-            dir_for(&remote_session_key("play.example.org"), "minimap")
-                .join("blob")
-                .exists(),
-            "server buckets are untouched"
-        );
-        // Idempotent: a world with no client-mod data deletes cleanly.
-        delete_local_world_storage_at(&base, "doomed").unwrap();
-        let _ = std::fs::remove_dir_all(&base);
-    }
 
     /// Client mods activate ONLY for packs in the session's enabled set —
     /// on a remote join that is the server's handshake-reported mod list,
@@ -1396,15 +1486,21 @@ mod tests {
         let pack = |name: &str, id: Option<&str>, client_wasm: Option<&str>| {
             petramond_world::assets::Pack {
                 dir: PathBuf::from(format!("/fixture/{name}")),
-                name: name.to_owned(),
-                id: id.map(str::to_owned),
-                version: None,
-                description: String::new(),
-                summary: None,
-                icon: None,
+                header: petramond_world::assets::PackHeader {
+                    name: name.to_owned(),
+                    id: id.map(str::to_owned),
+                    version: None,
+                    description: String::new(),
+                    summary: None,
+                    icon: None,
+                    dependencies: Vec::new(),
+                    touches_world: false,
+                },
+                origin: petramond_world::assets::PackOrigin::Shipped,
                 wasm: None,
                 client_wasm: client_wasm.map(PathBuf::from),
                 integrations: Vec::new(),
+                launch: None,
             }
         };
         let packs = [
@@ -1430,15 +1526,50 @@ mod tests {
         );
         let all: BTreeSet<String> = ["minimap".to_owned(), "radar".to_owned()].into();
         assert_eq!(session_client_mods(&packs, &all).len(), 2);
+
+        let mut world_pack = pack("farm", Some("farm"), Some("/fixture/farm/client.wasm"));
+        world_pack.header.touches_world = true;
+        let packs = [
+            pack(
+                "minimap",
+                Some("minimap"),
+                Some("/fixture/minimap/client.wasm"),
+            ),
+            world_pack,
+        ];
+        assert_eq!(
+            presentation_only(&packs),
+            BTreeSet::from(["minimap".to_owned()]),
+            "a pack that changes a world never loads without the server"
+        );
     }
 
-    /// The reservation rule is DERIVED from the engine's binding table:
-    /// engine-bound keys are refused to client mods, unbound keys are free.
+    /// Geometry and glyphs name no image, so no missing image can drop them;
+    /// an image row still waits for its image.
     #[test]
-    fn engine_bound_keys_are_reserved_for_client_mods() {
-        assert!(reserved_key("key_w"));
-        assert!(reserved_key("digit_1"));
-        assert!(!reserved_key("key_m"));
-        assert!(!reserved_key("key_n"));
+    fn canvas_rules_and_labels_survive_the_view_without_an_image() {
+        use mod_api::ClientCanvasElement as E;
+        let elements = [
+            E::Rect {
+                rect: [0.0; 4],
+                color: [9; 4],
+                filled: false,
+            },
+            E::Image {
+                image_key: "m:unpublished".into(),
+                rect: [0.0; 4],
+            },
+            E::Text {
+                pos: [0.0; 2],
+                text: "t".into(),
+                color: [9; 4],
+                small: true,
+                max_w: None,
+            },
+        ];
+        let rows = canvas_rows(&elements, &Default::default());
+        let kept: Vec<_> = rows.iter().map(|row| &row.element).collect();
+        assert_eq!(kept, [&elements[0], &elements[2]]);
+        assert!(rows.iter().all(|row| row.image.is_none()));
     }
 }

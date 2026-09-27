@@ -16,12 +16,12 @@ host_domain! {
         MemoGet {
             #[serde(with = "serde_bytes")]
             key: Vec<u8>,
-        } => legal(EVERY, Any, Read),
+        } => legal(BESIDE_WORLD, Any, Read),
         /// [`Self::MemoGet`] over many keys, reply parallel to `keys`
         /// ([`HostRet::BytesMany`](crate::HostRet::BytesMany)). At most `SIM_BATCH_MAX` keys.
         MemoGetMany {
             keys: Vec<Vec<u8>>,
-        } => legal(EVERY, Any, Read),
+        } => legal(BESIDE_WORLD, Any, Read),
         /// Publish an entry to the memo every instance of the calling mod shares —
         /// all threads, all runtime sides — scoped to the mod and the world seed.
         /// Bounded and discardable: an entry may vanish at any time, so a value
@@ -34,7 +34,7 @@ host_domain! {
             key: Vec<u8>,
             #[serde(with = "serde_bytes")]
             value: Vec<u8>,
-        } => legal(EVERY, Any, Write),
+        } => legal(BESIDE_WORLD, Any, Write),
         /// [`Self::MemoGet`] that also settles WHO derives a missing entry: the
         /// first caller to miss holds the lease and must [`Self::MemoPut`] the
         /// value; a caller missing while a lease is held waits briefly for that
@@ -44,6 +44,6 @@ host_domain! {
         MemoClaim {
             #[serde(with = "serde_bytes")]
             key: Vec<u8>,
-        } => legal(EVERY, Any, Write),
+        } => legal(BESIDE_WORLD, Any, Write),
     }
 }

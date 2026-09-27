@@ -299,6 +299,28 @@ pub struct BlockStates {
     sparse: Option<Box<SparseStates>>,
 }
 
+/// The same per-cell state, however it came to be stored (an emptied sparse
+/// store equals none).
+impl PartialEq for BlockStates {
+    fn eq(&self, other: &Self) -> bool {
+        let Self {
+            fluid,
+            flowing_count,
+            sparse,
+        } = self;
+        let none = SparseStates::default();
+        let SparseStates {
+            cell_states,
+            cell_kv,
+        } = sparse.as_deref().unwrap_or(&none);
+        let theirs = other.sparse.as_deref().unwrap_or(&none);
+        fluid.as_deref() == other.fluid.as_deref()
+            && *flowing_count == other.flowing_count
+            && *cell_states == theirs.cell_states
+            && *cell_kv == theirs.cell_kv
+    }
+}
+
 impl BlockStates {
     pub fn new() -> Self {
         Self::default()

@@ -405,6 +405,7 @@ fn a_stale_authoritative_pair_does_not_stomp_a_newer_pending_click() {
             eating: None,
             eating_off_hand: false,
             move_scale: 1.0,
+            fly_scale: 1.0,
             denied_actions: Default::default(),
             held_pose_main: None,
             held_pose_off: None,

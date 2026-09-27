@@ -1,0 +1,334 @@
+{
+  "version": 2,
+  "document": {
+    "format": 1,
+    "kind": "petramond:account",
+    "class": "screen",
+    "root": {
+      "type": "frame",
+      "layout": {
+        "w": {
+          "grow": 1
+        },
+        "h": {
+          "grow": 1
+        },
+        "pad": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "margin": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "gap": 0,
+        "dir": "column",
+        "align": "center",
+        "justify": "center"
+      },
+      "children": [
+        {
+          "type": "image",
+          "image": "../../textures/gui/screenshot.png",
+          "fit": "cover",
+          "layout": {
+            "w": {
+              "grow": 1
+            },
+            "h": {
+              "grow": 1
+            },
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "justify": "start",
+            "abs": {
+              "x": 0,
+              "y": 0
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "layout": {
+            "w": 320,
+            "h": "auto",
+            "pad": [
+              4,
+              2,
+              4,
+              4
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 4,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start"
+          },
+          "style": "panel.large",
+          "children": [
+            {
+              "type": "label",
+              "text": "Account",
+              "scale": 2
+            },
+            {
+              "type": "frame",
+              "layout": {
+                "w": "auto",
+                "h": "auto",
+                "pad": [
+                  4,
+                  4,
+                  4,
+                  4
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 3,
+                "dir": "column",
+                "align": "stretch",
+                "justify": "start"
+              },
+              "style": "panel.inset",
+              "children": [
+                {
+                  "type": "label",
+                  "style": "label.accent",
+                  "bind": {
+                    "text": "account_name"
+                  }
+                },
+                {
+                  "type": "label",
+                  "style": "label.muted",
+                  "bind": {
+                    "text": "account_detail"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "row",
+              "layout": {
+                "w": "auto",
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 4,
+                "dir": "column",
+                "align": "stretch",
+                "justify": "start"
+              },
+              "children": [
+                {
+                  "id": "sign_in",
+                  "type": "button",
+                  "text": "Sign In",
+                  "layout": {
+                    "w": {
+                      "grow": 1
+                    },
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  },
+                  "style": "button.success",
+                  "bind": {
+                    "visible": "signed_out"
+                  }
+                },
+                {
+                  "id": "sign_out",
+                  "type": "button",
+                  "text": "Log Out",
+                  "layout": {
+                    "w": {
+                      "grow": 1
+                    },
+                    "h": "auto",
+                    "pad": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 0,
+                    "dir": "column",
+                    "justify": "start"
+                  },
+                  "bind": {
+                    "visible": "is_signed_in"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "label",
+              "style": "label.muted",
+              "bind": {
+                "text": "working_text",
+                "visible": "working"
+              }
+            },
+            {
+              "id": "status_scroll",
+              "type": "scroll",
+              "axis": "vertical",
+              "layout": {
+                "w": "auto",
+                "h": {
+                  "grow": 1
+                },
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start",
+                "min_h": 12,
+                "max_h": 26
+              },
+              "bind": {
+                "visible": "has_status"
+              },
+              "children": [
+                {
+                  "type": "label",
+                  "wrap": true,
+                  "style": "label.danger",
+                  "bind": {
+                    "text": "status_text"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "back",
+              "type": "button",
+              "text": "Back",
+              "layout": {
+                "w": {
+                  "grow": 1
+                },
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "editor": {
+    "sample_state": {
+      "account_detail": {
+        "str": "Sample text"
+      },
+      "account_name": {
+        "str": "Sample text"
+      },
+      "has_status": {
+        "bool": true
+      },
+      "is_signed_in": {
+        "bool": true
+      },
+      "signed_out": {
+        "bool": true
+      },
+      "status_text": {
+        "str": "Sample text"
+      },
+      "working": {
+        "bool": true
+      },
+      "working_text": {
+        "str": "Sample text"
+      }
+    },
+    "zoom": 1.0,
+    "preview_scale": 2,
+    "screen": [
+      1280,
+      720
+    ],
+    "pixel_grid": false
+  }
+}

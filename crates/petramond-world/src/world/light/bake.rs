@@ -45,7 +45,7 @@ impl SectionBakeJob {
     pub fn snapshot(
         pos: SectionPos,
         sections: &FxHashMap<SectionPos, Arc<Section>>,
-        columns: &FxHashMap<ChunkPos, Column>,
+        columns: &FxHashMap<ChunkPos, Arc<Column>>,
     ) -> Option<Self> {
         if !sections.get(&pos)?.light_dirty {
             return None;
@@ -58,7 +58,7 @@ impl SectionBakeJob {
     pub fn snapshot_unchecked(
         pos: SectionPos,
         sections: &FxHashMap<SectionPos, Arc<Section>>,
-        columns: &FxHashMap<ChunkPos, Column>,
+        columns: &FxHashMap<ChunkPos, Arc<Column>>,
     ) -> Option<Self> {
         let section = sections.get(&pos)?;
         let revision = section.light_revision;

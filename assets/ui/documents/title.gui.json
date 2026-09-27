@@ -49,52 +49,299 @@
       }
      },
      {
-      "type": "frame",
-      "style": "panel.large",
+      "type": "column",
       "layout": {
-       "pad": [
-        10,
-        8,
-        10,
-        10
-       ],
-       "gap": 7,
+       "gap": 2,
        "align": "center"
       },
       "children": [
        {
-        "type": "button",
-        "id": "start",
-        "text": "Start Game",
+        "type": "frame",
+        "style": "panel.large",
         "layout": {
-         "w": 140
-        }
+         "pad": [
+          10,
+          6,
+          10,
+          8
+         ],
+         "gap": 4,
+         "align": "center"
+        },
+        "children": [
+         {
+          "type": "button",
+          "id": "start",
+          "text": "Start Game",
+          "layout": {
+           "w": 140
+          }
+         },
+         {
+          "type": "button",
+          "id": "connect",
+          "text": "Connect to Server",
+          "layout": {
+           "w": 140
+          }
+         },
+         {
+          "type": "button",
+          "id": "browse",
+          "text": "Browse Content",
+          "layout": {
+           "w": 140
+          }
+         },
+         {
+          "type": "button",
+          "id": "options",
+          "text": "Options",
+          "layout": {
+           "w": 140
+          }
+         },
+         {
+          "type": "button",
+          "id": "quit",
+          "text": "Quit",
+          "layout": {
+           "w": 140
+          }
+         }
+        ]
        },
        {
-        "type": "button",
-        "id": "connect",
-        "text": "Connect to Server",
+        "type": "label",
+        "id": "notice",
+        "small": true,
+        "style": "label.muted",
         "layout": {
-         "w": 140
-        }
-       },
-       {
-        "type": "button",
-        "id": "options",
-        "text": "Options",
-        "layout": {
-         "w": 140
-        }
-       },
-       {
-        "type": "button",
-        "id": "quit",
-        "text": "Quit",
-        "layout": {
-         "w": 140
+         "max_w": 300
+        },
+        "bind": {
+         "text": "notice",
+         "visible": "has_notice"
         }
        }
       ]
+     }
+    ]
+   },
+   {
+    "type": "frame",
+    "layout": {
+     "w": {
+      "grow": 1
+     },
+     "h": {
+      "grow": 1
+     },
+     "pad": [
+      6,
+      6,
+      6,
+      6
+     ],
+     "dir": "row",
+     "align": "center",
+     "abs": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "bind": {
+     "visible": "has_launchers"
+    },
+    "children": [
+     {
+      "type": "frame",
+      "style": "panel.inset",
+      "layout": {
+       "pad": [
+        2,
+        2,
+        2,
+        2
+       ]
+      },
+      "children": [
+       {
+        "type": "scroll",
+        "layout": {
+         "max_h": 214
+        },
+        "children": [
+         {
+          "type": "list",
+          "id": "launchers",
+          "layout": {
+           "gap": 2
+          },
+          "bind": {
+           "items": "launchers"
+          },
+          "children": [
+           {
+            "type": "frame",
+            "style": "button.default",
+            "layout": {
+             "w": 22,
+             "h": 22,
+             "align": "center",
+             "justify": "center"
+            },
+            "children": [
+             {
+              "type": "image",
+              "image": "",
+              "layout": {
+               "w": 16,
+               "h": 16
+              },
+              "bind": {
+               "image": "icon"
+              }
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "type": "frame",
+    "layout": {
+     "w": {
+      "grow": 1
+     },
+     "h": {
+      "grow": 1
+     },
+     "pad": [
+      4,
+      4,
+      4,
+      4
+     ],
+     "dir": "row",
+     "justify": "end",
+     "abs": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "children": [
+     {
+      "type": "button",
+      "id": "account",
+      "icon": "icon.account",
+      "layout": {
+       "w": 24,
+       "h": 24
+      }
+     }
+    ]
+   },
+   {
+    "type": "tooltip",
+    "style": "panel.inset",
+    "layout": {
+     "max_w": 160,
+     "abs": {
+      "x": 10,
+      "y": 4
+     },
+     "pad": [
+      3,
+      2,
+      3,
+      3
+     ]
+    },
+    "bind": {
+     "visible": "launch_tip"
+    },
+    "children": [
+     {
+      "type": "label",
+      "wrap": true,
+      "layout": {
+       "max_w": 154
+      },
+      "bind": {
+       "text": "launch_tip"
+      }
+     }
+    ]
+   },
+   {
+    "type": "tooltip",
+    "hover": "account",
+    "id": "account_tooltip",
+    "style": "panel.inset",
+    "bind": {
+     "visible": "account_tip"
+    },
+    "layout": {
+     "max_w": 200,
+     "abs": {
+      "x": 4,
+      "y": 4
+     },
+     "pad": [
+      3,
+      2,
+      3,
+      3
+     ],
+     "align": "stretch"
+    },
+    "children": [
+     {
+      "type": "label",
+      "small": true,
+      "wrap": true,
+      "bind": {
+       "text": "account_tip"
+      }
+     }
+    ]
+   },
+   {
+    "type": "tooltip",
+    "hover": "notice",
+    "id": "notice_tooltip",
+    "style": "panel.inset",
+    "bind": {
+     "visible": "notice_tip"
+    },
+    "layout": {
+     "max_w": 200,
+     "abs": {
+      "x": 4,
+      "y": 4
+     },
+     "pad": [
+      3,
+      2,
+      3,
+      3
+     ],
+     "align": "stretch"
+    },
+    "children": [
+     {
+      "type": "label",
+      "small": true,
+      "wrap": true,
+      "bind": {
+       "text": "notice_tip"
+      }
      }
     ]
    }

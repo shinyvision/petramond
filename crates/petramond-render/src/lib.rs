@@ -21,6 +21,7 @@ pub mod item_entity;
 pub mod item_model;
 pub mod job;
 pub mod views;
+pub mod world_marks;
 
 pub mod lighting;
 pub mod mob_model;
@@ -45,11 +46,13 @@ pub use renderer::new_renderer_from_target;
 #[allow(unused_imports)]
 pub use renderer::TerrainMemory;
 pub use renderer::{
-    GhostPiece, RenderFailure, RenderInitError, RenderedFrame, Renderer, SchematicThumbnailer,
+    CaptureRequest, CaptureSource, Captured, GhostPiece, RenderFailure, RenderInitError,
+    RenderedFrame, Renderer, SchematicThumbnailer,
 };
 pub use views::BreakOverlayView;
 pub use views::EntityShadow;
 pub use views::{AnimId, AnimInterner, AnimLayer, AnimNames, GaitFade, MobArena};
+pub use world_marks::{WorldMark, WorldMarks};
 
 pub use scene::Scene;
 
@@ -75,6 +78,52 @@ pub struct ClientOverlayImage {
     pub uv: [f32; 4],
 }
 
+/// One entry of the client-overlay layer, drawn in order.
+pub enum ClientOverlayItem {
+    Image(ClientOverlayImage),
+    /// Batches `[start, end)` of [`ClientOverlayLayer::paint`]: solid and
+    /// glyph quads in physical px, each batch scissored to its own clip.
+    Paint {
+        batches: std::ops::Range<usize>,
+    },
+}
+
+/// The physical-pixel client layer — overlays and a modal canvas — as one
+/// ordered list, so a canvas's rules, labels and images stack in the order
+/// its mod retained them.
+#[derive(Default)]
+pub struct ClientOverlayLayer {
+    pub items: Vec<ClientOverlayItem>,
+    pub paint: petramond_ui::DrawList,
+}
+
+impl ClientOverlayLayer {
+    pub fn clear(&mut self) {
+        self.items.clear();
+        self.paint.clear();
+    }
+
+    pub fn push_image(&mut self, image: ClientOverlayImage) {
+        self.items.push(ClientOverlayItem::Image(image));
+    }
+
+    /// Paint one run of quads into the layer, in order after everything
+    /// already in it.
+    pub fn paint(&mut self, draw: impl FnOnce(&mut petramond_ui::DrawList)) {
+        // Sealing keeps this run's first quad from merging into the previous
+        // run's last batch, which would draw it under an image pushed between.
+        self.paint.begin_overlay();
+        let start = self.paint.batches.len();
+        draw(&mut self.paint);
+        let end = self.paint.batches.len();
+        if end > start {
+            self.items.push(ClientOverlayItem::Paint {
+                batches: start..end,
+            });
+        }
+    }
+}
+
 /// One solved GUI document. Its chrome, slot geometry, and image table are a
 /// single stamped unit so none can be paired with another layout generation.
 pub struct DocumentUiFrame<'a> {
@@ -86,13 +135,22 @@ pub struct DocumentUiFrame<'a> {
     pub hooks: &'a [petramond::gui::DocHook],
 }
 
-/// The complete UI handoff for one render frame. Every physical-pixel layer
-/// consumes `viewport`; the renderer accepts or rejects this packet as a whole.
+/// Both UI layers of one render frame. The SCENE layer draws over the world
+/// into the frame and is what a capture of the frame records with it; the
+/// WINDOW layer is composited onto the window only, after the frame's capture
+/// point. The renderer accepts or rejects the pair as a whole.
+pub struct UiLayers<'a> {
+    pub scene: UiFrame<'a>,
+    pub window: UiFrame<'a>,
+}
+
+/// One UI layer's handoff for one render frame. Every physical-pixel part
+/// consumes `viewport`.
 pub struct UiFrame<'a> {
     pub viewport: petramond::gui::UiViewport,
     pub document: Option<DocumentUiFrame<'a>>,
     pub content: &'a petramond::gui::UiSnapshot,
-    pub client_overlays: &'a [ClientOverlayImage],
+    pub client_overlays: &'a ClientOverlayLayer,
     pub client_overlay_dim: bool,
 }
 
@@ -114,6 +172,7 @@ mod ui_frame_coherence_tests {
         let viewport = petramond::gui::UiViewport::new((1280, 720), 7);
         let draw = petramond_ui::DrawList::default();
         let images: Vec<petramond::gui::DocImageSource> = Vec::new();
+        let overlays = ClientOverlayLayer::default();
         let slots = Vec::new();
         let content = petramond::gui::UiSnapshot {
             kind: petramond_world::gui_state::GuiKind::Hotbar,
@@ -130,7 +189,7 @@ mod ui_frame_coherence_tests {
                 hooks: &[],
             }),
             content: &content,
-            client_overlays: &[],
+            client_overlays: &overlays,
             client_overlay_dim: false,
         };
 
@@ -148,7 +207,7 @@ mod ui_frame_coherence_tests {
                 hooks: &[],
             }),
             content: &content,
-            client_overlays: &[],
+            client_overlays: &overlays,
             client_overlay_dim: false,
         };
         assert!(!stale_document.matches_viewport(viewport));

@@ -21,7 +21,7 @@ pub struct RenderedFrame {
 /// Colour formats [`Renderer::capture_frame`] can read back: 8-bit, four
 /// channels, RGBA or BGRA order. Anything wider would silently skew the
 /// readback, which assumes [`TEXEL_BYTES`] per pixel.
-const CAPTURE_FORMATS: [wgpu::TextureFormat; 4] = [
+pub(super) const CAPTURE_FORMATS: [wgpu::TextureFormat; 4] = [
     wgpu::TextureFormat::Rgba8Unorm,
     wgpu::TextureFormat::Rgba8UnormSrgb,
     wgpu::TextureFormat::Bgra8Unorm,
@@ -95,11 +95,16 @@ impl Renderer {
             self.offscreen_target = Some((width, height, view));
         }
         let (_, _, view) = self.offscreen_target.take().expect("offscreen target");
-        self.encode_frame(&view);
+        self.encode_frame(super::frame::FrameOut {
+            scene: &view,
+            scene_texture: None,
+            window: Some(super::frame::WindowOut::Scene),
+        });
         self.offscreen_target = Some((width, height, view));
     }
 
-    /// Render one frame into an owned offscreen target and read it back.
+    /// Render one frame into an owned offscreen target and read it back: the
+    /// window as it would show, the scene with the window's UI over it.
     /// Blocks until the GPU is done. Works with or without a surface; nothing
     /// is presented either way. Panics unless the renderer's colour format is
     /// one of `CAPTURE_FORMATS` — a windowed renderer on an HDR swapchain is
@@ -129,63 +134,30 @@ impl Renderer {
             },
         );
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-        self.encode_frame(&view);
-
-        let unpadded_row = width * TEXEL_BYTES;
-        let padded_row = unpadded_row.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("offscreen readback"),
-            size: u64::from(padded_row) * u64::from(height),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
+        self.encode_frame(super::frame::FrameOut {
+            scene: &view,
+            scene_texture: None,
+            window: Some(super::frame::WindowOut::Scene),
         });
+
+        let mut readback = super::readback::Readback::new(
+            &self.device,
+            (width, height),
+            format,
+            "offscreen readback",
+        );
         let mut enc = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("offscreen readback"),
             });
-        enc.copy_texture_to_buffer(
-            target.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &readback,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padded_row),
-                    rows_per_image: None,
-                },
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-        self.queue.submit(std::iter::once(enc.finish()));
-
-        readback.slice(..).map_async(wgpu::MapMode::Read, |r| {
-            r.expect("map offscreen readback buffer")
-        });
-        self.device
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: None,
-            })
-            .expect("offscreen readback poll");
-
-        let bgra = matches!(
-            format,
-            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
-        );
-        let rgba = {
-            let mapped = readback.slice(..).get_mapped_range();
-            pack_rows(&mapped, width, height, padded_row, bgra)
-        };
-        readback.unmap();
-        RenderedFrame {
-            width,
-            height,
-            rgba,
-        }
+        readback.record(&mut enc, &target);
+        let submitted = self.queue.submit(std::iter::once(enc.finish()));
+        readback.map(submitted);
+        readback
+            .collect(&self.device, true)
+            .expect("offscreen readback")
+            .expect("a waited readback has landed")
     }
 }
 
@@ -194,7 +166,13 @@ impl Renderer {
 /// BGRA target needs red and blue swapped. Getting either wrong yields a frame
 /// that is skewed or channel-swapped yet still plausible, so this is kept apart
 /// from the GPU work and tested.
-fn pack_rows(mapped: &[u8], width: u32, height: u32, padded_row: u32, bgra: bool) -> Vec<u8> {
+pub(super) fn pack_rows(
+    mapped: &[u8],
+    width: u32,
+    height: u32,
+    padded_row: u32,
+    bgra: bool,
+) -> Vec<u8> {
     let unpadded_row = (width * TEXEL_BYTES) as usize;
     let mut out = Vec::with_capacity(unpadded_row * height as usize);
     for row in 0..height as usize {

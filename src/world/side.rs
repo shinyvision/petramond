@@ -122,12 +122,18 @@ impl WorldSide for ServerSide {
 /// sections arrive as payloads (see `world::remote`).
 pub struct ReplicaSide {
     pub(in crate::world) terrain: TerrainRenderState,
+    /// The presented world's revisions: which keys changed when.
+    pub(in crate::world) changes: super::remote::Changes,
+    /// A presented replica's piece origins and piece cache.
+    pub(in crate::world) provenance: Option<Box<super::remote::Provenance>>,
 }
 
 impl ReplicaSide {
     pub(in crate::world) fn new(jobs: Arc<JobPool>) -> Self {
         Self {
             terrain: TerrainRenderState::new(jobs),
+            changes: super::remote::Changes::new(),
+            provenance: None,
         }
     }
 }

@@ -33,6 +33,7 @@ pub(super) fn join_data(spawn: WorldPos) -> Box<JoinData> {
     });
     Box::new(JoinData {
         player_id: PlayerId(3),
+        player_name: "Scripted".to_string(),
         seed: 42,
         clock: 0,
         tables: petramond::net::remap::local_name_tables(),
@@ -54,6 +55,7 @@ pub(super) fn join_data(spawn: WorldPos) -> Box<JoinData> {
         },
         crafting_recipes: Vec::new(),
         players: vec![(PlayerId(0), "Host".to_string())],
+        client_policy: Default::default(),
     })
 }
 

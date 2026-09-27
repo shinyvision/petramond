@@ -27,15 +27,22 @@ pub(crate) enum Editor {
 
 impl Minimap {
     pub(crate) fn load_waypoints(&mut self) {
-        let mut stored =
-            client_storage_get_many(vec![WAYPOINTS_KEY.into(), LEGACY_WAYPOINTS_KEY.into()])
-                .into_iter();
+        let mut stored = client_storage_get_many(
+            ClientStorageScope::World,
+            vec![WAYPOINTS_KEY.into(), LEGACY_WAYPOINTS_KEY.into()],
+        )
+        .into_iter();
         let current = stored.next().flatten();
         let legacy = stored.next().flatten();
         self.waypoints = load_list(current.as_deref(), legacy.as_deref());
     }
 
     pub(crate) fn select_waypoint_at(&mut self, x: f32, y: f32) {
+        // Waypoints are the session's own; a presentation shows them, never
+        // changes them.
+        if self.store.ephemeral {
+            return;
+        }
         let bpp = blocks_per_pixel(self.zoom);
         let half = FULL_SIZE as f32 * 0.5;
         let wx = self.pan[0] + f64::from((x - half) * bpp);
@@ -71,7 +78,7 @@ impl Minimap {
 
     pub(crate) fn save_editor(&mut self) {
         let name = self.draft.trim().to_owned();
-        if name.is_empty() {
+        if name.is_empty() || self.store.ephemeral {
             return;
         }
         let return_to_map = matches!(self.editor, Editor::Edit(_));
@@ -131,6 +138,9 @@ impl Minimap {
         let Editor::Edit(index) = self.editor else {
             return;
         };
+        if self.store.ephemeral {
+            return;
+        }
         if index < self.waypoints.len() {
             let removed = self.waypoints.remove(index);
             self.invalidate_waypoint_area(&removed.name, removed.pos, removed.color);
@@ -143,10 +153,15 @@ impl Minimap {
     }
 
     fn persist_waypoints(&self) {
-        client_storage_set_many(vec![(
-            WAYPOINTS_KEY.into(),
-            encode_versioned(&WaypointList(self.waypoints.clone())),
-        )]);
+        if let Err(why) = client_storage_set_many(
+            ClientStorageScope::World,
+            vec![(
+                WAYPOINTS_KEY.into(),
+                Some(encode_versioned(&WaypointList(self.waypoints.clone()))),
+            )],
+        ) {
+            log(&format!("minimap: waypoints not saved: {why}"));
+        }
     }
 }
 

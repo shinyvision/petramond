@@ -10,8 +10,8 @@ use petramond_world::inventory::Hand;
 
 use super::event_scope::{self, LiveLoop, Reach, Viewer};
 use super::interest::view_blocks;
-use super::spatial_loops::LiveSpatialLoops;
 use super::{ServerGame, SharedTickRows};
+use crate::net::spatial_loops::LiveSpatialLoops;
 
 /// The server-wide replication bookkeeping every recipient's batch draws on
 /// (per-recipient bookkeeping lives on each session). Replication state, not
@@ -450,6 +450,9 @@ impl ServerGame {
             move_scale: player
                 .claims
                 .replicated_attribute(mod_api::PlayerAttribute::MoveSpeed),
+            fly_scale: player
+                .claims
+                .replicated_attribute(mod_api::PlayerAttribute::FlySpeed),
             denied_actions: player.claims.replicated_denied_actions(),
             transform,
         }

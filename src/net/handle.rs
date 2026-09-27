@@ -72,6 +72,9 @@ pub struct ServerHandle {
     /// reader/writer threads feed the channels above); `None` in-process.
     /// `crashed` then means "connection lost".
     remote: Option<TcpClientConn>,
+    /// A handle with NO server end (a presented world): nothing drains from
+    /// it, everything sent is swallowed, and it is never a dead server.
+    serverless: bool,
 }
 
 /// The server end of an in-process pipe: what a server loop drains and feeds.
@@ -96,6 +99,7 @@ impl ServerHandle {
                 join: None,
                 crashed: Arc::new(AtomicBool::new(false)),
                 remote: None,
+                serverless: false,
             },
             ServerEnd {
                 inbox,
@@ -131,7 +135,28 @@ impl ServerHandle {
             join: None,
             crashed: conn.lost_flag(),
             remote: Some(conn),
+            serverless: false,
         }
+    }
+
+    /// A handle with no server end at all, for a client presenting a world
+    /// no server runs. Nothing sent through it goes anywhere, and there is no
+    /// server to save or shut down.
+    pub fn serverless() -> ServerHandle {
+        ServerHandle {
+            to_server: mpsc::channel().0,
+            from_server: mpsc::channel().1,
+            control: mpsc::channel().0,
+            join: None,
+            crashed: Arc::new(AtomicBool::new(false)),
+            remote: None,
+            serverless: true,
+        }
+    }
+
+    /// Whether this handle has no server end.
+    pub fn is_serverless(&self) -> bool {
+        self.serverless
     }
 
     /// A handle whose server end is serviced by the CALLER instead of a
@@ -167,11 +192,17 @@ impl ServerHandle {
     /// Send one gameplay message. `Err` = the server is gone (crashed or shut
     /// down); the caller surfaces it as a lost connection.
     pub fn send(&self, msg: ClientToServer) -> Result<(), ServerGone> {
+        if self.serverless {
+            return Ok(());
+        }
         self.to_server.send(msg).map_err(|_| ServerGone)
     }
 
     /// Drain every pending server→client message, in order, into `into`.
     pub fn drain(&mut self, into: &mut Vec<ServerToClient>) {
+        if self.serverless {
+            return;
+        }
         while let Ok(msg) = self.from_server.try_recv() {
             into.push(msg);
         }
@@ -203,6 +234,9 @@ impl ServerHandle {
     /// message sender makes the writer thread flush a farewell `Disconnect`
     /// before the socket closes; the remote server saves our player on leave.
     pub fn shutdown_and_join(&mut self) {
+        if self.serverless {
+            return;
+        }
         if self.remote.is_some() {
             self.to_server = mpsc::channel().0; // drop our sender clone
             self.remote = None;

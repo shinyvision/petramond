@@ -140,6 +140,16 @@ fn check_hover_anchors(node: &Node, path: &str, ids: &HashSet<&str>, issues: &mu
             });
         }
     }
+    for layout in std::iter::once(&node.layout).chain(node.compact_layout.as_deref()) {
+        if let Some(target) = layout.anchor_to.as_deref() {
+            if !ids.contains(target) {
+                issues.push(DocIssue {
+                    path: path.into(),
+                    message: format!("anchor_to '{target}' names no widget id"),
+                });
+            }
+        }
+    }
     for (i, child) in node.children.iter().enumerate() {
         check_hover_anchors(child, &format!("{path}/{i}"), ids, issues);
     }
@@ -267,14 +277,15 @@ fn walk<'a>(
             check_frames(frames, &mut issue);
             check_fps(fps, &mut issue);
             if let (Some(styles), Some(icon)) = (styles, icon.as_deref()) {
-                if !styles.has_style(icon) {
+                // A `.png` icon is document art; the host checks its file.
+                if !styles.has_style(icon) && !crate::is_doc_image_icon(icon) {
                     issue(format!("unknown icon part '{icon}'"));
                 }
             }
         }
         NodeKind::Toggle { icon } => {
             if let (Some(styles), Some(icon)) = (styles, icon.as_deref()) {
-                if !styles.has_style(icon) {
+                if !styles.has_style(icon) && !crate::is_doc_image_icon(icon) {
                     issue(format!("unknown icon part '{icon}'"));
                 }
             }
@@ -356,8 +367,47 @@ fn walk<'a>(
     if node.bind.text_opacity.is_some() && !matches!(node.kind, NodeKind::Label { .. }) {
         issue("'text_opacity' binding is only read on label nodes".into());
     }
-    if node.bind.palette.is_some() && !matches!(node.kind, NodeKind::Label { .. }) {
-        issue("'palette' binding is only read on label nodes".into());
+    if node.bind.palette.is_some()
+        && !matches!(
+            node.kind,
+            NodeKind::Label { .. } | NodeKind::Badge { .. } | NodeKind::TextInput { .. }
+        )
+    {
+        issue("'palette' binding is only read on label, badge and text_input nodes".into());
+    }
+    if node.bind.scene.is_some() && !matches!(node.kind, NodeKind::Canvas { .. }) {
+        issue("'scene' binding is only read on canvas nodes".into());
+    }
+    if matches!(node.kind, NodeKind::Canvas { .. }) && node.bind.scene.is_none() {
+        issue("a canvas needs a 'scene' binding naming what it paints".into());
+    }
+    if node.bind.icon.is_some()
+        && !matches!(node.kind, NodeKind::Button { .. } | NodeKind::Toggle { .. })
+    {
+        issue("'icon' binding is only read on button and toggle nodes".into());
+    }
+    if node.ellipsis_tip
+        && !matches!(
+            node.kind,
+            NodeKind::Label { .. } | NodeKind::Button { .. } | NodeKind::Badge { .. }
+        )
+    {
+        issue("'ellipsis_tip' is only read on label, button and badge nodes".into());
+    }
+    if let NodeKind::Label {
+        wrap, max_lines, ..
+    } = &node.kind
+    {
+        match max_lines {
+            Some(0) => issue("'max_lines' must be at least 1".into()),
+            Some(_) if !wrap => issue("'max_lines' needs a 'wrap' label".into()),
+            _ => {}
+        }
+    }
+    for layout in std::iter::once(&node.layout).chain(node.compact_layout.as_deref()) {
+        if layout.anchor_to.is_some() && layout.abs.is_none() {
+            issue("'anchor_to' places an 'abs' frame; this node has no 'abs'".into());
+        }
     }
 
     if let (Some(styles), Some(style)) = (styles, &node.style) {
@@ -609,5 +659,20 @@ mod tests {
             ] }
         }"#);
         assert_eq!(d.validate(None, None), vec![]);
+    }
+
+    #[test]
+    fn a_document_png_icon_passes_where_an_unknown_theme_part_does_not() {
+        let d = doc(r#"{
+            "format": 1, "kind": "somemod:x", "class": "screen",
+            "root": { "type": "row", "children": [
+                { "type": "button", "id": "a", "icon": "icons/close.png" },
+                { "type": "toggle", "id": "b", "icon": "icons/record.png" },
+                { "type": "button", "id": "c", "icon": "icon.nope" }
+            ] }
+        }"#);
+        let issues = d.validate(Some(&Styles(vec!["toggle"])), None);
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        assert!(issues[0].message.contains("icon.nope"));
     }
 }

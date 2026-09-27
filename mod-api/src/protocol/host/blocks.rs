@@ -224,14 +224,16 @@ host_domain! {
         /// selection rule or a body's collision rule ([`RayFilter`]). Unloaded
         /// cells read as air, like the crosshair's own ray. The line-of-sight
         /// primitive: a swung weapon reaching for a body, a projectile's flight,
-        /// an AI's sightline. `None` = nothing within `max`.
+        /// an AI's sightline. `None` = nothing within `max`. Legal on a CLIENT
+        /// instance too, cast against the replica with the same filters and caps
+        /// (aim previews, a camera kept out of walls).
         /// → [`HostRet::Raycast`](crate::HostRet::Raycast).
         Raycast {
             from: [f64; 3],
             dir: [f32; 3],
             max: f32,
             filter: RayFilter,
-        } => legal(SERVER, Sim, Read),
+        } => legal(SERVER_CLIENT, Sim, Read),
         /// The world's change log: every cell announced changed — a block, a
         /// fluid, a door's swing — from entry `since` on. `None` asks only where
         /// the log stands now. A mod keeping something derived from the world's

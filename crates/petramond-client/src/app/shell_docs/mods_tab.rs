@@ -1,28 +1,11 @@
 //! Shared Mods-tab behavior for the tabbed World Settings and Create World
-//! screens: pack-row binding against a `WorldSettings` disabled set, and the
-//! pack-icon extra images both documents' list rows reference.
+//! screens: pack-row binding against a `WorldSettings` disabled set. The
+//! rows' icons are the content library's normalized pack icons.
 
 use crate::app::shell_state::ModPackRow;
 use petramond::save::settings::WorldSettings;
 use petramond_ui::{UiMap, UiState, UiValue};
-use std::path::PathBuf;
 use std::sync::Arc;
-
-/// Per-row pack icons for the documents' `bind.image` — registered as extra
-/// images on the UI driver before `populate` runs.
-pub(super) fn extra_images() -> Vec<(String, PathBuf)> {
-    petramond_world::assets::packs()
-        .iter()
-        .filter_map(|pack| {
-            let icon = pack.icon.clone()?;
-            Some((icon_name(pack.id.as_deref(), &pack.name), icon))
-        })
-        .collect()
-}
-
-fn icon_name(id: Option<&str>, name: &str) -> String {
-    format!("pack_icon:{}", id.unwrap_or(name))
-}
 
 /// Bind the Mods-tab rows: one entry per installed pack, enabled state read
 /// from `settings.disabled_mods`. `rows` is parallel to
@@ -55,10 +38,20 @@ pub(super) fn populate(
             m.insert("enabled".into(), UiValue::Bool(enabled));
             m.insert("toggleable".into(), UiValue::Bool(toggleable));
             m.insert("content_only".into(), UiValue::Bool(!toggleable));
-            m.insert("has_icon".into(), UiValue::Bool(asset.icon.is_some()));
+            let icon = crate::app::content::pack_icon_name(
+                &asset
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| crate::app::content::dir_name(&asset.dir)),
+            );
+            let has_icon = crate::app::content::pack_icons()
+                .iter()
+                .any(|i| i.key == icon);
+            m.insert("has_icon".into(), UiValue::Bool(has_icon));
+            m.insert("icon".into(), UiValue::Str(icon));
             m.insert(
-                "icon".into(),
-                UiValue::Str(icon_name(pack.id.as_deref(), &pack.name)),
+                "is_addon".into(),
+                UiValue::Bool(crate::app::content::is_addon(asset)),
             );
             m
         })

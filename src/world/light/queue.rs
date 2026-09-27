@@ -95,7 +95,7 @@ impl LightBakeQueue {
         key: i64,
         pos: SectionPos,
         sections: &FxHashMap<SectionPos, Arc<Section>>,
-        columns: &FxHashMap<ChunkPos, Column>,
+        columns: &FxHashMap<ChunkPos, std::sync::Arc<Column>>,
     ) {
         if self.pending.contains_key(&pos) {
             return;
@@ -129,7 +129,7 @@ impl LightBakeQueue {
         base: SectionPos,
         members: &[SectionPos],
         sections: &FxHashMap<SectionPos, Arc<Section>>,
-        columns: &FxHashMap<ChunkPos, Column>,
+        columns: &FxHashMap<ChunkPos, std::sync::Arc<Column>>,
     ) {
         let fresh: Vec<SectionPos> = members
             .iter()
@@ -224,7 +224,7 @@ impl LightBakeJob {
         id: u64,
         pos: SectionPos,
         sections: &FxHashMap<SectionPos, Arc<Section>>,
-        columns: &FxHashMap<ChunkPos, Column>,
+        columns: &FxHashMap<ChunkPos, std::sync::Arc<Column>>,
     ) -> Option<Self> {
         let bake = SectionBakeJob::snapshot(pos, sections, columns)?;
         Some(Self { id, bake })

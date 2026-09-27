@@ -268,11 +268,15 @@ impl ChatUi {
     pub(super) fn draw(
         &mut self,
         draw: &mut petramond_ui::DrawList,
-        screen: (u32, u32),
+        viewport: petramond::gui::UiViewport,
         open: bool,
         now: f64,
     ) {
-        let scale = petramond::gui::gui_scale(screen) as i32;
+        let scale = viewport.scale.max(1);
+        let logical = (
+            (viewport.size.0 as i32 / scale).max(1),
+            (viewport.size.1 as i32 / scale).max(1),
+        );
         // Chat is not document-backed; it paints with the theme font.
         let font = ui_font();
         let mut p = petramond_ui::Painter {
@@ -281,15 +285,14 @@ impl ChatUi {
             font: &font,
         };
         if open {
-            self.draw_open(&mut p, screen, now);
+            self.draw_open(&mut p, logical, now);
         } else {
             self.input_layout = None;
-            self.draw_passive(&mut p, screen, now);
+            self.draw_passive(&mut p, logical, now);
         }
     }
 
-    fn draw_passive(&mut self, p: &mut petramond_ui::Painter<'_>, screen: (u32, u32), now: f64) {
-        let logical = logical_screen(screen);
+    fn draw_passive(&mut self, p: &mut petramond_ui::Painter<'_>, logical: (i32, i32), now: f64) {
         let w = CHAT_W.min(logical.0 - 16).max(120);
         self.rewrap(chars_for_width(w - PAD * 2));
         let mut y = logical.1 - 64;
@@ -321,8 +324,7 @@ impl ChatUi {
         }
     }
 
-    fn draw_open(&mut self, p: &mut petramond_ui::Painter<'_>, screen: (u32, u32), now: f64) {
-        let logical = logical_screen(screen);
+    fn draw_open(&mut self, p: &mut petramond_ui::Painter<'_>, logical: (i32, i32), now: f64) {
         let w = CHAT_W.min(logical.0 - 16).max(120);
         let x = 8;
         let input_h = 16;
@@ -413,14 +415,6 @@ struct ColoredGlyph {
 struct ColoredText {
     fg: ChatColor,
     text: String,
-}
-
-fn logical_screen(screen: (u32, u32)) -> (i32, i32) {
-    let scale = petramond::gui::gui_scale(screen) as i32;
-    (
-        (screen.0 as i32 / scale).max(1),
-        (screen.1 as i32 / scale).max(1),
-    )
 }
 
 /// How many characters of history text fit in `w` logical px.

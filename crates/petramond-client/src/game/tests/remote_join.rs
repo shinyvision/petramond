@@ -19,6 +19,7 @@ fn join_data() -> Box<JoinData> {
     });
     Box::new(JoinData {
         player_id: PlayerId(3),
+        player_name: "Joiner".into(),
         seed: 42,
         clock: 11_000,
         tables: petramond::net::remap::local_name_tables(),
@@ -43,6 +44,9 @@ fn join_data() -> Box<JoinData> {
             (PlayerId(0), "Host".to_string()),
             (PlayerId(1), "Visitor".to_string()),
         ],
+        client_policy: petramond::net::protocol::ClientPolicy {
+            presentation_packs: true,
+        },
     })
 }
 
@@ -59,6 +63,15 @@ fn new_remote_seeds_the_client_from_join_data() {
         &std::collections::BTreeSet::new(),
         None,
     );
+
+    // The server's consent reaches the client's mods.
+    assert!(matches!(
+        game.client_mods.presented().lock().context,
+        mod_api::ClientContext::Remote {
+            presentation_packs: true,
+            ..
+        }
+    ));
 
     // The locally-predicted player mirrors the restore (the wire twin of
     // `PlayerData::restore`).

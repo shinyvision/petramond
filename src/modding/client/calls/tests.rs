@@ -1,14 +1,15 @@
 use mod_api::calls;
 use mod_api::{HostCall, HostRet, RuntimeSide};
+use petramond_util::test_dirs::TestScratchDir;
 
 use crate::modding::host::{handle_host_call, ModStoreData};
 
-fn client_data(tag: &str) -> ModStoreData {
+fn client_data(dir: &std::path::Path) -> ModStoreData {
     ModStoreData::new_for_side(
         "weathertest",
         7,
         RuntimeSide::Client,
-        Some(std::env::temp_dir().join(format!("petramond-client-calls-{tag}"))),
+        Some(crate::modding::client::ClientBuckets::under(dir.to_owned())),
     )
 }
 
@@ -17,7 +18,8 @@ fn client_data(tag: &str) -> ModStoreData {
 /// errors, and the env-param read is capped at the GPU slot budget.
 #[test]
 fn weather_era_client_calls_validate_and_forgive() {
-    let mut data = client_data("weather-era");
+    let scratch = TestScratchDir::new("client-calls-weather-era");
+    let mut data = client_data(&scratch);
     // Unknown bundle key / unknown sound key: forgiving false.
     assert_eq!(
         handle_host_call(
@@ -112,7 +114,8 @@ fn weather_era_client_calls_validate_and_forgive() {
 /// capability gate, like every sim-facing call.
 #[test]
 fn weather_era_server_calls_stay_server_side() {
-    let mut data = client_data("server-side");
+    let scratch = TestScratchDir::new("client-calls-server-side");
+    let mut data = client_data(&scratch);
     for call in [
         HostCall::from(calls::BiomeAt { pos: [0, 0] }),
         HostCall::from(calls::SurfaceYAt { pos: [0, 0] }),
@@ -132,7 +135,8 @@ fn weather_era_server_calls_stay_server_side() {
 /// carve per position and stays server-side.
 #[test]
 fn the_underground_biome_partition_answers_on_a_client_instance() {
-    let mut client = client_data("underground-biome");
+    let scratch = TestScratchDir::new("client-calls-underground-biome");
+    let mut client = client_data(&scratch);
     let mut server = ModStoreData::new("weathertest", 7);
     let positions = vec![[0, -40, 0], [400, -30, -400], [-90, -20, 610]];
     let ask = |data: &mut ModStoreData| match handle_host_call(
@@ -165,11 +169,14 @@ fn the_underground_biome_partition_answers_on_a_client_instance() {
 
 #[test]
 fn client_instances_are_capability_isolated_and_namespace_their_state() {
+    let scratch = TestScratchDir::new("unused-client-mod-test");
     let mut data = ModStoreData::new_for_side(
         "map",
         7,
         RuntimeSide::Client,
-        Some(std::env::temp_dir().join("petramond-unused-client-mod-test")),
+        Some(crate::modding::client::ClientBuckets::under(
+            scratch.to_path_buf(),
+        )),
     );
     assert_eq!(
         handle_host_call(&mut data, HostCall::from(calls::RuntimeSide)),
@@ -264,18 +271,21 @@ fn client_instances_are_capability_isolated_and_namespace_their_state() {
     );
     let client = data.client.as_ref().unwrap();
     let scene = client.canvas_scenes.get("map:canvas").unwrap();
-    assert_eq!(scene.elements, elements);
+    assert_eq!(*scene.elements, elements);
     assert_eq!(scene.offset, [12.0, -7.0]);
     assert_eq!(client.images["map:tile"].revision, image_revision);
 }
 
 #[test]
 fn client_image_blit_mutates_in_place_and_validates_bounds() {
+    let scratch = TestScratchDir::new("unused-client-blit-test");
     let mut data = ModStoreData::new_for_side(
         "map",
         7,
         RuntimeSide::Client,
-        Some(std::env::temp_dir().join("petramond-unused-client-blit-test")),
+        Some(crate::modding::client::ClientBuckets::under(
+            scratch.to_path_buf(),
+        )),
     );
     assert_eq!(
         handle_host_call(
@@ -389,11 +399,14 @@ fn client_image_blit_mutates_in_place_and_validates_bounds() {
 
 #[test]
 fn client_surface_columns_gate_on_revision_and_pack_cells() {
+    let scratch = TestScratchDir::new("unused-client-surface-test");
     let mut data = ModStoreData::new_for_side(
         "map",
         7,
         RuntimeSide::Client,
-        Some(std::env::temp_dir().join("petramond-unused-client-surface-test")),
+        Some(crate::modding::client::ClientBuckets::under(
+            scratch.to_path_buf(),
+        )),
     );
     let mut world = crate::world::ReplicaWorld::new(0, 0);
     let sp = petramond_world::chunk::SectionPos::new(0, 4, 0);
@@ -459,11 +472,14 @@ fn client_surface_columns_gate_on_revision_and_pack_cells() {
 
 #[test]
 fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
+    let scratch = TestScratchDir::new("unused-client-blocks-test");
     let mut data = ModStoreData::new_for_side(
         "map",
         7,
         RuntimeSide::Client,
-        Some(std::env::temp_dir().join("petramond-unused-client-blocks-test")),
+        Some(crate::modding::client::ClientBuckets::under(
+            scratch.to_path_buf(),
+        )),
     );
     let mut world = crate::world::ReplicaWorld::new(0, 0);
     let sp = petramond_world::chunk::SectionPos::new(0, 4, 0);
@@ -552,7 +568,8 @@ fn a_client_poses_only_the_local_player_and_latches_a_hand_on_its_first_pose() {
     use mod_api::{HeldPose, HeldPoseData, PlayerId, PlayerSnapshot};
     use petramond_world::inventory::Hand;
 
-    let mut data = client_data("held-pose");
+    let scratch = TestScratchDir::new("client-calls-held-pose");
+    let mut data = client_data(&scratch);
     let guard = HeldPose {
         first_person: HeldPoseData {
             rotation: [0.0; 3],
@@ -644,7 +661,8 @@ fn a_client_poses_only_the_local_player_and_latches_a_hand_on_its_first_pose() {
 fn bone_poses_resolve_to_rig_ids_and_latch_per_bone() {
     use mod_api::{BonePoseData, BonePoseMode, PlayerId, PlayerSnapshot};
 
-    let mut data = client_data("bone-pose");
+    let scratch = TestScratchDir::new("client-calls-bone-pose");
+    let mut data = client_data(&scratch);
     let bend = |bone: &str| BonePoseData {
         bone: bone.into(),
         rotation: [-22.0, 0.0, 0.0],
@@ -737,7 +755,8 @@ fn client_player_inventory_is_local_only_and_needs_a_published_inventory() {
     use petramond_world::inventory::{Inventory, TOTAL_SLOTS};
     use petramond_world::item::{ItemStack, ItemType};
 
-    let mut data = client_data("inventory-gate");
+    let scratch = TestScratchDir::new("client-calls-inventory-gate");
+    let mut data = client_data(&scratch);
     let me = mod_api::PlayerId(7);
     let query = |player| HostCall::from(calls::PlayerInventory { player });
     let actor = |id| mod_api::PlayerSnapshot {
@@ -788,7 +807,8 @@ fn client_player_inventory_is_local_only_and_needs_a_published_inventory() {
 fn a_refused_animator_write_latches_no_key() {
     use mod_api::{AnimatorParam, AnimatorValue, PlayerId};
 
-    let mut data = client_data("animator-latch");
+    let scratch = TestScratchDir::new("client-calls-animator-latch");
+    let mut data = client_data(&scratch);
     let rig = crate::player::rigs::id(mod_api::rig::PLAYER_BODY).expect("the body rig");
     let graph = crate::player::rigs::graph(rig).expect("the body rig has an animator");
     let param = graph
@@ -851,4 +871,831 @@ fn blank_snapshot() -> mod_api::PlayerSnapshot {
         entombed: false,
         conditions: Vec::new(),
     }
+}
+
+/// Every VIEW call and every capability call this surface declares, one
+/// sample each, in declaration order.
+fn view_and_session_calls() -> Vec<HostCall> {
+    vec![
+        HostCall::from(calls::ClientViewCameraSet {
+            pos: [1.0, 2.0, 3.0],
+            yaw: 0.5,
+            pitch: -0.25,
+            roll: 0.0,
+            fov_y: Some(1.2),
+            anchor: None,
+        }),
+        HostCall::from(calls::ClientViewCameraRelease),
+        HostCall::from(calls::ClientViewChromeSet {
+            hud: Some(false),
+            hands: None,
+            crosshair: Some(true),
+        }),
+        HostCall::from(calls::ClientViewPerspectiveSet {
+            third_person: Some(true),
+        }),
+        HostCall::from(calls::ClientViewState),
+        HostCall::from(calls::ClientEnvSet {
+            params: vec![("weathertest:tint".into(), [1.0, 1.0, 1.0, 1.0])],
+        }),
+        HostCall::from(calls::ClientKeyLabels {
+            ids: vec!["open".into()],
+        }),
+        HostCall::from(calls::ClientStorageWritePoll {
+            scope: mod_api::ClientStorageScope::Pack,
+            ticket: 1,
+        }),
+        HostCall::from(calls::ClientUiFocus {
+            id: "name".into(),
+            item: None,
+        }),
+        HostCall::from(calls::ClientPauseOpen),
+        HostCall::from(calls::ClientViewFrameSet {
+            size: Some([640, 360]),
+        }),
+        HostCall::from(calls::ClientViewSubjectSet {
+            player: Some(mod_api::PlayerId(1)),
+        }),
+        HostCall::from(calls::ClientEntities {
+            ids: Vec::new(),
+            near: None,
+        }),
+    ]
+    .into_iter()
+    .chain(capability_calls())
+    .collect()
+}
+
+/// One sample of every capability call: files, state, events, presentation,
+/// frames and the clock, taps, media and facts.
+fn capability_calls() -> Vec<HostCall> {
+    use mod_api::ClientStorageScope::Pack;
+    let ranges = || {
+        vec![mod_api::ClientFileRanges {
+            scope: Pack,
+            path: "r/w.pmc".into(),
+            ranges: vec![[0, 40]],
+        }]
+    };
+    let pose = mod_api::ClientPose {
+        pos: [1.0, 70.0, 2.0],
+        yaw: 0.5,
+        pitch: 0.0,
+    };
+    vec![
+        HostCall::from(calls::ClientFileAppend {
+            scope: Pack,
+            path: "a".into(),
+            bytes: vec![1],
+        }),
+        HostCall::from(calls::ClientFileWrite {
+            scope: Pack,
+            path: "a".into(),
+            offset: 0,
+            bytes: vec![1],
+            truncate: true,
+        }),
+        HostCall::from(calls::ClientFileSync {
+            scope: Pack,
+            path: "a".into(),
+        }),
+        HostCall::from(calls::ClientFileRename {
+            scope: Pack,
+            from: "a".into(),
+            to: "b".into(),
+        }),
+        HostCall::from(calls::ClientFileDelete {
+            scope: Pack,
+            path: "b".into(),
+        }),
+        HostCall::from(calls::ClientFileRead {
+            scope: Pack,
+            path: "a".into(),
+            offset: 0,
+            len: 16,
+        }),
+        HostCall::from(calls::ClientFileList {
+            scope: Pack,
+            dir: "".into(),
+            after: None,
+            max_bytes: 4096,
+        }),
+        HostCall::from(calls::ClientFilePoll { ticket: 1 }),
+        HostCall::from(calls::ClientFileStat {
+            scope: Pack,
+            path: "a".into(),
+        }),
+        HostCall::from(calls::ClientFileReveal {
+            scope: Pack,
+            path: "a".into(),
+        }),
+        HostCall::from(calls::ClientWorldStateWrite {
+            scope: Pack,
+            path: "r/w.pmc".into(),
+            select: mod_api::ClientStateSelect::All,
+            kinds: None,
+            envelopes: Some("r/w.env".into()),
+        }),
+        HostCall::from(calls::ClientWorldEventsBegin {
+            scope: Pack,
+            path: "r/e.pmc".into(),
+            envelopes: None,
+        }),
+        HostCall::from(calls::ClientWorldEventsEnd { events: 1 }),
+        HostCall::from(calls::ClientWorldEventsPoll { events: 1 }),
+        HostCall::from(calls::ClientPresentationOpen {
+            tables: mod_api::ClientFileRange {
+                scope: Pack,
+                path: "r/w.pmc".into(),
+                offset: 40,
+                len: 80,
+            },
+            seed: 7,
+            mods: Vec::new(),
+            viewer: Some(pose),
+        }),
+        HostCall::from(calls::ClientPresentationApply {
+            state: ranges(),
+            events: ranges(),
+            at: 1.5,
+        }),
+        HostCall::from(calls::ClientPresentationCancel { apply: 1 }),
+        HostCall::from(calls::ClientPresentationQueue { events: ranges() }),
+        HostCall::from(calls::ClientPresentationTime { at: 2.0 }),
+        HostCall::from(calls::ClientPresentationViewer { pose, flying: true }),
+        HostCall::from(calls::ClientPresentationState),
+        HostCall::from(calls::ClientPresentationClose),
+        HostCall::from(calls::ClientFrameCapture {
+            source: mod_api::ClientCaptureSource::World,
+            size: Some([160, 90]),
+            when: mod_api::ClientCaptureWhen::Settled,
+            advance: false,
+            into: mod_api::ClientCaptureInto::File {
+                scope: Pack,
+                path: "thumb.raw".into(),
+            },
+        }),
+        HostCall::from(calls::ClientFrameCapturePoll { capture: 1 }),
+        HostCall::from(calls::ClientFrameCancel { capture: 1 }),
+        HostCall::from(calls::ClientClockSet { step: None }),
+        HostCall::from(calls::ClientClockAdvance),
+        HostCall::from(calls::ClientAudioTap {
+            sample_rate: 48_000,
+            channels: 2,
+            into: mod_api::ClientAudioInto::File {
+                scope: Pack,
+                path: "world.pcm".into(),
+            },
+        }),
+        HostCall::from(calls::ClientAudioTapState { tap: 1 }),
+        HostCall::from(calls::ClientAudioTapEnd { tap: 1 }),
+        HostCall::from(calls::ClientMediaEncoders { refresh: false }),
+        HostCall::from(calls::ClientMediaOpen {
+            scope: Pack,
+            path: "videos/a.mp4".into(),
+            container: "mp4".into(),
+            video: Some(mod_api::ClientMediaVideo {
+                codec: "libx264".into(),
+                width: 64,
+                height: 36,
+                fps: [30, 1],
+                options: Vec::new(),
+            }),
+            audio: None,
+            options: Vec::new(),
+        }),
+        HostCall::from(calls::ClientMediaPushFrame {
+            media: 1,
+            rgba: vec![0; 4],
+        }),
+        HostCall::from(calls::ClientMediaPushAudio {
+            media: 1,
+            pcm: vec![0; 4],
+        }),
+        HostCall::from(calls::ClientMediaClose { media: 1 }),
+        HostCall::from(calls::ClientMediaAbort { media: 1 }),
+        HostCall::from(calls::ClientMediaState { media: 1 }),
+        HostCall::from(calls::ClientEngineFacts),
+        HostCall::from(calls::ClientPacks),
+        HostCall::from(calls::ClientWallClock),
+    ]
+}
+
+/// A client-legal call that is PERMITTED but not ROUTED falls through to the
+/// simulation handler and dies on "no simulation context is active" — a trap
+/// that costs nothing to fall into when a variant is appended and nothing to
+/// catch here. The mirror invariant: on a SIM instance every one of them is a
+/// clean refusal, never a panic and never a partial write.
+#[test]
+fn the_view_and_capability_calls_are_routed_on_a_client_and_refused_on_a_sim() {
+    let scratch = TestScratchDir::new("client-calls-view-session");
+    let mut client = client_data(&scratch);
+    for call in view_and_session_calls() {
+        let name = format!("{call:?}");
+        if let HostRet::Err(mod_api::HostError {
+            detail: message, ..
+        }) = handle_host_call(&mut client, call)
+        {
+            assert!(
+                !message.contains("simulation"),
+                "{name} reached the simulation handler: {message}"
+            );
+        }
+    }
+
+    let scratch = TestScratchDir::new("client-calls-view-session-sim");
+    let mut sim = ModStoreData::new_for_side(
+        "weathertest",
+        7,
+        RuntimeSide::Server,
+        Some(crate::modding::client::ClientBuckets::under(
+            scratch.to_path_buf(),
+        )),
+    );
+    for call in view_and_session_calls() {
+        let name = format!("{call:?}");
+        assert!(
+            matches!(handle_host_call(&mut sim, call), HostRet::Err(_)),
+            "{name} answered a sim instance"
+        );
+    }
+}
+
+/// While a presentation is on screen, what a mod sees is the presented
+/// world's: a `World` write made then — a KV write or a file — never reaches
+/// the session's own bucket, while reads keep answering from it.
+#[test]
+fn client_storage_writes_during_a_presentation_never_reach_the_session() {
+    use mod_api::ClientStorageScope::World;
+    let dir = TestScratchDir::new("client-calls-presentation-storage");
+    let store = |dir: &std::path::Path| {
+        ModStoreData::new_for_side(
+            "map",
+            7,
+            RuntimeSide::Client,
+            Some(crate::modding::client::ClientBuckets::under(dir.to_owned())),
+        )
+    };
+    let set = |data: &mut ModStoreData, value: u8| {
+        handle_host_call(
+            data,
+            HostCall::from(calls::ClientStorageSetMany {
+                scope: World,
+                entries: vec![("map:tile".into(), Some(mod_api::ByteBuf::from(vec![value])))],
+            }),
+        )
+    };
+    let append = |data: &mut ModStoreData, value: u8| {
+        handle_host_call(
+            data,
+            HostCall::from(calls::ClientFileAppend {
+                scope: World,
+                path: "tiles/0".into(),
+                bytes: vec![value],
+            }),
+        )
+    };
+    let get = |data: &mut ModStoreData| {
+        handle_host_call(
+            data,
+            HostCall::from(calls::ClientStorageGetMany {
+                scope: World,
+                keys: vec!["map:tile".into()],
+            }),
+        )
+    };
+    let holds =
+        |value: u8| HostRet::ClientStorageValues(vec![Some(mod_api::ByteBuf::from(vec![value]))]);
+
+    let mut data = store(&dir);
+    assert!(matches!(set(&mut data, 1), HostRet::ClientStorageWrite(_)));
+    assert!(matches!(append(&mut data, 1), HostRet::Ticket(_)));
+    let presented = data.client.as_ref().unwrap().presented.clone();
+    let live = std::mem::replace(
+        &mut presented.lock().context,
+        mod_api::ClientContext::Presentation {
+            owner: "map".into(),
+        },
+    );
+    assert!(
+        matches!(
+            set(&mut data, 2),
+            HostRet::Err(mod_api::HostError {
+                code: mod_api::ErrorCode::Refused,
+                ..
+            })
+        ),
+        "refused, and says so"
+    );
+    assert!(matches!(
+        append(&mut data, 2),
+        HostRet::Err(mod_api::HostError {
+            code: mod_api::ErrorCode::Refused,
+            ..
+        })
+    ));
+    assert_eq!(
+        get(&mut data),
+        holds(1),
+        "reads answer from the session's storage"
+    );
+    presented.lock().context = live;
+    assert_eq!(get(&mut data), holds(1));
+    drop(data);
+    assert_eq!(
+        get(&mut store(&dir)),
+        holds(1),
+        "the disk never saw the presentation's write"
+    );
+    // A read is ordered after the writes queued to its bytes.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tile = crate::modding::client::files::FileRef::in_bucket(
+        &dir.join("world").join("files"),
+        "tiles/0",
+    );
+    crate::modding::client::files::read(&tile, 0, 1, move |read| {
+        let _ = tx.send(read);
+    });
+    assert_eq!(
+        rx.recv().unwrap(),
+        Ok(vec![1]),
+        "an instance's files reach the disk once it shuts down"
+    );
+}
+
+/// World marks are accepted WHOLE or refused WHOLE — a mod that sends an
+/// invalid mark keeps the set it had, never a truncated one — and the call is
+/// routed on a client and refused on a sim instance.
+#[test]
+fn a_world_mark_set_is_kept_whole_or_refused_whole() {
+    use mod_api::{ClientSprite, ClientWorldMark};
+    let line = |width: f32| ClientWorldMark::Line {
+        from: [0.0, 64.0, 0.0],
+        to: [f64::from(1u32 << 31), 1e12, -3.0],
+        color: [255, 0, 0, 255],
+        width,
+        occluded: 0,
+    };
+    let point = |sprite: ClientSprite, label: &str| ClientWorldMark::Point {
+        pos: [1.0, 2.0, 3.0],
+        sprite: Some(sprite),
+        size: 16.0,
+        color: [255; 4],
+        label: Some(label.into()),
+        occluded: 255,
+    };
+    let scratch = TestScratchDir::new("client-calls-world-marks");
+    let mut data = client_data(&scratch);
+    let set = |data: &mut ModStoreData, marks: Vec<ClientWorldMark>| {
+        handle_host_call(
+            data,
+            HostCall::from(calls::ClientWorldMarksSet {
+                set: "path".into(),
+                marks,
+            }),
+        )
+    };
+    let own = point(
+        ClientSprite::Image {
+            key: "weathertest:pin".into(),
+        },
+        "home",
+    );
+    assert_eq!(set(&mut data, vec![line(2.0), own.clone()]), HostRet::Unit);
+    let kept = data.client.as_ref().unwrap().world_marks["path"].clone();
+    assert_eq!(kept.len(), 2);
+    // Points land inside the world border on every axis.
+    let border = f64::from(petramond_world::border::WORLD_BORDER);
+    let ClientWorldMark::Line { to, .. } = kept[0] else {
+        panic!("the line came back as {:?}", kept[0]);
+    };
+    assert!(to.iter().all(|c| c.abs() <= border), "{to:?}");
+
+    let refused = [
+        vec![line(0.0)],
+        vec![line(f32::NAN)],
+        vec![ClientWorldMark::Line {
+            from: [f64::NAN, 0.0, 0.0],
+            to: [0.0; 3],
+            color: [0; 4],
+            width: 1.0,
+            occluded: 0,
+        }],
+        vec![point(
+            ClientSprite::Image {
+                key: "othermod:pin".into(),
+            },
+            "",
+        )],
+        vec![point(
+            ClientSprite::Theme {
+                part: "icon.plus".into(),
+            },
+            "two\nlines",
+        )],
+    ];
+    for marks in refused {
+        let what = format!("{:?}", marks.first());
+        assert!(
+            matches!(set(&mut data, marks), HostRet::Err(_)),
+            "accepted {what}"
+        );
+        assert_eq!(
+            data.client.as_ref().unwrap().world_marks["path"],
+            kept,
+            "a refused set changed the kept one ({what})"
+        );
+    }
+    // A second set is replaced on its own.
+    let live = HostCall::from(calls::ClientWorldMarksSet {
+        set: "live".into(),
+        marks: vec![line(1.0)],
+    });
+    assert_eq!(handle_host_call(&mut data, live), HostRet::Unit);
+    let bad_name = HostCall::from(calls::ClientWorldMarksSet {
+        set: "Live Path".into(),
+        marks: Vec::new(),
+    });
+    assert!(matches!(
+        handle_host_call(&mut data, bad_name),
+        HostRet::Err(_)
+    ));
+    assert_eq!(set(&mut data, Vec::new()), HostRet::Unit);
+    let left: Vec<&String> = data.client.as_ref().unwrap().world_marks.keys().collect();
+    assert_eq!(left, ["live"], "clearing one set leaves the other");
+
+    let scratch = TestScratchDir::new("client-calls-world-marks-sim");
+    let mut sim = ModStoreData::new_for_side(
+        "weathertest",
+        7,
+        RuntimeSide::Server,
+        Some(crate::modding::client::ClientBuckets::under(
+            scratch.to_path_buf(),
+        )),
+    );
+    assert!(matches!(set(&mut sim, vec![line(2.0)]), HostRet::Err(_)));
+}
+
+fn shell_data(dir: &std::path::Path) -> ModStoreData {
+    ModStoreData::new_for_side(
+        "map",
+        0,
+        RuntimeSide::Client,
+        Some(crate::modding::client::ClientBuckets {
+            world: None,
+            pack: dir.join("pack"),
+        }),
+    )
+}
+
+/// On the shell there is no world: every call that reads or writes one is
+/// refused with an error that says so — none reaches a desk or a disk — while
+/// the calls a launched tool is made of (its UI, its pack bucket, its files)
+/// answer as they do anywhere.
+#[test]
+fn a_shell_instance_is_refused_every_world_call_cleanly() {
+    use mod_api::{ClientContext, ClientStorageScope};
+    let dir = TestScratchDir::new("client-calls-shell");
+    let mut data = shell_data(&dir);
+
+    let world_calls = [
+        HostCall::from(calls::ClientBlocksAt {
+            positions: vec![[0, 0, 0]],
+        }),
+        HostCall::from(calls::ClientSurfaceColumns { queries: vec![] }),
+        HostCall::from(calls::ClientEnvParams { keys: vec![] }),
+        HostCall::from(calls::ClientViewState),
+        HostCall::from(calls::ClientViewCameraRelease),
+        HostCall::from(calls::ClientWorldMarksSet {
+            set: "path".into(),
+            marks: vec![],
+        }),
+        HostCall::from(calls::ClientMoodSet {
+            darken: 0.1,
+            desaturate: 0.1,
+        }),
+        HostCall::from(calls::PlayerState),
+        HostCall::from(calls::UndergroundBiomeAt {
+            positions: vec![[0, 0, 0]],
+        }),
+        HostCall::from(calls::ClientWorldStateWrite {
+            scope: ClientStorageScope::Pack,
+            path: "w.pmc".into(),
+            select: mod_api::ClientStateSelect::All,
+            kinds: None,
+            envelopes: None,
+        }),
+        HostCall::from(calls::ClientWorldEventsBegin {
+            scope: ClientStorageScope::Pack,
+            path: "e.pmc".into(),
+            envelopes: None,
+        }),
+        HostCall::from(calls::ClientFrameCapture {
+            source: mod_api::ClientCaptureSource::Scene,
+            size: None,
+            when: mod_api::ClientCaptureWhen::Next,
+            advance: true,
+            into: mod_api::ClientCaptureInto::Media(1),
+        }),
+        HostCall::from(calls::ClientClockSet { step: None }),
+        HostCall::from(calls::ClientClockAdvance),
+        HostCall::from(calls::ClientAudioTap {
+            sample_rate: 48_000,
+            channels: 2,
+            into: mod_api::ClientAudioInto::Media(1),
+        }),
+        HostCall::from(calls::ClientStorageGetMany {
+            scope: ClientStorageScope::World,
+            keys: vec!["map:k".into()],
+        }),
+        HostCall::from(calls::ClientStorageSetMany {
+            scope: ClientStorageScope::World,
+            entries: vec![("map:k".into(), Some(mod_api::ByteBuf::from(vec![1])))],
+        }),
+    ];
+    for call in world_calls {
+        let name = format!("{call:?}");
+        match handle_host_call(&mut data, call) {
+            HostRet::Err(mod_api::HostError {
+                detail: message, ..
+            }) => assert!(
+                message.contains("world") && !message.contains("simulation"),
+                "{name}: {message}"
+            ),
+            other => panic!("{name} answered on the shell: {other:?}"),
+        }
+    }
+    assert!(!dir.join("pack").exists(), "nothing reached a disk");
+
+    assert_eq!(
+        handle_host_call(&mut data, HostCall::from(calls::ClientContext)),
+        HostRet::ClientContext(ClientContext::Shell)
+    );
+    for call in [
+        HostCall::from(calls::ClientUiStateSet {
+            key: "map:title".into(),
+            value: mod_api::GuiValue::Str("t".into()),
+        }),
+        HostCall::from(calls::ClientTextMeasure {
+            text: "t".into(),
+            scale: 1,
+        }),
+        HostCall::from(calls::ClientGuiOpen {
+            kind_key: "map:browser".into(),
+        }),
+        HostCall::from(calls::ClientPresentationState),
+        HostCall::from(calls::ClientEngineFacts),
+        HostCall::from(calls::ClientPacks),
+        HostCall::from(calls::ClientWallClock),
+        HostCall::from(calls::ClientFileStat {
+            scope: ClientStorageScope::Pack,
+            path: "a".into(),
+        }),
+        HostCall::from(calls::ClientMediaState { media: 1 }),
+        HostCall::from(calls::ClientStorageSetMany {
+            scope: ClientStorageScope::Pack,
+            entries: vec![("map:k".into(), Some(mod_api::ByteBuf::from(vec![1])))],
+        }),
+    ] {
+        let name = format!("{call:?}");
+        assert!(
+            !matches!(handle_host_call(&mut data, call), HostRet::Err(_)),
+            "{name} is refused on the shell"
+        );
+    }
+    drop(data);
+}
+
+/// The PACK bucket follows the mod, not the world: what a session filed there
+/// — during a presentation too, which keeps its hands off the WORLD bucket —
+/// is what the next session reads, even one on the shell with no world at all.
+#[test]
+fn pack_storage_survives_across_sessions_and_presentations() {
+    use mod_api::ClientStorageScope::{Pack, World};
+    let dir = TestScratchDir::new("client-calls-pack-storage");
+    let set = |data: &mut ModStoreData, scope, value: u8| {
+        handle_host_call(
+            data,
+            HostCall::from(calls::ClientStorageSetMany {
+                scope,
+                entries: vec![(
+                    "map:project".into(),
+                    Some(mod_api::ByteBuf::from(vec![value])),
+                )],
+            }),
+        )
+    };
+    let holds = |value: Option<u8>| {
+        HostRet::ClientStorageValues(vec![value.map(|v| mod_api::ByteBuf::from(vec![v]))])
+    };
+
+    let mut world = ModStoreData::new_for_side(
+        "map",
+        7,
+        RuntimeSide::Client,
+        Some(crate::modding::client::ClientBuckets {
+            world: Some(dir.join("world")),
+            pack: dir.join("pack"),
+        }),
+    );
+    let presented = world.client.as_ref().unwrap().presented.clone();
+    let queued = |ret| matches!(ret, HostRet::ClientStorageWrite(_));
+    assert!(queued(set(&mut world, Pack, 1)));
+    presented.lock().context = mod_api::ClientContext::Presentation {
+        owner: "map".into(),
+    };
+    assert!(matches!(
+        set(&mut world, World, 9),
+        HostRet::Err(mod_api::HostError {
+            code: mod_api::ErrorCode::Refused,
+            ..
+        })
+    ));
+    assert!(
+        queued(set(&mut world, Pack, 2)),
+        "a presentation keeps the pack bucket"
+    );
+    drop(world);
+
+    let mut shell = shell_data(&dir);
+    assert_eq!(
+        handle_host_call(
+            &mut shell,
+            HostCall::from(calls::ClientStorageGetMany {
+                scope: Pack,
+                keys: vec!["map:project".into()],
+            }),
+        ),
+        holds(Some(2)),
+        "the next session, on the shell, reads it"
+    );
+    let HostRet::U64(ticket) = handle_host_call(
+        &mut shell,
+        HostCall::from(calls::ClientStorageReadBegin {
+            scope: Pack,
+            keys: vec!["map:project".into()],
+        }),
+    ) else {
+        panic!("a pack read begins on the shell");
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match handle_host_call(
+            &mut shell,
+            HostCall::from(calls::ClientStorageReadPoll {
+                scope: Pack,
+                ticket,
+            }),
+        ) {
+            HostRet::ClientStorageRead(None) => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the read never landed"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            HostRet::ClientStorageRead(Some(values)) => {
+                assert_eq!(values, vec![Some(mod_api::ByteBuf::from(vec![2]))]);
+                break;
+            }
+            other => panic!("poll answered {other:?}"),
+        }
+    }
+    drop(shell);
+    let reopened = |dir: &std::path::Path| {
+        ModStoreData::new_for_side(
+            "map",
+            7,
+            RuntimeSide::Client,
+            Some(crate::modding::client::ClientBuckets {
+                world: Some(dir.join("world")),
+                pack: dir.join("pack"),
+            }),
+        )
+    };
+    assert_eq!(
+        handle_host_call(
+            &mut reopened(&dir),
+            HostCall::from(calls::ClientStorageGetMany {
+                scope: World,
+                keys: vec!["map:project".into()],
+            }),
+        ),
+        holds(None),
+        "the presentation's world write never landed"
+    );
+}
+
+/// A client's `Raycast` is the sim's ray cast against the REPLICA: the
+/// switchboard sends a client instance's block-domain ray to the client
+/// handler, and it is validated the same way.
+#[test]
+fn a_client_raycast_answers_from_the_replica() {
+    let scratch = TestScratchDir::new("client-calls-raycast");
+    let mut data = client_data(&scratch);
+    let mut world = crate::world::ReplicaWorld::new(0, 0);
+    let sp = petramond_world::chunk::SectionPos::new(0, 4, 0);
+    world.insert_section_for_test(sp, petramond_world::section::Section::new(0, 4, 0));
+    assert!(world.set_block_world(3, 64, 5, petramond_world::block::Block::Stone));
+    let ray = |max| {
+        HostCall::from(calls::Raycast {
+            from: [3.5, 64.5, 0.5],
+            dir: [0.0, 0.0, 1.0],
+            max,
+            filter: mod_api::RayFilter::Collidable,
+        })
+    };
+    let hit = super::client_scope::enter(&world, || handle_host_call(&mut data, ray(16.0)));
+    let HostRet::Raycast(Some(hit)) = hit else {
+        panic!("a hit on the replica's stone, got {hit:?}");
+    };
+    assert_eq!(hit.block, [3, 64, 5]);
+    assert!(matches!(
+        super::client_scope::enter(&world, || handle_host_call(&mut data, ray(65.0))),
+        HostRet::Err(_)
+    ));
+}
+
+/// A media open is checked against the machine's own answer, never against a
+/// size of the engine's: a file only a mod's pushes feed opens at any size.
+/// A second writer of the same path is refused, and a wrong-sized push is
+/// the mod's bug.
+#[test]
+fn a_push_only_media_file_of_any_size_opens_and_its_path_is_its_own() {
+    use mod_api::ClientStorageScope::Pack;
+    let scratch = TestScratchDir::new("client-calls-media-open");
+    let mut data = client_data(&scratch);
+    let open = |size: u32| {
+        HostCall::from(calls::ClientMediaOpen {
+            scope: Pack,
+            path: "videos/huge.mkv".into(),
+            container: "matroska".into(),
+            video: Some(mod_api::ClientMediaVideo {
+                codec: "ffv1".into(),
+                width: size,
+                height: size,
+                fps: [1, 1],
+                options: Vec::new(),
+            }),
+            audio: None,
+            options: Vec::new(),
+        })
+    };
+    assert!(
+        matches!(
+            handle_host_call(&mut data, open(8)),
+            HostRet::Err(mod_api::HostError {
+                code: mod_api::ErrorCode::Refused,
+                ..
+            })
+        ),
+        "nothing opens before the machine was asked"
+    );
+    data.client
+        .as_ref()
+        .unwrap()
+        .media
+        .publish_encoders(mod_api::ClientMediaCapabilities {
+            encoder: Some("ffmpeg".into()),
+            containers: vec!["matroska".into()],
+            video_codecs: vec!["ffv1".into()],
+            audio_codecs: Vec::new(),
+        });
+    let HostRet::Ticket(media) = handle_host_call(&mut data, open(100_000)) else {
+        panic!("a push-only file was refused for its size");
+    };
+    assert!(
+        matches!(
+            handle_host_call(&mut data, open(8)),
+            HostRet::Err(mod_api::HostError {
+                code: mod_api::ErrorCode::Refused,
+                ..
+            })
+        ),
+        "the path is being written"
+    );
+    assert!(matches!(
+        handle_host_call(
+            &mut data,
+            HostCall::from(calls::ClientMediaPushFrame {
+                media,
+                rgba: vec![0; 4],
+            })
+        ),
+        HostRet::Err(_)
+    ));
+    assert_eq!(
+        handle_host_call(&mut data, HostCall::from(calls::ClientMediaAbort { media })),
+        HostRet::Unit
+    );
+    let HostRet::ClientMediaState(Some(state)) =
+        handle_host_call(&mut data, HostCall::from(calls::ClientMediaState { media }))
+    else {
+        panic!("the file's state is gone");
+    };
+    assert_eq!(state.failure, Some(mod_api::ClientMediaFailure::Aborted));
+    assert!(
+        matches!(handle_host_call(&mut data, open(8)), HostRet::Ticket(_)),
+        "an aborted file lets go of its path"
+    );
 }

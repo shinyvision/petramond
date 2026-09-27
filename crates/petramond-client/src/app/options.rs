@@ -130,36 +130,68 @@ impl App {
         }
     }
 
-    /// Dispatch a mod-registered bound action to its owning client mod, with
-    /// the same gating the legacy physical-key path had: presses only reach
-    /// mods in gameplay/client-GUI contexts and never over a focused text
-    /// input; releases always land so the mod's edge filter can't latch.
+    /// Dispatch a mod-registered bound action to its owning client mod. A
+    /// press never reaches a mod over a focused text input, and otherwise
+    /// only where the action fires (its registered contexts, against the
+    /// screen); a release always lands so the mod's edge filter can't latch.
     fn dispatch_mod_action(&mut self, id: &str, pressed: bool) {
-        if !super::client_mod_ui::client_key_dispatch_permitted(
-            pressed,
-            self.screen,
-            self.ui.text_input_focused(),
-        ) {
+        if pressed && self.ui.text_input_focused() {
             return;
         }
+        let screen = match self.screen {
+            AppScreen::ClientModGui(kind) => petramond_world::gui_state::kind_key(kind),
+            _ => None,
+        };
+        let canvas = self.client_canvas_key().map(str::to_owned);
+        let at = petramond::modding::client::keys::KeyContext {
+            gameplay: self.screen.gameplay_enabled(),
+            screen: screen.or(canvas.as_deref()),
+        };
         if let Some(session) = self.session.as_mut() {
-            session.game.client_mod_action(id, pressed);
+            session.game.client_mod_action(id, pressed, at);
+        } else if let Some(runtime) = self.shell_mods_mut() {
+            runtime.action(None, id, pressed, at);
         }
         self.apply_client_mod_commands();
     }
 
-    /// Rebuild the remappable-action table for the current session: engine
-    /// actions plus whatever the loaded client mods registered. Held bindings
-    /// release first — an action must not stay down across the swap.
+    /// Rebuild the remappable-action table for the current client mods (the
+    /// session's, or the shell's): engine actions plus whatever they
+    /// registered. Held bindings release first — an action must not stay
+    /// down across the swap.
     pub(super) fn rebuild_action_table(&mut self) {
         self.release_input_bindings();
         let mut table = petramond_input::controls::ActionTable::engine();
-        if let Some(session) = self.session.as_ref() {
-            for (id, label, category, default) in session.game.client_bindable_actions() {
-                table.push_registered_action(id, label, category, default);
+        if let Some(runtime) = self.client_mods_now() {
+            for action in runtime.key_actions() {
+                table.push_registered_action(
+                    action.full_id.clone(),
+                    action.label.clone(),
+                    action.category.clone(),
+                    action.default,
+                );
             }
         }
         self.controls.action_table = table;
+        self.publish_key_labels();
+    }
+
+    /// Tell the client mods what each of their actions is bound to now, as
+    /// the controls screen prints it.
+    pub(super) fn publish_key_labels(&mut self) {
+        let table = &self.controls.action_table;
+        let labels = table
+            .rows()
+            .iter()
+            .filter(|row| row.id.contains(':'))
+            .map(|row| {
+                let binding = table.effective(&self.options.settings.bindings, row);
+                (row.id.clone(), binding.label())
+            })
+            .collect();
+        if let Some(runtime) = self.client_mods_now() {
+            runtime.presented().lock().key_labels = labels;
+        }
     }
 
     // --- Remap capture (Options → Controls) ---
@@ -195,7 +227,7 @@ impl App {
             } else if self.options.armed_mod() == Some(code) {
                 // Tap-released with nothing else captured: bind the bare
                 // modifier (any OTHER still-held modifiers chord it).
-                self.options.finish_remap(
+                self.finish_remap(
                     &action,
                     Binding {
                         mods: BindMods::from_modifiers(self.controls.modifiers),
@@ -206,7 +238,7 @@ impl App {
             return true;
         }
         if down {
-            self.options.finish_remap(
+            self.finish_remap(
                 &action,
                 Binding {
                     mods: BindMods::from_modifiers(self.controls.modifiers),
@@ -236,7 +268,7 @@ impl App {
             // remap and arms that one; Back cancels and leaves.
             return false;
         }
-        self.options.finish_remap(
+        self.finish_remap(
             &action,
             Binding {
                 mods: BindMods::from_modifiers(self.controls.modifiers),
@@ -260,7 +292,7 @@ impl App {
         } else {
             ScrollDir::Up
         };
-        self.options.finish_remap(
+        self.finish_remap(
             &action,
             Binding {
                 mods: BindMods::from_modifiers(self.controls.modifiers),
@@ -280,6 +312,13 @@ impl App {
                 && y >= rect.y as f32
                 && y < (rect.y + rect.h) as f32
         })
+    }
+
+    /// Bind the armed action, and tell the client mods what it is bound to
+    /// now.
+    fn finish_remap(&mut self, action_id: &str, binding: Binding) {
+        self.options.finish_remap(action_id, binding);
+        self.publish_key_labels();
     }
 
     // --- Apply: the side effects an option has outside `OptionsState` ---

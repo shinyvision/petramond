@@ -3,13 +3,10 @@
 //! latching. Nothing else in the client touches the handle — gameplay code
 //! queues messages here and the frame driver flushes them.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use petramond::net::handle::ServerHandle;
 use petramond::net::protocol::{ClientToServer, ServerToClient};
-
-/// How often the replica's presentation backlog is reported to the server.
-const BACKLOG_REPORT_INTERVAL: Duration = Duration::from_millis(100);
 
 pub(super) struct NetLink {
     /// The handle to the SIMULATION — `ServerGame` on its own self-clocked
@@ -42,8 +39,6 @@ pub(super) struct NetLink {
     /// `StreamBatchAck` reports so the server sizes future batches to this
     /// client's real throughput.
     stream_rate_ema: Option<f32>,
-    /// When the replica's presentation backlog was last reported.
-    backlog_reported_at: Option<Instant>,
 }
 
 impl NetLink {
@@ -58,7 +53,6 @@ impl NetLink {
             connection_lost_reported: false,
             stream_batch_started: None,
             stream_rate_ema: None,
-            backlog_reported_at: None,
         }
     }
 
@@ -127,6 +121,12 @@ impl NetLink {
         msgs
     }
 
+    /// Queue `msg` ahead of the next drain as though the server had sent it:
+    /// what a presentation releases enters through the one pump.
+    pub(super) fn inject(&mut self, msg: ServerToClient) {
+        self.incoming.push(msg);
+    }
+
     /// Return a drained (now empty) message buffer for reuse.
     pub(super) fn recycle(&mut self, msgs: Vec<ServerToClient>) {
         debug_assert!(msgs.is_empty(), "recycled buffers are drained");
@@ -156,26 +156,6 @@ impl NetLink {
         self.send_now(ClientToServer::StreamBatchAck {
             messages_per_second: rate,
         });
-    }
-
-    /// Report the replica's presentation backlog, at most every
-    /// [`BACKLOG_REPORT_INTERVAL`]; `backlog` is only evaluated when a report
-    /// is due.
-    pub(super) fn report_terrain_backlog(&mut self, backlog: impl FnOnce() -> (u32, u32)) {
-        if self
-            .backlog_reported_at
-            .is_some_and(|at| at.elapsed() < BACKLOG_REPORT_INTERVAL)
-        {
-            return;
-        }
-        let (mesh_sections, upload_columns) = backlog();
-        let msg = ClientToServer::TerrainBacklog {
-            mesh_sections,
-            upload_columns,
-        };
-        if self.handle.send(msg).is_ok() {
-            self.backlog_reported_at = Some(Instant::now());
-        }
     }
 
     /// Latch the server as unreachable (crashed thread / closed channel /
@@ -285,21 +265,5 @@ mod tests {
             }
             _ => panic!("expected a StreamBatchAck"),
         }
-    }
-
-    #[test]
-    fn backlog_reports_are_throttled() {
-        let (handle, server) = ServerHandle::loopback();
-        let mut link = NetLink::new(handle, false);
-        link.report_terrain_backlog(|| (1, 2));
-        link.report_terrain_backlog(|| panic!("not due yet"));
-        assert!(matches!(
-            server.inbox.try_recv(),
-            Ok(ClientToServer::TerrainBacklog {
-                mesh_sections: 1,
-                upload_columns: 2
-            })
-        ));
-        assert!(server.inbox.try_recv().is_err());
     }
 }

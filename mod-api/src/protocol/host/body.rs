@@ -192,7 +192,7 @@ host_domain! {
         AnimationClip {
             rig: String,
             clip: String,
-        } => legal(SERVER_CLIENT, Any, Read),
+        } => legal(Sides::SERVER_CLIENT.union(Sides::SHELL), Any, Read),
         /// The session the running dispatch acts for, or `None` for an
         /// actor-less dispatch (see "Player addressing" on [`HostCall`](crate::HostCall)).
         /// → [`HostRet::ActingPlayer`](crate::HostRet::ActingPlayer).

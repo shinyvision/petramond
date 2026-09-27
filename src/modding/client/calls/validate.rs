@@ -1,7 +1,14 @@
-pub(super) fn client_canvas_element_image_key(element: &mod_api::ClientCanvasElement) -> &str {
+/// The image a canvas element draws, when it draws one at all: the geometry
+/// and glyph primitives name no image.
+pub(super) fn client_canvas_element_image_key(
+    element: &mod_api::ClientCanvasElement,
+) -> Option<&str> {
     match element {
         mod_api::ClientCanvasElement::Image { image_key, .. }
-        | mod_api::ClientCanvasElement::Sprite { image_key, .. } => image_key,
+        | mod_api::ClientCanvasElement::Sprite { image_key, .. } => Some(image_key),
+        mod_api::ClientCanvasElement::Rect { .. } | mod_api::ClientCanvasElement::Text { .. } => {
+            None
+        }
     }
 }
 
@@ -13,6 +20,13 @@ pub(super) fn client_canvas_element_valid(element: &mod_api::ClientCanvasElement
         mod_api::ClientCanvasElement::Sprite { center, .. } => {
             center[0].is_finite() && center[1].is_finite()
         }
+        mod_api::ClientCanvasElement::Rect { rect, .. } => {
+            rect.iter().all(|value| value.is_finite()) && rect[2] > 0.0 && rect[3] > 0.0
+        }
+        mod_api::ClientCanvasElement::Text { pos, text, .. } => {
+            pos.iter().all(|value| value.is_finite())
+                && text.len() <= mod_api::CLIENT_CANVAS_TEXT_MAX
+        }
     }
 }
 
@@ -22,30 +36,15 @@ pub(super) const CLIENT_BLOCKS_QUERY_MAX: usize = 512;
 pub(super) const CLIENT_IMAGE_SIDE_MAX: u16 = 640;
 pub(super) const CLIENT_OVERLAY_MAX: usize = 16;
 pub(super) const CLIENT_OVERLAY_DISPLAY_SIDE_MAX: u16 = 2048;
-pub(super) const CLIENT_KEY_BINDING_MAX: usize = 32;
-pub(super) const CLIENT_UI_STATE_MAX: usize = 1024;
 pub(super) const CLIENT_UI_STRING_MAX: usize = 16 << 10;
-pub(super) const CLIENT_IMAGE_MAX: usize = 64;
 pub(super) const CLIENT_TEXT_RUN_MAX: usize = 256;
 pub(super) const CLIENT_TEXT_BYTES_MAX: usize = 16 << 10;
 pub(super) const CLIENT_TEXT_SCALE_MAX: u8 = 8;
 pub(super) const CLIENT_COMMAND_MAX: usize = 64;
 pub(super) const CLIENT_CANVAS_SIDE_MAX: u16 = 2048;
 pub(super) const CLIENT_CANVAS_MAX: usize = 8;
-pub(super) const CLIENT_CANVAS_ELEMENT_MAX: usize = 64;
-/// Named shader params one `ClientEnvParams` call may read (the GPU slot
-/// budget — no shader can consume more anyway).
-pub(super) const CLIENT_ENV_PARAM_MAX: usize = 16;
 /// Largest per-axis ambient wind magnitude, blocks/s.
 pub(super) const CLIENT_AMBIENT_WIND_MAX: f32 = 64.0;
-
-pub(super) fn valid_client_key(key: &str) -> bool {
-    key.strip_prefix("key_")
-        .is_some_and(|tail| tail.len() == 1 && tail.as_bytes()[0].is_ascii_lowercase())
-        || key
-            .strip_prefix("digit_")
-            .is_some_and(|tail| tail.len() == 1 && tail.as_bytes()[0].is_ascii_digit())
-}
 
 /// A bare (un-namespaced) action id: lowercase snake_case, persisted in the
 /// player's client.json as `mod_id:id` — so it must be stable and file-safe.
@@ -59,12 +58,7 @@ pub(super) fn valid_client_key_id(id: &str) -> bool {
 
 pub(super) fn gui_value_fits(value: &mod_api::GuiValue) -> bool {
     let mut pending = vec![value];
-    let mut entries = 0;
     while let Some(value) = pending.pop() {
-        entries += 1;
-        if entries > CLIENT_UI_STATE_MAX {
-            return false;
-        }
         match value {
             mod_api::GuiValue::Str(s) if s.len() > CLIENT_UI_STRING_MAX => return false,
             mod_api::GuiValue::List(rows) => {
@@ -96,11 +90,5 @@ mod gui_tests {
         assert!(!gui_value_fits(&list(mod_api::GuiValue::Str(
             "x".repeat(CLIENT_UI_STRING_MAX + 1)
         ))));
-        assert!(!gui_value_fits(&mod_api::GuiValue::List(vec![
-                [("value".into(), mod_api::GuiValue::I32(1))]
-                    .into_iter()
-                    .collect();
-                CLIENT_UI_STATE_MAX
-            ])));
     }
 }

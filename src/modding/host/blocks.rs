@@ -292,38 +292,10 @@ pub(super) fn handle_block_call(mod_id: &str, call: BlockCall) -> HostRet {
             dir,
             max,
             filter,
-        } => {
-            let from = match super::guards::finite_pos(from, "Raycast.from") {
-                Ok(v) => v,
-                Err(e) => return e,
-            };
-            let dir = match finite3(dir, "Raycast.dir") {
-                Ok(v) if v.length_squared() > f32::EPSILON => v.normalize(),
-                Ok(_) => return HostRet::invalid("Raycast: zero direction".into()),
-                Err(e) => return e,
-            };
-            if !max.is_finite() || max <= 0.0 || max > mod_api::RAYCAST_MAX_DISTANCE {
-                return HostRet::invalid(format!(
-                    "Raycast: max must be finite and in (0, {}]",
-                    mod_api::RAYCAST_MAX_DISTANCE
-                ));
-            }
-            let filter = match filter {
-                mod_api::RayFilter::Selectable => crate::player::RayFilter::Selectable,
-                mod_api::RayFilter::Collidable => crate::player::RayFilter::Collidable,
-            };
-            sim_read(move |ctx| {
-                HostRet::Raycast(
-                    raycast::filtered(from, dir, max, filter, ctx.world.data()).map(
-                        |(hit, distance)| mod_api::RaycastHitData {
-                            block: hit.block.to_array(),
-                            face: hit.normal.to_array(),
-                            distance,
-                        },
-                    ),
-                )
-            })
-        }
+        } => match RaycastQuery::new(from, dir, max, filter) {
+            Ok(query) => sim_read(move |ctx| query.against(ctx.world.data())),
+            Err(refused) => refused,
+        },
         BlockCall::FindBlocks { min, max, blocks } => {
             if let Some(err) = batch_guard("FindBlocks block", blocks.len()) {
                 return err;
@@ -464,6 +436,58 @@ pub(super) fn handle_block_call(mod_id: &str, call: BlockCall) -> HostRet {
                 }
             }))
         }),
+    }
+}
+
+/// A validated `Raycast` — the one ray a mod may cast, against the world it
+/// is asked of: the simulation's, or on a client instance the replica.
+pub(in crate::modding) struct RaycastQuery {
+    from: petramond_math::world_pos::WorldPos,
+    dir: glam::Vec3,
+    max: f32,
+    filter: crate::player::RayFilter,
+}
+
+impl RaycastQuery {
+    pub(in crate::modding) fn new(
+        from: [f64; 3],
+        dir: [f32; 3],
+        max: f32,
+        filter: mod_api::RayFilter,
+    ) -> Result<Self, HostRet> {
+        let from = super::guards::finite_pos(from, "Raycast.from")?;
+        let dir = match finite3(dir, "Raycast.dir")? {
+            v if v.length_squared() > f32::EPSILON => v.normalize(),
+            _ => return Err(HostRet::invalid("Raycast: zero direction".into())),
+        };
+        if !max.is_finite() || max <= 0.0 || max > mod_api::RAYCAST_MAX_DISTANCE {
+            return Err(HostRet::invalid(format!(
+                "Raycast: max must be finite and in (0, {}]",
+                mod_api::RAYCAST_MAX_DISTANCE
+            )));
+        }
+        let filter = match filter {
+            mod_api::RayFilter::Selectable => crate::player::RayFilter::Selectable,
+            mod_api::RayFilter::Collidable => crate::player::RayFilter::Collidable,
+        };
+        Ok(Self {
+            from,
+            dir,
+            max,
+            filter,
+        })
+    }
+
+    pub(in crate::modding) fn against(&self, world: &petramond_world::world::WorldData) -> HostRet {
+        HostRet::Raycast(
+            raycast::filtered(self.from, self.dir, self.max, self.filter, world).map(
+                |(hit, distance)| mod_api::RaycastHitData {
+                    block: hit.block.to_array(),
+                    face: hit.normal.to_array(),
+                    distance,
+                },
+            ),
+        )
     }
 }
 

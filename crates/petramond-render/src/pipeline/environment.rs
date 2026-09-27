@@ -375,7 +375,10 @@ pub(super) fn create_environment_pipelines(
     passes
 }
 
-fn scene_depth_source(multisampled: bool, binding: u32) -> String {
+/// WGSL declaring the scene depth as group 0's `full_depth` at `binding`, for
+/// the scene's sample count, and `scene_depth_max(p)`: the farthest of its
+/// samples at texel `p`.
+pub(crate) fn scene_depth_source(multisampled: bool, binding: u32) -> String {
     let ty = if multisampled {
         "texture_depth_multisampled_2d"
     } else {

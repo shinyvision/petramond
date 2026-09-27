@@ -50,7 +50,7 @@ impl TestWorld {
         debug_assert_eq!((pos.cx, pos.cz), (chunk.cx, chunk.cz));
         let (column, sections) = crate::column_split::split_generated_column(&chunk);
         self.data.ensure_column(pos);
-        self.data.columns.insert(pos, column);
+        self.data.columns.insert(pos, Arc::new(column));
         let mut sums = vec![SectionSummary::Empty; (SECTION_MAX_CY - SECTION_MIN_CY + 1) as usize]
             .into_boxed_slice();
         for (cy, section) in sections {

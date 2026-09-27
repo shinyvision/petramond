@@ -1,6 +1,6 @@
 use super::*;
 use crate::state::{UiMap, UiState, UiValue};
-use crate::tree::InstTree;
+use crate::tree::{InstKey, InstTree};
 use std::sync::Arc;
 
 fn doc() -> Document {
@@ -62,13 +62,20 @@ fn reexpand(
 ) -> (Vec<String>, Vec<String>, usize) {
     let doc = doc();
     let shape = DocShape::of(&doc);
-    let first = InstTree::expand_with(&doc, &shape, state, false, hover.0, None);
+    let key = |id: Option<&str>| {
+        id.map(|id| InstKey {
+            id: id.to_owned(),
+            item: None,
+        })
+    };
+    let (before, after) = (key(hover.0), key(hover.1));
+    let first = InstTree::expand_with(&doc, &shape, state, false, before.as_ref(), None);
     let since = state.revision();
     change(state);
-    let changed = changed_deps(state, since, hover.0 != hover.1);
+    let changed = changed_deps(state, since, before != after);
     let mut prev = Prev::new(first.into_data(), &changed);
-    let reused = InstTree::expand_with(&doc, &shape, state, false, hover.1, Some(&mut prev));
-    let fresh = InstTree::expand_with(&doc, &shape, state, false, hover.1, None);
+    let reused = InstTree::expand_with(&doc, &shape, state, false, after.as_ref(), Some(&mut prev));
+    let fresh = InstTree::expand_with(&doc, &shape, state, false, after.as_ref(), None);
     (summary(&reused), summary(&fresh), prev.adopted())
 }
 

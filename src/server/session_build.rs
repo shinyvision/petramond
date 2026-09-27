@@ -72,7 +72,7 @@ pub struct LocalPlayer {
 /// builds the client bootstrap; server-side tests need only the sim.
 #[cfg(test)]
 pub fn build_server_inline(world_name: &str, new_seed: u32, render_dist: i32) -> ServerGame {
-    build_server_with_pool(
+    let mut server = build_server_with_pool(
         world_name,
         new_seed,
         render_dist,
@@ -86,7 +86,11 @@ pub fn build_server_inline(world_name: &str, new_seed: u32, render_dist: i32) ->
         }),
         Arc::new(JobPool::inline()),
     )
-    .0
+    .0;
+    // The suite never talks to the account service: a harness join offers a
+    // plain name, exactly as a private server's players do.
+    server.account_policy = crate::account::AccountPolicy::Offline;
+    server
 }
 
 /// The ONE server constructor both shapes share. `local_player` decides
@@ -130,6 +134,8 @@ pub fn build_server_with_pool(
     let fallback_world = SurfaceDensitySystem::new(seed);
     let mut accounts = PlayerRegistry::load(opened.save.as_ref().map(|(s, _)| s));
     let local = local_player.map(|LocalPlayer { key, name }| {
+        // The record is filed under the machine's identity, never the display
+        // name: signing in or out must not hand the player another character.
         let requested = crate::net::identity::coerce_player_name(&name);
         let save = opened.save.as_ref().map(|(s, _)| s);
         let claim = accounts.claim(save, key, &requested, |_| false);
@@ -222,6 +228,7 @@ pub fn build_server_with_pool(
         catalog,
         mods,
         jobs: pool.clone(),
+        account_policy: crate::account::AccountPolicy::from_env(),
     });
     server.install_core_systems();
     // Reconcile the restored record against THIS world's catalog before the

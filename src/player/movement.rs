@@ -652,7 +652,7 @@ impl Player {
         } else {
             SPECTATOR_SPEED
         };
-        self.vel = dir * speed;
+        self.vel = dir * speed * self.fly_scale();
         self.pos += self.vel * dt;
         self.on_ground = false;
         self.jumping = false;

@@ -7,6 +7,13 @@
 //! Cancellation is cooperative (a flag checked between blocking steps) plus a
 //! GENERATION guard: Cancel/Back bump the session's `gen` and drop the
 //! receiver, so an outcome from an abandoned attempt can never adopt a game.
+//!
+//! Identity is not typed here. A server that checks Petramond accounts is
+//! answered with a join ticket minted on this same worker thread (the handshake
+//! asks for the credential only after the server says which kind it wants); a
+//! server that checks none is answered with the machine's resolved player name.
+//! A refusal that means the stored sign-in is dead routes the player to the
+//! Account screen instead of repeating the error.
 
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,11 +25,12 @@ use super::shell_docs::ShellCommand;
 use super::ui_runtime::AppUi;
 use super::{App, AppScreen};
 use crate::game::Game;
+use petramond::account::{self, AccountError};
 use petramond::net::handle::ServerHandle;
 use petramond::net::handshake::{
-    client_handshake, installed_mod_ids, HandshakeError, HandshakeJoin,
+    client_handshake, installed_mod_ids, HandshakeError, HandshakeJoin, ServerOffer,
 };
-use petramond::net::protocol::ModEntry;
+use petramond::net::protocol::{JoinCredential, ModEntry};
 use petramond_render::camera::Camera;
 
 /// Per-step network deadline: the TCP connect and each handshake read.
@@ -49,6 +57,9 @@ enum ConnectOutcome {
     /// The server runs mods this client lacks (the join was refused).
     Missing(Vec<ModEntry>),
     Failed(String),
+    /// The join needs a Petramond sign-in this client does not have: the Account
+    /// screen, not another inline error.
+    SignInNeeded(String),
 }
 
 pub(super) struct ConnectSession {
@@ -60,10 +71,9 @@ pub(super) struct ConnectSession {
     cancel: Arc<AtomicBool>,
     /// The mod list of the last refused join (the ModsMissing screen's rows).
     pub(super) missing: Vec<ModEntry>,
-    /// The last ATTEMPTED address/name — re-seeded into the entry fields when
-    /// the ModsMissing screen returns here.
+    /// The last ATTEMPTED address — re-seeded into the entry field when the
+    /// ModsMissing screen returns here.
     pub(super) addr: String,
-    pub(super) name: String,
 }
 
 impl Default for ConnectSession {
@@ -75,7 +85,6 @@ impl Default for ConnectSession {
             cancel: Arc::new(AtomicBool::new(false)),
             missing: Vec::new(),
             addr: String::new(),
-            name: String::new(),
         }
     }
 }
@@ -87,6 +96,8 @@ pub(super) enum ConnectEvent {
     /// The server runs mods this client lacks: the refusal's list is in
     /// [`ConnectSession::missing`].
     Missing,
+    /// The join needs a Petramond sign-in: the Account screen, showing why.
+    SignInNeeded(String),
 }
 
 impl ConnectSession {
@@ -157,26 +168,32 @@ impl ConnectSession {
                     self.rx = None;
                     self.phase = ConnectPhase::Failed { message };
                 }
+                ConnectOutcome::SignInNeeded(message) => {
+                    self.rx = None;
+                    self.phase = ConnectPhase::Editing;
+                    return Some(ConnectEvent::SignInNeeded(message));
+                }
             }
         }
     }
 
-    /// Reset for a fresh open of the Connect screen, its fields seeded from
-    /// client.json (`last_server` + the resolved player name).
+    /// Reset for a fresh open of the Connect screen, the address seeded from
+    /// client.json's `last_server`. There is no name field: an online server
+    /// names the session from the player's account, and an offline one is
+    /// offered the machine's resolved player name.
     pub(super) fn open_fresh(&mut self, ui: &mut AppUi) {
-        let settings = petramond::save::client::load();
-        let addr = settings.last_server.clone().unwrap_or_default();
-        let name = petramond::save::client::resolve_player_name(&settings);
+        let addr = petramond::save::client::load()
+            .last_server
+            .unwrap_or_default();
         *self = ConnectSession::default();
-        seed_connect_fields(ui, &addr, name);
+        seed_connect_fields(ui, &addr);
     }
 
-    /// Back from the ModsMissing screen: the refused attempt's address and
-    /// name intact.
+    /// Back from the ModsMissing screen: the refused attempt's address intact.
     pub(super) fn reopen(&mut self, ui: &mut AppUi) {
         self.phase = ConnectPhase::Editing;
-        let (addr, name) = (self.addr.clone(), self.name.clone());
-        seed_connect_fields(ui, &addr, name);
+        let addr = self.addr.clone();
+        seed_connect_fields(ui, &addr);
     }
 }
 
@@ -187,46 +204,53 @@ pub(super) fn connect_event_command(event: ConnectEvent) -> ShellCommand {
         // A refusal lists the mods this client lacks; its Back reopens the
         // connect screen with the attempt intact.
         ConnectEvent::Missing => ShellCommand::Goto(AppScreen::ModsMissing),
+        ConnectEvent::SignInNeeded(message) => ShellCommand::OpenAccount(Some(message)),
     }
 }
 
-/// Seed the connect document's entry fields and focus the address.
-fn seed_connect_fields(ui: &mut AppUi, addr: &str, name: String) {
+/// Seed the connect document's address field and focus it.
+fn seed_connect_fields(ui: &mut AppUi, addr: &str) {
     // Activate the document FIRST: switching kinds resets bound state, which
-    // would wipe the seeds below on the screen's first frame.
+    // would wipe the seed below on the screen's first frame.
     ui.ensure_active(petramond_world::gui_state::GuiKind::ConnectServer);
-    let state = ui.state_mut();
-    state.set("server_addr", petramond_ui::UiValue::Str(addr.to_owned()));
-    state.set("player_name", petramond_ui::UiValue::Str(name));
+    ui.state_mut()
+        .set("server_addr", petramond_ui::UiValue::Str(addr.to_owned()));
     // Ready to type immediately, editing from the prefill.
     ui.focus_text_input("server_addr", addr, ADDR_MAX_CHARS);
 }
 
 impl App {
-    /// Open the Connect to Server screen from the title: fields prefilled
-    /// from client.json (`last_server` + the resolved player name).
+    /// Open the Connect to Server screen from the title, the address prefilled
+    /// from client.json's `last_server`.
     pub(super) fn open_connect_server(&mut self) {
         self.shell.connect.open_fresh(&mut self.ui);
+        // The screen shows who the player will appear as; refresh the cached
+        // credential view so it is not one sign-in behind.
+        self.refresh_account_view();
         self.set_screen(AppScreen::ConnectServer);
     }
 
     /// Back from the ModsMissing screen: same screen, the refused attempt's
-    /// address and name intact.
+    /// address intact.
     pub(super) fn reopen_connect_server(&mut self) {
         self.shell.connect.reopen(&mut self.ui);
         self.set_screen(AppScreen::ConnectServer);
     }
 
-    /// The Connect button/Enter: validate the fields, persist them, and spawn
+    /// The Connect button/Enter: validate the address, remember it, and spawn
     /// the worker thread. Parse failures show inline without any thread.
     pub(super) fn begin_connect(&mut self) {
         let connect = &mut self.shell.connect;
         if connect.connecting() {
             return;
         }
-        let state = self.ui.state_mut();
-        let addr_text = state.get_str("server_addr").unwrap_or("").trim().to_owned();
-        let name = state.get_str("player_name").unwrap_or("").trim().to_owned();
+        let addr_text = self
+            .ui
+            .state_mut()
+            .get_str("server_addr")
+            .unwrap_or("")
+            .trim()
+            .to_owned();
         let (host, port) = match petramond::net::address::parse_server_address(&addr_text) {
             Ok(parts) => parts,
             Err(e) => {
@@ -236,15 +260,12 @@ impl App {
                 return;
             }
         };
-        if name.is_empty() {
-            connect.phase = ConnectPhase::Failed {
-                message: "Enter a player name".to_owned(),
-            };
-            return;
-        }
         connect.addr = addr_text.clone();
-        connect.name = name.clone();
-        persist_connect_fields(&addr_text, &name);
+        // The name an OFFLINE server is offered; an online server's session name
+        // comes out of the redeemed ticket instead.
+        let fallback_name =
+            petramond::save::client::resolve_player_name(&petramond::save::client::load());
+        remember_server(&addr_text);
         let view_distance = self.render_dist;
 
         connect.gen += 1;
@@ -270,7 +291,7 @@ impl App {
                 let outcome = run_connect(
                     &host,
                     port,
-                    &name,
+                    &fallback_name,
                     view_distance,
                     cache_claims,
                     &cancel,
@@ -313,24 +334,43 @@ impl App {
     }
 }
 
-/// Remember the attempt on disk: `last_server` prefills the next open and
-/// `player_name` becomes the sticky display name. Suppressed under test — the
-/// suite must never rewrite the developer's real client.json.
-fn persist_connect_fields(addr: &str, name: &str) {
+/// Remember the attempted address so `last_server` prefills the next open.
+/// Suppressed under test — the suite must never rewrite the developer's real
+/// client.json.
+fn remember_server(addr: &str) {
     if cfg!(test) {
         return;
     }
     let mut settings = petramond::save::client::load();
     settings.last_server = Some(addr.to_owned());
-    settings.player_name = Some(name.to_owned());
     if let Err(e) = petramond::save::client::store(&settings) {
-        log::warn!("could not persist the connect fields: {e}");
+        log::warn!("could not persist the last server address: {e}");
     }
+}
+
+/// Resolve what this server asked for. Called by the handshake AFTER the
+/// server's `HelloAck`, on the worker thread, so minting a ticket (itself a
+/// blocking call to the account service) only happens for a server that wants
+/// one.
+fn credential_for(
+    offer: &ServerOffer,
+    fallback_name: &str,
+) -> Result<JoinCredential, HandshakeError> {
+    if !offer.requires_account {
+        return Ok(JoinCredential::Name(fallback_name.to_owned()));
+    }
+    account::session::join_ticket_for(offer.server_id)
+        .map(JoinCredential::Ticket)
+        .map_err(|e| HandshakeError::Credential {
+            sign_in_required: matches!(e, AccountError::SignInRequired(_)),
+            message: e.message().to_owned(),
+        })
 }
 
 /// The whole blocking connect sequence, on the worker thread: DNS → TCP
 /// connect (each resolved address, [`CONNECT_TIMEOUT`] apiece) → read
-/// deadline → join handshake → connection threads + remote handle. The
+/// deadline → join handshake (which mints an account ticket if the server asks
+/// for one) → connection threads + remote handle. The
 /// cancel flag is honoured between blocking steps; a cancelled attempt's
 /// outcome is stale by generation anyway, so the exact drop point only
 /// affects how soon the socket closes.
@@ -395,7 +435,7 @@ fn run_connect(
     let join = match client_handshake(
         &mut stream,
         &identity,
-        name,
+        |offer| credential_for(offer, name),
         view_distance,
         &installed_mod_ids(),
         cache_claims,
@@ -403,6 +443,10 @@ fn run_connect(
         Ok(join) => join,
         // No farewell frame after a mod refusal — just drop the socket.
         Err(HandshakeError::MissingMods(mods)) => return ConnectOutcome::Missing(mods),
+        Err(HandshakeError::Credential {
+            message,
+            sign_in_required: true,
+        }) => return ConnectOutcome::SignInNeeded(message),
         Err(e) => return ConnectOutcome::Failed(e.to_string()),
     };
     if cancelled() {

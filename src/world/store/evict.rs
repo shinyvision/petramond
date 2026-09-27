@@ -19,6 +19,7 @@ impl<S: WorldSide> World<S> {
         self.forget_stream_section(pos);
         let section_removed = self.data.sections.remove(&pos).is_some();
         if section_removed {
+            self.unstamp_section(pos);
             self.note_section_unloaded(pos);
             self.data.bump_column_payload_revision(pos.chunk_pos());
         }
@@ -48,6 +49,7 @@ impl<S: WorldSide> World<S> {
         // the settled short-circuit must not hide it from the next scan.
         self.data.missing_columns_settled = false;
         let bits = self.data.section_column_cys.get(&pos).copied().unwrap_or(0);
+        self.unstamp_column(pos, bits);
         for_each_column_cy(bits, |cy| {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
             self.forget_block_draws_in_section(sp);

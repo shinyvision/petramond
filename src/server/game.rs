@@ -96,6 +96,18 @@ pub struct ServerGame {
     /// Joins whose player is being restored off the server thread (see
     /// [`crate::server::admissions`]).
     pub(in crate::server) admissions: Admissions,
+    /// Whether joining players must prove a Petramond account. Online is the
+    /// default for every server this process builds; the headless host's
+    /// `settings.json` and `PETRAMOND_ONLINE_MODE` can turn it off for a private
+    /// server, and the in-process test harness constructs servers Offline.
+    pub(in crate::server) account_policy: crate::account::AccountPolicy,
+    /// What joining clients are told this server consents to (their own
+    /// presentation packs). On unless its settings say not.
+    pub(in crate::server) client_policy: crate::net::protocol::ClientPolicy,
+    /// The opaque id this run advertises in `HelloAck`, and presents again when
+    /// it redeems a joining client's ticket. Fresh per server (see
+    /// [`crate::account::new_server_id`]).
+    pub(in crate::server) server_id: String,
     /// Player identities promoted through `op`. Persisted in the world's
     /// engine KV map; the listen server's local session is always an
     /// operator independently of this set.
@@ -136,6 +148,7 @@ pub(in crate::server) struct ServerParts {
     pub mods: crate::modding::ModHost,
     /// The shared job pool admissions restore joining players on.
     pub jobs: std::sync::Arc<crate::worker::JobPool>,
+    pub account_policy: crate::account::AccountPolicy,
 }
 
 impl ServerGame {
@@ -148,6 +161,9 @@ impl ServerGame {
             world: parts.world,
             sessions: SessionRegistry::new(parts.local),
             admissions: Admissions::new(parts.jobs),
+            account_policy: parts.account_policy,
+            client_policy: Default::default(),
+            server_id: crate::account::new_server_id(),
             operators: parts.operators,
             accounts: parts.accounts,
             catalog: parts.catalog,
@@ -196,6 +212,22 @@ impl ServerGame {
     /// joins are refused with `ServerFull`.
     pub fn set_max_players(&mut self, max_players: usize) {
         self.sessions.set_capacity(max_players);
+    }
+
+    /// Whether joining players must prove a Petramond account (a headless
+    /// server's `online_mode`).
+    pub fn set_account_policy(&mut self, policy: crate::account::AccountPolicy) {
+        self.account_policy = policy;
+    }
+
+    pub fn account_policy(&self) -> crate::account::AccountPolicy {
+        self.account_policy
+    }
+
+    /// What joining clients are told this server consents to about their own
+    /// packs.
+    pub fn set_client_policy(&mut self, policy: crate::net::protocol::ClientPolicy) {
+        self.client_policy = policy;
     }
 
     /// How far from the nearest player mobs simulate (a headless server's

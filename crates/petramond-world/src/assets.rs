@@ -9,16 +9,13 @@
 //!
 //! # Mod packs
 //!
-//! A pack is a directory under a `mods/` root containing a `pack.json`
-//! manifest. Roots, in priority order (first root providing a pack directory
-//! NAME wins for that pack):
-//!
-//! 1. the `PETRAMOND_MODS` env override — REPLACES every other root
-//!    (tests / explicit launches mean exactly that mod set),
-//! 2. `mods/` under the working directory (the dev tree),
-//! 3. `<OS data dir>/petramond/mods` (e.g. `~/.local/share/petramond/mods`)
-//!    — where players install packs without touching the install,
-//! 4. `mods/` alongside the executable (packs shipped with the game).
+//! A pack is a visible directory under a `mods/` root containing a
+//! `pack.json` manifest. Roots ([`PackRoots`]): the `PETRAMOND_MODS`
+//! override REPLACES every other root and counts as shipped; otherwise the
+//! workspace `mods/` (only in a checkout) and `mods/` beside the executable
+//! are SHIPPED, and `<OS data dir>/petramond/mods` is the one INSTALLED root.
+//! A shipped pack wins every directory-name or id collision with an installed
+//! one; among installed packs the directory-order rule settles duplicates.
 //!
 //! The manifest:
 //!
@@ -30,6 +27,7 @@
 //!   "description": "...",
 //!   "wasm": "mod.wasm",
 //!   "client_wasm": "client.wasm",
+//!   "launch": { "label": "My Tool", "icon": "launch.png" },
 //!   "dependencies": ["othermod"],
 //!   "after": ["thirdmod"]
 //! }
@@ -99,7 +97,10 @@ use serde_json::{Map, Value};
 
 mod discover;
 
-pub use discover::PackRefusal;
+pub use discover::{
+    admit_pack_dir, discovery_started, installed_root_active, shipped_pack_ids, PackHeader,
+    PackOrigin, PackRefusal,
+};
 
 /// Where content is searched for: base asset roots and `mods/` roots, each in
 /// priority order (first wins). [`PackRoots::from_env`] is the ONE place the
@@ -111,27 +112,35 @@ pub use discover::PackRefusal;
 pub struct PackRoots {
     /// Base asset directories, highest priority first.
     pub assets: Vec<PathBuf>,
-    /// `mods/` directories searched for packs, highest priority first.
+    /// SHIPPED `mods/` directories searched for packs, highest priority
+    /// first. Their packs are content packs: never written by the game.
     pub mods: Vec<PathBuf>,
+    /// The one INSTALLED `mods/` root, when this discovery reads one. Its
+    /// packs may never shadow a shipped pack's directory name or id.
+    pub installed: Option<PathBuf>,
 }
 
 impl PackRoots {
     /// The launch environment's roots (see the module docs): the
     /// `PETRAMOND_ASSETS` / `PETRAMOND_MODS` overrides, the working
-    /// directory, the user's data dir and the executable's directory.
+    /// directory's assets, the workspace checkout, the executable's
+    /// directory and the user's installed-packs dir.
     pub fn from_env() -> PackRoots {
+        let (mods, installed) = env_mod_roots();
         PackRoots {
             assets: env_asset_roots(),
-            mods: env_mod_roots(),
+            mods,
+            installed,
         }
     }
 
-    /// The environment's base asset roots with EXACTLY `mods` as the pack
-    /// roots — a fixture pack set staged by a test, or an explicit launch.
+    /// The environment's base asset roots with EXACTLY `mods` as the (shipped)
+    /// pack roots — a fixture pack set staged by a test, or an explicit launch.
     pub fn with_mods(mods: impl IntoIterator<Item = PathBuf>) -> PackRoots {
         PackRoots {
             assets: env_asset_roots(),
             mods: mods.into_iter().collect(),
+            installed: None,
         }
     }
 }
@@ -156,27 +165,30 @@ fn env_asset_roots() -> Vec<PathBuf> {
     roots
 }
 
-/// `mods/` directories searched for packs, in priority order (see the module
-/// docs): dev tree, then the user's OS data dir, then alongside the
-/// executable. Unlike the additive base roots, the `PETRAMOND_MODS` override
-/// REPLACES the default roots: pointing the game at a mods dir must mean
-/// exactly that mod set, not "that plus whatever the working directory
-/// carries".
-fn env_mod_roots() -> Vec<PathBuf> {
+/// The shipped `mods/` roots in priority order, and the installed root (see
+/// the module docs). Unlike the additive base roots, the `PETRAMOND_MODS`
+/// override REPLACES the default roots and counts as shipped: pointing the
+/// game at a mods dir must mean exactly that mod set, not "that plus whatever
+/// the working directory carries" — so under it the installed root is not
+/// read. The working directory's `mods/` is never a root.
+fn env_mod_roots() -> (Vec<PathBuf>, Option<PathBuf>) {
     if let Ok(dir) = std::env::var("PETRAMOND_MODS") {
-        return vec![PathBuf::from(dir)];
+        return (vec![PathBuf::from(dir)], None);
     }
-    let mut roots = vec![PathBuf::from("mods")];
+    let mut shipped = Vec::new();
     // The workspace checkout's mods, compile-time-resolved like the asset
-    // roots' entry (dev/test binaries of sibling workspace crates).
-    roots.push(workspace_root().join("mods"));
-    roots.push(petramond_util::paths::base_data_dir().join("mods"));
+    // roots' entry (dev/test binaries of sibling workspace crates) — only
+    // while that checkout still exists.
+    let workspace = workspace_root();
+    if workspace.join("Cargo.toml").is_file() {
+        shipped.push(workspace.join("mods"));
+    }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            roots.push(dir.join("mods"));
+            shipped.push(dir.join("mods"));
         }
     }
-    roots
+    (shipped, Some(petramond_util::paths::installed_mods_dir()))
 }
 
 /// The workspace root, from this crate's compiled-in manifest dir. Dev builds
@@ -190,23 +202,14 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// A discovered, validated mod pack in load order.
+/// A discovered, validated mod pack in load order. Its display and
+/// dependency data are its [`PackHeader`] (read through `Deref`).
 #[derive(Clone)]
 pub struct Pack {
     pub dir: PathBuf,
-    /// The pack's display name (`pack.json` `name` — the only required field).
-    pub name: String,
-    /// The pack's namespace id (`None` = content-only point-file override pack).
-    pub id: Option<String>,
-    /// The pack's declared version string, for the save's mod-set record
-    /// (`mods.json` — see `modding::modset`).
-    pub version: Option<String>,
-    /// Human-readable description from `pack.json`, used by shell presentation.
-    pub description: String,
-    /// Short row copy for compact shell lists. Falls back to `description`.
-    pub summary: Option<String>,
-    /// Absolute path of the pack's icon PNG (for mod lists), when it ships one.
-    pub icon: Option<PathBuf>,
+    pub header: PackHeader,
+    /// The root it was found in.
+    pub origin: PackOrigin,
     /// Absolute path of the pack's compiled logic, when it ships one.
     pub wasm: Option<PathBuf>,
     /// Optional presentation-only client module. It runs in a separate
@@ -216,7 +219,31 @@ pub struct Pack {
     /// installed, by target name. Ones naming an absent pack are dropped at
     /// discovery with a logged note.
     pub integrations: Vec<Integration>,
+    /// The pack's entry on the title screen, when it declares one that
+    /// discovery admits.
+    pub launch: Option<LaunchEntry>,
 }
+
+impl std::ops::Deref for Pack {
+    type Target = PackHeader;
+    fn deref(&self) -> &PackHeader {
+        &self.header
+    }
+}
+
+/// A title-screen launch entry (`pack.json` `launch`): an icon button that
+/// starts the pack's `client_wasm` with no world behind it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LaunchEntry {
+    /// What the button's tooltip says.
+    pub label: String,
+    /// Absolute path of the button's icon PNG.
+    pub icon: PathBuf,
+}
+
+/// The longest launch label, in bytes: the tooltip ellipsizes anything that
+/// outgrows its panel, but a label this long is a pack writing a paragraph.
+pub const LAUNCH_LABEL_MAX: usize = 48;
 
 /// One `integrations/<target>/` directory of a pack (see the module docs).
 #[derive(Clone)]
@@ -261,8 +288,6 @@ pub struct Layer {
 pub struct PackSet {
     base_roots: Arc<[PathBuf]>,
     installed: Arc<[Pack]>,
-    /// `installed[i]`'s declared hard dependencies (mod ids).
-    dependencies: Arc<[Vec<String>]>,
     refused: Arc<[PackRefusal]>,
     layers: Vec<Layer>,
     enabled: Vec<Pack>,
@@ -281,7 +306,6 @@ impl PackSet {
     fn assemble(
         base_roots: Vec<PathBuf>,
         installed: Vec<Pack>,
-        dependencies: Vec<Vec<String>>,
         refused: Vec<PackRefusal>,
     ) -> PackSet {
         let layers = layers_of(&installed);
@@ -290,7 +314,6 @@ impl PackSet {
             enabled: installed.clone(),
             catalog_layers: layers.clone(),
             installed: installed.into(),
-            dependencies: dependencies.into(),
             refused: refused.into(),
             layers,
             disabled: BTreeSet::new(),
@@ -305,12 +328,12 @@ impl PackSet {
         let mut off = disabled.clone();
         loop {
             let before = off.len();
-            for (pack, deps) in self.installed.iter().zip(self.dependencies.iter()) {
+            for pack in self.installed.iter() {
                 let Some(id) = &pack.id else { continue };
                 if off.contains(id) {
                     continue;
                 }
-                if let Some(dep) = deps.iter().find(|d| off.contains(*d)) {
+                if let Some(dep) = pack.dependencies.iter().find(|d| off.contains(*d)) {
                     log::info!(
                         "mod pack '{}' disabled for this world: it depends on '{dep}'",
                         pack.name
@@ -331,7 +354,6 @@ impl PackSet {
         PackSet {
             base_roots: self.base_roots.clone(),
             installed: self.installed.clone(),
-            dependencies: self.dependencies.clone(),
             refused: self.refused.clone(),
             layers: self.layers.clone(),
             catalog_layers: layers_of(&enabled),
@@ -521,6 +543,11 @@ pub struct CatalogLayer {
 /// Every installed pack of the current registry, in load order.
 pub fn packs() -> &'static [Pack] {
     crate::content::current().packs().installed()
+}
+
+/// The packs the current registry's discovery refused, with why.
+pub fn refused() -> &'static [PackRefusal] {
+    crate::content::current().packs().refused()
 }
 
 /// The current registry's asset overlays ([`PackSet::layers`]).

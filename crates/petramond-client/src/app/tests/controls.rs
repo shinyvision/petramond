@@ -890,6 +890,53 @@ fn mod_bound_key_dispatches_to_the_client_mod() {
     );
 }
 
+/// A key action fires only where it was registered to: the minimap's M
+/// (gameplay AND its own map canvas) closes the map it opened, while N
+/// (gameplay only) does nothing over the map. And what a mod reads back as
+/// the action's label is the player's CURRENT binding.
+#[test]
+fn mod_key_actions_fire_only_in_their_contexts_and_report_their_binding() {
+    use petramond_input::controls::Binding;
+    use petramond_input::keycode::KeyCode;
+    let mut app = app();
+    app.update_frame((1280, 720));
+    let press = |app: &mut crate::app::App, key| {
+        app.handle_raw_key(key, true);
+        let _ = app.handle_raw_key(key, false);
+        app.update_frame((1280, 720));
+    };
+    press(&mut app, KeyCode::KeyM);
+    assert!(app.screen.client_canvas_open());
+    press(&mut app, KeyCode::KeyN);
+    assert!(
+        app.screen.client_canvas_open(),
+        "a gameplay-only action never fires over a screen, got {:?}",
+        app.screen
+    );
+    press(&mut app, KeyCode::KeyM);
+    assert!(
+        !app.screen.client_canvas_open(),
+        "M is registered for the map canvas too, so it closes it"
+    );
+
+    let label = |app: &crate::app::App| {
+        app.client_mods_now()
+            .unwrap()
+            .presented()
+            .lock()
+            .key_labels
+            .get("minimap:open_map")
+            .cloned()
+    };
+    assert_eq!(label(&app).as_deref(), Some("M"));
+    app.options
+        .settings
+        .bindings
+        .set_id("minimap:open_map", Binding::key(KeyCode::F9));
+    app.publish_key_labels();
+    assert_eq!(label(&app).as_deref(), Some("F9"));
+}
+
 /// Wheel travel over an open client canvas routes to the owning mod
 /// (coalesced per frame) instead of the gameplay scroll bindings: the bundled
 /// minimap zooms around the cursor, which re-anchors its retained scene view.

@@ -366,6 +366,33 @@
                                   }
                                 },
                                 {
+                                  "id": "addon_badge",
+                                  "type": "frame",
+                                  "layout": {
+                                    "w": 12,
+                                    "h": 12,
+                                    "pad": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "margin": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "gap": 0,
+                                    "dir": "column",
+                                    "justify": "start"
+                                  },
+                                  "style": "icon.sheep_head",
+                                  "bind": {
+                                    "visible": "is_addon"
+                                  }
+                                },
+                                {
                                   "type": "badge",
                                   "bind": {
                                     "text": "version",
@@ -525,6 +552,48 @@
               ]
             }
           ]
+        },
+        {
+          "id": "addon_badge_tooltip",
+          "type": "tooltip",
+          "hover": "addon_badge",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              3,
+              2,
+              3,
+              3
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start",
+            "max_w": 200,
+            "abs": {
+              "x": 4,
+              "y": 4
+            }
+          },
+          "style": "panel.inset",
+          "bind": {
+            "visible": "tab_mods"
+          },
+          "children": [
+            {
+              "type": "label",
+              "text": "Petramond Addon",
+              "wrap": true,
+              "small": true
+            }
+          ]
         }
       ]
     }
@@ -561,6 +630,9 @@
             "icon": {
               "str": "First item"
             },
+            "is_addon": {
+              "bool": true
+            },
             "name": {
               "str": "First item"
             },
@@ -590,6 +662,9 @@
             "icon": {
               "str": "Second item"
             },
+            "is_addon": {
+              "bool": true
+            },
             "name": {
               "str": "Second item"
             },
@@ -618,6 +693,9 @@
             },
             "icon": {
               "str": "Third item"
+            },
+            "is_addon": {
+              "bool": true
             },
             "name": {
               "str": "Third item"

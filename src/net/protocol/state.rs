@@ -266,6 +266,8 @@ pub struct SelfState {
     /// every step. Mirrored, not predicted: a scalar a batch late is
     /// imperceptible.
     pub move_scale: f32,
+    /// The resolved flight-speed scale, mirrored the same way.
+    pub fly_scale: f32,
     /// The resolved set of actions barred on this body. Rides the RECIPIENT's
     /// own state, not the shared player rows: what a body may do is not
     /// presentation, so no observer needs it — but the owner's client does, or
@@ -288,6 +290,20 @@ pub struct SelfState {
     /// A transform correction when the ticks moved this player (see
     /// [`SelfTransform`]); `None` on ordinary updates.
     pub transform: Option<SelfTransform>,
+}
+
+impl SelfState {
+    /// This state over an older one of the same player, as one state: the
+    /// inventory rides only when it changed, so an absent one is the older
+    /// one's. A correction is an event, never state, so it is dropped.
+    pub fn over(self, older: Option<SelfState>) -> SelfState {
+        let inventory = self.inventory.or_else(|| older.and_then(|o| o.inventory));
+        SelfState {
+            inventory,
+            transform: None,
+            ..self
+        }
+    }
 }
 
 /// One world-anchored event a tick produced, broadcast to every observer

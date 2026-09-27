@@ -29,6 +29,7 @@ fn shell_app() -> App {
 fn join_data() -> Box<JoinData> {
     Box::new(JoinData {
         player_id: PlayerId(2),
+        player_name: "Joiner".into(),
         seed: 11,
         clock: 6000,
         tables: petramond::net::remap::local_name_tables(),
@@ -50,11 +51,13 @@ fn join_data() -> Box<JoinData> {
         },
         crafting_recipes: Vec::new(),
         players: vec![(PlayerId(0), "Host".to_string())],
+        client_policy: Default::default(),
     })
 }
 
 /// Title → Connect to Server; typed edits mirror into bound state; the
-/// Connect button gates on both fields being non-empty.
+/// Connect button gates on the address alone — there is no player-name field,
+/// because an online server names the session from the Petramond account.
 #[test]
 fn connect_screen_opens_from_title_mirrors_edits_and_gates_connect() {
     let mut app = shell_app();
@@ -64,15 +67,11 @@ fn connect_screen_opens_from_title_mirrors_edits_and_gates_connect() {
     app.drive_doc_ui(GuiKind::Title, SCREEN, 0.1);
     assert_eq!(app.screen, AppScreen::ConnectServer);
 
-    // The player name prefills from the resolved identity (never empty).
     app.drive_doc_ui(GuiKind::ConnectServer, SCREEN, 0.2);
-    let name = app
-        .ui
-        .state_mut()
-        .get_str("player_name")
-        .unwrap_or("")
-        .to_owned();
-    assert!(!name.is_empty(), "player name prefilled");
+    assert!(
+        app.ui.out().rect("player_name").is_none(),
+        "the player-name field is gone: identity comes from the account"
+    );
 
     // The address input opens focused: select-all + type replaces whatever
     // the prefill was, and the controller mirrors it into bound state.
@@ -96,13 +95,49 @@ fn connect_screen_opens_from_title_mirrors_edits_and_gates_connect() {
     assert_eq!(app.ui.state_mut().get_bool("can_connect"), Some(false));
 }
 
+/// A local world whose recorded world-affecting pack is gone stops at the
+/// Missing Mods screen before opening, and Back returns to World Select with
+/// nothing opened.
+#[test]
+fn a_world_missing_a_pack_that_shaped_it_asks_before_opening() {
+    super::ensure_test_data_dir();
+    let mut app = shell_app();
+    let dir_name = format!("missing-pack-{}", std::process::id());
+    let dir = petramond::save::world_dir(&dir_name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let record = |affects: bool| {
+        format!(r#"{{"mods":[{{"id":"ghost_pack","version":"2.0","affects_world":{affects}}}]}}"#)
+    };
+    app.screen = AppScreen::WorldSelect;
+    std::fs::write(dir.join("mods.json"), record(true)).unwrap();
+    app.open_world_checked(&dir_name, 7);
+    assert_eq!(app.screen, AppScreen::ModsMissing);
+    app.drive_doc_ui(GuiKind::ModsMissing, SCREEN, 0.0);
+    assert_eq!(app.ui.state_mut().get_bool("can_open_anyway"), Some(true));
+    let rows = app
+        .ui
+        .state_mut()
+        .get_list("missing_rows")
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        rows[0].get("id"),
+        Some(&UiValue::Str("ghost_pack".to_owned()))
+    );
+
+    click_doc_id(&mut app, "back");
+    app.drive_doc_ui(GuiKind::ModsMissing, SCREEN, 0.1);
+    assert_eq!(app.screen, AppScreen::WorldSelect);
+    assert!(!app.has_session(), "nothing opened");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A refused join's mod list fills the ModsMissing rows; Back returns to the
 /// connect screen with the attempted address preserved.
 #[test]
 fn refused_mod_list_populates_missing_rows_and_back_preserves_address() {
     let mut app = shell_app();
     app.shell.connect.addr = "192.168.1.9:7434".to_owned();
-    app.shell.connect.name = "Rachel".to_owned();
     app.shell.connect.missing = vec![
         ModEntry {
             id: "kitchen".to_owned(),
@@ -145,9 +180,9 @@ fn refused_mod_list_populates_missing_rows_and_back_preserves_address() {
 fn a_bad_address_fails_inline_without_spawning_a_worker() {
     let mut app = shell_app();
     app.open_connect_server();
-    let state = app.ui.state_mut();
-    state.set("server_addr", UiValue::Str("host:notaport".to_owned()));
-    state.set("player_name", UiValue::Str("Rachel".to_owned()));
+    app.ui
+        .state_mut()
+        .set("server_addr", UiValue::Str("host:notaport".to_owned()));
 
     app.begin_connect();
 
@@ -341,9 +376,9 @@ fn end_to_end_connect_through_the_ui_joins_a_lan_server() {
 
     let mut app = shell_app();
     app.open_connect_server();
-    let state = app.ui.state_mut();
-    state.set("server_addr", UiValue::Str(format!("127.0.0.1:{port}")));
-    state.set("player_name", UiValue::Str("E2EVisitor".to_owned()));
+    app.ui
+        .state_mut()
+        .set("server_addr", UiValue::Str(format!("127.0.0.1:{port}")));
     app.begin_connect();
     assert!(
         app.shell.connect.connecting(),
@@ -377,4 +412,107 @@ fn end_to_end_connect_through_the_ui_joins_a_lan_server() {
     assert_eq!(app.screen, AppScreen::Title);
     assert!(!app.has_session());
     host.shutdown_and_join();
+}
+
+/// Title → Account, and the screen's two states. The stored sign-in
+/// is real machine state the suite must not invent, so this drives the
+/// signed-OUT shape (the state every fresh install is in) and pins that the
+/// screen offers Sign In rather than Log Out.
+#[test]
+fn account_screen_opens_from_the_title_and_offers_sign_in_when_signed_out() {
+    let mut app = shell_app();
+
+    app.drive_doc_ui(GuiKind::Title, SCREEN, 0.0);
+    click_doc_id(&mut app, "account");
+    app.drive_doc_ui(GuiKind::Title, SCREEN, 0.1);
+    assert_eq!(app.screen, AppScreen::Account);
+
+    // No stored sign-in in the test data dir: the signed-out shape.
+    app.shell.account.saved = None;
+    app.drive_doc_ui(GuiKind::Account, SCREEN, 0.2);
+    assert_eq!(app.ui.state_mut().get_bool("signed_out"), Some(true));
+    assert_eq!(app.ui.state_mut().get_bool("is_signed_in"), Some(false));
+    assert!(app.ui.out().rect("sign_in").is_some(), "Sign In is offered");
+    assert!(
+        app.ui.out().rect("sign_out").is_none(),
+        "nothing to log out of"
+    );
+
+    click_doc_id(&mut app, "sign_in");
+    app.drive_doc_ui(GuiKind::Account, SCREEN, 0.3);
+    assert_eq!(app.screen, AppScreen::AccountSignIn);
+
+    // Submit gates on both fields; typing only the name is not enough.
+    app.drive_doc_ui(GuiKind::AccountSignIn, SCREEN, 0.4);
+    assert_eq!(app.ui.state_mut().get_bool("can_submit"), Some(false));
+    assert!(app.handle_text_input("explorer"));
+    app.drive_doc_ui(GuiKind::AccountSignIn, SCREEN, 0.5);
+    app.drive_doc_ui(GuiKind::AccountSignIn, SCREEN, 0.6);
+    assert_eq!(
+        app.ui.state_mut().get_str("account_id"),
+        Some("explorer"),
+        "the identifier mirrors into bound state"
+    );
+    assert_eq!(
+        app.ui.state_mut().get_bool("can_submit"),
+        Some(false),
+        "no password yet"
+    );
+    app.submit_account_sign_in();
+    assert!(
+        !app.shell.account.status.is_empty(),
+        "submitting half a form says so instead of reaching the network"
+    );
+
+    // ESC goes back to the account overview, never out of the flow.
+    app.handle_control(Control::CloseScreen, true);
+    assert_eq!(app.screen, AppScreen::Account);
+}
+
+/// The account screens hand back to whichever screen opened them, however
+/// often the player moved between the overview and the form.
+#[test]
+fn account_back_returns_to_the_screen_that_opened_it() {
+    let mut app = shell_app();
+    app.screen = AppScreen::ConnectServer;
+    app.open_account(None);
+    app.open_account_sign_in();
+    app.open_account(None);
+    app.drive_doc_ui(GuiKind::Account, SCREEN, 0.0);
+    click_doc_id(&mut app, "back");
+    app.drive_doc_ui(GuiKind::Account, SCREEN, 0.1);
+    assert_eq!(app.screen, AppScreen::ConnectServer);
+}
+
+/// A join refused because the sign-in is dead must send the player to the
+/// Account screen WITH the reason, not leave them on an inline error they
+/// cannot act on.
+///
+/// The refusal is constructed, not obtained from
+/// `account::session::join_ticket_for`: that reads the real credential store
+/// and, for a developer who IS signed in, makes live HTTPS calls to the account
+/// service. An earlier draft did exactly that and passed only because nobody
+/// running it happened to be signed in.
+#[test]
+fn an_online_server_offered_no_sign_in_routes_the_player_to_the_account_screen() {
+    use petramond::account::AccountError;
+
+    let e = AccountError::SignInRequired(
+        "Sign in to your Petramond account to play on a server".to_owned(),
+    );
+    assert!(
+        e.clears_sign_in(),
+        "only this kind of refusal routes to the Account screen"
+    );
+
+    let mut app = shell_app();
+    app.open_account(Some(e.message().to_owned()));
+    assert_eq!(app.screen, AppScreen::Account);
+    app.drive_doc_ui(GuiKind::Account, SCREEN, 0.0);
+    assert_eq!(app.ui.state_mut().get_bool("has_status"), Some(true));
+    assert_eq!(
+        app.ui.state_mut().get_str("status_text"),
+        Some(e.message()),
+        "the join's reason is what the screen shows"
+    );
 }

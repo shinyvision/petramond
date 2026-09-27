@@ -120,11 +120,13 @@ fn integrate_session(
 
     // F1: only soft-accept a claim from a PlayerUpdate this pump. Stale
     // claims must not yank the player every tick (tests and idle sessions).
+    let fly_scale = sess.player.fly_scale();
     let velocity_plausible = if sess.player.is_flying() {
         claimed_vel.is_finite()
-            && claimed_vel.length() <= crate::player::creative_flight_speed(true) * CLAIM_VEL_SLACK
+            && claimed_vel.length()
+                <= crate::player::creative_flight_speed(true) * fly_scale * CLAIM_VEL_SLACK
     } else {
-        claim_velocity_plausible(claimed_vel, spectator)
+        claim_velocity_plausible(claimed_vel, spectator, fly_scale)
     };
     let accept_claim = fresh
         && velocity_plausible
@@ -223,12 +225,12 @@ fn integrate_session(
 /// the sprint cap, vertical within [terminal fall, jump take-off]. Checked
 /// per-axis — a legitimate sprint jump combines BOTH caps, so a single
 /// 3D-magnitude test would reject every airborne claim.
-fn claim_velocity_plausible(vel: Vec3, spectator: bool) -> bool {
+fn claim_velocity_plausible(vel: Vec3, spectator: bool, fly_scale: f32) -> bool {
     if !vel.is_finite() {
         return false;
     }
     if spectator {
-        return vel.length() <= player::SPECTATOR_SPRINT * CLAIM_VEL_SLACK;
+        return vel.length() <= player::SPECTATOR_SPRINT * fly_scale * CLAIM_VEL_SLACK;
     }
     let horizontal = Vec3::new(vel.x, 0.0, vel.z).length();
     horizontal <= CLAIM_H_SPEED * CLAIM_VEL_SLACK

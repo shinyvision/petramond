@@ -20,6 +20,7 @@ mod entities;
 mod environment;
 mod hand;
 mod screen;
+pub(super) use screen::overlay_pass;
 mod terrain;
 #[cfg(test)]
 mod tests;
@@ -48,6 +49,7 @@ pub(super) enum Node {
     EmitterParticles,
     Outline,
     Ghosts,
+    WorldMarksDepth,
     Hand,
     Grade,
     Crosshair,
@@ -58,7 +60,7 @@ pub(super) enum Node {
 /// The frame's pass table. Each row is a node's whole contract with the
 /// rest of the frame; the phases carry the ordering rules (see [`Phase`]).
 pub(super) fn frame_graph() -> Result<FrameGraph<Node>, GraphError> {
-    use ColorTarget::{EnvColor, Swapchain, World};
+    use ColorTarget::{EnvColor, MarksEye, Swapchain, World};
     use DepthTarget::{Depth, EnvDepth};
     use LoadOp::{Clear, Load};
     // Most nodes draw into the world colour over the frame depth, loading both.
@@ -117,6 +119,11 @@ pub(super) fn frame_graph() -> Result<FrameGraph<Node>, GraphError> {
         ),
         world(Node::Outline, "outline pass", Phase::Highlight),
         world(Node::Ghosts, "ghosts and selection", Phase::Highlight),
+        // The window's world marks test against the world's depth, which the
+        // hand pass clears: keep it, as eye depth, first.
+        PassNode::new(Node::WorldMarksDepth, "world marks depth", Phase::Highlight)
+            .color(MarksEye, Clear)
+            .sampling(&[Sampled::Depth]),
         // Clearing depth gives the hand its own depth space: it stays on top
         // of the world while its held geometry still self-sorts.
         PassNode::new(Node::Hand, "hand pass", Phase::Hand)
@@ -165,11 +172,12 @@ impl Renderer {
             Node::EmitterParticles => self.particle.emitters_active(),
             Node::Outline => self.chrome.outline_active(),
             Node::Ghosts => !(self.ghosts.is_empty() && self.selection.is_empty()),
+            Node::WorldMarksDepth => self.world_marks_keep_depth(),
             Node::Hand => self.hand.active(),
             Node::Grade => route == SceneRoute::PostProcess,
             Node::Crosshair => self.chrome.crosshair_active(),
-            Node::Ui => self.ui.base_active(),
-            Node::UiOverlay => self.ui.overlay_active(),
+            Node::Ui => self.ui.scene.base_active(),
+            Node::UiOverlay => self.ui.scene.overlay_active(),
         }
     }
 
@@ -209,11 +217,12 @@ impl Renderer {
                 self.ghosts.draw(pass, ctx.samples);
                 self.selection.draw(pass, ctx.samples);
             }
+            Node::WorldMarksDepth => self.record_world_marks_depth(pass, ctx),
             Node::Hand => self.hand.record(pass, ctx, &self.actor.player_gpu.bind),
             Node::Grade => self.targets.record_grade(pass),
             Node::Crosshair => self.chrome.record_crosshair(pass),
-            Node::Ui => self.ui.record_base(pass),
-            Node::UiOverlay => self.ui.record_overlay(pass),
+            Node::Ui => self.ui.record_base(pass, &self.ui.scene),
+            Node::UiOverlay => self.ui.record_overlay(pass, &self.ui.scene),
         }
     }
 
@@ -314,6 +323,10 @@ impl Renderer {
                 .unwrap_or(&self.targets.scene_color),
             ColorTarget::EnvColor => &self.sky.env_color,
             ColorTarget::Swapchain => swapchain,
+            ColorTarget::MarksEye => self
+                .world_marks
+                .eye_view()
+                .expect("the marks' depth node runs only with their eye target"),
         }
     }
 
@@ -355,7 +368,7 @@ impl Renderer {
                 }
             }
             ColorTarget::EnvColor => wgpu::Color::TRANSPARENT,
-            ColorTarget::Swapchain => wgpu::Color::BLACK,
+            ColorTarget::Swapchain | ColorTarget::MarksEye => wgpu::Color::BLACK,
         }
     }
 }

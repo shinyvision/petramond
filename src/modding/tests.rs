@@ -75,15 +75,21 @@ impl Sim {
 fn disabled_packs_contribute_no_wasm_instance() {
     let pack = |name: &str, id: Option<&str>, wasm: Option<&str>| petramond_world::assets::Pack {
         dir: PathBuf::from(format!("/fixture/{name}")),
-        name: name.to_owned(),
-        id: id.map(str::to_owned),
-        version: None,
-        description: String::new(),
-        summary: None,
-        icon: None,
+        header: petramond_world::assets::PackHeader {
+            name: name.to_owned(),
+            id: id.map(str::to_owned),
+            version: None,
+            description: String::new(),
+            summary: None,
+            icon: None,
+            dependencies: Vec::new(),
+            touches_world: wasm.is_some(),
+        },
+        origin: petramond_world::assets::PackOrigin::Shipped,
         wasm: wasm.map(PathBuf::from),
         client_wasm: None,
         integrations: Vec::new(),
+        launch: None,
     };
     let packs = [
         pack("alpha", Some("alpha"), Some("/fixture/alpha/mod.wasm")),
@@ -123,6 +129,7 @@ pub fn built_mod_wasm(krate: &str) -> Option<PathBuf> {
             "fasttest",
             "--target",
             "wasm32-unknown-unknown",
+            "--message-format=json-render-diagnostics",
             "-p",
             krate,
         ])
@@ -139,17 +146,35 @@ pub fn built_mod_wasm(krate: &str) -> Option<PathBuf> {
         }
         panic!("building the '{krate}' mod failed:\n{stderr}");
     }
-    Some(mods_src.join(format!(
-        "target/wasm32-unknown-unknown/fasttest/{krate}.wasm"
-    )))
+    // Cargo reports where the artifact landed: the target dir is config,
+    // never a path this helper may assume.
+    let wasm_name = format!("{}.wasm", krate.replace('-', "_"));
+    let wasm = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|msg| msg["reason"] == "compiler-artifact")
+        .flat_map(|msg| {
+            msg["filenames"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|f| f.as_str().map(PathBuf::from))
+                .collect::<Vec<_>>()
+        })
+        .find(|path| path.file_name().is_some_and(|n| n == wasm_name.as_str()))
+        .unwrap_or_else(|| panic!("cargo reported no {wasm_name} for the '{krate}' build"));
+    Some(wasm)
 }
 
 /// Stage a fixture `mods/` root holding the REAL packs of `ids` with freshly
 /// built wasm, for child-process tests that need pack content registry-visible
-/// (`PETRAMOND_MODS` + the 2a re-spawn pattern). Returns the fixture root
-/// (removed by [`run_child_test`]), or `None` when the wasm32 target is
-/// missing (the test skips, like [`built_mod_wasm`]).
-pub fn stage_mods_fixture(tag: &str, ids: &[&str]) -> Option<PathBuf> {
+/// (`PETRAMOND_MODS` + the 2a re-spawn pattern). Returns the fixture root,
+/// or `None` when the wasm32 target is missing (the test skips, like
+/// [`built_mod_wasm`]).
+pub fn stage_mods_fixture(
+    tag: &str,
+    ids: &[&str],
+) -> Option<petramond_util::test_dirs::TestScratchDir> {
     let wasms: Vec<PathBuf> = ids
         .iter()
         .map(|id| built_mod_wasm(id))
@@ -166,8 +191,7 @@ pub fn stage_mods_fixture(tag: &str, ids: &[&str]) -> Option<PathBuf> {
             }
         }
     }
-    let root = std::env::temp_dir().join(format!("petramond-fixture-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = petramond_util::test_dirs::TestScratchDir::new(&format!("fixture-{tag}"));
     for (id, wasm) in ids.iter().zip(&wasms) {
         let dst = root.join("mods").join(id);
         let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -201,7 +225,7 @@ pub fn with_fixture_content(root: &std::path::Path, body: impl FnOnce()) {
 }
 
 /// Re-spawn the test binary on `test_path` (an `#[ignore]`d inner test) with
-/// `PETRAMOND_MODS` pointing at `root/mods`, then clean the fixture up.
+/// `PETRAMOND_MODS` pointing at `root/mods`.
 /// `PETRAMOND_DATA_DIR` is pinned to this process's shared test root (the one
 /// the app tests use): saves stay out of the developer's real data dir, and
 /// the disk module cache there lets every child after the first deserialize
@@ -213,11 +237,10 @@ pub fn run_child_test(root: &std::path::Path, test_path: &str) {
             ("PETRAMOND_MODS", root.join("mods")),
             (
                 "PETRAMOND_DATA_DIR",
-                std::env::temp_dir().join(format!("petramond-test-data-{}", std::process::id())),
+                petramond_util::test_dirs::test_process_data_dir(),
             ),
         ],
     );
-    let _ = std::fs::remove_dir_all(root);
     run.assert_passed();
 }
 

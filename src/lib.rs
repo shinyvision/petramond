@@ -3,6 +3,8 @@
 //! Native desktop target. Worldgen runs off the render thread via an OS thread
 //! pool (rayon).
 
+pub mod account;
+pub mod capture;
 pub mod content;
 pub mod entity;
 pub mod events;
@@ -19,6 +21,7 @@ pub mod rules;
 pub mod save;
 pub mod schematic;
 pub mod server;
+pub mod service;
 pub mod tooling;
 pub mod worker;
 pub mod world;

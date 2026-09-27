@@ -15,6 +15,30 @@ impl Audio {
         Audio
     }
 
+    pub fn new_offline(_channels: u16, _sample_rate: u32, _seed: u64) -> Self {
+        Audio
+    }
+
+    pub fn begin_offline(&mut self, _channels: u16, _sample_rate: u32, _seed: u64) {}
+    pub fn end_offline(&mut self) {}
+    pub fn offline_format(&self) -> Option<(u16, u32)> {
+        None
+    }
+    pub fn pull(&mut self, _dt: f64, _out: &mut Vec<f32>) -> usize {
+        0
+    }
+    pub fn world_format(&self) -> Option<(u16, u32)> {
+        None
+    }
+    pub fn mixes(&self) -> bool {
+        false
+    }
+    pub fn has_device(&self) -> bool {
+        false
+    }
+    pub fn set_world_copied(&mut self, _copied: bool) {}
+    pub fn drain_world_copy(&mut self, _out: &mut Vec<f32>) {}
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn take_played_for_test(&mut self) -> Vec<Sound> {
         Vec::new()
@@ -36,6 +60,7 @@ impl Audio {
     pub fn update_music(&mut self, _dt: f32) {}
 
     pub fn play(&mut self, _sound: Sound) {}
+    pub fn play_interface(&mut self, _sound: Sound) {}
 
     pub fn play_attenuated(&mut self, _sound: Sound, _gain: f32) {}
 

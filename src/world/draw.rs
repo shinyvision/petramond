@@ -707,6 +707,11 @@ impl ServerWorld {
 impl ReplicaWorld {
     /// Apply one replicated row on the REPLICA.
     pub fn apply_remote_block_draw(&mut self, pos: IVec3, prims: DrawPrims) {
+        if let Some(section) = petramond_world::chunk::SectionPos::from_world(pos.x, pos.y, pos.z)
+            .filter(|s| self.data.sections.contains_key(s))
+        {
+            self.before_section_write(section);
+        }
         if prims.is_empty() {
             self.remove_draw(pos);
         } else {

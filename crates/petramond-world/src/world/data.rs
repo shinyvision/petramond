@@ -7,6 +7,7 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::block::Block;
@@ -75,12 +76,13 @@ pub struct WorldData {
     /// Per-column 2D data (biome, visible surface, direct-sky cover) shared by a
     /// vertical stack of sections. Cheap; ensured present whenever a section in
     /// the column loads.
-    pub columns: FxHashMap<ChunkPos, Column>,
+    pub columns: FxHashMap<ChunkPos, std::sync::Arc<Column>>,
     /// Per-column presentation revision (biome/surface/sky-cover/summaries).
     /// Terrain replication resends ColumnData only when this
     /// changes, and revision-gated surface sampling relies on EQUALITY:
     /// values come from `column_revision_counter`, so a value is never reused
-    /// — not even by a column that unloads and reloads with other content.
+    /// — not even by a column that unloads and reloads with other content,
+    /// nor by another store (see [`revision_base`]).
     pub column_payload_revisions: FxHashMap<ChunkPos, u64>,
     /// Store-wide source of unique column payload revision values.
     pub column_revision_counter: u64,
@@ -249,7 +251,7 @@ impl WorldData {
             self.column_payload_revisions
                 .insert(pos, self.column_revision_counter);
         }
-        self.columns.entry(pos).or_default()
+        Arc::make_mut(self.columns.entry(pos).or_default())
     }
 
     /// Mod pack ids disabled for this world (per-world `settings.json`).
@@ -298,7 +300,9 @@ impl WorldData {
 
     #[inline]
     pub fn column_at(&self, wx: i32, wz: i32) -> Option<&Column> {
-        self.columns.get(&ChunkPos::new(wx >> 4, wz >> 4))
+        self.columns
+            .get(&ChunkPos::new(wx >> 4, wz >> 4))
+            .map(|c| &**c)
     }
 
     // --- World-coordinate routing ----------------------------------------------
@@ -382,7 +386,13 @@ impl WorldData {
         if let Some(section) = self.sections.get(&pos) {
             return section.summary();
         }
-        if self.saved_section_contains(pos) {
+        self.unloaded_section_summary(pos)
+    }
+
+    /// [`section_summary`](Self::section_summary) for a section known not to
+    /// be loaded, without looking for it.
+    pub fn unloaded_section_summary(&self, pos: SectionPos) -> SectionSummary {
+        if !SectionPos::cy_in_range(pos.cy) || self.saved_section_contains(pos) {
             return SectionSummary::Unknown;
         }
         if let Some(sums) = self.column_summaries.get(&pos.chunk_pos()) {
@@ -469,4 +479,14 @@ impl WorldData {
     pub fn column_section_range() -> std::ops::RangeInclusive<i32> {
         SECTION_MIN_CY..=SECTION_MAX_CY
     }
+}
+
+/// Where a new store's column revisions start. Every store takes its own
+/// range, so a revision read from one world can never equal one read from
+/// another — a client swaps whole replicas (a presentation in, the shell's
+/// world back), and whoever kept a revision from before the swap must see a
+/// change, not a coincidence.
+pub fn revision_base() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    NEXT.fetch_add(1 << 40, Ordering::Relaxed)
 }

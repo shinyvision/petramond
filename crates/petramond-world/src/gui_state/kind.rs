@@ -62,6 +62,12 @@ impl GuiKind {
     /// The chiseling station: a crafting station for shaped block variants
     /// (stairs, slabs, fences) carved from full blocks.
     pub const ChiselingStation: GuiKind = GuiKind(24);
+    /// "Account": who this client is signed in as on petramond.com.
+    pub const Account: GuiKind = GuiKind(25);
+    /// The password form the Account screen opens to sign in.
+    pub const AccountSignIn: GuiKind = GuiKind(26);
+    /// The content browser: installed packs and what petramond.com offers.
+    pub const Content: GuiKind = GuiKind(27);
     pub const Other: GuiKind = GuiKind(u8::MAX);
 
     /// Whether this is a pack-registered (namespaced) kind, as opposed to an
@@ -74,7 +80,7 @@ impl GuiKind {
 
 /// Engine kind keys, index == frozen id. Append-only, like every engine name
 /// table.
-const ENGINE_GUI_KIND_NAMES: [&str; 25] = [
+const ENGINE_GUI_KIND_NAMES: [&str; 28] = [
     "petramond:chest",
     "petramond:inventory",
     "petramond:crafting_table",
@@ -100,6 +106,9 @@ const ENGINE_GUI_KIND_NAMES: [&str; 25] = [
     "petramond:creative",
     "petramond:schematics",
     "petramond:chiseling_station",
+    "petramond:account",
+    "petramond:account_sign_in",
+    "petramond:content",
 ];
 
 /// Registered mod kinds cap out below the `Other` sentinel; in practice a

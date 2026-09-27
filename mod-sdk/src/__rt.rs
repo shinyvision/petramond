@@ -72,17 +72,54 @@ fn to_wire(bytes: &[u8]) -> u64 {
 /// call goes to the host installed on the calling thread instead
 /// ([`crate::testing::install_host`]).
 pub fn host_call(call: &HostCall) -> HostRet {
+    match host_call_reply(call) {
+        Answer::Native(ret) => ret,
+        Answer::Guest(reply) => reply.decode(),
+    }
+}
+
+/// A host call's reply, before decoding.
+pub enum Answer {
+    /// From the off-wasm host installed on the calling thread
+    /// ([`crate::testing::install_host`]).
+    Native(HostRet),
+    /// The encoded reply in guest memory, as the host wrote it.
+    Guest(Reply),
+}
+
+/// An encoded reply the host allocated in this guest's memory through
+/// `mod_alloc`. This guest owns it, and frees it on drop — so a caller can
+/// keep the reply's own allocation as a decoded value's buffer, with no copy.
+pub struct Reply {
+    ptr: u32,
+    len: u32,
+}
+
+impl Reply {
+    pub fn bytes(&self) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(self.ptr as *const u8, self.len as usize) }
+    }
+
+    pub fn decode(self) -> HostRet {
+        mod_api::decode(self.bytes()).expect("malformed host reply")
+    }
+}
+
+impl Drop for Reply {
+    fn drop(&mut self) {
+        free(self.ptr, self.len);
+    }
+}
+
+pub fn host_call_reply(call: &HostCall) -> Answer {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(ret) = crate::testing::answer_natively(call) {
-        return ret;
+        return Answer::Native(ret);
     }
     let request = mod_api::encode(call).expect("encode host call");
     let packed = unsafe { host_dispatch(request.as_ptr() as u32, request.len() as u32) };
     let (ptr, len) = mod_api::unpack_ptr_len(packed);
-    let reply = unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };
-    let ret = mod_api::decode(reply).expect("malformed host reply");
-    free(ptr, len);
-    ret
+    Answer::Guest(Reply { ptr, len })
 }
 
 /// Registration replies must be `Unit`; an [`HostRet::Err`] (e.g.

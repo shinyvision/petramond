@@ -217,11 +217,13 @@ fn parse_string(b: &[u8], i: &mut usize) -> Option<String> {
                 *i += 1;
             }
             _ => {
-                // Consume one UTF-8 scalar (multi-byte sequences pass through).
-                let rest = std::str::from_utf8(&b[*i..]).ok()?;
-                let c = rest.chars().next()?;
-                out.push(c);
-                *i += c.len_utf8();
+                // A run of plain bytes up to the next quote or escape. Both
+                // are ASCII, so the run ends on a char boundary of the input.
+                let start = *i;
+                while *i < b.len() && !matches!(b[*i], b'"' | b'\\') {
+                    *i += 1;
+                }
+                out.push_str(std::str::from_utf8(&b[start..*i]).ok()?);
             }
         }
     }
@@ -245,6 +247,10 @@ mod tests {
         assert_eq!(color, [250, 224, 28]);
         assert_eq!(v.get("dilute").unwrap().as_bool(), Some(true));
         assert_eq!(v.get("name").unwrap().as_str(), Some("a\"b"));
+        assert_eq!(
+            Value::parse(r#""é\u00e9\\ ü""#).unwrap().as_str(),
+            Some("éé\\ ü")
+        );
         assert_eq!(v.get("absent"), None);
         assert_eq!(Value::parse("-2.5e2").unwrap().as_f64(), Some(-250.0));
         assert!(Value::parse("{\"unterminated\":").is_none());

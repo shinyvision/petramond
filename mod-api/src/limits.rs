@@ -86,3 +86,18 @@ pub const GUI_IMAGE_MAX_FRAMES: u32 = 64;
 /// Bounded so a row typo or a scripted decision cannot launch a body across
 /// the map in one tick; the engine clamps the settled value to `0..=` this.
 pub const MAX_MOB_SPEED_SCALE: f32 = 4.0;
+
+/// Named shader params one `ClientEnvParams` read may ask for — the GPU slot
+/// budget, since no shader consumes more anyway.
+pub const CLIENT_ENV_PARAM_MAX: usize = 16;
+
+/// Named shader params one client mod may OVERRIDE at once (`ClientEnvSet`).
+/// The same budget as the read: an override replaces a param the renderer
+/// already has a slot for, so there is nothing more to override.
+pub const CLIENT_ENV_OVERRIDE_MAX: usize = CLIENT_ENV_PARAM_MAX;
+
+/// Bytes in one canvas `Text` element
+/// ([`ClientCanvasElement::Text`](crate::ClientCanvasElement::Text)). A canvas
+/// label is a line, not a document: a mod with paragraphs to show wants a GUI
+/// document, which lays text out instead of placing it.
+pub const CLIENT_CANVAS_TEXT_MAX: usize = 256;

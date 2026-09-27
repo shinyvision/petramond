@@ -82,7 +82,8 @@
      "w": 110
     },
     "bind": {
-     "visible": "is_remote"
+     "visible": "is_remote",
+     "text": "leave_label"
     }
    },
    {

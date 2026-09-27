@@ -163,12 +163,15 @@ struct CacheEntry {
 impl CacheEntry {
     /// `None` when the disk cache is unusable. Unit tests skip the disk cache
     /// unless they isolate the data dir — fixture guests must not litter (or
-    /// read) the developer's real `modcache/`.
+    /// read) the developer's real `modcache/`. `PETRAMOND_MODCACHE_DIR` moves
+    /// the cache out of the data dir, so processes that each isolate their own
+    /// data dir can still share one set of compiled artifacts.
     fn for_source(path: &Path, wasm: &[u8]) -> Option<Self> {
-        if cfg!(test) && std::env::var_os("PETRAMOND_DATA_DIR").is_none() {
-            return None;
-        }
-        let dir = petramond_util::paths::base_data_dir().join("modcache");
+        let dir = match std::env::var_os("PETRAMOND_MODCACHE_DIR") {
+            Some(dir) => PathBuf::from(dir),
+            None if cfg!(test) && std::env::var_os("PETRAMOND_DATA_DIR").is_none() => return None,
+            None => petramond_util::paths::base_data_dir().join("modcache"),
+        };
         std::fs::create_dir_all(&dir).ok()?;
         let key = install_key(&dir)?;
         let wasm_hash = blake3::hash(wasm);

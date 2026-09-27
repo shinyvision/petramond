@@ -69,7 +69,7 @@ fn the_mod_body_scale_multiplies_the_wished_land_speed() {
         mod_api::PlayerAttribute::MoveSpeed,
         0.5,
     );
-    pl.adopt_resolved_body(0.5, DeniedActions::of([BodyAction::Mine]));
+    pl.adopt_resolved_body(0.5, 1.0, DeniedActions::of([BodyAction::Mine]));
     assert_eq!(
         pl.wish_speed(walk),
         WALK * 0.25,
@@ -78,7 +78,7 @@ fn the_mod_body_scale_multiplies_the_wished_land_speed() {
     assert!(pl.denied_actions().denies(BodyAction::Mine));
     assert!(!pl.denied_actions().denies(BodyAction::Attack));
 
-    pl.adopt_resolved_body(1.0, DeniedActions::NONE);
+    pl.adopt_resolved_body(1.0, 1.0, DeniedActions::NONE);
     assert_eq!(pl.wish_speed(walk), WALK * 0.5, "and releases only its own");
     assert!(pl.denied_actions().is_empty(), "the mirror releases too");
 }

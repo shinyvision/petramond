@@ -46,7 +46,7 @@ pub use players::PlayerFiles;
 pub use worlds::{
     delete_world, dir_name_for, list_worlds, random_seed, read_world_seed, read_world_settings,
     rename_world, seed_from_text, world_dir, world_exists, world_size_bytes, write_world_metadata,
-    write_world_settings, WorldInfo,
+    write_world_mod_baseline, write_world_settings, WorldInfo,
 };
 
 use std::collections::{HashMap, HashSet};
@@ -661,7 +661,7 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
 
     // Per-world settings (`settings.json`; absent = defaults). Mod enablement
     // is read BEFORE the palette so disabled-mod content decodes as unknown.
-    let world_settings = settings::load(&dir);
+    let world_settings = settings::load_persisting(&dir);
     let keep_inventory = world_settings.keep_inventory;
     let day_minutes = world_settings.day_minutes;
     let disabled_mods = world_settings.disabled_mods;

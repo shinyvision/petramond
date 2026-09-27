@@ -7,6 +7,7 @@ use petramond_world::block::Block;
 
 #[test]
 fn mounted_autosave_expands_past_blocked_dismount_probes_without_moving_the_rider() {
+    let dir = petramond_util::test_dirs::TestScratchDir::new("mounted-autosave");
     let mut game = game_on_empty_chunk();
     let seat = WorldPos::new(8.0, 80.0, 8.0);
     assert!(game
@@ -68,16 +69,7 @@ fn mounted_autosave_expands_past_blocked_dismount_probes_without_moving_the_ride
         "the transient seat transform is deliberately unsafe to reload detached"
     );
 
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "petramond-mounted-autosave-{}-{nonce}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    let opened = petramond::save::open_at(dir.clone()).expect("temp save opens");
+    let opened = petramond::save::open_at(dir.to_path_buf()).expect("temp save opens");
     game.server_world_mut()
         .attach_save(opened.save, opened.saved);
     let key = game.session().key();
@@ -122,7 +114,6 @@ fn mounted_autosave_expands_past_blocked_dismount_probes_without_moving_the_ride
     assert!(game.session().mount().is_some());
 
     drop(game);
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]

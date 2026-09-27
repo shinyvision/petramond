@@ -141,6 +141,14 @@ pub fn gui_scale(screen: (u32, u32)) -> f32 {
     by_h.min(by_w).clamp(1, 4) as f32
 }
 
+/// The UI scale of a WORLD FRAME rendered at a set size (a frame-size claim,
+/// a frame capture): the window's rule without its cap, so a 4K frame's HUD
+/// keeps the proportions a 1080p frame's has.
+pub fn frame_ui_scale(frame: (u32, u32)) -> f32 {
+    let (w, h) = frame;
+    (h / 240).min(w / 320).max(1) as f32
+}
+
 /// The one physical viewport authority for a complete UI frame. `generation`
 /// changes whenever the renderer reconfigures its surface, so layout produced
 /// before a resize can never be combined with geometry produced after it.
@@ -156,6 +164,16 @@ impl UiViewport {
         UiViewport {
             size,
             scale: gui_scale(size) as i32,
+            generation,
+        }
+    }
+
+    /// The viewport of a world frame rendered at a set size
+    /// ([`frame_ui_scale`]).
+    pub fn for_frame(size: (u32, u32), generation: u64) -> UiViewport {
+        UiViewport {
+            size,
+            scale: frame_ui_scale(size) as i32,
             generation,
         }
     }

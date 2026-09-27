@@ -22,6 +22,46 @@ use crate::widget;
 /// Resolves document-relative image names to host texture ids + pixel sizes.
 pub trait DocImages {
     fn resolve(&self, name: &str) -> Option<(u16, (u32, u32))>;
+
+    /// The host-kept scene a `canvas` node's `scene` binding names, if the
+    /// host keeps one by that name.
+    fn scene(&self, _name: &str) -> Option<&SceneView> {
+        None
+    }
+}
+
+/// One element of a host-kept 2-D scene, in scene units (one unit = one
+/// logical pixel of the canvas node): what a `canvas` node paints. Images are
+/// named like every other document image.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SceneElement {
+    /// An image stretched over `rect` `[x, y, w, h]`.
+    Image { image: String, rect: [f32; 4] },
+    /// An image at its own size, one image pixel per logical pixel, centred.
+    Sprite { image: String, center: [f32; 2] },
+    /// A filled rectangle, or a one-pixel outline.
+    Rect {
+        rect: [f32; 4],
+        color: [f32; 4],
+        filled: bool,
+    },
+    /// One line at the UI's glyph size (`small` one step down), ellipsized
+    /// into `max_w` when given, else at the canvas's right edge.
+    Text {
+        pos: [f32; 2],
+        text: String,
+        color: [f32; 4],
+        small: bool,
+        max_w: Option<f32>,
+    },
+}
+
+/// A scene as a canvas node paints it: its elements in paint order, shifted
+/// by `offset` (the scene's pan).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SceneView {
+    pub offset: [f32; 2],
+    pub elements: Vec<SceneElement>,
 }
 
 /// No document images (screens that use none; tests).
@@ -79,6 +119,12 @@ pub(crate) fn frame_src(
     [col * fw, row * fh, fw, fh]
 }
 
+/// One `*` per character, so a masked field still shows its length and its
+/// caret lands where the character it stands for does.
+fn mask(text: &str) -> String {
+    "*".repeat(text.chars().count())
+}
+
 /// A framed sheet's natural layout size: ONE frame, not the whole sheet.
 pub(crate) fn frame_cell(sheet: (i32, i32), frames: Option<[u32; 2]>) -> (i32, i32) {
     match frames.filter(|&[c, r]| c > 0 && r > 0) {
@@ -119,6 +165,30 @@ pub(super) struct Here<'a> {
     pub hovered: bool,
     pub pressed: bool,
     pub focused: bool,
+}
+
+/// A resolved button/toggle/tab icon: a theme part or a document image.
+pub(super) enum Icon<'a> {
+    Part {
+        face: &'a PartFace,
+        size: (i32, i32),
+    },
+    /// Document art dims with its widget; theme parts carry their own faces.
+    Doc { src: SpriteSrc, size: (i32, i32) },
+}
+
+impl Icon<'_> {
+    pub(super) fn size(&self) -> (i32, i32) {
+        match self {
+            Icon::Part { size, .. } | Icon::Doc { size, .. } => *size,
+        }
+    }
+}
+
+/// Whether an authored icon name names a `.png` beside the document rather
+/// than a theme part — the loader checks such a file exists.
+pub fn is_doc_image_icon(name: &str) -> bool {
+    name.ends_with(".png")
 }
 
 impl<'a> PaintCtx<'a> {
@@ -190,22 +260,27 @@ impl<'a> PaintCtx<'a> {
             | NodeKind::List { .. }
             | NodeKind::Tooltip { .. }
             | NodeKind::Scroll { .. } => self.container(&n, p),
-            NodeKind::Spacer | NodeKind::Hook => {}
+            NodeKind::Spacer | NodeKind::Hook | NodeKind::Viewport { .. } => {}
+            NodeKind::Canvas { .. } => self.canvas(&n, p),
             NodeKind::Label {
-                wrap, scale, small, ..
-            } => self.label(&n, *wrap, *scale, *small, p),
+                wrap,
+                scale,
+                small,
+                max_lines,
+                ..
+            } => self.label(&n, *wrap, *scale, *small, *max_lines, p),
             NodeKind::Image {
                 fit, frames, fps, ..
             } => self.image(&n, *fit, *frames, *fps, p),
             NodeKind::Rotimage { pivot, .. } => self.rotimage(&n, *pivot, p),
-            NodeKind::Button {
-                icon, frames, fps, ..
-            } => self.button(&n, icon.as_deref(), *frames, *fps, p),
+            NodeKind::Button { frames, fps, .. } => self.button(&n, *frames, *fps, p),
             NodeKind::Checkbox | NodeKind::Toggle { .. } => self.toggle(&n, p),
             NodeKind::Slider { min, max, .. } => self.slider(&n, *min, *max, p),
-            NodeKind::TextInput { placeholder, .. } => {
-                self.text_input(&n, placeholder.as_deref(), p)
-            }
+            NodeKind::TextInput {
+                placeholder,
+                masked,
+                ..
+            } => self.text_input(&n, placeholder.as_deref(), *masked, p),
             NodeKind::Slot { .. } => self.slots(&n, 1, 1, p),
             NodeKind::SlotGrid { cols, rows, .. } => self.slots(&n, *cols, *rows, p),
             NodeKind::Gauge { mode } => self.gauge(&n, *mode, p),
@@ -309,8 +384,19 @@ impl<'a> PaintCtx<'a> {
         rect: RectI,
         clip: Option<RectI>,
     ) {
+        self.draw_face_styled(p, face, rect, PaintStyle::plain(clip));
+    }
+
+    /// [`Self::draw_face`] with a multiply tint.
+    pub(super) fn draw_face_styled(
+        &self,
+        p: &mut Painter<'_>,
+        face: &PartFace,
+        rect: RectI,
+        style: PaintStyle,
+    ) {
         let fit = Fit::NineSlice(face.slice.unwrap_or([0; 4]));
-        p.sprite(&self.face_src(face), rect, fit, PaintStyle::plain(clip));
+        p.sprite(&self.face_src(face), rect, fit, style);
     }
 
     /// A theme face stretched over `rect` (icons, gauge fills, handles).
@@ -328,6 +414,52 @@ impl<'a> PaintCtx<'a> {
     pub(super) fn face_of(&self, key: &str, state: FaceState) -> Option<&'a PartFace> {
         let theme: &'a Theme = self.theme;
         theme.part(key).and_then(|part| part.face(state))
+    }
+
+    /// An icon by name: a theme part, else a document image (a `.png` beside
+    /// the document, or an image the host published under that name).
+    pub(super) fn icon(&self, name: &str) -> Option<Icon<'a>> {
+        let theme: &'a Theme = self.theme;
+        if let Some(part) = theme.part(name) {
+            if let Some(face) = part.face(FaceState::Default) {
+                return Some(Icon::Part {
+                    face,
+                    size: part.natural(),
+                });
+            }
+        }
+        let (tex, size) = self.images.resolve(name)?;
+        Some(Icon::Doc {
+            src: SpriteSrc {
+                tex: TexId::DocImage(tex),
+                rect: [0, 0, size.0, size.1],
+                tex_size: size,
+            },
+            size: (size.0 as i32, size.1 as i32),
+        })
+    }
+
+    /// Draw a resolved icon over `at`; document art dims with a disabled
+    /// widget.
+    pub(super) fn draw_icon(
+        &self,
+        p: &mut Painter<'_>,
+        icon: &Icon<'_>,
+        at: RectI,
+        enabled: bool,
+        clip: Option<RectI>,
+    ) {
+        match icon {
+            Icon::Part { face, .. } => self.draw_sprite(p, face, at, PaintStyle::plain(clip)),
+            Icon::Doc { src, .. } => {
+                let color = if enabled {
+                    [1.0; 4]
+                } else {
+                    [0.45, 0.45, 0.45, 1.0]
+                };
+                p.sprite(src, at, Fit::Stretch, PaintStyle { color, clip });
+            }
+        }
     }
 
     /// A document image by name: its texture and size.

@@ -2,6 +2,7 @@
 //! the identity proof every join must carry.
 
 use super::admission::{MAX_PENDING_PER_IP, PRE_JOIN_MAX_FRAME};
+use super::tests::{headless, joins_as};
 use super::*;
 use crate::net::framing::{read_msg, write_msg};
 use crate::net::handshake::{client_handshake, installed_mod_ids, HandshakeError};
@@ -47,7 +48,7 @@ fn join_reply(
     write_msg(
         stream,
         &ClientToServer::Join {
-            player_name: name.to_string(),
+            credential: JoinCredential::Name(name.to_string()),
             key,
             proof,
             view_distance: 2,
@@ -139,7 +140,7 @@ fn oversize_pre_join_frames_drop_the_connection() {
 /// holds at most one session.
 #[test]
 fn joins_without_a_valid_identity_proof_are_refused() {
-    let server = crate::server::session_build::build_headless_session("", 5, 2);
+    let server = headless("", 5, 2);
     let mut host = crate::server::handle::spawn(server);
     let port = host.open_to_lan(0).expect("bind an ephemeral port");
     let (alice, mallory) = (identity(), identity());
@@ -176,7 +177,7 @@ fn joins_without_a_valid_identity_proof_are_refused() {
     client_handshake(
         &mut first,
         &alice,
-        "Alice",
+        joins_as("Alice"),
         2,
         &installed_mod_ids(),
         Vec::new(),
@@ -186,7 +187,7 @@ fn joins_without_a_valid_identity_proof_are_refused() {
     match client_handshake(
         &mut second,
         &alice,
-        "Alice",
+        joins_as("Alice"),
         2,
         &installed_mod_ids(),
         Vec::new(),

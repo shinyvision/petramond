@@ -203,7 +203,7 @@ pub struct Section {
 
 /// A section's block-entity maps, keyed by section-local block index
 /// (`section_idx`, max 4095 — fits `u16`).
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)]
 struct BlockEntities {
     /// Furnace machine state (burn/cook counters). A furnace's SLOTS live in
     /// [`containers`](Self::containers) under the same key.

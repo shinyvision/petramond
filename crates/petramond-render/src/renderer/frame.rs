@@ -141,7 +141,11 @@ impl Renderer {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        self.encode_frame(&view);
+        self.encode_frame(FrameOut {
+            scene: &view,
+            scene_texture: None,
+            window: Some(WindowOut::Scene),
+        });
         frame.present();
     }
 
@@ -149,7 +153,7 @@ impl Renderer {
     /// nothing: a surfaceless renderer, a swapchain that needed rebuilding
     /// first, an acquire that timed out or failed, or no memory left for a
     /// frame (recorded as this renderer's [`failure`](Self::failure)).
-    fn acquire_swapchain_frame(&mut self) -> Option<wgpu::SurfaceTexture> {
+    pub(super) fn acquire_swapchain_frame(&mut self) -> Option<wgpu::SurfaceTexture> {
         let surface = self.surface.as_ref()?;
         match surface.get_current_texture() {
             // A suboptimal frame still presents (with a per-present driver
@@ -160,7 +164,7 @@ impl Renderer {
             Ok(t) if t.suboptimal && !self.suboptimal_retried => {
                 self.suboptimal_retried = true;
                 drop(t);
-                surface.configure(&self.device, &self.config);
+                surface.configure(&self.device, &self.surface_config());
                 None
             }
             Ok(t) => {
@@ -171,7 +175,7 @@ impl Renderer {
             // haven't delivered yet): reconfigure at the current size and let
             // the next frame draw.
             Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
-                surface.configure(&self.device, &self.config);
+                surface.configure(&self.device, &self.surface_config());
                 None
             }
             // The compositor did not hand an image back in time (a hidden or
@@ -194,11 +198,18 @@ impl Renderer {
         }
     }
 
-    /// Everything between "here is the colour target" and "the GPU has this
+    /// Everything between "here are the targets" and "the GPU has this
     /// frame": the per-frame CPU bakes, draw planning, the frame graph's
     /// plan, pass encoding, submit. Target-agnostic, so the windowed
-    /// swapchain and an offscreen capture share one frame graph.
-    pub(super) fn encode_frame(&mut self, view: &wgpu::TextureView) {
+    /// swapchain, set-size frames and an offscreen capture share one frame
+    /// graph.
+    ///
+    /// The order is the frame's contract: the SCENE (the graph: world, hand,
+    /// aim marks, the scene's UI layer), then the CAPTURE POINT, then the
+    /// WINDOW (the scene shown on it, the world marks, and the window's UI
+    /// layer over it). Nothing drawn after the capture point can reach a
+    /// capture.
+    pub(super) fn encode_frame(&mut self, out: FrameOut<'_>) -> wgpu::SubmissionIndex {
         let t = Instant::now();
         self.refresh_overlay_buffers();
         self.prepare_held_item();
@@ -214,6 +225,7 @@ impl Renderer {
         let shape = FrameShape {
             route,
             msaa: self.targets.anti_aliasing.sample_count() > 1,
+            keep_scene: self.captures.world_due,
         };
         // The reusable plan is taken out while `self` is read to fill it,
         // then put back (capacity retained next frame).
@@ -227,8 +239,24 @@ impl Renderer {
                 label: Some("frame"),
             });
         let mut stats = RenderStats::default();
-        self.encode_passes(&mut enc, view, &plan, route, &mut stats);
+        self.encode_passes(&mut enc, out.scene, &plan, route, &mut stats);
         self.frame_plan = plan;
+        if let Some(scene) = out.scene_texture {
+            self.encode_captures(&mut enc, scene);
+        }
+        match out.window {
+            Some(WindowOut::Scene) => {
+                let (w, h) = self.screen_size();
+                self.encode_world_marks(&mut enc, out.scene, (0.0, 0.0, w as f32, h as f32));
+                self.encode_ui_layer(&mut enc, out.scene, &self.ui.window);
+            }
+            Some(WindowOut::Letterboxed { view, frame, rect }) => {
+                frame.blit_into(&mut enc, view, rect, "frame to window");
+                self.encode_world_marks(&mut enc, view, rect);
+                self.encode_ui_layer(&mut enc, view, &self.ui.window);
+            }
+            None => {}
+        }
         self.cpu_stage("cpu: encode passes", t);
 
         if let Some(timer) = &self.gpu_timer {
@@ -238,12 +266,13 @@ impl Renderer {
         let cb = enc.finish();
         self.cpu_stage("cpu: encoder finish", t);
         let t = Instant::now();
-        self.queue.submit(std::iter::once(cb));
+        let submitted = self.queue.submit(std::iter::once(cb));
         self.cpu_stage("cpu: queue submit", t);
         if let Some(timer) = &self.gpu_timer {
             timer.after_submit(&self.device);
         }
         self.last_stats = stats;
+        submitted
     }
 
     /// Fold the CPU time since `since` into the profile under `label` (a
@@ -253,4 +282,27 @@ impl Renderer {
             timer.cpu_stage(label, since.elapsed().as_nanos() as f64);
         }
     }
+}
+
+/// Where one frame goes (see [`Renderer::encode_frame`]).
+pub(super) struct FrameOut<'a> {
+    /// Where the scene lands.
+    pub(super) scene: &'a wgpu::TextureView,
+    /// The owned image `scene` views, when it is one: this frame's captures
+    /// copy it at the capture point, before any window UI draws.
+    pub(super) scene_texture: Option<&'a super::sized_frames::FrameTarget>,
+    /// Where the window's UI lands; `None` = this frame shows no window.
+    pub(super) window: Option<WindowOut<'a>>,
+}
+
+pub(super) enum WindowOut<'a> {
+    /// The scene target is the window.
+    Scene,
+    /// The window is an image of its own: it is shown the frame first,
+    /// scaled into `rect`.
+    Letterboxed {
+        view: &'a wgpu::TextureView,
+        frame: &'a super::sized_frames::FrameTarget,
+        rect: (f32, f32, f32, f32),
+    },
 }

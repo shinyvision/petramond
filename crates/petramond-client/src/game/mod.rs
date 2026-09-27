@@ -37,12 +37,17 @@ pub mod ambient;
 mod block_animation;
 pub mod body_pose;
 mod camera_rig;
+mod capture;
 mod client_mods;
+mod presented_entities;
+mod view_subject;
+pub use view_subject::SubjectHands;
 mod client_presentation;
 pub mod creative;
 #[cfg(test)]
 pub use petramond::menu as container;
 mod bone_ease;
+mod captured_view;
 mod dig_feedback;
 pub mod environment;
 mod first_person;
@@ -55,6 +60,7 @@ mod menu_prediction;
 mod net_link;
 pub mod prediction;
 pub mod presentation;
+mod presenting;
 pub mod remote_players;
 mod replica_state;
 pub mod replicated;
@@ -126,19 +132,33 @@ pub struct Game {
     /// Client-side world presentation effects: particles, dig feedback,
     /// animated-block easing and the local body's bone easing.
     fx: world_fx::WorldFx,
+    /// This frame's presented players and mobs (`ClientEntities`).
+    presented_entities_cache: Vec<mod_api::ClientEntityData>,
+    /// An anchored camera's anchor as last found in a frame.
+    last_anchor_feet: Option<(mod_api::EntityRef, petramond_math::world_pos::WorldPos)>,
+    /// This frame's anchored camera did not find its anchor.
+    anchor_missing: bool,
+    /// A presentation this client presents, and the captured view it shows
+    /// (see `presenting.rs`).
+    presenting: presenting::Presenting,
+    /// The presented world's moment, and this frame for the events logs.
+    world_capture: capture::WorldCapture,
 }
 
 impl Game {
     pub fn set_aspect(&mut self, aspect: f32) {
         self.local.cam.aspect = aspect;
+        // The boom was placed from the old eye this frame; it presents now.
+        if let Some(boom) = self.local.third_person.cam.as_mut() {
+            boom.aspect = aspect;
+        }
     }
 
-    /// The player's ear (eye) position, for the app layer's distance
-    /// attenuation of positional mod sounds. Movement-derived → the client's
-    /// predicted player.
+    /// Where the ears are: the presented camera, so every sound path and
+    /// every camera-anchored effect follows a claimed or boom camera.
     #[inline]
     pub fn listener_position(&self) -> petramond_math::world_pos::WorldPos {
-        self.local.player.eye()
+        self.render_camera().pos
     }
 
     /// Current fixed-tick number, exposed for client-side presentation systems
@@ -280,28 +300,14 @@ impl Game {
     /// The LOCAL player's health for the HUD hearts (replicated self view), or
     /// `None` when there is no survival bar to draw (a floating spectator).
     pub fn player_health(&self) -> Option<petramond_world::gui_state::HealthView> {
-        if self.replica.self_view.mode != petramond::player::PlayerMode::Survival {
-            return None;
-        }
-        Some(petramond_world::gui_state::HealthView {
-            current: self.replica.self_view.health,
-            max: petramond::player::MAX_HEALTH,
-        })
+        self.replica.self_view.health_view()
     }
 
     /// The LOCAL player's active status effects for the HUD icon row, in
     /// application order (replicated self view). Empty for a spectator — the
     /// row hides with the hearts.
     pub fn player_effect_icons(&self) -> Vec<petramond_world::effect::Effect> {
-        if self.replica.self_view.mode != petramond::player::PlayerMode::Survival {
-            return Vec::new();
-        }
-        self.replica
-            .self_view
-            .effects
-            .iter()
-            .map(|&(e, _)| e)
-            .collect()
+        self.replica.self_view.effect_icons()
     }
 
     /// Test injection: set the client's look target without a raycast, then

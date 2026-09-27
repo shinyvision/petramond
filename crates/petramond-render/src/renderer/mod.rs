@@ -10,6 +10,7 @@ use wgpu::util::DeviceExt;
 mod actor_pass;
 use actor_pass::{ActorPass, MobGpu, PlayerGpu};
 use skinned_draw::{SkinFrame, SkinnedModel};
+mod capture;
 mod client_overlay;
 mod column_store;
 use column_store::{ColumnSlot, ColumnStore};
@@ -40,10 +41,14 @@ mod offscreen;
 mod passes;
 use passes::Node;
 mod post_process;
+mod readback;
+mod sized_frames;
 mod ui_frame;
 mod upload_queue;
 use upload_queue::UploadQueue;
+mod world_marks;
 
+pub use capture::{CaptureRequest, CaptureSource, Captured};
 #[cfg(test)]
 pub(crate) use construct::instance_descriptor;
 pub use construct::new_renderer_from_target;
@@ -72,7 +77,7 @@ use super::uniforms::Uniforms;
 use super::{
     BlockEntityInstance, BreakOverlayView, EntityShadow, HeldItemView, ItemEntityInstance,
     LocalFrame, MobRenderInstance, ParticleEmitterInstance, ParticleInstance, PlayerBodyRender,
-    SolidParticleInstance, UiFrame,
+    SolidParticleInstance, UiFrame, UiLayers,
 };
 use draw_plan::{QuadPass, SectionOcclusion, TerrainDraws};
 use petramond::gui::{UiSnapshot, UiViewport};
@@ -451,7 +456,12 @@ impl TerrainPass {
 }
 
 /// The UI pass: the 2D pipeline every HUD/inventory quad draws with, the
-/// document draw path, client overlays, HUD chrome layers, and the icon atlas.
+/// icon atlas and theme every layer samples, and the two UI layers.
+///
+/// The SCENE layer draws over the world into the frame and is part of what a
+/// capture records (the HUD the view claims leave up). The WINDOW layer is
+/// composited onto the window only, after the capture point: screens, menus,
+/// mod documents, canvases and overlays.
 struct UiPass {
     /// UI pipeline (2D HUD / inventory). Every UI quad is drawn with it; group(0)
     /// binds whichever baked texture (or the icon atlas) the quad samples.
@@ -459,8 +469,25 @@ struct UiPass {
     /// Texture+sampler bind layout used by every UI texture (doc-UI images,
     /// the heart atlas).
     texture_bgl: wgpu::BindGroupLayout,
-    /// GUI-document draw path (petramond-ui DrawList upload + batches): every
-    /// screen's chrome. See `doc_ui`.
+    /// The document theme's atlas and font, uploaded once any layer needs them.
+    theme: Option<doc_ui::ThemeBinds>,
+    /// Pre-baked inventory icon atlas (one 64×64 cell per item, rendered once at
+    /// init) + its UI-pass bind group + the cell-UV lookup. Every slot icon is now a
+    /// 2D textured quad sampling this, not live 3D geometry. See `icon_atlas`.
+    icon_atlas: IconAtlas,
+    scene: UiLayer,
+    window: UiLayer,
+    /// Frame-size generation: rejects a scene UI solved before the frame's
+    /// size last changed.
+    scene_generation: u64,
+    /// Window-size generation, for the window layer.
+    window_generation: u64,
+}
+
+/// One UI layer: a GUI document, client overlays and the game-owned content
+/// (slot icons, counts, HUD chrome layers), uploaded and drawn as a unit.
+struct UiLayer {
+    /// GUI-document draw path (petramond-ui DrawList upload + batches). See `doc_ui`.
     doc_ui: doc_ui::DocUi,
     /// Client-WASM images drawn directly in physical screen pixels (HUD
     /// overlays and the active modal canvas), outside document layout.
@@ -480,10 +507,6 @@ struct UiPass {
     /// A NEW HUD element is one `UiBuild` vec + one [`HudLayer`] entry in
     /// `construct` — not a field trio, upload block, and pass branch each.
     hud_layers: Vec<HudLayer>,
-    /// Pre-baked inventory icon atlas (one 64×64 cell per item, rendered once at
-    /// init) + its UI-pass bind group + the cell-UV lookup. Every slot icon is now a
-    /// 2D textured quad sampling this, not live 3D geometry. See `icon_atlas`.
-    icon_atlas: IconAtlas,
     /// Reusable dynamic vbuf for the per-frame icon QUADS (two triangles per filled
     /// slot, sampling the icon atlas), grown to fit.
     icon_quad_vbuf: wgpu::Buffer,
@@ -499,10 +522,31 @@ struct UiPass {
     /// Reusable CPU staging for the per-frame UI geometry (all quad buffers +
     /// overlay spans + icon-quad list), cleared + refilled each frame.
     build: UiBuild,
-    /// Surface generation used to reject a complete UI frame solved before a
-    /// resize, plus the viewport of the most recently prepared coherent UI.
-    viewport_generation: u64,
+    /// The viewport of the most recently prepared coherent UI.
     prepared_viewport: UiViewport,
+}
+
+impl UiLayer {
+    fn new(device: &wgpu::Device, hud_layers: Vec<HudLayer>) -> Self {
+        let buffer = |label| dynamic_draw::new_buffer(device, wgpu::BufferUsages::VERTEX, label);
+        Self {
+            doc_ui: doc_ui::DocUi::default(),
+            client_overlays: client_overlay::ClientOverlays::default(),
+            solid_vbuf: buffer("ui solid vbuf"),
+            solid_verts: Vec::new(),
+            count_vertex_count: 0,
+            overlay_count_vertex_count: 0,
+            drag_count_vertex_count: 0,
+            hud_layers,
+            icon_quad_vbuf: buffer("icon quad vbuf"),
+            icon_quad_verts: Vec::new(),
+            icon_quad_vertex_count: 0,
+            overlay_icon_quad_vertex_count: 0,
+            drag_icon_quad_vertex_count: 0,
+            build: UiBuild::default(),
+            prepared_viewport: UiViewport::default(),
+        }
+    }
 }
 
 /// The sky + atmosphere pass: the skybox pipeline, the pack environment
@@ -663,6 +707,15 @@ pub struct Renderer {
     /// Reusable colour target for repeated surfaceless frames (tooling); built
     /// on first use so a windowed renderer never allocates it.
     offscreen_target: Option<(u32, u32, wgpu::TextureView)>,
+    /// Frames rendered at a size the window does not have (see `sized_frames`).
+    sized_frames: Option<Box<sized_frames::SizedFrames>>,
+    /// Where set-size frames show on the window (see
+    /// [`Renderer::set_frame_destination`]).
+    frame_destination: Option<[u32; 4]>,
+    /// Frame captures being taken and on their way back (see `capture`).
+    captures: capture::Captures,
+    /// The window's world marks (see `world_marks`).
+    world_marks: world_marks::WorldMarksPass,
     /// The swapchain was rebuilt in response to a suboptimal acquire and came
     /// back STILL suboptimal — stop retrying (some drivers, e.g. NVIDIA on
     /// Wayland, report suboptimal permanently; reconfiguring every frame would
@@ -718,4 +771,20 @@ struct HudLayer {
     under_chrome: bool,
     vbuf: wgpu::Buffer,
     vertex_count: u32,
+}
+
+impl HudLayer {
+    /// The same layer with its own vertex buffer, for another UI layer.
+    fn another(&self, device: &wgpu::Device) -> Self {
+        Self {
+            source: self.source,
+            texture: match &self.texture {
+                HudLayerTexture::Solid => HudLayerTexture::Solid,
+                HudLayerTexture::Texture(bind) => HudLayerTexture::Texture(bind.clone()),
+            },
+            under_chrome: self.under_chrome,
+            vbuf: dynamic_draw::new_buffer(device, wgpu::BufferUsages::VERTEX, "hud layer vbuf"),
+            vertex_count: 0,
+        }
+    }
 }

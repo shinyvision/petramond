@@ -127,4 +127,59 @@ impl Section {
         }
         s
     }
+
+    /// Whether `other` holds exactly this section's content — blocks, cell
+    /// state, block entities, light and the counters derived from them — so
+    /// installing it in this one's place would change nothing a reader sees.
+    /// Bookkeeping (dirty flags, revisions) and the client's own bakes of the
+    /// content are not content. Every field is named, so a new one has to be
+    /// sorted here.
+    pub fn same_content(&self, other: &Section) -> bool {
+        let Section {
+            cx,
+            cy,
+            cz,
+            blocks,
+            states,
+            entities,
+            dirty: _,
+            modified: _,
+            skylight,
+            blocklight,
+            light_dirty: _,
+            light_from_persist: _,
+            light_revision: _,
+            mesh_revision: _,
+            random_tick_count,
+            opaque_count,
+            plane_opaque,
+            non_air_count,
+            water_count,
+            fluid_count,
+            quench_count,
+            quencher_count,
+            biome_tint_count,
+            particle_emitter_cells,
+            light_emitter_count,
+            shape_render: _,
+            light_apertures: _,
+        } = self;
+        (*cx, *cy, *cz) == (other.cx, other.cy, other.cz)
+            && *random_tick_count == other.random_tick_count
+            && *opaque_count == other.opaque_count
+            && *plane_opaque == other.plane_opaque
+            && *non_air_count == other.non_air_count
+            && *water_count == other.water_count
+            && *fluid_count == other.fluid_count
+            && *quench_count == other.quench_count
+            && *quencher_count == other.quencher_count
+            && *biome_tint_count == other.biome_tint_count
+            && *light_emitter_count == other.light_emitter_count
+            && *particle_emitter_cells == other.particle_emitter_cells
+            && skylight.as_deref() == other.skylight.as_deref()
+            && blocklight.as_deref() == other.blocklight.as_deref()
+            && *entities == other.entities
+            && *states == other.states
+            && *blocks == other.blocks
+    }
 }

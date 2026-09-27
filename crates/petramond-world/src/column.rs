@@ -8,6 +8,8 @@
 //! section in the column is touched. See [`crate::chunk::Chunk`] for the column data
 //! this replaces (`heightmap`, `biomes`).
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::chunk::{CHUNK_SX, CHUNK_SZ, WORLD_MIN_Y};
 
 /// Sentinel height for a column with no matching block at all (e.g. open sky all
@@ -15,6 +17,9 @@ use crate::chunk::{CHUNK_SX, CHUNK_SZ, WORLD_MIN_Y};
 pub const NO_SURFACE: i32 = WORLD_MIN_Y - 1;
 
 /// The 2D per-column data, each a `16×16` grid indexed `z * CHUNK_SX + x`.
+///
+/// `Sync`, so a store can hold it behind `Arc` and hand a capture or a worker
+/// the column as it stands for a refcount bump.
 pub struct Column {
     /// Highest non-air world Y per `(x,z)` column, or [`NO_SURFACE`] if none. World
     /// Y (so it may be negative), hence `i32` rather than the old `u16`.
@@ -25,11 +30,30 @@ pub struct Column {
     sky_cover: Box<[i32; CHUNK_SX * CHUNK_SZ]>,
     /// Biome id per `(x,z)` column (`Biome::from_id`).
     biomes: Box<[u8; CHUNK_SX * CHUNK_SZ]>,
-    /// Cached `(min, max)` of [`sky_cover`](Self::sky_cover), `None` when a
-    /// write has invalidated it. The skylight planner asks nine columns for
-    /// this range on EVERY light bake — on the main thread — and recomputing
-    /// it means 2304 comparisons per bake over maps that barely ever change.
-    sky_cover_range: std::cell::Cell<Option<(i32, i32)>>,
+    /// Cached `(min, max)` of [`sky_cover`](Self::sky_cover), packed by
+    /// [`pack_range`], or [`RANGE_STALE`] when a write has invalidated it. The
+    /// skylight planner asks nine columns for this range on EVERY light bake —
+    /// on the main thread — and recomputing it means 2304 comparisons per bake
+    /// over maps that barely ever change.
+    sky_cover_range: AtomicU64,
+}
+
+/// No packed range: `(lo, hi)` packs with `lo <= hi`, and this has `lo > hi`.
+const RANGE_STALE: u64 = pack_range(0, -1);
+
+const fn pack_range(lo: i32, hi: i32) -> u64 {
+    ((lo as u32 as u64) << 32) | hi as u32 as u64
+}
+
+impl Clone for Column {
+    fn clone(&self) -> Self {
+        Self {
+            surface_heightmap: self.surface_heightmap.clone(),
+            sky_cover: self.sky_cover.clone(),
+            biomes: self.biomes.clone(),
+            sky_cover_range: AtomicU64::new(self.sky_cover_range.load(Ordering::Relaxed)),
+        }
+    }
 }
 
 impl Default for Column {
@@ -44,7 +68,7 @@ impl Column {
             surface_heightmap: Box::new([NO_SURFACE; CHUNK_SX * CHUNK_SZ]),
             sky_cover: Box::new([NO_SURFACE; CHUNK_SX * CHUNK_SZ]),
             biomes: Box::new([0u8; CHUNK_SX * CHUNK_SZ]),
-            sky_cover_range: std::cell::Cell::new(Some((NO_SURFACE, NO_SURFACE))),
+            sky_cover_range: AtomicU64::new(pack_range(NO_SURFACE, NO_SURFACE)),
         }
     }
 
@@ -88,7 +112,7 @@ impl Column {
     #[inline]
     pub fn set_sky_cover_y(&mut self, x: usize, z: usize, wy: i32) {
         self.sky_cover[z * CHUNK_SX + x] = wy;
-        self.sky_cover_range.set(None);
+        *self.sky_cover_range.get_mut() = RANGE_STALE;
     }
 
     pub fn sky_cover_slice(&self) -> &[i32] {
@@ -98,16 +122,17 @@ impl Column {
     /// The `(min, max)` sky-cover height over this column's 256 cells, memoized
     /// until the next write.
     pub fn sky_cover_range(&self) -> (i32, i32) {
-        if let Some(range) = self.sky_cover_range.get() {
-            return range;
+        let packed = self.sky_cover_range.load(Ordering::Relaxed);
+        if packed != RANGE_STALE {
+            return ((packed >> 32) as u32 as i32, packed as u32 as i32);
         }
         let (mut lo, mut hi) = (i32::MAX, i32::MIN);
         for &h in self.sky_cover.iter() {
             lo = lo.min(h);
             hi = hi.max(h);
         }
-        let range = (lo, hi);
-        self.sky_cover_range.set(Some(range));
-        range
+        self.sky_cover_range
+            .store(pack_range(lo, hi), Ordering::Relaxed);
+        (lo, hi)
     }
 }

@@ -27,6 +27,10 @@ impl Game {
     /// server ignores Pause. While paused the app must keep calling
     /// [`Game::pump_network`] so server output is still consumed.
     pub fn set_paused(&mut self, paused: bool) {
+        self.send_pause(paused);
+    }
+
+    fn send_pause(&mut self, paused: bool) {
         // A remote client never pauses the shared server (which also gates:
         // once opened to LAN, Pause is ignored) — belt and braces.
         if self.net.is_remote() {
@@ -78,7 +82,13 @@ impl Game {
     /// actual bound port. Host only — the pause menu hides the button for
     /// remote sessions (and a remote handle has no control channel to ask).
     pub fn open_to_lan(&mut self, port: u16) -> std::io::Result<u16> {
-        self.net.open_to_lan(port)
+        let bound = self.net.open_to_lan(port)?;
+        if let mod_api::ClientContext::Local { shared, .. } =
+            &mut self.client_mods.presented().lock().context
+        {
+            *shared = true;
+        }
+        Ok(bound)
     }
 
     /// One-shot: the latched connection-loss reason if it has not yet been

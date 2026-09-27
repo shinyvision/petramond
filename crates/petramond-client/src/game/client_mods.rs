@@ -7,22 +7,16 @@
 use super::Game;
 
 impl Game {
+    /// Drive the session's client mods for one frame: `frame` as the app
+    /// assembled it, with this game's player filled in.
     pub fn drive_client_mods(
         &mut self,
-        dt: f32,
-        screen: (u32, u32),
-        open_gui: Option<&str>,
-        open_canvas: Option<&str>,
+        mut frame: mod_api::ClientFrameData,
+        presented_view: mod_api::ClientViewStateData,
     ) {
-        let frame = mod_api::ClientFrameData {
-            dt: dt.max(0.0),
-            player_pos: self.local.player.pos.to_array(),
-            yaw: self.local.player.yaw,
-            pitch: self.local.player.pitch,
-            screen: [screen.0, screen.1],
-            open_gui: open_gui.map(str::to_owned),
-            open_canvas: open_canvas.map(str::to_owned),
-        };
+        frame.player_pos = self.local.player.pos.to_array();
+        frame.yaw = self.local.player.yaw;
+        frame.pitch = self.local.player.pitch;
         // The per-frame hook gets the SAME actor snapshot the prediction
         // dispatches publish, so a mod's rule is one predicate that reads
         // `player_state()` wherever it runs — and knows which player it is
@@ -37,11 +31,14 @@ impl Game {
             ..self.hand.take_swing_events()
         };
         let actor = self.client_actor_snapshot(self.local.predicted_input.sneak, swing);
+        self.client_mods.presented().lock().local_player =
+            Some(mod_api::PlayerId(self.replica.entities.self_id().0));
         self.client_mods.frame(
             &self.replica.world,
             &actor,
             &self.replica.self_view.inventory,
             frame,
+            presented_view,
         );
     }
 
@@ -82,47 +79,50 @@ impl Game {
 
     /// Dispatch a mod-registered bound action edge (`mod_id:action`) to its
     /// owning client mod.
-    pub fn client_mod_action(&mut self, full_id: &str, pressed: bool) -> bool {
+    pub fn client_mod_action(
+        &mut self,
+        full_id: &str,
+        pressed: bool,
+        at: petramond::modding::client::keys::KeyContext<'_>,
+    ) -> bool {
         self.client_mods
-            .action(&self.replica.world, full_id, pressed)
+            .action(Some(&self.replica.world), full_id, pressed, at)
     }
 
-    /// The session's mod-registered remappable key actions, for the app's
-    /// action table: `(full_id, label, category, default binding)`.
-    pub fn client_bindable_actions(
-        &self,
-    ) -> Vec<(String, String, String, petramond_input::controls::Binding)> {
+    /// Issue `call` as client mod `mod_id` would, beside this replica.
+    #[cfg(test)]
+    pub(crate) fn client_call_for_test(
+        &mut self,
+        mod_id: &str,
+        call: mod_api::HostCall,
+    ) -> Option<mod_api::HostRet> {
         self.client_mods
-            .key_actions()
-            .iter()
-            .map(|a| {
-                (
-                    a.full_id.clone(),
-                    a.label.clone(),
-                    a.category.clone(),
-                    petramond_input::controls::Binding::key(a.default_code),
-                )
-            })
-            .collect()
+            .call_as_for_test(mod_id, Some(&self.replica.world), call)
+    }
+
+    /// This session's client mods, for the reads the app shares with the
+    /// shell's (the same questions asked of whichever runtime is current).
+    pub fn client_mod_runtime(&self) -> &petramond::modding::client::ClientModRuntime {
+        &self.client_mods
     }
 
     pub fn release_client_mod_keys(&mut self) {
-        self.client_mods.release_all_keys(&self.replica.world);
+        self.client_mods.release_all_keys(Some(&self.replica.world));
     }
 
     pub fn client_mod_ui_event(&mut self, kind_key: &str, event: mod_api::ClientUiEvent) {
         self.client_mods
-            .ui_event(&self.replica.world, kind_key, event);
+            .ui_event(Some(&self.replica.world), kind_key, event);
     }
 
     pub fn client_mod_canvas_event(&mut self, canvas_key: &str, event: mod_api::ClientCanvasEvent) {
         self.client_mods
-            .canvas_event(&self.replica.world, canvas_key, event);
+            .canvas_event(Some(&self.replica.world), canvas_key, event);
     }
 
     pub fn client_mod_canvas_scroll(&mut self, canvas_key: &str, x: f32, y: f32, delta: f32) {
         self.client_mods
-            .canvas_scroll(&self.replica.world, canvas_key, x, y, delta);
+            .canvas_scroll(Some(&self.replica.world), canvas_key, x, y, delta);
     }
 
     pub fn client_mod_overlays(&self) -> &[petramond::modding::ClientOverlayRegistration] {
@@ -131,6 +131,25 @@ impl Game {
 
     pub fn client_mod_image(&self, image_key: &str) -> Option<petramond::modding::ClientImageData> {
         self.client_mods.image(image_key)
+    }
+
+    /// Every client mod's world marks, in the order they draw (see
+    /// `ClientModRuntime::for_each_world_mark`).
+    pub fn for_each_client_world_mark(
+        &self,
+        f: impl FnMut(&mod_api::ClientWorldMark, Option<&petramond::modding::ClientImageData>),
+    ) {
+        self.client_mods.for_each_world_mark(f);
+    }
+
+    /// Stand in for client mod `mod_id`'s own `ClientWorldMarksSet`.
+    #[cfg(test)]
+    pub(crate) fn set_client_world_marks_for_test(
+        &mut self,
+        mod_id: &str,
+        marks: Vec<mod_api::ClientWorldMark>,
+    ) -> bool {
+        self.client_mods.set_world_marks_for_test(mod_id, marks)
     }
 
     pub fn client_mod_canvas_view(
